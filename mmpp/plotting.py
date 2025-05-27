@@ -990,9 +990,17 @@ MMPP Plotter:
         if len(results) <= 1:
             return []
         
-        # Collect all potential parameters
+        # Collect all potential parameters from attributes dict (for ZarrJobResult)
+        # and direct attributes (for other result types)
         all_params = set()
         for result in results:
+            # Check attributes dict first (ZarrJobResult pattern)
+            if hasattr(result, 'attributes') and isinstance(result.attributes, dict):
+                for attr_name, value in result.attributes.items():
+                    if isinstance(value, (int, float, str, bool)):
+                        all_params.add(attr_name)
+            
+            # Also check direct attributes (fallback for other objects)
             for attr_name in dir(result):
                 if (not attr_name.startswith('_') and 
                     attr_name not in ['path', 'attributes'] and
@@ -1009,12 +1017,18 @@ MMPP Plotter:
         for param in all_params:
             values = []
             for result in results:
-                if hasattr(result, param):
-                    try:
+                # Try to get value from attributes dict first, then direct attribute
+                value = None
+                try:
+                    if hasattr(result, 'attributes') and param in result.attributes:
+                        value = result.attributes[param]
+                    elif hasattr(result, param):
                         value = getattr(result, param)
+                    
+                    if value is not None:
                         values.append(value)
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
             
             # Check if values are different (accounting for floating point precision)
             if len(values) > 1:
@@ -1078,13 +1092,27 @@ MMPP Plotter:
             'PBCz': 'd',         # Integer for PBC
         }
         
+        def get_value(result, param):
+            """Get parameter value from result object, handling both attributes dict and direct attributes."""
+            try:
+                # Try attributes dict first (ZarrJobResult pattern)
+                if hasattr(result, 'attributes') and param in result.attributes:
+                    return result.attributes[param]
+                # Try direct attribute access
+                elif hasattr(result, param):
+                    return getattr(result, param)
+                else:
+                    return None
+            except Exception:
+                return None
+        
         # If varying parameters are provided, use only those
         if varying_params is not None:
             params_to_show = varying_params[:self.config.max_legend_params]
             
             for param in params_to_show:
-                if hasattr(result, param):
-                    value = getattr(result, param)
+                value = get_value(result, param)
+                if value is not None:
                     format_spec = format_rules.get(param, 'g')
                     
                     try:
@@ -1105,8 +1133,8 @@ MMPP Plotter:
             
             # Add priority parameters first
             for param in priority_params:
-                if hasattr(result, param):
-                    value = getattr(result, param)
+                value = get_value(result, param)
+                if value is not None:
                     format_spec = format_rules.get(param, 'g')
                     
                     try:
@@ -1124,18 +1152,28 @@ MMPP Plotter:
             # Add other interesting parameters (limited by max_legend_params to avoid clutter)
             max_additional = max(0, self.config.max_legend_params - len(priority_params))
             other_params_added = 0
-            for attr_name in sorted(dir(result)):
+            
+            # Get all available parameters
+            available_params = set()
+            if hasattr(result, 'attributes') and isinstance(result.attributes, dict):
+                available_params.update(result.attributes.keys())
+            
+            for attr_name in dir(result):
+                if (not attr_name.startswith('_') and 
+                    attr_name not in ['path', 'attributes'] and
+                    not callable(getattr(result, attr_name, None))):
+                    available_params.add(attr_name)
+            
+            for attr_name in sorted(available_params):
                 if (other_params_added >= max_additional or 
-                    attr_name.startswith('_') or 
-                    attr_name in priority_params or
-                    attr_name in ['path', 'attributes']):
+                    attr_name in priority_params):
                     continue
                     
-                try:
-                    value = getattr(result, attr_name)
-                    if isinstance(value, (int, float)) and not callable(value):
-                        format_spec = format_rules.get(attr_name, '.2g')
-                        
+                value = get_value(result, attr_name)
+                if value is not None and isinstance(value, (int, float)) and not callable(value):
+                    format_spec = format_rules.get(attr_name, '.2g')
+                    
+                    try:
                         if format_spec == 'd':
                             formatted_value = f"{int(value)}"
                         elif format_spec.endswith('e'):
@@ -1145,8 +1183,8 @@ MMPP Plotter:
                         
                         label_parts.append(f"{attr_name}={formatted_value}")
                         other_params_added += 1
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
         
         return ", ".join(label_parts) if label_parts else "Dataset"
 
