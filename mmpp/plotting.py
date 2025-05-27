@@ -1,4 +1,4 @@
-from typing import Optional, Dict, List, Union, Any, Tuple
+from typing import Optional, Dict, List, Union, Any, Tuple, Iterator
 import os
 import numpy as np
 from dataclasses import dataclass
@@ -56,15 +56,15 @@ class PlotConfig:
     tick_fontsize: int = 10
     use_custom_fonts: bool = True
     font_family: str = "Arial"
-    colors: Dict[str, str] = None
+    colors: Optional[Dict[str, str]] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize default colors."""
         if self.colors is None:
             self.colors = {"text": "#808080", "axes": "#808080", "grid": "#cccccc"}
 
 
-def setup_custom_fonts():
+def setup_custom_fonts() -> bool:
     """Setup custom fonts including Arial."""
     try:
         # Import fonts from custom directory
@@ -97,7 +97,7 @@ def setup_custom_fonts():
         return False
 
 
-def load_paper_style():
+def load_paper_style() -> bool:
     """Load custom paper style."""
     try:
         # Try to find paper.mplstyle in current directory or relative to this file
@@ -121,7 +121,7 @@ def load_paper_style():
         return False
 
 
-def apply_custom_colors(colors: Dict[str, str]):
+def apply_custom_colors(colors: Dict[str, str]) -> None:
     """Apply custom colors to matplotlib rcParams."""
     try:
         if "text" in colors:
@@ -152,7 +152,7 @@ class MMPPlotter:
     - Custom fonts and paper-ready styling
     """
 
-    def __init__(self, results, mmpp_instance=None):
+    def __init__(self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None) -> None:
         """
         Initialize the plotter.
 
@@ -184,7 +184,7 @@ class MMPPlotter:
         # Setup custom styling
         self._setup_styling()
 
-    def _setup_styling(self):
+    def _setup_styling(self) -> None:
         """Setup custom fonts and styling."""
         try:
             # Setup custom fonts if enabled
@@ -197,10 +197,10 @@ class MMPPlotter:
                     # Fallback to a standard style
                     try:
                         plt.style.use("seaborn-v0_8")
-                    except:
+                    except (OSError, ImportError):
                         try:
                             plt.style.use("default")
-                        except:
+                        except (OSError, ImportError):
                             pass
             else:
                 # Load specified style
@@ -289,7 +289,7 @@ class MMPPlotter:
                         )
                     )
                 return capture.get()
-            except:
+            except Exception:
                 pass
 
         return str(summary_text) + "\n" + str(methods_text) + "\n" + str(examples_text)
@@ -305,7 +305,7 @@ MMPP Plotter:
 
 🔧 Main methods:
   • plot(x_series, y_series, **kwargs) - Main plotting method
-  • plot_time_series(dataset, **kwargs) - Time series plots  
+  • plot_time_series(dataset, **kwargs) - Time series plots
   • plot_components(dataset, **kwargs) - Component comparison
   • configure(**kwargs) - Update configuration
   • reset_style() - Reset to paper style
@@ -415,9 +415,9 @@ MMPP Plotter:
         self,
         job: Pyzfn,
         dataset_name: str,
-        x_series: str = None,
-        comp: Union[str, int] = None,
-        average: tuple = None,
+        x_series: Optional[str] = None,
+        comp: Optional[Union[str, int]] = None,
+        average: Optional[Tuple[Any, ...]] = None,
     ) -> tuple:
         """
         Extract data from a Pyzfn job.
@@ -497,17 +497,17 @@ MMPP Plotter:
         self,
         x_series: str,
         y_series: str,
-        comp: Union[str, int] = None,
-        average: tuple = None,
-        figsize: tuple = None,
-        title: str = None,
-        xlabel: str = None,
-        ylabel: str = None,
-        legend_labels: List[str] = None,
-        colors: List[str] = None,
-        save_path: str = None,
+        comp: Optional[Union[str, int]] = None,
+        average: Optional[Tuple[Any, ...]] = None,
+        figsize: Optional[Tuple[Any, ...]] = None,
+        title: Optional[str] = None,
+        xlabel: Optional[str] = None,
+        ylabel: Optional[str] = None,
+        legend_labels: Optional[List[str]] = None,
+        colors: Optional[List[str]] = None,
+        save_path: Optional[str] = None,
         paper_ready: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> tuple:
         """
         Create a plot for the specified data series.
@@ -684,7 +684,7 @@ MMPP Plotter:
         dataset: str,
         comp: Union[str, int] = "z",
         average: tuple = (1, 2, 3),
-        **kwargs,
+        **kwargs: Any,
     ) -> tuple:
         """
         Convenience method for time series plotting.
@@ -710,7 +710,7 @@ MMPP Plotter:
         )
 
     def plot_components(
-        self, dataset: str, time_slice: int = -1, average: tuple = (1, 2, 3), **kwargs
+        self, dataset: str, time_slice: int = -1, average: tuple = (1, 2, 3), **kwargs: Any
     ) -> tuple:
         """
         Plot all three components of a dataset.
@@ -830,13 +830,13 @@ MMPP Plotter:
 class PlotterProxy:
     """Proxy class to provide plotting functionality to search results."""
 
-    def __init__(self, results, mmpp_instance=None):
+    def __init__(self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None) -> None:
         self._results = results
         self._mmpp = mmpp_instance
-        self._plotter = None
+        self._plotter: Optional[MMPPlotter] = None
 
     @property
-    def mpl(self) -> MMPPlotter:
+    def matplotlib(self) -> MMPPlotter:
         """Get the matplotlib plotter instance."""
         if self._plotter is None:
             self._plotter = MMPPlotter(self._results, self._mmpp)
@@ -845,8 +845,8 @@ class PlotterProxy:
     def __len__(self) -> int:
         return len(self._results)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Any:
         return self._results[index]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         return iter(self._results)

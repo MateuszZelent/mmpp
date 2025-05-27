@@ -63,11 +63,11 @@ class ZarrJobResult:
     path: str
     attributes: Dict[str, Any]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Post-initialization to add plotting capabilities."""
         self._mmpp_ref = None
 
-    def _set_mmpp_ref(self, mmpp_instance: "MMPP"):
+    def _set_mmpp_ref(self, mmpp_instance: "MMPP") -> None:
         """Set reference to MMPP instance for plotting."""
         self._mmpp_ref = mmpp_instance
 
@@ -551,7 +551,7 @@ class MMPP:
 
         return examples
 
-    def find(self, **kwargs: Any) -> "PlotterProxy":
+    def find(self, **kwargs: Any) -> Union["PlotterProxy", List["ZarrJobResult"]]:
         """
         Find zarr folders that match the given criteria.
         Now returns a PlotterProxy with plotting capabilities.
@@ -870,7 +870,7 @@ class MMPP:
             print("No database available. Run scan() first.")
             return
 
-        print(f"\n=== MMPP Database Summary ===")
+        print("\n=== MMPP Database Summary ===")
         print(f"Total entries: {len(self.dataframe)}")
         print(f"Total columns: {len(self.dataframe.columns)}")
         print(f"Database path: {self.database_path}")
@@ -936,11 +936,11 @@ class MMPP:
 
         # Create summary panel
         summary_text = Text()
-        summary_text.append(f"📊 Total entries: ", style="bold cyan")
+        summary_text.append("📊 Total entries: ", style="bold cyan")
         summary_text.append(f"{len(self.dataframe)}\n", style="bright_white")
-        summary_text.append(f"📁 Database path: ", style="bold cyan")
+        summary_text.append("📁 Database path: ", style="bold cyan")
         summary_text.append(f"{self.database_path}\n", style="dim")
-        summary_text.append(f"🔍 Columns: ", style="bold cyan")
+        summary_text.append("🔍 Columns: ", style="bold cyan")
         summary_text.append(f"{len(self.dataframe.columns)}", style="bright_white")
 
         # Create methods panel
@@ -1086,7 +1086,6 @@ MMPP Database Summary:
 
                 # Use itables with simplified parameters for VS Code
                 from itables import to_html_datatable
-                from IPython.display import HTML, display
 
                 html_table = to_html_datatable(
                     df_formatted,

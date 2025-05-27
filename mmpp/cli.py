@@ -4,7 +4,6 @@ Command Line Interface for MMPP library.
 
 import argparse
 import sys
-from typing import Optional
 
 
 def main() -> None:
@@ -18,7 +17,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Info command
-    info_parser = subparsers.add_parser("info", help="Show library information")
+    subparsers.add_parser("info", help="Show library information")
 
     # Parse arguments
     args = parser.parse_args()

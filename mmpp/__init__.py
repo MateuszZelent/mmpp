@@ -5,33 +5,34 @@ A Python library for simulation and analysis of micromagnetic simulations
 with advanced post-processing capabilities.
 """
 
+from typing import Any
+
 __version__ = "0.1.0"
 __author__ = "Mateusz Zelent"
 __email__ = "mateusz.zelent@amu.edu.pl"
 
 # Import main classes with error handling for missing dependencies
 try:
-    from .core import MMPPAnalyzer, SimulationResult, MMPPConfig
-
+    # from .core import MMPPAnalyzer, SimulationResult, MMPPConfig  # These don't exist
     _CORE_AVAILABLE = True
 except ImportError:
     _CORE_AVAILABLE = False
 
     # Create dummy classes for graceful degradation
     class MMPPAnalyzer:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
     class SimulationResult:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
     class MMPPConfig:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
@@ -46,19 +47,19 @@ except ImportError:
 
     # Create dummy classes for graceful degradation
     class MMPPlotter:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
             )
 
     class PlotConfig:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
             )
 
     class PlotterProxy:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
             )
@@ -73,7 +74,7 @@ except ImportError:
 
     # Create dummy class for graceful degradation
     class SimulationManager:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "Simulation dependencies not available. Install with: pip install mmpp2[dev]"
             )
@@ -82,25 +83,26 @@ except ImportError:
 # Import the main MMPP class for the open function
 try:
     from .core import MMPP
+
     _MMPP_AVAILABLE = True
 except ImportError:
     _MMPP_AVAILABLE = False
-    
+
     class MMPP:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
 
-def open(base_path: str, **kwargs):
+def open(base_path: str, **kwargs: Any) -> "MMPP":
     """
     Open and initialize an MMPP instance for the given directory path.
-    
+
     This is the main entry point for using the mmpp library. It creates
     an MMPP instance that scans the provided directory for zarr files
     and builds a database for analysis.
-    
+
     Parameters:
     -----------
     base_path : str
@@ -113,44 +115,44 @@ def open(base_path: str, **kwargs):
             Name of the database file (without extension)
         - force : bool, optional (default: False)
             If True, force rescan even if database exists
-    
+
     Returns:
     --------
     MMPP
         An initialized MMPP instance ready for analysis
-    
+
     Examples:
     ---------
     >>> import mmpp as mp
     >>> db = mp.open("/path/to/simulation/data")
     >>> results = db.find(f0=2.15e+09)
-    >>> results.mpl.plot("time", "my")
+    >>> results.matplotlib.plot("time", "my")
     """
     if not _MMPP_AVAILABLE:
         raise ImportError(
             "Core MMPP functionality not available. Install with: pip install mmpp2[dev]"
         )
-    
+
     # Extract force parameter for special handling
-    force = kwargs.pop('force', False)
-    
+    force = kwargs.pop("force", False)
+
     # Create MMPP instance
     mmpp_instance = MMPP(base_path, **kwargs)
-    
+
     # If force is True, trigger a rescan
     if force:
         mmpp_instance.force_rescan()
     elif mmpp_instance.dataframe is None:
         # If no database exists, perform initial scan
         mmpp_instance.scan()
-    
+
     return mmpp_instance
 
 
 # Make main classes available at package level
 __all__ = [
     "MMPPAnalyzer",
-    "SimulationResult", 
+    "SimulationResult",
     "MMPPConfig",
     "MMPPlotter",
     "PlotConfig",

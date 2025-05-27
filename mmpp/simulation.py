@@ -7,7 +7,7 @@ import subprocess
 import re
 import zarr
 import logging
-from typing import Optional, Dict, List, Union
+from typing import Optional, Dict, List, Union, Tuple, Any
 import time
 
 # Configure logging with rich integration
@@ -81,7 +81,7 @@ class SimulationManager:
         return os.path.basename(file_path).split(".mx3_status")[0]
 
     @staticmethod
-    def check_simulation_completion(zarr_path: str) -> (bool, int):
+    def check_simulation_completion(zarr_path: str) -> Tuple[bool, int]:
         """
         Check if a simulation represented by a .zarr directory is complete
         and return a tuple (is_complete, file_count).
@@ -132,9 +132,9 @@ class SimulationManager:
         report_lines: List[str] = []
         report_log_level = "INFO"  # Poziom logowania: INFO / WARNING / ERROR
         restart_required = False  # Czy powtarzać / uruchamiać symulację?
-        skip_further_checks = (
-            False  # Gdy np. mamy lock, done, itp. i nie chcemy powielać sprawdzeń
-        )
+        # skip_further_checks = (
+        #     False  # Gdy np. mamy lock, done, itp. i nie chcemy powielać sprawdzeń
+        # )
         sim_status_str = "unknown"
         zarr_status_str = "N/A"  # Informacja o stanie plików .zarr
 
@@ -144,15 +144,16 @@ class SimulationManager:
         if len(kwargs) > 0 and last_param_name is None:
             last_param_name = list(kwargs.keys())[-1]
 
-        sim_params = "_".join(
-            [
-                f"{key}_{format(val, '.5g') if isinstance(val, (int, float)) else val}"
-                for key, val in kwargs.items()
-                if key not in [last_param_name, "i", "prefix", "template"]
-            ]
-        )
+        # Build simulation parameters string (unused but kept for potential future use)
+        # sim_params = "_".join(
+        #     [
+        #         f"{key}_{format(val, '.5g') if isinstance(val, (int, float)) else val}"
+        #         for key, val in kwargs.items()
+        #         if key not in [last_param_name, "i", "prefix", "template"]
+        #     ]
+        # )
 
-        par_sep = ","
+        # par_sep = ","
         val_sep = "_"
         path = (
             f"{self.main_path}{kwargs['prefix']}/"
@@ -192,7 +193,7 @@ class SimulationManager:
         if lock_file:
             sim_status_str = "locked"
             zarr_status_str = "not checked"
-            skip_further_checks = True
+            # skip_further_checks = True
             # Dodatkowo możemy (opcjonalnie) sprawdzić, czy .zarr jest kompletne
             # ale z Twoich założeń: "nie ma sensu sprawdzać dalej" - więc pomijamy.
 
@@ -211,22 +212,22 @@ class SimulationManager:
                 )
                 restart_required = True
                 report_log_level = upgrade_log_level(report_log_level, "ERROR")
-            skip_further_checks = True
+            # skip_further_checks = True
 
         # (C) interrupted_file => symulacja przerwana
         elif interrupted_file:
             sim_status_str = "interrupted => will restart"
             zarr_status_str = "not checked"
             restart_required = True
-            skip_further_checks = True
+            # skip_further_checks = True
             # Usuwamy plik, żeby móc wystartować ponownie
             os.remove(interrupted_file)
 
         # (D) Brak statusu => sprawdzamy .zarr (o ile istnieje)
         else:
             if os.path.exists(zarr_path):
-                zarr_file_count = self.check_simulation_completion(zarr_path)
-                if zarr_file_count:
+                zarr_file_complete, zarr_file_count = self.check_simulation_completion(zarr_path)
+                if zarr_file_complete:
                     sim_status_str = "done => no status file"
                     zarr_status_str = f"complete ({zarr_file_count} files)"
                     # W takim wypadku niby nic nie trzeba robić
@@ -286,7 +287,7 @@ class SimulationManager:
         lock_file = f"{path}.mx3_status.lock"
         done_file = f"{path}.mx3_status.done"
         interrupted_file = f"{path}.mx3_status.interrupted"
-        final_path = self.destination_path + path.replace(self.main_path, "") + ".zarr"
+        # final_path = self.destination_path + path.replace(self.main_path, "") + ".zarr"
 
         return f"""#!/bin/bash -l
 #SBATCH --job-name="{name}"
@@ -300,29 +301,29 @@ class SimulationManager:
 #SBATCH --gpus-per-node=1
 #SBATCH --gres=gpu:1
 #SBATCH --exclude=gpu39
- 
+
 sleep 10
- 
+
 # Log node name
 echo "Running on node: $SLURMD_NODENAME"
- 
+
 nvidia-smi
 echo "CUDA_VISIBLE_DEVICES = $CUDA_VISIBLE_DEVICES"
- 
+
 source /mnt/storage_3/home/kkingdyoun/.bashrc
 export TMPDIR="/mnt/storage_3/home/kkingstoun/pl0095-01/scratch/tmp/"
 
 mv "{mx3_file}" "{lock_file}"
 /mnt/storage_3/home/kkingstoun/pl0095-01/scratch/bin/amumax -f --hide-progress-bar -o "{path}.zarr" "{lock_file}"
 RESULT=$?
- 
+
 if [ $RESULT -eq 0 ]; then
     echo "FINISHED"
     mv "{lock_file}" "{done_file}"
 else
     echo "INTERRUPTED"
     mv "{lock_file}" "{interrupted_file}"
-   
+
     # Check if it was a CUDA error
     if grep -q "CUDA_ERROR" "{path}.zarr/amumax.out" || nvidia-smi | grep -q "No devices were found"; then
         # Add this node to the bad nodes list if not already present
@@ -342,7 +343,7 @@ fi
         return content
 
     @staticmethod
-    def raw_code(*args: List[str], **kwargs: Dict[str, Union[str, float, int]]) -> str:
+    def raw_code(*args: Any, **kwargs: Union[str, float, int]) -> str:
         """Generate the raw code by filling in a template with parameters."""
         import os
 
@@ -352,7 +353,7 @@ fi
 
     def submit_all_simulations(
         self,
-        params: Dict[str, np.ndarray],
+        params: Dict[str, Any],  # Changed from np.ndarray to Any to accept numpy arrays
         last_param_name: str,
         minsim: int = 0,
         maxsim: Optional[int] = None,
