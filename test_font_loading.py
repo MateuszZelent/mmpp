@@ -49,6 +49,18 @@ def test_font_manager():
         dejavu_fonts = mmpp.fonts.find_font("dejavu")
         print(f"   DejaVu-like fonts: {dejavu_fonts}")
         
+        # Test recursive directory scanning
+        print(f"\n📂 Testing recursive directory scanning:")
+        mmpp.fonts.show_font_structure(max_depth=2)
+        
+        # Test finding fonts by family name
+        available = mmpp.fonts.available
+        if available:
+            test_family = available[0]
+            print(f"\n🎯 Testing find by family name: '{test_family}'")
+            found_path = mmpp.fonts.find_font(test_family)
+            print(f"   Found at: {found_path}")
+        
         # Test adding a custom path (create temp directory)
         temp_font_dir = "/tmp/test_fonts"
         print(f"\n📂 Testing add_path with: {temp_font_dir}")

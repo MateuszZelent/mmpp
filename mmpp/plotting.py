@@ -2,6 +2,7 @@ from typing import Optional, Dict, List, Union, Any, Tuple, Iterator
 import os
 import numpy as np
 from dataclasses import dataclass
+import platform
 
 # Import for plotting
 try:
@@ -1110,281 +1111,335 @@ MMPP Plotter:
 
 class FontManager:
     """
-    Manager for font handling in MMPP2.
+    Comprehensive font management system for mmpp library.
     
-    Provides easy access to font management functionality:
-    - List available fonts
-    - Manage font search paths
-    - Set default fonts
-    
-    Usage:
-    ------
-    import mmpp
-    print(mmpp.fonts)           # List available fonts
-    print(mmpp.fonts.paths)     # Show search paths
-    mmpp.fonts.add_path("/path/to/fonts")  # Add font directory
-    mmpp.fonts.set_default_font("Arial")   # Set default font
+    Provides methods to discover, manage, and configure fonts across different platforms.
     """
     
     def __init__(self):
-        """Initialize the font manager."""
-        self._search_paths = []
-        self._default_font = "Arial"
-        self._initialize_default_paths()
+        self._custom_paths: List[str] = []
+        self._default_font: Optional[str] = None
+        self._font_cache: Dict[str, List[str]] = {}
+        self._initialize_system_paths()
     
-    def _initialize_default_paths(self) -> None:
-        """Initialize default font search paths."""
-        # Package font directory
-        package_dir = os.path.dirname(__file__)
-        package_fonts = os.path.join(package_dir, "fonts")
+    def _initialize_system_paths(self) -> None:
+        """Initialize system font paths based on the operating system."""
+        self._system_paths = []
         
-        # Default search paths
-        default_paths = [
-            package_fonts,  # Package fonts
-            "./fonts",  # Local fonts (development)
-            os.path.expanduser("~/.fonts"),  # User fonts (Linux)
-            os.path.expanduser("~/Library/Fonts"),  # User fonts (macOS)
-            "/System/Library/Fonts",  # System fonts (macOS)
-            "/Library/Fonts",  # System fonts (macOS)
-            "C:/Windows/Fonts",  # System fonts (Windows)
-        ]
+        system = platform.system().lower()
         
-        # Add existing paths
-        for path in default_paths:
-            if os.path.exists(path):
-                self._search_paths.append(os.path.abspath(path))
+        if system == "windows":
+            # Windows font paths
+            windows_fonts = [
+                "C:/Windows/Fonts",
+                os.path.expanduser("~/AppData/Local/Microsoft/Windows/Fonts"),
+                os.path.expanduser("~/AppData/Roaming/Microsoft/Windows/Fonts")
+            ]
+            self._system_paths.extend([p for p in windows_fonts if os.path.exists(p)])
+            
+        elif system == "darwin":  # macOS
+            macos_fonts = [
+                "/System/Library/Fonts",
+                "/Library/Fonts",
+                os.path.expanduser("~/Library/Fonts"),
+                "/System/Library/Fonts/Supplemental"
+            ]
+            self._system_paths.extend([p for p in macos_fonts if os.path.exists(p)])
+            
+        else:  # Linux and other Unix-like systems
+            linux_fonts = [
+                "/usr/share/fonts",
+                "/usr/local/share/fonts",
+                os.path.expanduser("~/.local/share/fonts"),
+                os.path.expanduser("~/.fonts"),
+                "/usr/share/fonts/TTF",
+                "/usr/share/fonts/truetype"
+            ]
+            self._system_paths.extend([p for p in linux_fonts if os.path.exists(p)])
+        
+        # Add mmpp package fonts
+        package_dir = os.path.dirname(os.path.abspath(__file__))
+        mmpp_fonts_path = os.path.join(package_dir, "fonts")
+        if os.path.exists(mmpp_fonts_path):
+            self._system_paths.append(mmpp_fonts_path)
+    
+    @property
+    def available(self) -> List[str]:
+        """
+        Get list of all available font families.
+        
+        Returns:
+            List of font family names available on the system
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            return []
+        
+        # Get fonts from matplotlib font manager
+        font_families = set()
+        
+        # Add system fonts detected by matplotlib
+        for font in font_manager.fontManager.ttflist:
+            font_families.add(font.name)
+        
+        # Add fonts from custom paths
+        for path in self.paths:
+            for font_file in self._scan_font_directory(path):
+                try:
+                    font_prop = font_manager.FontProperties(fname=font_file)
+                    font_families.add(font_prop.get_name())
+                except Exception:
+                    continue
+        
+        return sorted(list(font_families))
     
     @property
     def paths(self) -> List[str]:
         """
-        Get list of font search paths.
+        Get list of all font search paths.
         
         Returns:
-        --------
-        List[str]
             List of absolute paths where fonts are searched
         """
-        return self._search_paths.copy()
-    
-    def add_path(self, path: str) -> bool:
-        """
-        Add a new font search path.
-        
-        Parameters:
-        -----------
-        path : str
-            Path to directory containing font files
-            
-        Returns:
-        --------
-        bool
-            True if path was added successfully, False otherwise
-        """
-        try:
+        all_paths = self._system_paths.copy()
+        all_paths.extend(self._custom_paths)
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_paths = []
+        for path in all_paths:
             abs_path = os.path.abspath(path)
-            if not os.path.exists(abs_path):
-                print(f"Warning: Font path does not exist: {abs_path}")
-                return False
-            
-            if abs_path not in self._search_paths:
-                self._search_paths.append(abs_path)
-                print(f"✓ Added font search path: {abs_path}")
-                
-                # Scan for fonts in the new path
-                self._scan_path(abs_path)
-                return True
-            else:
-                print(f"Path already in search list: {abs_path}")
-                return True
-                
-        except Exception as e:
-            print(f"Error adding font path {path}: {e}")
-            return False
-    
-    def _scan_path(self, path: str) -> int:
-        """
-        Scan a directory for font files and add them to matplotlib.
-        
-        Parameters:
-        -----------
-        path : str
-            Directory path to scan
-            
-        Returns:
-        --------
-        int
-            Number of fonts found and added
-        """
-        if not MATPLOTLIB_AVAILABLE:
-            return 0
-            
-        try:
-            font_files = font_manager.findSystemFonts(fontpaths=[path])
-            added_count = 0
-            
-            for font_file in font_files:
-                try:
-                    font_manager.fontManager.addfont(font_file)
-                    added_count += 1
-                    print(f"✓ Added font: {os.path.basename(font_file)}")
-                except Exception as e:
-                    print(f"Warning: Could not add font {font_file}: {e}")
-            
-            if added_count > 0:
-                # Rebuild font cache
-                font_manager.fontManager.findfont(self._default_font, rebuild_if_missing=True)
-            
-            return added_count
-            
-        except Exception as e:
-            print(f"Error scanning font path {path}: {e}")
-            return 0
-    
-    def refresh(self) -> int:
-        """
-        Refresh font cache by scanning all search paths.
-        
-        Returns:
-        --------
-        int
-            Total number of fonts found and added
-        """
-        if not MATPLOTLIB_AVAILABLE:
-            print("Matplotlib not available - cannot refresh fonts")
-            return 0
-        
-        total_added = 0
-        print("🔍 Refreshing font cache...")
-        
-        for path in self._search_paths:
-            if os.path.exists(path):
-                added = self._scan_path(path)
-                total_added += added
-            else:
-                print(f"Warning: Font path no longer exists: {path}")
-        
-        print(f"✓ Font refresh completed - {total_added} fonts processed")
-        return total_added
-    
-    @property  
-    def available(self) -> List[str]:
-        """
-        Get list of available font families.
-        
-        Returns:
-        --------
-        List[str]
-            List of available font family names
-        """
-        if not MATPLOTLIB_AVAILABLE:
-            return []
-        
-        try:
-            # Get unique font family names
-            font_families = set()
-            for font in font_manager.fontManager.ttflist:
-                font_families.add(font.name)
-            
-            return sorted(list(font_families))
-            
-        except Exception as e:
-            print(f"Error getting available fonts: {e}")
-            return []
-    
-    def set_default_font(self, font_name: str) -> bool:
-        """
-        Set the default font for matplotlib.
-        
-        Parameters:
-        -----------
-        font_name : str
-            Name of the font family to set as default
-            
-        Returns:
-        --------
-        bool
-            True if font was set successfully, False otherwise
-        """
-        if not MATPLOTLIB_AVAILABLE:
-            print("Matplotlib not available - cannot set default font")
-            return False
-        
-        try:
-            # Check if font is available
-            available_fonts = self.available
-            if font_name not in available_fonts:
-                print(f"Warning: Font '{font_name}' not found in available fonts")
-                print(f"Available fonts: {', '.join(available_fonts[:10])}...")
-                return False
-            
-            # Set the font
-            plt.rcParams["font.family"] = font_name
-            plt.rcParams["font.sans-serif"] = [font_name] + plt.rcParams["font.sans-serif"]
-            
-            self._default_font = font_name
-            print(f"✓ Default font set to: {font_name}")
-            return True
-            
-        except Exception as e:
-            print(f"Error setting default font to {font_name}: {e}")
-            return False
+            if abs_path not in seen:
+                seen.add(abs_path)
+                unique_paths.append(abs_path)
+        return unique_paths
     
     @property
-    def default_font(self) -> str:
+    def default_font(self) -> Optional[str]:
         """
-        Get the current default font.
+        Get the current default font family.
         
         Returns:
-        --------
-        str
-            Name of the current default font
+            Name of the default font family, or None if not set
         """
         return self._default_font
     
-    def find_font(self, pattern: str) -> List[str]:
+    def add_path(self, font_path: str) -> bool:
         """
-        Find fonts matching a pattern.
+        Add a custom font directory to the search paths.
         
-        Parameters:
-        -----------
-        pattern : str
-            Pattern to search for (case-insensitive)
+        Args:
+            font_path: Absolute or relative path to font directory
             
         Returns:
-        --------
-        List[str]
-            List of font names matching the pattern
+            True if path was added successfully, False otherwise
         """
-        available = self.available
-        pattern_lower = pattern.lower()
+        abs_path = os.path.abspath(font_path)
         
-        matching = [font for font in available if pattern_lower in font.lower()]
-        return sorted(matching)
+        if not os.path.exists(abs_path):
+            print(f"Warning: Font path does not exist: {abs_path}")
+            return False
+        
+        if not os.path.isdir(abs_path):
+            print(f"Warning: Font path is not a directory: {abs_path}")
+            return False
+        
+        if abs_path not in self._custom_paths:
+            self._custom_paths.append(abs_path)
+            self._font_cache.clear()  # Clear cache to force refresh
+            
+            # Refresh matplotlib font cache if available
+            if MATPLOTLIB_AVAILABLE:
+                font_manager.fontManager.addfont(abs_path)
+                
+            return True
+        
+        return False
+    
+    def set_default_font(self, font_family: str) -> bool:
+        """
+        Set the default font family for mmpp plots.
+        
+        Args:
+            font_family: Name of the font family to set as default
+            
+        Returns:
+            True if font was set successfully, False if font not found
+        """
+        available_fonts = self.available
+        
+        # Check if font is available
+        if font_family not in available_fonts:
+            # Try case-insensitive match
+            font_lower = font_family.lower()
+            matches = [f for f in available_fonts if f.lower() == font_lower]
+            
+            if matches:
+                font_family = matches[0]
+            else:
+                print(f"Warning: Font '{font_family}' not found in available fonts")
+                print(f"Available fonts: {', '.join(available_fonts[:10])}...")
+                return False
+        
+        self._default_font = font_family
+        
+        # Set as matplotlib default if available
+        if MATPLOTLIB_AVAILABLE:
+            plt.rcParams['font.family'] = font_family
+            
+        return True
+    
+    def find_font(self, font_name: str) -> Optional[str]:
+        """
+        Find the full path to a specific font file.
+        
+        Args:
+            font_name: Name of the font to find (with or without extension)
+            
+        Returns:
+            Full path to the font file, or None if not found
+        """
+        # If it's already a filename with extension, search for it directly
+        if font_name.endswith(('.ttf', '.otf', '.woff', '.woff2', '.TTF', '.OTF')):
+            for path in self.paths:
+                # First try direct path
+                font_path = os.path.join(path, font_name)
+                if os.path.exists(font_path):
+                    return os.path.abspath(font_path)
+                
+                # Then search recursively in subdirectories
+                for root, dirs, files in os.walk(path):
+                    if font_name in files:
+                        return os.path.abspath(os.path.join(root, font_name))
+        
+        # If no extension, try common extensions
+        for ext in ['.ttf', '.otf', '.TTF', '.OTF', '.woff', '.woff2']:
+            result = self.find_font(font_name + ext)
+            if result:
+                return result
+        
+        # Also try to find by font family name using matplotlib
+        if MATPLOTLIB_AVAILABLE:
+            try:
+                # Search through all font files to find matching family name
+                for path in self.paths:
+                    for font_file in self._scan_font_directory(path):
+                        try:
+                            font_prop = font_manager.FontProperties(fname=font_file)
+                            if font_prop.get_name().lower() == font_name.lower():
+                                return font_file
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+        
+        return None
+    
+    def refresh(self) -> None:
+        """
+        Refresh the font cache and reload font information.
+        """
+        self._font_cache.clear()
+        
+        if MATPLOTLIB_AVAILABLE:
+            # Rebuild matplotlib font cache
+            font_manager.fontManager = font_manager.FontManager()
+            
+            # Re-add custom paths
+            for path in self._custom_paths:
+                font_manager.fontManager.addfont(path)
+    
+    def _scan_font_directory(self, directory: str) -> List[str]:
+        """
+        Scan a directory for font files.
+        
+        Args:
+            directory: Path to directory to scan
+            
+        Returns:
+            List of full paths to font files found
+        """
+        if directory in self._font_cache:
+            return self._font_cache[directory]
+        
+        font_extensions = {'.ttf', '.otf', '.TTF', '.OTF', '.woff', '.woff2'}
+        font_files = []
+        
+        try:
+            for root, dirs, files in os.walk(directory):
+                for file in files:
+                    if any(file.endswith(ext) for ext in font_extensions):
+                        font_files.append(os.path.join(root, file))
+        except (OSError, PermissionError):
+            pass
+        
+        self._font_cache[directory] = font_files
+        return font_files
+    
+    def show_font_structure(self, max_depth: int = 3) -> None:
+        """
+        Display the font directory structure for debugging.
+        
+        Args:
+            max_depth: Maximum depth to traverse (default: 3)
+        """
+        print("Font Directory Structure:")
+        print("=" * 50)
+        
+        for i, path in enumerate(self.paths):
+            print(f"\n{i+1}. {path}")
+            if not os.path.exists(path):
+                print("   [PATH DOES NOT EXIST]")
+                continue
+                
+            try:
+                font_count = 0
+                for root, dirs, files in os.walk(path):
+                    # Calculate current depth
+                    depth = root.replace(path, '').count(os.sep)
+                    if depth > max_depth:
+                        continue
+                    
+                    # Show directory structure
+                    indent = "   " + "  " * depth
+                    folder_name = os.path.basename(root) if root != path else "[ROOT]"
+                    
+                    # Count font files in this directory
+                    font_files = [f for f in files if any(f.lower().endswith(ext) for ext in ['.ttf', '.otf', '.woff', '.woff2'])]
+                    
+                    if font_files:
+                        print(f"{indent}📁 {folder_name}/ ({len(font_files)} fonts)")
+                        if depth < 2:  # Show font names for shallow directories
+                            for font_file in font_files[:5]:  # Show max 5 fonts
+                                print(f"{indent}  └─ {font_file}")
+                            if len(font_files) > 5:
+                                print(f"{indent}  └─ ... and {len(font_files) - 5} more")
+                        font_count += len(font_files)
+                    elif depth <= 1:  # Show empty directories at shallow levels
+                        print(f"{indent}📂 {folder_name}/")
+                
+                print(f"   Total fonts found: {font_count}")
+                
+            except (OSError, PermissionError) as e:
+                print(f"   [ERROR: {e}]")
     
     def __repr__(self) -> str:
         """String representation showing available fonts."""
         available = self.available
+        count = len(available)
         
-        if not available:
-            return "FontManager: No fonts available (matplotlib not installed?)"
+        if count == 0:
+            return "FontManager(no fonts found)"
         
-        # Show first 10 fonts and total count
-        display_fonts = available[:10]
-        total_count = len(available)
+        preview = available[:5]
+        if count > 5:
+            preview_str = ", ".join(preview) + f", ... ({count - 5} more)"
+        else:
+            preview_str = ", ".join(preview)
         
-        result = f"FontManager: {total_count} fonts available\n"
-        result += f"Default font: {self._default_font}\n"
-        result += f"Search paths: {len(self._search_paths)} directories\n"
-        result += f"Sample fonts: {', '.join(display_fonts)}"
-        
-        if total_count > 10:
-            result += f"... and {total_count - 10} more"
-        
-        return result
+        return f"FontManager({count} fonts: {preview_str})"
     
     def __str__(self) -> str:
-        """Simple string representation."""
-        return f"FontManager ({len(self.available)} fonts available)"
+        """User-friendly string representation."""
+        return self.__repr__()
 
 
 # Create global font manager instance
