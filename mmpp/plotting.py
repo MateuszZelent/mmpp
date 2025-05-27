@@ -1108,6 +1108,288 @@ MMPP Plotter:
         
         return ", ".join(label_parts) if label_parts else "Dataset"
 
+class FontManager:
+    """
+    Manager for font handling in MMPP2.
+    
+    Provides easy access to font management functionality:
+    - List available fonts
+    - Manage font search paths
+    - Set default fonts
+    
+    Usage:
+    ------
+    import mmpp
+    print(mmpp.fonts)           # List available fonts
+    print(mmpp.fonts.paths)     # Show search paths
+    mmpp.fonts.add_path("/path/to/fonts")  # Add font directory
+    mmpp.fonts.set_default_font("Arial")   # Set default font
+    """
+    
+    def __init__(self):
+        """Initialize the font manager."""
+        self._search_paths = []
+        self._default_font = "Arial"
+        self._initialize_default_paths()
+    
+    def _initialize_default_paths(self) -> None:
+        """Initialize default font search paths."""
+        # Package font directory
+        package_dir = os.path.dirname(__file__)
+        package_fonts = os.path.join(package_dir, "fonts")
+        
+        # Default search paths
+        default_paths = [
+            package_fonts,  # Package fonts
+            "./fonts",  # Local fonts (development)
+            os.path.expanduser("~/.fonts"),  # User fonts (Linux)
+            os.path.expanduser("~/Library/Fonts"),  # User fonts (macOS)
+            "/System/Library/Fonts",  # System fonts (macOS)
+            "/Library/Fonts",  # System fonts (macOS)
+            "C:/Windows/Fonts",  # System fonts (Windows)
+        ]
+        
+        # Add existing paths
+        for path in default_paths:
+            if os.path.exists(path):
+                self._search_paths.append(os.path.abspath(path))
+    
+    @property
+    def paths(self) -> List[str]:
+        """
+        Get list of font search paths.
+        
+        Returns:
+        --------
+        List[str]
+            List of absolute paths where fonts are searched
+        """
+        return self._search_paths.copy()
+    
+    def add_path(self, path: str) -> bool:
+        """
+        Add a new font search path.
+        
+        Parameters:
+        -----------
+        path : str
+            Path to directory containing font files
+            
+        Returns:
+        --------
+        bool
+            True if path was added successfully, False otherwise
+        """
+        try:
+            abs_path = os.path.abspath(path)
+            if not os.path.exists(abs_path):
+                print(f"Warning: Font path does not exist: {abs_path}")
+                return False
+            
+            if abs_path not in self._search_paths:
+                self._search_paths.append(abs_path)
+                print(f"✓ Added font search path: {abs_path}")
+                
+                # Scan for fonts in the new path
+                self._scan_path(abs_path)
+                return True
+            else:
+                print(f"Path already in search list: {abs_path}")
+                return True
+                
+        except Exception as e:
+            print(f"Error adding font path {path}: {e}")
+            return False
+    
+    def _scan_path(self, path: str) -> int:
+        """
+        Scan a directory for font files and add them to matplotlib.
+        
+        Parameters:
+        -----------
+        path : str
+            Directory path to scan
+            
+        Returns:
+        --------
+        int
+            Number of fonts found and added
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            return 0
+            
+        try:
+            font_files = font_manager.findSystemFonts(fontpaths=[path])
+            added_count = 0
+            
+            for font_file in font_files:
+                try:
+                    font_manager.fontManager.addfont(font_file)
+                    added_count += 1
+                    print(f"✓ Added font: {os.path.basename(font_file)}")
+                except Exception as e:
+                    print(f"Warning: Could not add font {font_file}: {e}")
+            
+            if added_count > 0:
+                # Rebuild font cache
+                font_manager.fontManager.findfont(self._default_font, rebuild_if_missing=True)
+            
+            return added_count
+            
+        except Exception as e:
+            print(f"Error scanning font path {path}: {e}")
+            return 0
+    
+    def refresh(self) -> int:
+        """
+        Refresh font cache by scanning all search paths.
+        
+        Returns:
+        --------
+        int
+            Total number of fonts found and added
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            print("Matplotlib not available - cannot refresh fonts")
+            return 0
+        
+        total_added = 0
+        print("🔍 Refreshing font cache...")
+        
+        for path in self._search_paths:
+            if os.path.exists(path):
+                added = self._scan_path(path)
+                total_added += added
+            else:
+                print(f"Warning: Font path no longer exists: {path}")
+        
+        print(f"✓ Font refresh completed - {total_added} fonts processed")
+        return total_added
+    
+    @property  
+    def available(self) -> List[str]:
+        """
+        Get list of available font families.
+        
+        Returns:
+        --------
+        List[str]
+            List of available font family names
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            return []
+        
+        try:
+            # Get unique font family names
+            font_families = set()
+            for font in font_manager.fontManager.ttflist:
+                font_families.add(font.name)
+            
+            return sorted(list(font_families))
+            
+        except Exception as e:
+            print(f"Error getting available fonts: {e}")
+            return []
+    
+    def set_default_font(self, font_name: str) -> bool:
+        """
+        Set the default font for matplotlib.
+        
+        Parameters:
+        -----------
+        font_name : str
+            Name of the font family to set as default
+            
+        Returns:
+        --------
+        bool
+            True if font was set successfully, False otherwise
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            print("Matplotlib not available - cannot set default font")
+            return False
+        
+        try:
+            # Check if font is available
+            available_fonts = self.available
+            if font_name not in available_fonts:
+                print(f"Warning: Font '{font_name}' not found in available fonts")
+                print(f"Available fonts: {', '.join(available_fonts[:10])}...")
+                return False
+            
+            # Set the font
+            plt.rcParams["font.family"] = font_name
+            plt.rcParams["font.sans-serif"] = [font_name] + plt.rcParams["font.sans-serif"]
+            
+            self._default_font = font_name
+            print(f"✓ Default font set to: {font_name}")
+            return True
+            
+        except Exception as e:
+            print(f"Error setting default font to {font_name}: {e}")
+            return False
+    
+    @property
+    def default_font(self) -> str:
+        """
+        Get the current default font.
+        
+        Returns:
+        --------
+        str
+            Name of the current default font
+        """
+        return self._default_font
+    
+    def find_font(self, pattern: str) -> List[str]:
+        """
+        Find fonts matching a pattern.
+        
+        Parameters:
+        -----------
+        pattern : str
+            Pattern to search for (case-insensitive)
+            
+        Returns:
+        --------
+        List[str]
+            List of font names matching the pattern
+        """
+        available = self.available
+        pattern_lower = pattern.lower()
+        
+        matching = [font for font in available if pattern_lower in font.lower()]
+        return sorted(matching)
+    
+    def __repr__(self) -> str:
+        """String representation showing available fonts."""
+        available = self.available
+        
+        if not available:
+            return "FontManager: No fonts available (matplotlib not installed?)"
+        
+        # Show first 10 fonts and total count
+        display_fonts = available[:10]
+        total_count = len(available)
+        
+        result = f"FontManager: {total_count} fonts available\n"
+        result += f"Default font: {self._default_font}\n"
+        result += f"Search paths: {len(self._search_paths)} directories\n"
+        result += f"Sample fonts: {', '.join(display_fonts)}"
+        
+        if total_count > 10:
+            result += f"... and {total_count - 10} more"
+        
+        return result
+    
+    def __str__(self) -> str:
+        """Simple string representation."""
+        return f"FontManager ({len(self.available)} fonts available)"
+
+
+# Create global font manager instance
+fonts = FontManager()
+
 class PlotterProxy:
     """Proxy class to provide plotting functionality to search results."""
 

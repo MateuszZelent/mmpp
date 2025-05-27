@@ -38,7 +38,7 @@ except ImportError:
 
 
 try:
-    from .plotting import MMPPlotter, PlotConfig, PlotterProxy
+    from .plotting import MMPPlotter, PlotConfig, PlotterProxy, fonts
 
     _PLOTTING_AVAILABLE = True
 except ImportError:
@@ -62,6 +62,32 @@ except ImportError:
             raise ImportError(
                 "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
             )
+    
+    # Create dummy font manager
+    class DummyFontManager:
+        def __init__(self):
+            pass
+        
+        @property
+        def paths(self):
+            return []
+        
+        @property
+        def available(self):
+            return []
+        
+        def add_path(self, path):
+            print("Font management not available - install matplotlib")
+            return False
+        
+        def set_default_font(self, font):
+            print("Font management not available - install matplotlib")
+            return False
+        
+        def __repr__(self):
+            return "FontManager: Not available (matplotlib not installed)"
+    
+    fonts = DummyFontManager()
 
 
 try:
@@ -152,7 +178,7 @@ def open(base_path: str, **kwargs):
 # Make main classes available at package level
 __all__ = [
     "MMPPAnalyzer",
-    "SimulationResult",
+    "SimulationResult", 
     "MMPPConfig",
     "MMPPlotter",
     "PlotConfig",
@@ -160,6 +186,7 @@ __all__ = [
     "SimulationManager",
     "MMPP",
     "open",
+    "fonts",  # Font management
 ]
 
 # Feature availability flags
