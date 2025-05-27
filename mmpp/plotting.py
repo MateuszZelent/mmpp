@@ -69,17 +69,30 @@ class PlotConfig:
 def setup_custom_fonts() -> bool:
     """Setup custom fonts including Arial."""
     try:
-        # Import fonts from custom directory
-        font_dirs = ["./fonts"]
+        # Import fonts from package directory
+        package_dir = os.path.dirname(__file__)
+        font_dirs = [
+            os.path.join(package_dir, "fonts"),  # Package fonts
+            "./fonts",  # Local fonts (development)
+            os.path.expanduser("~/.fonts"),  # User fonts
+        ]
 
+        fonts_loaded = False
         for font_dir in font_dirs:
             if os.path.exists(font_dir):
+                print(f"🔍 Checking font directory: {font_dir}")
                 font_files = font_manager.findSystemFonts(fontpaths=[font_dir])
                 for font_file in font_files:
                     try:
                         font_manager.fontManager.addfont(font_file)
+                        fonts_loaded = True
+                        print(f"✓ Added font: {os.path.basename(font_file)}")
                     except Exception as e:
                         print(f"Warning: Could not add font {font_file}: {e}")
+
+        # Rebuild font cache if fonts were loaded
+        if fonts_loaded:
+            font_manager.fontManager.findfont('Arial', rebuild_if_missing=True)
 
         # Set Arial as default font
         plt.rcParams["font.family"] = "Arial"
@@ -324,12 +337,33 @@ MMPP Plotter:
         Parameters:
         -----------
         **kwargs : Any
-            Configuration options (figsize, dpi, style, colormap, colors, etc.)
+            Configuration options:
+            - figsize : tuple - Figure size (width, height), default (12, 8)
+            - dpi : int - Figure DPI, default 100
+            - style : str - Matplotlib style, default "paper"
+            - colormap : str - Colormap name, default "viridis"
+            - line_alpha : float - Line transparency, default 0.7
+            - line_width : float - Line width, default 1.5
+            - grid : bool - Show grid, default True
+            - legend : bool - Show legend, default True
+            - title_fontsize : int - Title font size, default 14
+            - label_fontsize : int - Label font size, default 12
+            - tick_fontsize : int - Tick font size, default 10
+            - use_custom_fonts : bool - Use custom fonts, default True
+            - font_family : str - Font family, default "Arial"
+            - colors : dict - Custom colors for text/axes/grid
+            - max_legend_params : int - Max parameters in legend, default 4
+            - sort_results : bool - Sort results by parameters, default True
 
         Returns:
         --------
         MMPPlotter
             Self for method chaining
+        
+        Examples:
+        ---------
+        >>> plotter.configure(sort_results=False, max_legend_params=6)
+        >>> plotter.configure(style='dark_background', grid=False)
         """
         style_changed = False
 
@@ -589,6 +623,9 @@ MMPP Plotter:
         else:
             sorted_results = self.results
         
+        # Get varying parameters for smart legend (only show parameters that differ)
+        varying_params = self._get_varying_parameters(sorted_results) if len(sorted_results) > 1 else []
+        
         # Update iterator to use sorted results
         iterator = (
             tqdm(sorted_results, desc="Processing datasets")
@@ -612,8 +649,8 @@ MMPP Plotter:
                     if legend_labels and i < len(legend_labels):
                         label = legend_labels[i]
                     else:
-                        # Create informative label from result attributes with proper formatting
-                        label = self._format_result_label(result)
+                        # Create informative label showing only varying parameters
+                        label = self._format_result_label(result, varying_params)
 
                     # Plot
                     line = ax.plot(
@@ -894,14 +931,88 @@ MMPP Plotter:
             print(f"Warning: Could not sort results: {e}")
             return results
 
-    def _format_result_label(self, result: Any) -> str:
+    def _get_varying_parameters(self, results: List[Any]) -> List[str]:
         """
-        Format result label with proper precision for different parameter types.
+        Identify which parameters vary between results.
+        
+        Parameters:
+        -----------
+        results : List[Any]
+            List of result objects to analyze
+            
+        Returns:
+        --------
+        List[str]
+            List of parameter names that vary between results
+        """
+        if len(results) <= 1:
+            return []
+        
+        # Collect all potential parameters
+        all_params = set()
+        for result in results:
+            for attr_name in dir(result):
+                if (not attr_name.startswith('_') and 
+                    attr_name not in ['path', 'attributes'] and
+                    not callable(getattr(result, attr_name, None))):
+                    try:
+                        value = getattr(result, attr_name)
+                        if isinstance(value, (int, float, str, bool)):
+                            all_params.add(attr_name)
+                    except Exception:
+                        pass
+        
+        # Check which parameters actually vary
+        varying_params = []
+        for param in all_params:
+            values = []
+            for result in results:
+                if hasattr(result, param):
+                    try:
+                        value = getattr(result, param)
+                        values.append(value)
+                    except Exception:
+                        pass
+            
+            # Check if values are different (accounting for floating point precision)
+            if len(values) > 1:
+                unique_values = set()
+                for val in values:
+                    if isinstance(val, float):
+                        # Round to reasonable precision for comparison
+                        unique_values.add(round(val, 10))
+                    else:
+                        unique_values.add(val)
+                
+                if len(unique_values) > 1:
+                    varying_params.append(param)
+        
+        # Sort by priority (important parameters first)
+        priority_params = ['solver', 'f0', 'maxerr', 'dt', 'Nx', 'Ny', 'Nz', 'PBCx', 'PBCy', 'PBCz', 'amp_values']
+        
+        # Sort varying parameters by priority
+        sorted_varying = []
+        for param in priority_params:
+            if param in varying_params:
+                sorted_varying.append(param)
+        
+        # Add remaining varying parameters alphabetically
+        for param in sorted(varying_params):
+            if param not in sorted_varying:
+                sorted_varying.append(param)
+        
+        return sorted_varying
+
+    def _format_result_label(self, result: Any, varying_params: Optional[List[str]] = None) -> str:
+        """
+        Format result label showing only varying parameters with proper precision.
         
         Parameters:
         -----------
         result : Any
             Result object with attributes
+        varying_params : List[str], optional
+            List of parameters that vary between results. If None, uses default behavior.
             
         Returns:
         --------
@@ -915,6 +1026,7 @@ MMPP Plotter:
             'maxerr': '.2e',      # Scientific notation with 2 decimal places
             'f0': '.2e',          # Scientific notation for frequency
             'dt': '.2e',          # Scientific notation for time step
+            'amp_values': '.3e',  # Scientific notation for amplitude
             'solver': 'd',        # Integer for solver
             'Nx': 'd',           # Integer for grid size
             'Ny': 'd',           # Integer for grid size  
@@ -924,53 +1036,75 @@ MMPP Plotter:
             'PBCz': 'd',         # Integer for PBC
         }
         
-        # Priority order for display
-        priority_params = ['solver', 'f0', 'maxerr', 'Nx', 'Ny', 'Nz']
+        # If varying parameters are provided, use only those
+        if varying_params is not None:
+            params_to_show = varying_params[:self.config.max_legend_params]
+            
+            for param in params_to_show:
+                if hasattr(result, param):
+                    value = getattr(result, param)
+                    format_spec = format_rules.get(param, 'g')
+                    
+                    try:
+                        if format_spec == 'd':
+                            formatted_value = f"{int(value)}"
+                        elif format_spec.endswith('e'):
+                            formatted_value = f"{float(value):{format_spec}}"
+                        else:
+                            formatted_value = f"{value:{format_spec}}"
+                        
+                        label_parts.append(f"{param}={formatted_value}")
+                    except (ValueError, TypeError):
+                        label_parts.append(f"{param}={value}")
         
-        # Add priority parameters first
-        for param in priority_params:
-            if hasattr(result, param):
-                value = getattr(result, param)
-                format_spec = format_rules.get(param, 'g')
-                
+        else:
+            # Fallback to original behavior if no varying parameters specified
+            priority_params = ['solver', 'f0', 'maxerr', 'Nx', 'Ny', 'Nz']
+            
+            # Add priority parameters first
+            for param in priority_params:
+                if hasattr(result, param):
+                    value = getattr(result, param)
+                    format_spec = format_rules.get(param, 'g')
+                    
+                    try:
+                        if format_spec == 'd':
+                            formatted_value = f"{int(value)}"
+                        elif format_spec.endswith('e'):
+                            formatted_value = f"{float(value):{format_spec}}"
+                        else:
+                            formatted_value = f"{value:{format_spec}}"
+                        
+                        label_parts.append(f"{param}={formatted_value}")
+                    except (ValueError, TypeError):
+                        label_parts.append(f"{param}={value}")
+            
+            # Add other interesting parameters (limited by max_legend_params to avoid clutter)
+            max_additional = max(0, self.config.max_legend_params - len(priority_params))
+            other_params_added = 0
+            for attr_name in sorted(dir(result)):
+                if (other_params_added >= max_additional or 
+                    attr_name.startswith('_') or 
+                    attr_name in priority_params or
+                    attr_name in ['path', 'attributes']):
+                    continue
+                    
                 try:
-                    if format_spec == 'd':
-                        formatted_value = f"{int(value)}"
-                    elif format_spec.endswith('e'):
-                        formatted_value = f"{float(value):{format_spec}}"
-                    else:
-                        formatted_value = f"{value:{format_spec}}"
-                    
-                    label_parts.append(f"{param}={formatted_value}")
-                except (ValueError, TypeError):
-                    label_parts.append(f"{param}={value}")
-        
-        # Add other interesting parameters (limited by max_legend_params to avoid clutter)
-        max_additional = max(0, self.config.max_legend_params - len(priority_params))
-        other_params_added = 0
-        for attr_name in sorted(dir(result)):
-            if (other_params_added >= max_additional or 
-                attr_name.startswith('_') or 
-                attr_name in priority_params or
-                attr_name in ['path', 'attributes']):
-                continue
-                
-            try:
-                value = getattr(result, attr_name)
-                if isinstance(value, (int, float)) and not callable(value):
-                    format_spec = format_rules.get(attr_name, '.2g')
-                    
-                    if format_spec == 'd':
-                        formatted_value = f"{int(value)}"
-                    elif format_spec.endswith('e'):
-                        formatted_value = f"{float(value):{format_spec}}"
-                    else:
-                        formatted_value = f"{value:{format_spec}}"
-                    
-                    label_parts.append(f"{attr_name}={formatted_value}")
-                    other_params_added += 1
-            except Exception:
-                pass
+                    value = getattr(result, attr_name)
+                    if isinstance(value, (int, float)) and not callable(value):
+                        format_spec = format_rules.get(attr_name, '.2g')
+                        
+                        if format_spec == 'd':
+                            formatted_value = f"{int(value)}"
+                        elif format_spec.endswith('e'):
+                            formatted_value = f"{float(value):{format_spec}}"
+                        else:
+                            formatted_value = f"{value:{format_spec}}"
+                        
+                        label_parts.append(f"{attr_name}={formatted_value}")
+                        other_params_added += 1
+                except Exception:
+                    pass
         
         return ", ".join(label_parts) if label_parts else "Dataset"
 
