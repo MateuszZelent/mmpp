@@ -5,34 +5,33 @@ A Python library for simulation and analysis of micromagnetic simulations
 with advanced post-processing capabilities.
 """
 
-from typing import Any
-
 __version__ = "0.1.0"
 __author__ = "Mateusz Zelent"
 __email__ = "mateusz.zelent@amu.edu.pl"
 
 # Import main classes with error handling for missing dependencies
 try:
-    # from .core import MMPPAnalyzer, SimulationResult, MMPPConfig  # These don't exist
+    from .core import MMPPAnalyzer, SimulationResult, MMPPConfig
+
     _CORE_AVAILABLE = True
 except ImportError:
     _CORE_AVAILABLE = False
 
     # Create dummy classes for graceful degradation
     class MMPPAnalyzer:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
     class SimulationResult:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
     class MMPPConfig:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
@@ -47,19 +46,19 @@ except ImportError:
 
     # Create dummy classes for graceful degradation
     class MMPPlotter:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
             )
 
     class PlotConfig:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
             )
 
     class PlotterProxy:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
             )
@@ -74,7 +73,7 @@ except ImportError:
 
     # Create dummy class for graceful degradation
     class SimulationManager:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Simulation dependencies not available. Install with: pip install mmpp2[dev]"
             )
@@ -89,13 +88,13 @@ except ImportError:
     _MMPP_AVAILABLE = False
 
     class MMPP:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
 
-def open(base_path: str, **kwargs: Any) -> "MMPP":
+def open(base_path: str, **kwargs):
     """
     Open and initialize an MMPP instance for the given directory path.
 
@@ -126,7 +125,8 @@ def open(base_path: str, **kwargs: Any) -> "MMPP":
     >>> import mmpp as mp
     >>> db = mp.open("/path/to/simulation/data")
     >>> results = db.find(f0=2.15e+09)
-    >>> results.matplotlib.plot("time", "my")
+    >>> results.matplotlib.plot("time", "my")  # Current API
+    >>> results.mpl.plot("time", "my")  # Short alias
     """
     if not _MMPP_AVAILABLE:
         raise ImportError(

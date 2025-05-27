@@ -57,6 +57,8 @@ class PlotConfig:
     use_custom_fonts: bool = True
     font_family: str = "Arial"
     colors: Optional[Dict[str, str]] = None
+    max_legend_params: int = 4  # Maximum number of parameters to show in legend
+    sort_results: bool = True   # Whether to sort results by parameters
 
     def __post_init__(self) -> None:
         """Initialize default colors."""
@@ -152,7 +154,9 @@ class MMPPlotter:
     - Custom fonts and paper-ready styling
     """
 
-    def __init__(self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None) -> None:
+    def __init__(
+        self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None
+    ) -> None:
         """
         Initialize the plotter.
 
@@ -579,6 +583,19 @@ MMPP Plotter:
 
         plotted_data = []
 
+        # Sort results by all available parameters for consistent ordering
+        if self.config.sort_results:
+            sorted_results = self._sort_results_by_parameters(self.results)
+        else:
+            sorted_results = self.results
+        
+        # Update iterator to use sorted results
+        iterator = (
+            tqdm(sorted_results, desc="Processing datasets")
+            if TQDM_AVAILABLE
+            else sorted_results
+        )
+
         # Plot each result
         for i, result in enumerate(iterator):
             try:
@@ -595,15 +612,8 @@ MMPP Plotter:
                     if legend_labels and i < len(legend_labels):
                         label = legend_labels[i]
                     else:
-                        # Create informative label from result attributes
-                        label_parts = []
-                        for key in ["solver", "f0", "maxerr"]:
-                            if hasattr(result, key):
-                                value = getattr(result, key)
-                                label_parts.append(f"{key}={value}")
-                        label = (
-                            ", ".join(label_parts) if label_parts else f"Dataset {i+1}"
-                        )
+                        # Create informative label from result attributes with proper formatting
+                        label = self._format_result_label(result)
 
                     # Plot
                     line = ax.plot(
@@ -710,7 +720,11 @@ MMPP Plotter:
         )
 
     def plot_components(
-        self, dataset: str, time_slice: int = -1, average: tuple = (1, 2, 3), **kwargs: Any
+        self,
+        dataset: str,
+        time_slice: int = -1,
+        average: tuple = (1, 2, 3),
+        **kwargs: Any,
     ) -> tuple:
         """
         Plot all three components of a dataset.
@@ -826,11 +840,146 @@ MMPP Plotter:
 
         print(f"Data saved to: {filename}")
 
+    def _sort_results_by_parameters(self, results: List[Any]) -> List[Any]:
+        """
+        Sort results by all available parameters for consistent ordering.
+        
+        Parameters:
+        -----------
+        results : List[Any]
+            List of result objects to sort
+            
+        Returns:
+        --------
+        List[Any]
+            Sorted list of results
+        """
+        def sort_key(result):
+            # Collect all sortable attributes
+            sort_values = []
+            
+            # Common parameters in order of importance
+            important_params = ['solver', 'f0', 'maxerr', 'Nx', 'Ny', 'Nz', 'PBCx', 'PBCy', 'PBCz']
+            
+            for param in important_params:
+                if hasattr(result, param):
+                    value = getattr(result, param)
+                    # Convert to sortable format
+                    if isinstance(value, (int, float)):
+                        sort_values.append(value)
+                    elif isinstance(value, str):
+                        sort_values.append(value)
+                    else:
+                        sort_values.append(str(value))
+                else:
+                    sort_values.append(0)  # Default value for missing parameters
+                    
+            # Add any other attributes not in the important list
+            for attr_name in sorted(dir(result)):
+                if (not attr_name.startswith('_') and 
+                    attr_name not in important_params and
+                    attr_name not in ['path', 'attributes']):
+                    try:
+                        value = getattr(result, attr_name)
+                        if isinstance(value, (int, float, str)):
+                            sort_values.append(value)
+                    except Exception:
+                        pass
+                        
+            return tuple(sort_values)
+        
+        try:
+            return sorted(results, key=sort_key)
+        except Exception as e:
+            print(f"Warning: Could not sort results: {e}")
+            return results
+
+    def _format_result_label(self, result: Any) -> str:
+        """
+        Format result label with proper precision for different parameter types.
+        
+        Parameters:
+        -----------
+        result : Any
+            Result object with attributes
+            
+        Returns:
+        --------
+        str
+            Formatted label string
+        """
+        label_parts = []
+        
+        # Define formatting rules for different parameters
+        format_rules = {
+            'maxerr': '.2e',      # Scientific notation with 2 decimal places
+            'f0': '.2e',          # Scientific notation for frequency
+            'dt': '.2e',          # Scientific notation for time step
+            'solver': 'd',        # Integer for solver
+            'Nx': 'd',           # Integer for grid size
+            'Ny': 'd',           # Integer for grid size  
+            'Nz': 'd',           # Integer for grid size
+            'PBCx': 'd',         # Integer for PBC
+            'PBCy': 'd',         # Integer for PBC
+            'PBCz': 'd',         # Integer for PBC
+        }
+        
+        # Priority order for display
+        priority_params = ['solver', 'f0', 'maxerr', 'Nx', 'Ny', 'Nz']
+        
+        # Add priority parameters first
+        for param in priority_params:
+            if hasattr(result, param):
+                value = getattr(result, param)
+                format_spec = format_rules.get(param, 'g')
+                
+                try:
+                    if format_spec == 'd':
+                        formatted_value = f"{int(value)}"
+                    elif format_spec.endswith('e'):
+                        formatted_value = f"{float(value):{format_spec}}"
+                    else:
+                        formatted_value = f"{value:{format_spec}}"
+                    
+                    label_parts.append(f"{param}={formatted_value}")
+                except (ValueError, TypeError):
+                    label_parts.append(f"{param}={value}")
+        
+        # Add other interesting parameters (limited by max_legend_params to avoid clutter)
+        max_additional = max(0, self.config.max_legend_params - len(priority_params))
+        other_params_added = 0
+        for attr_name in sorted(dir(result)):
+            if (other_params_added >= max_additional or 
+                attr_name.startswith('_') or 
+                attr_name in priority_params or
+                attr_name in ['path', 'attributes']):
+                continue
+                
+            try:
+                value = getattr(result, attr_name)
+                if isinstance(value, (int, float)) and not callable(value):
+                    format_spec = format_rules.get(attr_name, '.2g')
+                    
+                    if format_spec == 'd':
+                        formatted_value = f"{int(value)}"
+                    elif format_spec.endswith('e'):
+                        formatted_value = f"{float(value):{format_spec}}"
+                    else:
+                        formatted_value = f"{value:{format_spec}}"
+                    
+                    label_parts.append(f"{attr_name}={formatted_value}")
+                    other_params_added += 1
+            except Exception:
+                pass
+        
+        return ", ".join(label_parts) if label_parts else "Dataset"
 
 class PlotterProxy:
     """Proxy class to provide plotting functionality to search results."""
 
-    def __init__(self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None) -> None:
+    def __init__(
+        self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None
+    ) -> None:
         self._results = results
         self._mmpp = mmpp_instance
         self._plotter: Optional[MMPPlotter] = None
@@ -841,6 +990,11 @@ class PlotterProxy:
         if self._plotter is None:
             self._plotter = MMPPlotter(self._results, self._mmpp)
         return self._plotter
+
+    @property
+    def mpl(self) -> MMPPlotter:
+        """Get the matplotlib plotter instance (alias for matplotlib)."""
+        return self.matplotlib
 
     def __len__(self) -> int:
         return len(self._results)

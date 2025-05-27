@@ -226,7 +226,9 @@ class SimulationManager:
         # (D) Brak statusu => sprawdzamy .zarr (o ile istnieje)
         else:
             if os.path.exists(zarr_path):
-                zarr_file_complete, zarr_file_count = self.check_simulation_completion(zarr_path)
+                zarr_file_complete, zarr_file_count = self.check_simulation_completion(
+                    zarr_path
+                )
                 if zarr_file_complete:
                     sim_status_str = "done => no status file"
                     zarr_status_str = f"complete ({zarr_file_count} files)"
