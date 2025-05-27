@@ -1482,6 +1482,43 @@ class FontManager:
         """User-friendly string representation."""
         return self.__repr__()
 
+    def show_setup_info(self) -> None:
+        """
+        Display detailed font setup information with verbose output.
+        
+        This method shows the same information that would be displayed
+        during initial font setup with verbose=True.
+        """
+        print("Font Setup Information:")
+        print("=" * 50)
+        
+        # Force verbose font setup
+        global _FONTS_INITIALIZED, _STYLE_INITIALIZED
+        
+        # Temporarily reset initialization flags to show verbose output
+        original_fonts = _FONTS_INITIALIZED
+        original_style = _STYLE_INITIALIZED
+        
+        _FONTS_INITIALIZED = False
+        _STYLE_INITIALIZED = False
+        
+        try:
+            print("\n1. Font Loading:")
+            font_result = setup_custom_fonts(verbose=True)
+            print(f"   Result: {'✓ Success' if font_result else '✗ Failed'}")
+            
+            print("\n2. Style Loading:")
+            style_result = load_paper_style(verbose=True)
+            print(f"   Result: {'✓ Success' if style_result else '✗ Failed'}")
+            
+            print(f"\n3. Available Fonts: {len(self.available)} fonts detected")
+            print(f"4. Font Paths: {len(self.paths)} paths configured")
+            
+        finally:
+            # Restore original state
+            _FONTS_INITIALIZED = original_fonts
+            _STYLE_INITIALIZED = original_style
+
 
 # Create global font manager instance
 fonts = FontManager()
