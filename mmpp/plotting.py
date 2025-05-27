@@ -67,8 +67,10 @@ class PlotConfig:
             self.colors = {"text": "#808080", "axes": "#808080", "grid": "#cccccc"}
 
 
-# Global font setup cache
+# Global font and style setup cache
 _FONTS_INITIALIZED = False
+_STYLE_INITIALIZED = False
+_STYLING_SETUP_COMPLETED = False
 
 def setup_custom_fonts(verbose: bool = False) -> bool:
     """Setup custom fonts including Arial."""
@@ -129,8 +131,14 @@ def setup_custom_fonts(verbose: bool = False) -> bool:
         return False
 
 
-def load_paper_style() -> bool:
+def load_paper_style(verbose: bool = False) -> bool:
     """Load custom paper style."""
+    global _STYLE_INITIALIZED
+    
+    # Skip if already initialized
+    if _STYLE_INITIALIZED:
+        return True
+        
     try:
         # Try to find paper.mplstyle in current directory or relative to this file
         style_paths = [
@@ -142,14 +150,20 @@ def load_paper_style() -> bool:
         for style_path in style_paths:
             if os.path.exists(style_path):
                 plt.style.use(style_path)
-                print(f"✓ Loaded paper style from: {style_path}")
+                if verbose:
+                    print(f"✓ Loaded paper style from: {style_path}")
+                _STYLE_INITIALIZED = True
                 return True
 
-        print("⚠ paper.mplstyle not found, using default style")
+        if verbose:
+            print("⚠ paper.mplstyle not found, using default style")
+        _STYLE_INITIALIZED = True
         return False
 
     except Exception as e:
-        print(f"Warning: Could not load paper style: {e}")
+        if verbose:
+            print(f"Warning: Could not load paper style: {e}")
+        _STYLE_INITIALIZED = True
         return False
 
 
@@ -220,6 +234,12 @@ class MMPPlotter:
 
     def _setup_styling(self) -> None:
         """Setup custom fonts and styling."""
+        global _STYLING_SETUP_COMPLETED
+        
+        # Skip if styling has already been set up globally
+        if _STYLING_SETUP_COMPLETED:
+            return
+            
         try:
             # Setup custom fonts if enabled
             if self.config.use_custom_fonts:
@@ -227,7 +247,7 @@ class MMPPlotter:
 
             # Load paper style
             if self.config.style == "paper":
-                if not load_paper_style():
+                if not load_paper_style(verbose=False):
                     # Fallback to a standard style
                     try:
                         plt.style.use("seaborn-v0_8")
@@ -247,8 +267,13 @@ class MMPPlotter:
             # Apply custom colors
             apply_custom_colors(self.config.colors)
 
+            # Mark styling as completed globally
+            _STYLING_SETUP_COMPLETED = True
+
         except Exception as e:
             print(f"Warning: Styling setup failed: {e}")
+            # Even if setup failed, mark as completed to avoid retries
+            _STYLING_SETUP_COMPLETED = True
 
     def __repr__(self) -> str:
         """Rich representation of the plotter."""

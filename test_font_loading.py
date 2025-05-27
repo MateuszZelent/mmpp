@@ -118,10 +118,10 @@ def test_old_font_functions():
         print("✓ Old font functions still importable")
         
         # Test old functions
-        font_success = setup_custom_fonts()
+        font_success = setup_custom_fonts(verbose=True)
         print(f"   setup_custom_fonts(): {font_success}")
         
-        style_success = load_paper_style()
+        style_success = load_paper_style(verbose=True)
         print(f"   load_paper_style(): {style_success}")
         
         return True
