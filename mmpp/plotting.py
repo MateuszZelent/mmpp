@@ -67,8 +67,17 @@ class PlotConfig:
             self.colors = {"text": "#808080", "axes": "#808080", "grid": "#cccccc"}
 
 
-def setup_custom_fonts() -> bool:
+# Global font setup cache
+_FONTS_INITIALIZED = False
+
+def setup_custom_fonts(verbose: bool = False) -> bool:
     """Setup custom fonts including Arial."""
+    global _FONTS_INITIALIZED
+    
+    # Skip if already initialized
+    if _FONTS_INITIALIZED:
+        return True
+        
     try:
         # Import fonts from package directory
         package_dir = os.path.dirname(__file__)
@@ -81,15 +90,18 @@ def setup_custom_fonts() -> bool:
         fonts_loaded = False
         for font_dir in font_dirs:
             if os.path.exists(font_dir):
-                print(f"🔍 Checking font directory: {font_dir}")
+                if verbose:
+                    print(f"🔍 Checking font directory: {font_dir}")
                 font_files = font_manager.findSystemFonts(fontpaths=[font_dir])
                 for font_file in font_files:
                     try:
                         font_manager.fontManager.addfont(font_file)
                         fonts_loaded = True
-                        print(f"✓ Added font: {os.path.basename(font_file)}")
+                        if verbose:
+                            print(f"✓ Added font: {os.path.basename(font_file)}")
                     except Exception as e:
-                        print(f"Warning: Could not add font {font_file}: {e}")
+                        if verbose:
+                            print(f"Warning: Could not add font {font_file}: {e}")
 
         # Rebuild font cache if fonts were loaded
         if fonts_loaded:
@@ -102,14 +114,18 @@ def setup_custom_fonts() -> bool:
         # Check if Arial is available
         available_fonts = set(f.name for f in font_manager.fontManager.ttflist)
         if "Arial" in available_fonts:
-            print("✓ Arial font loaded successfully")
+            if verbose:
+                print("✓ Arial font loaded successfully")
         else:
-            print("⚠ Arial font not found, using default fonts")
+            if verbose:
+                print("⚠ Arial font not found, using default fonts")
 
+        _FONTS_INITIALIZED = True
         return True
 
     except Exception as e:
-        print(f"Warning: Font setup failed: {e}")
+        if verbose:
+            print(f"Warning: Font setup failed: {e}")
         return False
 
 
@@ -207,7 +223,7 @@ class MMPPlotter:
         try:
             # Setup custom fonts if enabled
             if self.config.use_custom_fonts:
-                setup_custom_fonts()
+                setup_custom_fonts(verbose=False)
 
             # Load paper style
             if self.config.style == "paper":
