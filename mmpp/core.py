@@ -40,11 +40,7 @@ try:
     from .plotting import MMPPlotter, PlotterProxy
     PLOTTING_AVAILABLE = True
 except ImportError:
-    try:
-        from plotting import MMPPlotter, PlotterProxy
-        PLOTTING_AVAILABLE = True
-    except ImportError:
-        PLOTTING_AVAILABLE = False
+    PLOTTING_AVAILABLE = False
 
 
 @dataclass
