@@ -46,6 +46,13 @@ try:
 except ImportError:
     PLOTTING_AVAILABLE = False
 
+# Import FFT functionality
+try:
+    from .fft import FFTConsole
+    FFT_AVAILABLE = True
+except ImportError:
+    FFT_AVAILABLE = False
+
 
 @dataclass
 class ScanResult:
@@ -89,31 +96,22 @@ class ZarrJobResult:
         """Get matplotlib plotter for this single result (alias for mpl)."""
         return self.mpl
 
-    def __getattr__(self, name: str) -> Any:
-        """Allow accessing attributes as object properties."""
-        if name in self.attributes:
-            return self.attributes[name]
-        raise AttributeError(
-            f"'{self.__class__.__name__}' object has no attribute '{name}'"
-        )
+    @property
+    def fft(self) -> "FFTConsole":
+        """Get FFT console for this single result."""
+        if not FFT_AVAILABLE:
+            raise ImportError(
+                "FFT functionality not available. Check fft module import."
+            )
+        if self._mmpp_ref is None:
+            raise ValueError(
+                "MMPP reference not set. Use results from MMPP instance."
+            )
+        return FFTConsole([self], self._mmpp_ref)
 
-    def __getitem__(self, key: str) -> Any:
-        """Allow accessing attributes using dictionary-style notation."""
-        return self.attributes[key]
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get attribute value with optional default."""
-        return self.attributes.get(key, default)
-
-    def keys(self) -> List[str]:
-        """Get list of available attribute names."""
-        return list(self.attributes.keys())
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary including path."""
-        result = {"path": self.path}
-        result.update(self.attributes)
-        return result
+    def calculate_fft_data(self, **kwargs):
+        """Direct method for FFT calculation."""
+        return self.fft.calculate_fft_data(**kwargs)
 
 
 class MMPP:
@@ -133,7 +131,7 @@ class MMPP:
         Parameters:
         -----------
         base_path : str
-            Base directory path to scan for zarr folders
+            Base directory path to scan for zarr folders OR direct path to .zarr file
         max_workers : int, optional
             Maximum number of worker threads for scanning (default: 8)
         database_name : str, optional
@@ -142,17 +140,133 @@ class MMPP:
         self.base_path: str = os.path.abspath(base_path)
         self.max_workers: int = max_workers
         self.database_name: str = database_name
-        self.database_path: str = os.path.join(self.base_path, f"{database_name}.pkl")
-        self.dataframe: Optional[pd.DataFrame] = None
         self._lock: threading.Lock = threading.Lock()
         self._interactive_mode: bool = True  # Enable interactive mode by default
+        self._single_zarr_mode: bool = False
+        self._zarr_results: List[ZarrJobResult] = []
+
+        # Check if base_path is a direct .zarr file
+        if self.base_path.endswith('.zarr') and os.path.isdir(self.base_path):
+            self._single_zarr_mode = True
+            self.database_path = None
+            self.dataframe = None
+            self._load_single_zarr()
+        else:
+            # Original directory scanning mode
+            self.database_path: str = os.path.join(self.base_path, f"{database_name}.pkl")
+            self.dataframe: Optional[pd.DataFrame] = None
+            # Try to load existing database
+            self._load_database()
 
         # Initialize rich console if available
         if RICH_AVAILABLE:
             self.console = Console()
 
-        # Try to load existing database
-        self._load_database()
+    def _load_single_zarr(self) -> None:
+        """Load a single .zarr file directly."""
+        try:
+            # Scan the single zarr file
+            scan_result = self._scan_single_zarr(self.base_path)
+            
+            if scan_result.error:
+                print(f"Error loading zarr file {self.base_path}: {scan_result.error}")
+                return
+            
+            # Create ZarrJobResult
+            result = ZarrJobResult(path=scan_result.path, attributes=scan_result.attributes)
+            result._set_mmpp_ref(self)
+            self._zarr_results = [result]
+            
+            print(f"Loaded single zarr file: {self.base_path}")
+            
+        except Exception as e:
+            print(f"Error loading single zarr file: {e}")
+            self._zarr_results = []
+
+    def __len__(self) -> int:
+        """Return number of zarr results available."""
+        if self._single_zarr_mode:
+            return len(self._zarr_results)
+        elif self.dataframe is not None:
+            return len(self.dataframe)
+        else:
+            return 0
+
+    def __getitem__(self, index: int) -> ZarrJobResult:
+        """
+        Get zarr result by index.
+        
+        Parameters:
+        -----------
+        index : int
+            Index of the result to get
+            
+        Returns:
+        --------
+        ZarrJobResult
+            The zarr result at the specified index
+        """
+        if self._single_zarr_mode:
+            if 0 <= index < len(self._zarr_results):
+                return self._zarr_results[index]
+            else:
+                raise IndexError(f"Index {index} out of range for {len(self._zarr_results)} results")
+        else:
+            # Database mode
+            if self.dataframe is None or self.dataframe.empty:
+                raise IndexError("No database available. Run scan() first.")
+                
+            if 0 <= index < len(self.dataframe):
+                row = self.dataframe.iloc[index]
+                path = row["path"]
+                attributes = {
+                    col: row[col]
+                    for col in self.dataframe.columns
+                    if col != "path" and pd.notna(row[col])
+                }
+                result = ZarrJobResult(path=path, attributes=attributes)
+                result._set_mmpp_ref(self)
+                return result
+            else:
+                raise IndexError(f"Index {index} out of range for {len(self.dataframe)} results")
+
+    def __iter__(self):
+        """Make MMPP iterable."""
+        for i in range(len(self)):
+            yield self[i]
+
+    @property
+    def mpl(self) -> "MMPPlotter":
+        """Get matplotlib plotter for all results."""
+        if not PLOTTING_AVAILABLE:
+            raise ImportError(
+                "Plotting functionality not available. Check plotting.py import."
+            )
+        
+        if self._single_zarr_mode:
+            return MMPPlotter(self._zarr_results, self)
+        else:
+            all_results = self.get_all_jobs()
+            return MMPPlotter(all_results, self)
+
+    @property
+    def matplotlib(self) -> "MMPPlotter":
+        """Get matplotlib plotter for all results (alias for mpl)."""
+        return self.mpl
+
+    @property
+    def fft(self) -> "FFTConsole":
+        """Get FFT console for all results."""
+        if not FFT_AVAILABLE:
+            raise ImportError(
+                "FFT functionality not available. Check fft module import."
+            )
+        
+        if self._single_zarr_mode:
+            return FFTConsole(self._zarr_results, self)
+        else:
+            all_results = self.get_all_jobs()
+            return FFTConsole(all_results, self)
 
     def _find_zarr_folders(self) -> List[str]:
         """
@@ -477,6 +591,10 @@ class MMPP:
         pd.DataFrame
             The resulting database DataFrame
         """
+        if self._single_zarr_mode:
+            print("Single zarr mode - no scanning needed.")
+            return pd.DataFrame()  # Return empty DataFrame for single zarr mode
+            
         # Check if we need to scan
         if not force and self.dataframe is not None:
             print("Database already loaded. Use force=True to rescan.")
@@ -571,6 +689,33 @@ class MMPP:
         PlotterProxy
             Proxy object containing ZarrJobResult objects with plotting capabilities
         """
+        if self._single_zarr_mode:
+            # In single zarr mode, just return the single result if no criteria or if it matches
+            if not kwargs:
+                # No criteria, return all (which is just one)
+                if PLOTTING_AVAILABLE:
+                    return PlotterProxy(self._zarr_results, self)
+                else:
+                    return self._zarr_results
+            else:
+                # Check if single result matches criteria
+                matching_results = []
+                for result in self._zarr_results:
+                    matches = True
+                    for key, value in kwargs.items():
+                        if key not in result.attributes or result.attributes[key] != value:
+                            matches = False
+                            break
+                    if matches:
+                        matching_results.append(result)
+                
+                print(f"Found {len(matching_results)} results matching criteria: {kwargs}")
+                if PLOTTING_AVAILABLE:
+                    return PlotterProxy(matching_results, self)
+                else:
+                    return matching_results
+        
+        # Original database mode logic
         if self.dataframe is None or self.dataframe.empty:
             print("No database available. Run scan() first.")
             if PLOTTING_AVAILABLE:
@@ -922,6 +1067,9 @@ class MMPP:
 
     def __repr__(self) -> str:
         """Rich representation of MMPP object when printed."""
+        if self._single_zarr_mode:
+            return f"MMPP(single_zarr='{self.base_path}', results={len(self._zarr_results)})"
+        
         if not self._interactive_mode:
             return f"MMPP(base_path='{self.base_path}', entries={len(self.dataframe) if self.dataframe is not None else 0})"
 
