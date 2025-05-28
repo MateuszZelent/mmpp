@@ -1,6 +1,345 @@
 """
 FFT Console Module
 
+User interface and communication layer for FFT analysis.
+Provides high-level interface and rich console output.
+"""
+
+from typing import Optional, Dict, List, Union, Any, Tuple
+import time
+from dataclasses import dataclass
+
+# Import dependencies with error handling
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.progress import Progress, TaskID
+    from rich.text import Text
+    from rich import print as rprint
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+
+from .compute_fft import FFTCompute, FFTComputeResult, WINDOW_TYPES, FILTER_TYPES, FFT_ENGINES
+
+
+@dataclass
+class FFTSession:
+    """Container for FFT analysis session data."""
+    
+    results: List[Any]
+    mmpp_instance: Optional[Any] = None
+    compute_engine: Optional[FFTCompute] = None
+    cache: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.cache is None:
+            self.cache = {}
+        if self.compute_engine is None:
+            self.compute_engine = FFTCompute()
+
+
+class FFTConsole:
+    """
+    FFT Console interface for rich user interaction.
+    
+    Provides high-level FFT analysis interface with rich console output
+    and user-friendly communication.
+    """
+    
+    def __init__(self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None):
+        """
+        Initialize FFT console.
+        
+        Parameters:
+        -----------
+        results : List or single result
+            ZarrJobResult objects to analyze
+        mmpp_instance : MMPP, optional
+            Reference to parent MMPP instance
+        """
+        # Handle both single results and lists
+        if not isinstance(results, list):
+            results = [results]
+        
+        self.session = FFTSession(
+            results=results,
+            mmpp_instance=mmpp_instance,
+            compute_engine=FFTCompute()
+        )
+        
+        # Initialize rich console if available
+        if RICH_AVAILABLE:
+            self.console = Console()
+        else:
+            self.console = None
+    
+    def _print(self, *args, **kwargs):
+        """Print with rich console if available, otherwise regular print."""
+        if RICH_AVAILABLE and self.console:
+            self.console.print(*args, **kwargs)
+        else:
+            print(*args, **kwargs)
+    
+    def show_options(self) -> None:
+        """Display available FFT options."""
+        options = self.session.compute_engine.get_available_options()
+        
+        if RICH_AVAILABLE and self.console:
+            # Create rich table
+            table = Table(title="FFT Analysis Options")
+            table.add_column("Category", style="cyan")
+            table.add_column("Available Options", style="green")
+            table.add_column("Description", style="dim")
+            
+            # Window functions
+            windows_text = ", ".join(options['windows'])
+            table.add_row("Window Functions", windows_text, "Signal windowing for spectral analysis")
+            
+            # Filter types
+            filters_text = ", ".join(options['filters'])
+            table.add_row("Filter Types", filters_text, "Data preprocessing filters")
+            
+            # FFT engines
+            engines_text = ", ".join(options['engines'])
+            table.add_row("FFT Engines", engines_text, "Computation backends")
+            
+            # Dependencies
+            deps = options['dependencies']
+            dep_status = []
+            for dep, available in deps.items():
+                status = "✓" if available else "✗"
+                dep_status.append(f"{dep}: {status}")
+            table.add_row("Dependencies", " | ".join(dep_status), "Required libraries status")
+            
+            self.console.print(table)
+        else:
+            # Plain text output
+            print("\n=== FFT Analysis Options ===")
+            print(f"Window Functions: {', '.join(options['windows'])}")
+            print(f"Filter Types: {', '.join(options['filters'])}")
+            print(f"FFT Engines: {', '.join(options['engines'])}")
+            print("\nDependencies:")
+            for dep, available in options['dependencies'].items():
+                status = "Available" if available else "Not Available"
+                print(f"  {dep}: {status}")
+    
+    def calculate_fft_data(self, 
+                          dataset: str = "m_z11",
+                          z_layer: int = -1,
+                          method: int = 1,
+                          window: WINDOW_TYPES = "hann",
+                          filter_type: FILTER_TYPES = "remove_mean",
+                          engine: Optional[FFT_ENGINES] = None,
+                          result_index: int = 0,
+                          save_to_cache: bool = True,
+                          verbose: bool = True) -> FFTComputeResult:
+        """
+        Calculate FFT for specified parameters with rich console output.
+        
+        Parameters:
+        -----------
+        dataset : str, optional
+            Dataset name (default: "m_z11")
+        z_layer : int, optional
+            Z-layer index (default: -1)
+        method : int, optional
+            FFT method (1 or 2, default: 1)
+        window : str, optional
+            Window function (default: "hann")
+        filter_type : str, optional
+            Filter type (default: "remove_mean")
+        engine : str, optional
+            FFT engine (default: auto)
+        result_index : int, optional
+            Index of result to analyze (default: 0)
+        save_to_cache : bool, optional
+            Whether to cache results (default: True)
+        verbose : bool, optional
+            Whether to show progress (default: True)
+            
+        Returns:
+        --------
+        FFTComputeResult
+            FFT computation result
+        """
+        if result_index >= len(self.session.results):
+            raise IndexError(f"Result index {result_index} out of range")
+        
+        result = self.session.results[result_index]
+        
+        # Create cache key
+        cache_key = f"{result.path}_{dataset}_z{z_layer}_m{method}_{window}_{filter_type}_{engine}"
+        
+        # Check cache
+        if save_to_cache and cache_key in self.session.cache:
+            if verbose:
+                self._print("🔄 Loading from cache...")
+            return self.session.cache[cache_key]
+        
+        if verbose:
+            self._print(f"🔊 Calculating FFT for dataset '{dataset}', z={z_layer}, method={method}")
+            if RICH_AVAILABLE and self.console:
+                # Show progress with rich
+                with Progress() as progress:
+                    task = progress.add_task("Processing...", total=100)
+                    
+                    # Load data
+                    progress.update(task, advance=20, description="Loading data...")
+                    data, dt = self.session.compute_engine.load_data_from_zarr(
+                        result.path, dataset, z_layer
+                    )
+                    
+                    progress.update(task, advance=30, description="Computing FFT...")
+                    # Calculate FFT
+                    if method == 1:
+                        fft_result = self.session.compute_engine.calculate_fft_method1(
+                            data, dt, window, filter_type, engine
+                        )
+                    elif method == 2:
+                        fft_result = self.session.compute_engine.calculate_fft_method2(
+                            data, dt, window, filter_type, engine
+                        )
+                    else:
+                        raise ValueError(f"Invalid method: {method}. Use 1 or 2.")
+                    
+                    progress.update(task, advance=50, description="Finalizing...")
+            else:
+                # Simple progress without rich
+                print("📊 Loading data...")
+                data, dt = self.session.compute_engine.load_data_from_zarr(
+                    result.path, dataset, z_layer
+                )
+                
+                print("🔄 Computing FFT...")
+                if method == 1:
+                    fft_result = self.session.compute_engine.calculate_fft_method1(
+                        data, dt, window, filter_type, engine
+                    )
+                elif method == 2:
+                    fft_result = self.session.compute_engine.calculate_fft_method2(
+                        data, dt, window, filter_type, engine
+                    )
+                else:
+                    raise ValueError(f"Invalid method: {method}. Use 1 or 2.")
+        else:
+            # Silent calculation
+            data, dt = self.session.compute_engine.load_data_from_zarr(
+                result.path, dataset, z_layer
+            )
+            
+            if method == 1:
+                fft_result = self.session.compute_engine.calculate_fft_method1(
+                    data, dt, window, filter_type, engine
+                )
+            elif method == 2:
+                fft_result = self.session.compute_engine.calculate_fft_method2(
+                    data, dt, window, filter_type, engine
+                )
+            else:
+                raise ValueError(f"Invalid method: {method}. Use 1 or 2.")
+        
+        # Cache result
+        if save_to_cache:
+            self.session.cache[cache_key] = fft_result
+        
+        # Show summary
+        if verbose:
+            self._show_fft_summary(fft_result)
+        
+        return fft_result
+    
+    def _show_fft_summary(self, fft_result: FFTComputeResult) -> None:
+        """Show FFT calculation summary."""
+        metadata = fft_result.metadata
+        
+        if RICH_AVAILABLE and self.console:
+            # Rich summary
+            summary_text = Text()
+            summary_text.append("✅ FFT Calculation Complete\n", style="bold green")
+            summary_text.append(f"Method: {metadata['method']}\n", style="cyan")
+            summary_text.append(f"Window: {metadata['window']}, Filter: {metadata['filter_type']}\n", style="cyan")
+            summary_text.append(f"Engine: {metadata['engine']}\n", style="cyan")
+            summary_text.append(f"Calculation time: {metadata['calculation_time']:.3f}s\n", style="yellow")
+            summary_text.append(f"Frequency range: 0-{fft_result.frequencies[-1]:.2e} Hz\n", style="blue")
+            summary_text.append(f"Resolution: {metadata['frequency_resolution']:.2e} Hz", style="blue")
+            
+            panel = Panel(summary_text, title="FFT Summary", border_style="green")
+            self.console.print(panel)
+        else:
+            # Plain text summary
+            print("✅ FFT Calculation Complete")
+            print(f"Method: {metadata['method']}")
+            print(f"Window: {metadata['window']}, Filter: {metadata['filter_type']}")
+            print(f"Engine: {metadata['engine']}")
+            print(f"Calculation time: {metadata['calculation_time']:.3f}s")
+            print(f"Frequency range: 0-{fft_result.frequencies[-1]:.2e} Hz")
+            print(f"Resolution: {metadata['frequency_resolution']:.2e} Hz")
+    
+    def list_cached_results(self) -> None:
+        """List all cached FFT results."""
+        if not self.session.cache:
+            self._print("No cached FFT results found.")
+            return
+        
+        if RICH_AVAILABLE and self.console:
+            table = Table(title="Cached FFT Results")
+            table.add_column("#", style="cyan")
+            table.add_column("Dataset", style="green")
+            table.add_column("Z-Layer", style="blue")
+            table.add_column("Method", style="yellow")
+            table.add_column("Window", style="magenta")
+            table.add_column("Filter", style="red")
+            table.add_column("Engine", style="white")
+            table.add_column("Calc Time", style="dim")
+            
+            for i, (cache_key, fft_result) in enumerate(self.session.cache.items()):
+                metadata = fft_result.metadata
+                table.add_row(
+                    str(i + 1),
+                    cache_key.split('_')[1],  # dataset
+                    cache_key.split('_')[2][1:],  # z-layer (remove 'z' prefix)
+                    str(metadata['method']),
+                    metadata['window'],
+                    metadata['filter_type'],
+                    metadata['engine'],
+                    f"{metadata['calculation_time']:.3f}s"
+                )
+            
+            self.console.print(table)
+        else:
+            print("\n=== Cached FFT Results ===")
+            for i, (cache_key, fft_result) in enumerate(self.session.cache.items()):
+                metadata = fft_result.metadata
+                print(f"{i+1}. {cache_key}: Method {metadata['method']}, "
+                      f"{metadata['window']}/{metadata['filter_type']}, "
+                      f"{metadata['engine']}, {metadata['calculation_time']:.3f}s")
+    
+    def clear_cache(self) -> None:
+        """Clear FFT cache."""
+        count = len(self.session.cache)
+        self.session.cache.clear()
+        self._print(f"🧹 Cleared {count} cached FFT results.")
+    
+    def get_cache_info(self) -> Dict[str, Any]:
+        """Get cache information."""
+        return {
+            'cached_results': len(self.session.cache),
+            'cache_keys': list(self.session.cache.keys())
+        }
+    
+    def __len__(self) -> int:
+        return len(self.session.results)
+    
+    def __getitem__(self, index: int):
+        return self.session.results[index]
+    
+    def __repr__(self) -> str:
+        return f"FFTConsole({len(self.session.results)} results, {len(self.session.cache)} cached)"
+"""
+FFT Console Module
+
 Rich console interface for beautiful FFT data presentation and analysis.
 """
 

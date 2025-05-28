@@ -46,13 +46,6 @@ try:
 except ImportError:
     PLOTTING_AVAILABLE = False
 
-# Import FFT functionality
-try:
-    from .fft import FFTConsole
-    FFT_AVAILABLE = True
-except ImportError:
-    FFT_AVAILABLE = False
-
 
 @dataclass
 class ScanResult:
