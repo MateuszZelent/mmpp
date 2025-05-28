@@ -580,10 +580,11 @@ MMPP Plotter:
         comp: Optional[Union[str, int]] = None,
         average: Optional[Tuple[Any, ...]] = None,
         figsize: Optional[Tuple[Any, ...]] = None,
-        title: Optional[str] = None,
+        title: Optional[Union[str, List[str]]] = None,
         xlabel: Optional[str] = None,
         ylabel: Optional[str] = None,
         legend_labels: Optional[List[str]] = None,
+        legend_variables: Optional[List[str]] = None,
         colors: Optional[List[str]] = None,
         save_path: Optional[str] = None,
         paper_ready: bool = False,
@@ -604,14 +605,19 @@ MMPP Plotter:
             Axes to average over (e.g., (1,2,3) for spatial averaging)
         figsize : tuple, optional
             Figure size (width, height)
-        title : str, optional
-            Plot title
+        title : Union[str, List[str]], optional
+            Plot title. Can be:
+            - str: Custom title text
+            - List[str]: Parameter names to show in title (e.g., ['amp', 'f0'] -> "Amp = 0.1, F0 = 1e9")
         xlabel : str, optional
             X-axis label
         ylabel : str, optional
             Y-axis label
         legend_labels : List[str], optional
             Custom legend labels
+        legend_variables : List[str], optional
+            Specific variables to show in legend (e.g., ['maxerr', 'f0']). 
+            If provided, overrides automatic varying parameter detection.
         colors : List[str], optional
             Custom colors for each line
         save_path : str, optional
@@ -666,7 +672,12 @@ MMPP Plotter:
             sorted_results = self.results
         
         # Get varying parameters for smart legend (only show parameters that differ)
-        varying_params = self._get_varying_parameters(sorted_results) if len(sorted_results) > 1 else []
+        if legend_variables is not None:
+            # User specified which variables to show in legend
+            varying_params = legend_variables
+        else:
+            # Auto-detect varying parameters
+            varying_params = self._get_varying_parameters(sorted_results) if len(sorted_results) > 1 else []
         
         # Update iterator to use sorted results
         iterator = (
@@ -736,9 +747,24 @@ MMPP Plotter:
                 ylabel_parts.append("averaged")
             ax.set_ylabel(" ".join(ylabel_parts), fontsize=self.config.label_fontsize)
 
+        # Set title
         if title:
-            ax.set_title(title, fontsize=self.config.title_fontsize)
+            if isinstance(title, list):
+                # Dynamic title based on parameter values
+                dynamic_title = self._format_dynamic_title(title, sorted_results)
+                if dynamic_title:
+                    ax.set_title(dynamic_title, fontsize=self.config.title_fontsize)
+                else:
+                    # Fallback if no parameters found
+                    title_parts = [f"{y_series} vs {x_series}"]
+                    if comp is not None:
+                        title_parts.append(f"component {comp}")
+                    ax.set_title(" - ".join(title_parts), fontsize=self.config.title_fontsize)
+            else:
+                # Static title string
+                ax.set_title(title, fontsize=self.config.title_fontsize)
         else:
+            # Default title
             title_parts = [f"{y_series} vs {x_series}"]
             if comp is not None:
                 title_parts.append(f"component {comp}")
@@ -990,34 +1016,70 @@ MMPP Plotter:
         if len(results) <= 1:
             return []
         
-        # Collect all potential parameters from attributes dict (for ZarrJobResult)
-        # and direct attributes (for other result types)
+        # Define parameters to exclude from legend (memory addresses, internal vars, etc.)
+        excluded_params = {
+            # Memory addresses and pointers
+            'Aex', 'Bext', 'Ms', 'alpha', 'gamma',  # Common MUMAX3 pointers
+            # User requested exclusions
+            'end_time', 'maxerr_path', 'port',
+            # Internal/technical parameters
+            'path', 'attributes', 'job_id', 'timestamp', 'uuid',
+            # Time-related parameters
+            'start_time', 'runtime',
+            # Very long or non-informative parameters
+            'command_line', 'full_path', 'working_directory'
+        }
+        
+        def should_exclude_param(name: str, value: Any) -> bool:
+            """Check if parameter should be excluded from legend."""
+            # Exclude if in explicit exclusion list
+            if name in excluded_params:
+                return True
+            
+            # Exclude memory addresses (hex values starting with 0x)
+            if isinstance(value, str) and value.startswith('0x'):
+                return True
+            
+            # Exclude very long strings (likely file paths or commands)
+            if isinstance(value, str) and len(value) > 50:
+                return True
+            
+            # Exclude parameters with underscores at start/end (internal vars)
+            if name.startswith('_') or name.endswith('_'):
+                return True
+            
+            return False
+
+        # Collect all potential parameters - primarily from attributes dict for ZarrJobResult
         all_params = set()
         for result in results:
-            # Check attributes dict first (ZarrJobResult pattern)
+            # Primary method: Check attributes dict (ZarrJobResult pattern)
             if hasattr(result, 'attributes') and isinstance(result.attributes, dict):
                 for attr_name, value in result.attributes.items():
-                    if isinstance(value, (int, float, str, bool)):
+                    # Only consider simple types that can vary meaningfully
+                    if (isinstance(value, (int, float, str, bool)) and 
+                        not should_exclude_param(attr_name, value)):
                         all_params.add(attr_name)
             
-            # Also check direct attributes (fallback for other objects)
-            for attr_name in dir(result):
-                if (not attr_name.startswith('_') and 
-                    attr_name not in ['path', 'attributes'] and
-                    not callable(getattr(result, attr_name, None))):
-                    try:
-                        value = getattr(result, attr_name)
-                        if isinstance(value, (int, float, str, bool)):
-                            all_params.add(attr_name)
-                    except Exception:
-                        pass
+            # Fallback: check direct attributes for non-ZarrJobResult objects
+            elif not hasattr(result, 'attributes'):
+                for attr_name in dir(result):
+                    if (not attr_name.startswith('_') and 
+                        not callable(getattr(result, attr_name, None))):
+                        try:
+                            value = getattr(result, attr_name)
+                            if (isinstance(value, (int, float, str, bool)) and
+                                not should_exclude_param(attr_name, value)):
+                                all_params.add(attr_name)
+                        except Exception:
+                            pass
         
         # Check which parameters actually vary
         varying_params = []
         for param in all_params:
             values = []
             for result in results:
-                # Try to get value from attributes dict first, then direct attribute
+                # Get value - prefer attributes dict, fall back to direct attribute
                 value = None
                 try:
                     if hasattr(result, 'attributes') and param in result.attributes:
@@ -1058,6 +1120,77 @@ MMPP Plotter:
                 sorted_varying.append(param)
         
         return sorted_varying
+
+    def _format_dynamic_title(self, title_params: List[str], results: List[Any]) -> str:
+        """
+        Format dynamic title based on parameter values.
+        
+        Parameters:
+        -----------
+        title_params : List[str]
+            List of parameter names to include in title
+        results : List[Any]
+            List of result objects
+            
+        Returns:
+        --------
+        str
+            Formatted title string
+        """
+        if not title_params or not results:
+            return ""
+        
+        # Use first result for parameter values (assuming they're constant across plots)
+        result = results[0]
+        title_parts = []
+        
+        # Define formatting rules for title parameters
+        format_rules = {
+            'maxerr': '.2e',      # Scientific notation
+            'f0': '.2e', 
+            'dt': '.2e',
+            'amp_values': '.3e',
+            'amp': '.3e',         # Common alias for amp_values
+            'solver': 'd',        # Integer
+            'Nx': 'd', 'Ny': 'd', 'Nz': 'd',  # Grid sizes
+        }
+        
+        def get_value(result, param):
+            """Get parameter value from result."""
+            try:
+                if hasattr(result, 'attributes') and param in result.attributes:
+                    return result.attributes[param]
+                elif hasattr(result, param):
+                    return getattr(result, param)
+            except Exception:
+                pass
+            return None
+        
+        for param in title_params:
+            value = get_value(result, param)
+            if value is not None:
+                # Format parameter name (capitalize)
+                param_name = param.replace('_', ' ').title()
+                
+                # Format value according to rules
+                if param in format_rules:
+                    if format_rules[param] == 'd':
+                        formatted_value = f"{value:d}"
+                    else:
+                        formatted_value = f"{value:{format_rules[param]}}"
+                else:
+                    # Default formatting
+                    if isinstance(value, float):
+                        if abs(value) >= 1000 or abs(value) < 0.001:
+                            formatted_value = f"{value:.2e}"
+                        else:
+                            formatted_value = f"{value:.3f}"
+                    else:
+                        formatted_value = str(value)
+                
+                title_parts.append(f"{param_name} = {formatted_value}")
+        
+        return ", ".join(title_parts)
 
     def _format_result_label(self, result: Any, varying_params: Optional[List[str]] = None) -> str:
         """

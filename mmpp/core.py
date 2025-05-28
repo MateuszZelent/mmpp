@@ -84,6 +84,11 @@ class ZarrJobResult:
             )
         return MMPPlotter([self], self._mmpp_ref)
 
+    @property
+    def matplotlib(self) -> "MMPPlotter":
+        """Get matplotlib plotter for this single result (alias for mpl)."""
+        return self.mpl
+
     def __getattr__(self, name: str) -> Any:
         """Allow accessing attributes as object properties."""
         if name in self.attributes:
