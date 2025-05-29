@@ -82,12 +82,9 @@ except ImportError:
     IPYTHON_AVAILABLE = False
 
 # Import plotting functionality
-try:
-    from .plotting import MMPPlotter, PlotterProxy
+PLOTTING_AVAILABLE=True
+from .plotting import MMPPlotter, PlotterProxy
 
-    PLOTTING_AVAILABLE = True
-except ImportError:
-    PLOTTING_AVAILABLE = False
 
 # Import FFT functionality
 try:
@@ -346,7 +343,7 @@ class ZarrJobResult:
         dataset = self.get_raw(dset)
         return np.asarray(dataset[slices])
 
-    def get_raw_f32(self, dset: str, slices: ArraySlice = slice(None)) -> npf32:
+    def get_raw_f32(self, dset: str, slices: ArraySlice = slice(None)) -> np.ndarray:
         """
         Get raw data as float32 array from dataset with special characters.
         
@@ -526,15 +523,6 @@ class ZarrJobResult:
 
     @property
     def mpl(self) -> "MMPPlotter":
-        """Get matplotlib plotter for this single result."""
-        if not PLOTTING_AVAILABLE:
-            raise ImportError(
-                "Plotting functionality not available. Check plotting.py import."
-            )
-        if self._mmpp_ref is None:
-            raise ValueError(
-                "MMPP reference not set. Use results from MMPP.find() method."
-            )
         return MMPPlotter([self], self._mmpp_ref)
 
     @property

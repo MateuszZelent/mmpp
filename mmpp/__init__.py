@@ -11,32 +11,32 @@ __email__ = "mateusz.zelent@amu.edu.pl"
 
 # Import main classes with error handling for missing dependencies
 try:
-    from .core import MMPPAnalyzer, SimulationResult, MMPPConfig
+    from .core import MMPP, ScanResult, ZarrJobResult
 
     _CORE_AVAILABLE = True
 except ImportError:
     _CORE_AVAILABLE = False
 
     # Create dummy classes for graceful degradation
-    class MMPPAnalyzer:
+    class MMPP:
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
-    class SimulationResult:
+    class ScanResult:
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
-    class MMPPConfig:
+    class ZarrJobResult:
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Core dependencies not available. Install with: pip install mmpp2[dev]"
             )
 
-
+# Try to import plotting classes
 try:
     from .plotting import MMPPlotter, PlotConfig, PlotterProxy, fonts
 
@@ -105,21 +105,6 @@ except ImportError:
             )
 
 
-# Import the main MMPP class for the open function
-try:
-    from .core import MMPP
-
-    _MMPP_AVAILABLE = True
-except ImportError:
-    _MMPP_AVAILABLE = False
-
-    class MMPP:
-        def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Core dependencies not available. Install with: pip install mmpp2[dev]"
-            )
-
-
 def open(base_path: str, **kwargs):
     """
     Open and initialize an MMPP instance for the given directory path.
@@ -154,7 +139,7 @@ def open(base_path: str, **kwargs):
     >>> results.matplotlib.plot("time", "my")  # Current API
     >>> results.mpl.plot("time", "my")  # Short alias
     """
-    if not _MMPP_AVAILABLE:
+    if not _CORE_AVAILABLE:
         raise ImportError(
             "Core MMPP functionality not available. Install with: pip install mmpp2[dev]"
         )
@@ -177,14 +162,13 @@ def open(base_path: str, **kwargs):
 
 # Make main classes available at package level
 __all__ = [
-    "MMPPAnalyzer",
-    "SimulationResult", 
-    "MMPPConfig",
+    "MMPP",
+    "ScanResult", 
+    "ZarrJobResult",
     "MMPPlotter",
     "PlotConfig",
     "PlotterProxy",
     "SimulationManager",
-    "MMPP",
     "open",
     "fonts",  # Font management
 ]
@@ -194,5 +178,5 @@ __features__ = {
     "core": _CORE_AVAILABLE,
     "plotting": _PLOTTING_AVAILABLE,
     "simulation": _SIMULATION_AVAILABLE,
-    "mmpp": _MMPP_AVAILABLE,
+    "mmpp": _CORE_AVAILABLE,
 }

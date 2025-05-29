@@ -1,8 +1,14 @@
-from typing import Optional, Dict, List, Union, Any, Tuple, Iterator
+from typing import Optional, Dict, List, Union, Any, Tuple, Iterator, TYPE_CHECKING
 import os
 import numpy as np
 from dataclasses import dataclass
 import platform
+import colorsys
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+else:
+    Axes = Any
 
 # Import for plotting
 try:
@@ -39,6 +45,12 @@ except ImportError:
 
 from pyzfn import Pyzfn
 
+# Import type aliases from core
+try:
+    from .core import np3d
+except ImportError:
+    np3d = np.ndarray
+
 
 @dataclass
 class PlotConfig:
@@ -65,6 +77,101 @@ class PlotConfig:
         """Initialize default colors."""
         if self.colors is None:
             self.colors = {"text": "#808080", "axes": "#808080", "grid": "#cccccc"}
+
+
+class FontManager:
+    """Font management utilities for plotting."""
+    
+    @staticmethod
+    def get_available_fonts() -> List[str]:
+        """Get list of available fonts on the system."""
+        if not MATPLOTLIB_AVAILABLE:
+            return []
+        
+        try:
+            # Get fonts from matplotlib font manager
+            font_list = font_manager.findSystemFonts(fontpaths=None, fontext='ttf')
+            font_names = []
+            for font_path in font_list:
+                try:
+                    font_prop = font_manager.FontProperties(fname=font_path)
+                    font_names.append(font_prop.get_name())
+                except Exception:
+                    continue
+            return sorted(list(set(font_names)))
+        except Exception:
+            return []
+    
+    @staticmethod
+    def setup_custom_fonts(verbose: bool = True) -> bool:
+        """Setup custom fonts from the fonts directory."""
+        if not MATPLOTLIB_AVAILABLE:
+            return False
+        
+        try:
+            # Get the fonts directory path
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            fonts_dir = os.path.join(current_dir, "fonts")
+            
+            if not os.path.exists(fonts_dir):
+                if verbose:
+                    print(f"Fonts directory not found: {fonts_dir}")
+                return False
+            
+            # Add custom fonts
+            font_files = []
+            for root, dirs, files in os.walk(fonts_dir):
+                for file in files:
+                    if file.endswith(('.ttf', '.otf')):
+                        font_path = os.path.join(root, file)
+                        font_files.append(font_path)
+                        font_manager.fontManager.addfont(font_path)
+            
+            if verbose and font_files:
+                print(f"Loaded {len(font_files)} custom fonts from {fonts_dir}")
+            
+            return len(font_files) > 0
+            
+        except Exception as e:
+            if verbose:
+                print(f"Error setting up custom fonts: {e}")
+            return False
+
+
+class PlotterProxy:
+    """Proxy class to provide plotting functionality to search results."""
+    
+    def __init__(self, results: List[Any], mmpp_instance: Optional[Any] = None):
+        """
+        Initialize the plotter proxy.
+        
+        Parameters:
+        -----------
+        results : List[Any]
+            List of results to plot
+        mmpp_instance : Optional[Any]
+            Reference to MMPP instance
+        """
+        self.results = results
+        self.mmpp_instance = mmpp_instance
+    
+    def __getattr__(self, name: str) -> Any:
+        """Delegate attribute access to MMPPlotter."""
+        if not MATPLOTLIB_AVAILABLE:
+            raise ImportError(
+                "Plotting functionality not available. Install matplotlib to use plotting features."
+            )
+        
+        # Create MMPPlotter instance and delegate
+        plotter = MMPPlotter(self.results, self.mmpp_instance)
+        return getattr(plotter, name)
+    
+    def __repr__(self) -> str:
+        """String representation of the proxy."""
+        if MATPLOTLIB_AVAILABLE:
+            return f"PlotterProxy({len(self.results)} results)"
+        else:
+            return "PlotterProxy(plotting not available - install matplotlib)"
 
 
 # Global font and style setup cache
@@ -1321,406 +1428,238 @@ MMPP Plotter:
         
         return ", ".join(label_parts) if label_parts else "Dataset"
 
-class FontManager:
+    def snapshot(
+        self,
+        dset: str = "m",
+        z: int = 0,
+        t: int = -1,
+        ax: Optional[Axes] = None,
+        repeat: int = 1,
+        zero: Optional[bool] = None,
+    ) -> Axes:
+        """
+        Create a snapshot visualization of magnetization data.
+        
+        Parameters:
+        -----------
+        dset : str, default "m"
+            Dataset name to visualize
+        z : int, default 0
+            Z-slice to display
+        t : int, default -1
+            Time step to display (-1 for last)
+        ax : Optional[Axes], default None
+            Matplotlib axes to plot on (creates new if None)
+        repeat : int, default 1
+            Number of times to tile the image
+        zero : Optional[bool], default None
+            Reference time step to subtract (for difference plots)
+            
+        Returns:
+        --------
+        Axes
+            Matplotlib axes object with the plot
+        """
+        if not self.results:
+            raise ValueError("No results available for plotting")
+        
+        # Use the first result for now
+        result = self.results[0]
+        
+        # Get the magnetization data
+        arr = result.get_np3d(dset, (t, z, slice(None), slice(None), slice(None)))
+        if ax is None:
+            shape_ratio = arr.shape[1] / arr.shape[0]
+            _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
+        if zero is not None:
+            arr -= result.get_np3d(dset, (zero, z, slice(None), slice(None), slice(None)))
+        
+        arr = np.tile(arr, (repeat, repeat, 1))
+        u = arr[:, :, 0]
+        v = arr[:, :, 1]
+        w = arr[:, :, 2]
+
+        alphas = -np.abs(w) + 1
+        hsl = np.ones((u.shape[0], u.shape[1], 3), dtype=np.float32)
+        hsl[:, :, 0] = np.angle(u + 1j * v) / np.pi / 2  # normalization
+        hsl[:, :, 1] = np.sqrt(u**2 + v**2 + w**2)
+        hsl[:, :, 2] = (w + 1) / 2
+        rgb = hsl2rgb(hsl)
+        
+        stepx = max(int(u.shape[1] / 20), 1)
+        stepy = max(int(u.shape[0] / 20), 1)
+        scale = 1 / max(stepx, stepy)
+        x, y = np.meshgrid(
+            np.arange(0, u.shape[1], stepx) * float(result.z.attrs["dx"]) * 1e9,
+            np.arange(0, u.shape[0], stepy) * float(result.z.attrs["dy"]) * 1e9,
+        )
+        
+        antidots = np.ma.masked_not_equal(result[dset][0, 0, :, :, 2], 0)
+        antidots = np.tile(antidots, (repeat, repeat))
+        
+        ax.quiver(
+            x,
+            y,
+            u[::stepy, ::stepx],
+            v[::stepy, ::stepx],
+            alpha=alphas[::stepy, ::stepx],
+            angles="xy",
+            scale_units="xy",
+            scale=scale,
+        )
+        
+        ax.imshow(
+            rgb,
+            interpolation="None",
+            origin="lower",
+            aspect="equal",
+            cmap="hsv",
+            vmin=-np.pi,
+            vmax=np.pi,
+            extent=(
+                0,
+                rgb.shape[1] * float(result.z.attrs["dx"]) * 1e9,
+                0,
+                rgb.shape[0] * float(result.z.attrs["dy"]) * 1e9,
+            ),
+        )
+        
+        ax.set(title=result.name, xlabel="x (nm)", ylabel="y (nm)")
+        
+        # if not isinstance(ax, Axes):
+        #     raise ValueError("ax must be a matplotlib Axes object")
+        
+        return ax
+
+
+def hsl2rgb(hsl: np.ndarray) -> np.ndarray:
     """
-    Comprehensive font management system for mmpp library.
+    Convert HSL color space to RGB.
     
-    Provides methods to discover, manage, and configure fonts across different platforms.
+    Parameters:
+    -----------
+    hsl : np.ndarray
+        HSL color array with shape (..., 3)
+        
+    Returns:
+    --------
+    np.ndarray
+        RGB color array with same shape
     """
+    h = hsl[..., 0] * 360
+    s = hsl[..., 1]
+    l = hsl[..., 2]  # noqa: E741
+
+    rgb = np.zeros_like(hsl)
+    for i, n in enumerate([0, 8, 4]):
+        k = (n + h / 30) % 12
+        a = s * np.minimum(l, 1 - l)
+        k = np.minimum(k - 3, 9 - k)
+        k = np.clip(k, -1, 1)
+        rgb[..., i] = l - a * k
+    rgb = np.clip(rgb, 0, 1)
+    return rgb
+
+
+def rgb2hsl(rgb: np.ndarray) -> np.ndarray:
+    """
+    Convert RGB color space to HSL.
     
-    def __init__(self):
-        self._custom_paths: List[str] = []
-        self._default_font: Optional[str] = None
-        self._font_cache: Dict[str, List[str]] = {}
-        self._initialize_system_paths()
-    
-    def _initialize_system_paths(self) -> None:
-        """Initialize system font paths based on the operating system."""
-        self._system_paths = []
+    Parameters:
+    -----------
+    rgb : np.ndarray
+        RGB color array with shape (..., 3)
         
-        system = platform.system().lower()
-        
-        if system == "windows":
-            # Windows font paths
-            windows_fonts = [
-                "C:/Windows/Fonts",
-                os.path.expanduser("~/AppData/Local/Microsoft/Windows/Fonts"),
-                os.path.expanduser("~/AppData/Roaming/Microsoft/Windows/Fonts")
-            ]
-            self._system_paths.extend([p for p in windows_fonts if os.path.exists(p)])
-            
-        elif system == "darwin":  # macOS
-            macos_fonts = [
-                "/System/Library/Fonts",
-                "/Library/Fonts",
-                os.path.expanduser("~/Library/Fonts"),
-                "/System/Library/Fonts/Supplemental"
-            ]
-            self._system_paths.extend([p for p in macos_fonts if os.path.exists(p)])
-            
-        else:  # Linux and other Unix-like systems
-            linux_fonts = [
-                "/usr/share/fonts",
-                "/usr/local/share/fonts",
-                os.path.expanduser("~/.local/share/fonts"),
-                os.path.expanduser("~/.fonts"),
-                "/usr/share/fonts/TTF",
-                "/usr/share/fonts/truetype"
-            ]
-            self._system_paths.extend([p for p in linux_fonts if os.path.exists(p)])
-        
-        # Add mmpp package fonts
-        package_dir = os.path.dirname(os.path.abspath(__file__))
-        mmpp_fonts_path = os.path.join(package_dir, "fonts")
-        if os.path.exists(mmpp_fonts_path):
-            self._system_paths.append(mmpp_fonts_path)
-    
-    @property
-    def available(self) -> List[str]:
-        """
-        Get list of all available font families.
-        
-        Returns:
-            List of font family names available on the system
-        """
-        if not MATPLOTLIB_AVAILABLE:
-            return []
-        
-        # Get fonts from matplotlib font manager
-        font_families = set()
-        
-        # Add system fonts detected by matplotlib
-        for font in font_manager.fontManager.ttflist:
-            font_families.add(font.name)
-        
-        # Add fonts from custom paths
-        for path in self.paths:
-            for font_file in self._scan_font_directory(path):
-                try:
-                    font_prop = font_manager.FontProperties(fname=font_file)
-                    font_families.add(font_prop.get_name())
-                except Exception:
-                    continue
-        
-        return sorted(list(font_families))
-    
-    @property
-    def paths(self) -> List[str]:
-        """
-        Get list of all font search paths.
-        
-        Returns:
-            List of absolute paths where fonts are searched
-        """
-        all_paths = self._system_paths.copy()
-        all_paths.extend(self._custom_paths)
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_paths = []
-        for path in all_paths:
-            abs_path = os.path.abspath(path)
-            if abs_path not in seen:
-                seen.add(abs_path)
-                unique_paths.append(abs_path)
-        return unique_paths
-    
-    @property
-    def default_font(self) -> Optional[str]:
-        """
-        Get the current default font family.
-        
-        Returns:
-            Name of the default font family, or None if not set
-        """
-        return self._default_font
-    
-    def add_path(self, font_path: str) -> bool:
-        """
-        Add a custom font directory to the search paths.
-        
-        Args:
-            font_path: Absolute or relative path to font directory
-            
-        Returns:
-            True if path was added successfully, False otherwise
-        """
-        abs_path = os.path.abspath(font_path)
-        
-        if not os.path.exists(abs_path):
-            print(f"Warning: Font path does not exist: {abs_path}")
-            return False
-        
-        if not os.path.isdir(abs_path):
-            print(f"Warning: Font path is not a directory: {abs_path}")
-            return False
-        
-        if abs_path not in self._custom_paths:
-            self._custom_paths.append(abs_path)
-            self._font_cache.clear()  # Clear cache to force refresh
-            
-            # Refresh matplotlib font cache if available
-            if MATPLOTLIB_AVAILABLE:
-                font_manager.fontManager.addfont(abs_path)
-                
-            return True
-        
+    Returns:
+    --------
+    np.ndarray
+        HSL color array with same shape
+    """
+    hsl = np.ones_like(rgb)
+    for i in range(rgb.shape[0]):
+        for j in range(rgb.shape[1]):
+            r, g, b = rgb[i, j]
+            h, l, s = colorsys.rgb_to_hls(r, g, b)  # noqa: E741
+            hsl[i, j, 0] = h
+            hsl[i, j, 1] = s
+            hsl[i, j, 2] = l
+    return hsl
+
+
+def load_paper_style(verbose: bool = True) -> bool:
+    """Load paper-ready plotting style."""
+    if not MATPLOTLIB_AVAILABLE:
         return False
     
-    def set_default_font(self, font_family: str) -> bool:
-        """
-        Set the default font family for mmpp plots.
+    try:
+        # Get the style file path
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        style_file = os.path.join(current_dir, "paper.mplstyle")
         
-        Args:
-            font_family: Name of the font family to set as default
-            
-        Returns:
-            True if font was set successfully, False if font not found
-        """
-        available_fonts = self.available
-        
-        # Check if font is available
-        if font_family not in available_fonts:
-            # Try case-insensitive match
-            font_lower = font_family.lower()
-            matches = [f for f in available_fonts if f.lower() == font_lower]
-            
-            if matches:
-                font_family = matches[0]
-            else:
-                print(f"Warning: Font '{font_family}' not found in available fonts")
-                print(f"Available fonts: {', '.join(available_fonts[:10])}...")
-                return False
-        
-        self._default_font = font_family
-        
-        # Set as matplotlib default if available
-        if MATPLOTLIB_AVAILABLE:
-            plt.rcParams['font.family'] = font_family
-            
-        return True
-    
-    def find_font(self, font_name: str) -> Optional[str]:
-        """
-        Find the full path to a specific font file.
-        
-        Args:
-            font_name: Name of the font to find (with or without extension)
-            
-        Returns:
-            Full path to the font file, or None if not found
-        """
-        # If it's already a filename with extension, search for it directly
-        if font_name.endswith(('.ttf', '.otf', '.woff', '.woff2', '.TTF', '.OTF')):
-            for path in self.paths:
-                # First try direct path
-                font_path = os.path.join(path, font_name)
-                if os.path.exists(font_path):
-                    return os.path.abspath(font_path)
-                
-                # Then search recursively in subdirectories
-                for root, dirs, files in os.walk(path):
-                    if font_name in files:
-                        return os.path.abspath(os.path.join(root, font_name))
-        
-        # If no extension, try common extensions
-        for ext in ['.ttf', '.otf', '.TTF', '.OTF', '.woff', '.woff2']:
-            result = self.find_font(font_name + ext)
-            if result:
-                return result
-        
-        # Also try to find by font family name using matplotlib
-        if MATPLOTLIB_AVAILABLE:
-            try:
-                # Search through all font files to find matching family name
-                for path in self.paths:
-                    for font_file in self._scan_font_directory(path):
-                        try:
-                            font_prop = font_manager.FontProperties(fname=font_file)
-                            if font_prop.get_name().lower() == font_name.lower():
-                                return font_file
-                        except Exception:
-                            continue
-            except Exception:
-                pass
-        
-        return None
-    
-    def refresh(self) -> None:
-        """
-        Refresh the font cache and reload font information.
-        """
-        self._font_cache.clear()
-        
-        if MATPLOTLIB_AVAILABLE:
-            # Rebuild matplotlib font cache
-            font_manager.fontManager = font_manager.FontManager()
-            
-            # Re-add custom paths
-            for path in self._custom_paths:
-                font_manager.fontManager.addfont(path)
-    
-    def _scan_font_directory(self, directory: str) -> List[str]:
-        """
-        Scan a directory for font files.
-        
-        Args:
-            directory: Path to directory to scan
-            
-        Returns:
-            List of full paths to font files found
-        """
-        if directory in self._font_cache:
-            return self._font_cache[directory]
-        
-        font_extensions = {'.ttf', '.otf', '.TTF', '.OTF', '.woff', '.woff2'}
-        font_files = []
-        
-        try:
-            for root, dirs, files in os.walk(directory):
-                for file in files:
-                    if any(file.endswith(ext) for ext in font_extensions):
-                        font_files.append(os.path.join(root, file))
-        except (OSError, PermissionError):
-            pass
-        
-        self._font_cache[directory] = font_files
-        return font_files
-    
-    def show_font_structure(self, max_depth: int = 3) -> None:
-        """
-        Display the font directory structure for debugging.
-        
-        Args:
-            max_depth: Maximum depth to traverse (default: 3)
-        """
-        print("Font Directory Structure:")
-        print("=" * 50)
-        
-        for i, path in enumerate(self.paths):
-            print(f"\n{i+1}. {path}")
-            if not os.path.exists(path):
-                print("   [PATH DOES NOT EXIST]")
-                continue
-                
-            try:
-                font_count = 0
-                for root, dirs, files in os.walk(path):
-                    # Calculate current depth
-                    depth = root.replace(path, '').count(os.sep)
-                    if depth > max_depth:
-                        continue
-                    
-                    # Show directory structure
-                    indent = "   " + "  " * depth
-                    folder_name = os.path.basename(root) if root != path else "[ROOT]"
-                    
-                    # Count font files in this directory
-                    font_files = [f for f in files if any(f.lower().endswith(ext) for ext in ['.ttf', '.otf', '.woff', '.woff2'])]
-                    
-                    if font_files:
-                        print(f"{indent}📁 {folder_name}/ ({len(font_files)} fonts)")
-                        if depth < 2:  # Show font names for shallow directories
-                            for font_file in font_files[:5]:  # Show max 5 fonts
-                                print(f"{indent}  └─ {font_file}")
-                            if len(font_files) > 5:
-                                print(f"{indent}  └─ ... and {len(font_files) - 5} more")
-                        font_count += len(font_files)
-                    elif depth <= 1:  # Show empty directories at shallow levels
-                        print(f"{indent}📂 {folder_name}/")
-                
-                print(f"   Total fonts found: {font_count}")
-                
-            except (OSError, PermissionError) as e:
-                print(f"   [ERROR: {e}]")
-    
-    def __repr__(self) -> str:
-        """String representation showing available fonts."""
-        available = self.available
-        count = len(available)
-        
-        if count == 0:
-            return "FontManager(no fonts found)"
-        
-        preview = available[:5]
-        if count > 5:
-            preview_str = ", ".join(preview) + f", ... ({count - 5} more)"
+        if os.path.exists(style_file):
+            plt.style.use(style_file)
+            if verbose:
+                print(f"Loaded paper style from: {style_file}")
+            return True
         else:
-            preview_str = ", ".join(preview)
-        
-        return f"FontManager({count} fonts: {preview_str})"
+            if verbose:
+                print(f"Paper style file not found: {style_file}")
+            return False
+            
+    except Exception as e:
+        if verbose:
+            print(f"Error loading paper style: {e}")
+        return False
+
+
+def setup_custom_fonts(verbose: bool = True) -> bool:
+    """Setup custom fonts - convenience function."""
+    return FontManager.setup_custom_fonts(verbose)
+
+
+def apply_custom_colors(colors: Dict[str, str]) -> None:
+    """Apply custom color scheme to matplotlib."""
+    if not MATPLOTLIB_AVAILABLE:
+        return
     
-    def __str__(self) -> str:
-        """User-friendly string representation."""
-        return self.__repr__()
-
-    def show_setup_info(self) -> None:
-        """
-        Display detailed font setup information with verbose output.
+    try:
+        # Apply text colors
+        if "text" in colors:
+            plt.rcParams["text.color"] = colors["text"]
+            plt.rcParams["axes.labelcolor"] = colors["text"]
+            plt.rcParams["xtick.color"] = colors["text"]
+            plt.rcParams["ytick.color"] = colors["text"]
         
-        This method shows the same information that would be displayed
-        during initial font setup with verbose=True.
-        """
-        print("Font Setup Information:")
-        print("=" * 50)
+        # Apply axes colors
+        if "axes" in colors:
+            plt.rcParams["axes.edgecolor"] = colors["axes"]
+            plt.rcParams["axes.spines.left"] = True
+            plt.rcParams["axes.spines.bottom"] = True
+            plt.rcParams["axes.spines.top"] = False
+            plt.rcParams["axes.spines.right"] = False
         
-        # Force verbose font setup
-        global _FONTS_INITIALIZED, _STYLE_INITIALIZED
-        
-        # Temporarily reset initialization flags to show verbose output
-        original_fonts = _FONTS_INITIALIZED
-        original_style = _STYLE_INITIALIZED
-        
-        _FONTS_INITIALIZED = False
-        _STYLE_INITIALIZED = False
-        
-        try:
-            print("\n1. Font Loading:")
-            font_result = setup_custom_fonts(verbose=True)
-            print(f"   Result: {'✓ Success' if font_result else '✗ Failed'}")
+        # Apply grid colors
+        if "grid" in colors:
+            plt.rcParams["grid.color"] = colors["grid"]
             
-            print("\n2. Style Loading:")
-            style_result = load_paper_style(verbose=True)
-            print(f"   Result: {'✓ Success' if style_result else '✗ Failed'}")
-            
-            print(f"\n3. Available Fonts: {len(self.available)} fonts detected")
-            print(f"4. Font Paths: {len(self.paths)} paths configured")
-            
-        finally:
-            # Restore original state
-            _FONTS_INITIALIZED = original_fonts
-            _STYLE_INITIALIZED = original_style
+    except Exception:
+        pass
 
 
-# Create global font manager instance
-fonts = FontManager()
+# Convenience object for font operations
+class FontUtils:
+    """Utility object for font management."""
+    
+    @staticmethod
+    def get_available() -> List[str]:
+        """Get available fonts."""
+        return FontManager.get_available_fonts()
+    
+    @staticmethod
+    def setup_custom(verbose: bool = True) -> bool:
+        """Setup custom fonts."""
+        return FontManager.setup_custom_fonts(verbose)
 
-class PlotterProxy:
-    """Proxy class to provide plotting functionality to search results."""
 
-    def __init__(
-        self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None
-    ) -> None:
-        self._results = results
-        self._mmpp = mmpp_instance
-        self._plotter: Optional[MMPPlotter] = None
-
-    @property
-    def matplotlib(self) -> MMPPlotter:
-        """Get the matplotlib plotter instance."""
-        if self._plotter is None:
-            self._plotter = MMPPlotter(self._results, self._mmpp)
-        return self._plotter
-
-    @property
-    def mpl(self) -> MMPPlotter:
-        """Get the matplotlib plotter instance (alias for matplotlib)."""
-        return self.matplotlib
-
-    def __len__(self) -> int:
-        return len(self._results)
-
-    def __getitem__(self, index: int) -> Any:
-        return self._results[index]
-
-    def __iter__(self) -> Iterator[Any]:
-        return iter(self._results)
+# Create a fonts instance for backward compatibility
+fonts = FontUtils()
