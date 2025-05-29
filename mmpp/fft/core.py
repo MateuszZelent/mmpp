@@ -279,6 +279,9 @@ class FFT:
                       z_layer: int = -1,
                       log_scale: bool = True,
                       normalize: bool = False,
+                      save: bool = True,
+                      force: bool = False,
+                      save_dataset_name: Optional[str] = None,
                       **kwargs) -> Tuple[Any, Any]:
         """
         Plot power spectrum.
@@ -295,6 +298,12 @@ class FFT:
             Use logarithmic scale (default: True)
         normalize : bool, optional
             Normalize spectrum (default: False)
+        save : bool, optional
+            Save FFT result to zarr file (default: True)
+        force : bool, optional
+            Force recalculation and overwrite existing (default: False)
+        save_dataset_name : str, optional
+            Custom name for saved dataset (default: auto-generated)
         **kwargs : Any
             Additional plotting options
             
@@ -305,7 +314,9 @@ class FFT:
         """
         return self.plotter.power_spectrum(
             dataset_name=dset, method=method, z_layer=z_layer,
-            log_scale=log_scale, normalize=normalize, **kwargs
+            log_scale=log_scale, normalize=normalize, 
+            save=save, force=force, save_dataset_name=save_dataset_name,
+            **kwargs
         )
     
     def clear_cache(self):

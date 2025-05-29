@@ -103,10 +103,22 @@ class FFTComputeResult:
         
         # Create dataset group
         fft_group = z.create_group(dataset_name) if dataset_name not in z["fft"] else z["fft"][dataset_name]
+        print("DUPA")
+        # Determine chunking strategy based on data shape and type
+        # Only chunk the last components (magnetization x, y, z)
+        spectrum_chunks = None
+        freq_chunks = None
+        if self.spectrum.ndim > 1:
+            # For multidimensional data, chunk only the last dimension (components)
+            chunk_shape = list(self.spectrum.shape)
+            chunk_shape[-1] = min(chunk_shape[-1], 3)  # Chunk magnetization components
+            spectrum_chunks = tuple(chunk_shape)
         
-        # Save spectrum data
-        fft_group.create_dataset("spectrum", data=self.spectrum, chunks=False, overwrite=force)
-        fft_group.create_dataset("frequencies", data=self.frequencies, chunks=False, overwrite=force)
+        # Save spectrum data with appropriate chunking
+        fft_group.create_dataset("spectrum", data=self.spectrum, 
+                                chunks=spectrum_chunks, overwrite=force)
+        fft_group.create_dataset("frequencies", data=self.frequencies, 
+                                chunks=freq_chunks, overwrite=force)
         
         # Save metadata as attributes
         for key, value in self.metadata.items():
@@ -563,6 +575,51 @@ class FFTCompute:
             print(f"Warning: Could not load existing FFT data: {e}")
             return None
     
+    def _verify_fft_parameters(self, existing_result: FFTComputeResult, 
+                               **kwargs) -> bool:
+        """
+        Verify if FFT parameters match existing result.
+        
+        Parameters:
+        -----------
+        existing_result : FFTComputeResult
+            Existing FFT result to compare against
+        **kwargs : Any
+            FFT parameters to verify
+            
+        Returns:
+        --------
+        bool
+            True if parameters match, False otherwise
+        """
+        # Extract parameters from kwargs with defaults
+        window = kwargs.get('window', self.config.window_function)
+        filter_type = kwargs.get('filter_type', self.config.filter_type)
+        engine = kwargs.get('engine', self.config.fft_engine)
+        zero_padding = kwargs.get('zero_padding', self.config.zero_padding)
+        nfft = kwargs.get('nfft', self.config.nfft)
+        
+        # Compare with existing config
+        config_match = (
+            existing_result.config.window_function == window and
+            existing_result.config.filter_type == filter_type and
+            existing_result.config.fft_engine == engine and
+            existing_result.config.zero_padding == zero_padding and
+            existing_result.config.nfft == nfft
+        )
+        
+        # Compare metadata that affects FFT calculation
+        # (add other relevant metadata fields as needed)
+        metadata_keys_to_check = ['z_layer', 'source_dataset']
+        metadata_match = True
+        for key in metadata_keys_to_check:
+            if key in kwargs and key in existing_result.metadata:
+                if kwargs[key] != existing_result.metadata[key]:
+                    metadata_match = False
+                    break
+        
+        return config_match and metadata_match
+    
     def calculate_fft_data(self, zarr_path: str, dataset: str, z_layer: int = -1, 
                           method: int = 1, save: bool = False, force: bool = False, 
                           save_dataset_name: Optional[str] = None, **kwargs) -> FFTComputeResult:
@@ -601,8 +658,14 @@ class FFTCompute:
         if not force:
             existing_result = self.load_existing_fft_data(zarr_path, save_dataset_name)
             if existing_result is not None:
-                print(f"Loaded existing FFT data for {save_dataset_name}")
-                return existing_result
+                # Verify that parameters match
+                if self._verify_fft_parameters(existing_result, z_layer=z_layer, 
+                                               source_dataset=dataset, **kwargs):
+                    print(f"Loaded existing FFT data for {save_dataset_name} (parameters verified)")
+                    return existing_result
+                else:
+                    print(f"Existing FFT data found but parameters don't match, recalculating...")
+                    force = True  # Force recalculation if parameters don't match
         
         # Load data
         data, dt = self.load_data_from_zarr(zarr_path, dataset, z_layer)

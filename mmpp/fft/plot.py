@@ -67,6 +67,9 @@ class FFTPlotter:
                       z_layer: int = -1,
                       log_scale: bool = True,
                       normalize: bool = False,
+                      save: bool = True,
+                      force: bool = False,
+                      save_dataset_name: Optional[str] = None,
                       figsize: Optional[Tuple[float, float]] = None,
                       save_path: Optional[str] = None,
                       **kwargs) -> Tuple[Any, Any]:
@@ -85,6 +88,12 @@ class FFTPlotter:
             Use logarithmic scale for power (default: True)
         normalize : bool, optional
             Normalize power spectra (default: False)
+        save : bool, optional
+            Save FFT result to zarr file (default: True)
+        force : bool, optional
+            Force recalculation and overwrite existing (default: False)
+        save_dataset_name : str, optional
+            Custom name for saved dataset (default: auto-generated)
         figsize : tuple, optional
             Figure size
         save_path : str, optional
@@ -108,7 +117,9 @@ class FFTPlotter:
         for i, result in enumerate(self.results):
             try:
                 fft_result = self.fft_compute.calculate_fft_data(
-                    result.path, dataset_name, z_layer, method, **kwargs
+                    result.path, dataset_name, z_layer, method, 
+                    save=save, force=force, save_dataset_name=save_dataset_name,
+                    **kwargs
                 )
                 
                 power = np.abs(fft_result.spectrum)**2
