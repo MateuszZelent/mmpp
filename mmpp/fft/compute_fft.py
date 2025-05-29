@@ -97,22 +97,38 @@ class FFTComputeResult:
         if force and fft_path in z:
             del z[fft_path]
         
-        # Create group if it doesn't exist
+        # Create fft group if it doesn't exist
         if "fft" not in z:
-            z.create_group("fft")
+            fft_main_group = z.create_group("fft")
+        else:
+            fft_main_group = z["fft"]
         
-        # Create dataset group
-        fft_group = z.create_group(dataset_name) if dataset_name not in z["fft"] else z["fft"][dataset_name]
-        print("DUPA")
-        # Determine chunking strategy based on data shape and type
-        # Only chunk the last components (magnetization x, y, z)
+        # Create dataset group within fft/
+        if dataset_name not in fft_main_group:
+            fft_group = fft_main_group.create_group(dataset_name)
+            print(f"Created new FFT dataset group: fft/{dataset_name}")
+        else:
+            fft_group = fft_main_group[dataset_name]
+            if not force:
+                print(f"FFT dataset fft/{dataset_name} already exists. Use force=True to overwrite.")
+                return
+            print(f"Overwriting existing FFT dataset: fft/{dataset_name}")
+        
+        # Determine chunking strategy for magnetization components only
+        # Chunk only the last dimension (x, y, z components) with maximum 3 chunks
         spectrum_chunks = None
         freq_chunks = None
-        if self.spectrum.ndim > 1:
-            # For multidimensional data, chunk only the last dimension (components)
+        if self.spectrum.ndim > 1 and self.spectrum.shape[-1] <= 3:
+            # For spectrum data with components, chunk each component separately
             chunk_shape = list(self.spectrum.shape)
-            chunk_shape[-1] = min(chunk_shape[-1], 3)  # Chunk magnetization components
+            chunk_shape[-1] = 1  # One component per chunk
             spectrum_chunks = tuple(chunk_shape)
+        elif self.spectrum.ndim == 2:
+            # For 2D data (freq, components), chunk by components
+            spectrum_chunks = (self.spectrum.shape[0], 1)
+        
+        # For frequencies, no chunking needed (1D array)
+        freq_chunks = None
         
         # Save spectrum data with appropriate chunking
         fft_group.create_dataset("spectrum", data=self.spectrum, 
@@ -656,24 +672,33 @@ class FFTCompute:
         
         # Try to load existing data if not forcing recalculation
         if not force:
+            print(f"Checking for existing FFT data: fft/{save_dataset_name}")
             existing_result = self.load_existing_fft_data(zarr_path, save_dataset_name)
             if existing_result is not None:
                 # Verify that parameters match
                 if self._verify_fft_parameters(existing_result, z_layer=z_layer, 
                                                source_dataset=dataset, **kwargs):
-                    print(f"Loaded existing FFT data for {save_dataset_name} (parameters verified)")
+                    print(f"✓ Loaded existing FFT data for {save_dataset_name} (parameters verified)")
                     return existing_result
                 else:
-                    print(f"Existing FFT data found but parameters don't match, recalculating...")
+                    print(f"⚠ Existing FFT data found but parameters don't match, recalculating...")
                     force = True  # Force recalculation if parameters don't match
+            else:
+                print(f"No existing FFT data found, calculating new FFT...")
+        else:
+            print(f"Force recalculation enabled, computing new FFT...")
         
         # Load data
+        print(f"Loading data from {dataset} (z_layer={z_layer})...")
         data, dt = self.load_data_from_zarr(zarr_path, dataset, z_layer)
+        print(f"Data shape: {data.shape}, dt: {dt}")
         
         # Extract configuration from kwargs
         window = kwargs.get('window', self.config.window_function)
         filter_type = kwargs.get('filter_type', self.config.filter_type)
         engine = kwargs.get('engine', self.config.fft_engine)
+        
+        print(f"Computing FFT with method {method} (window: {window}, filter: {filter_type}, engine: {engine})...")
         
         # Calculate FFT using specified method
         if method == 1:
@@ -682,6 +707,8 @@ class FFTCompute:
             result = self.calculate_fft_method2(data, dt, window, filter_type, engine)
         else:
             raise ValueError(f"Unsupported FFT method: {method}")
+        
+        print(f"✓ FFT calculation completed in {result.metadata.get('calculation_time', 0):.3f}s")
         
         # Add additional metadata
         result.metadata.update({
@@ -694,9 +721,12 @@ class FFTCompute:
         # Save to zarr if requested
         if save:
             try:
+                print(f"Saving FFT data to fft/{save_dataset_name}...")
                 result.save_to_zarr(zarr_path, save_dataset_name, force=force)
-                print(f"Saved FFT data to zarr: fft/{save_dataset_name}")
+                print(f"✓ Successfully saved FFT data to fft/{save_dataset_name}")
             except Exception as e:
-                print(f"Warning: Could not save FFT data: {e}")
+                print(f"❌ Warning: Could not save FFT data: {e}")
+        else:
+            print("FFT calculation completed (not saved)")
         
         return result
