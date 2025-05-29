@@ -70,6 +70,55 @@ class FFTComputeResult:
         """Get frequency with maximum power."""
         peak_idx = np.argmax(self.spectrum)
         return self.frequencies[peak_idx]
+    
+    def save_to_zarr(self, zarr_path: str, dataset_name: str = "fft", force: bool = False) -> None:
+        """
+        Save FFT result to zarr file.
+        
+        Parameters:
+        -----------
+        zarr_path : str
+            Path to zarr file
+        dataset_name : str, optional
+            Base dataset name (default: "fft")
+        force : bool, optional
+            Overwrite existing data (default: False)
+        """
+        import zarr
+        import shutil
+        
+        # Open zarr file
+        z = zarr.open(zarr_path, mode='a')
+        
+        # Create dataset path
+        fft_path = f"fft/{dataset_name}"
+        
+        # Remove existing if force=True
+        if force and fft_path in z:
+            del z[fft_path]
+        
+        # Create group if it doesn't exist
+        if "fft" not in z:
+            z.create_group("fft")
+        
+        # Create dataset group
+        fft_group = z.create_group(dataset_name) if dataset_name not in z["fft"] else z["fft"][dataset_name]
+        
+        # Save spectrum data
+        fft_group.create_dataset("spectrum", data=self.spectrum, chunks=False, overwrite=force)
+        fft_group.create_dataset("frequencies", data=self.frequencies, chunks=False, overwrite=force)
+        
+        # Save metadata as attributes
+        for key, value in self.metadata.items():
+            fft_group.attrs[key] = value
+        
+        # Save config as attributes
+        fft_group.attrs["window_function"] = self.config.window_function
+        fft_group.attrs["filter_type"] = self.config.filter_type
+        fft_group.attrs["fft_engine"] = self.config.fft_engine
+        fft_group.attrs["zero_padding"] = self.config.zero_padding
+        if self.config.nfft is not None:
+            fft_group.attrs["nfft"] = self.config.nfft
 
 
 class FFTCompute:
@@ -460,3 +509,131 @@ class FFTCompute:
                 'pyfftw': PYFFTW_AVAILABLE
             }
         }
+    
+    def load_existing_fft_data(self, zarr_path: str, dataset_name: str = "fft") -> Optional[FFTComputeResult]:
+        """
+        Load existing FFT data from zarr file.
+        
+        Parameters:
+        -----------
+        zarr_path : str
+            Path to zarr file
+        dataset_name : str, optional
+            Dataset name (default: "fft")
+            
+        Returns:
+        --------
+        Optional[FFTComputeResult]
+            Loaded FFT result or None if not found
+        """
+        try:
+            import zarr
+            z = zarr.open(zarr_path, mode='r')
+            
+            fft_path = f"fft/{dataset_name}"
+            if fft_path not in z:
+                return None
+            
+            fft_group = z[fft_path]
+            
+            # Load data
+            spectrum = np.array(fft_group["spectrum"])
+            frequencies = np.array(fft_group["frequencies"])
+            
+            # Load metadata
+            metadata = dict(fft_group.attrs)
+            
+            # Create config from attributes
+            config = FFTComputeConfig(
+                window_function=metadata.pop("window_function", "hann"),
+                filter_type=metadata.pop("filter_type", "remove_mean"),
+                fft_engine=metadata.pop("fft_engine", "auto"),
+                zero_padding=metadata.pop("zero_padding", True),
+                nfft=metadata.pop("nfft", None)
+            )
+            
+            return FFTComputeResult(
+                frequencies=frequencies,
+                spectrum=spectrum,
+                metadata=metadata,
+                config=config
+            )
+            
+        except Exception as e:
+            print(f"Warning: Could not load existing FFT data: {e}")
+            return None
+    
+    def calculate_fft_data(self, zarr_path: str, dataset: str, z_layer: int = -1, 
+                          method: int = 1, save: bool = False, force: bool = False, 
+                          save_dataset_name: Optional[str] = None, **kwargs) -> FFTComputeResult:
+        """
+        Calculate FFT for data from zarr file.
+        
+        Parameters:
+        -----------
+        zarr_path : str
+            Path to zarr file
+        dataset : str
+            Dataset name
+        z_layer : int
+            Z-layer index (-1 for last layer)
+        method : int
+            FFT method (1 or 2)
+        save : bool, optional
+            Save result to zarr file (default: False)
+        force : bool, optional
+            Force recalculation and overwrite existing (default: False)
+        save_dataset_name : str, optional
+            Custom name for saved dataset (default: auto-generated)
+        **kwargs : Any
+            Additional FFT configuration options
+            
+        Returns:
+        --------
+        FFTComputeResult
+            FFT computation result
+        """
+        # Generate save dataset name if not provided
+        if save_dataset_name is None:
+            save_dataset_name = f"{dataset}_z{z_layer}_m{method}"
+        
+        # Try to load existing data if not forcing recalculation
+        if not force:
+            existing_result = self.load_existing_fft_data(zarr_path, save_dataset_name)
+            if existing_result is not None:
+                print(f"Loaded existing FFT data for {save_dataset_name}")
+                return existing_result
+        
+        # Load data
+        data, dt = self.load_data_from_zarr(zarr_path, dataset, z_layer)
+        
+        # Extract configuration from kwargs
+        window = kwargs.get('window', self.config.window_function)
+        filter_type = kwargs.get('filter_type', self.config.filter_type)
+        engine = kwargs.get('engine', self.config.fft_engine)
+        
+        # Calculate FFT using specified method
+        if method == 1:
+            result = self.calculate_fft_method1(data, dt, window, filter_type, engine)
+        elif method == 2:
+            result = self.calculate_fft_method2(data, dt, window, filter_type, engine)
+        else:
+            raise ValueError(f"Unsupported FFT method: {method}")
+        
+        # Add additional metadata
+        result.metadata.update({
+            'zarr_path': zarr_path,
+            'source_dataset': dataset,
+            'z_layer': z_layer,
+            'save_dataset_name': save_dataset_name
+        })
+        
+        # Save to zarr if requested
+        if save:
+            try:
+                result.save_to_zarr(zarr_path, save_dataset_name, force=force)
+                print(f"Saved FFT data to zarr: fft/{save_dataset_name}")
+            except Exception as e:
+                print(f"Warning: Could not save FFT data: {e}")
+        
+        return result

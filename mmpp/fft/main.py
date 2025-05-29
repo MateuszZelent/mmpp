@@ -17,12 +17,13 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 try:
-    import numpy.fft
-    NUMPY_FFT_AVAILABLE = True
+    from pyzfn import Pyzfn
+    PYZFN_AVAILABLE = True
 except ImportError:
-    NUMPY_FFT_AVAILABLE = False
+    PYZFN_AVAILABLE = False
 
-from pyzfn import Pyzfn
+# Import from our own modules
+from .compute_fft import FFTCompute, FFTComputeResult, FFTComputeConfig
 
 
 @dataclass
@@ -107,8 +108,8 @@ class FFTAnalyzer:
         self.config = FFTConfig()
         
         # Check dependencies
-        if not (SCIPY_AVAILABLE or NUMPY_FFT_AVAILABLE):
-            raise ImportError("FFT analysis requires scipy or numpy. Install with: pip install scipy")
+        if not (SCIPY_AVAILABLE):
+            raise ImportError("FFT analysis requires scipy. Install with: pip install scipy")
         
         # Cache for FFT results
         self._fft_cache: Dict[str, FFTResult] = {}
