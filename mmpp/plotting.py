@@ -5,6 +5,12 @@ from dataclasses import dataclass
 import platform
 import colorsys
 
+# Import shared logging configuration
+from .logging_config import setup_mmpp_logging, get_mmpp_logger
+
+# Get logger for plotting
+log = get_mmpp_logger("mmpp.plot")
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 else:
@@ -115,7 +121,7 @@ class FontManager:
             
             if not os.path.exists(fonts_dir):
                 if verbose:
-                    print(f"Fonts directory not found: {fonts_dir}")
+                    log.warning(f"Fonts directory not found: {fonts_dir}")
                 return False
             
             # Add custom fonts
@@ -128,13 +134,13 @@ class FontManager:
                         font_manager.fontManager.addfont(font_path)
             
             if verbose and font_files:
-                print(f"Loaded {len(font_files)} custom fonts from {fonts_dir}")
+                log.info(f"Loaded {len(font_files)} custom fonts from {fonts_dir}")
             
             return len(font_files) > 0
             
         except Exception as e:
             if verbose:
-                print(f"Error setting up custom fonts: {e}")
+                log.error(f"Error setting up custom fonts: {e}")
             return False
 
 
@@ -200,17 +206,17 @@ def setup_custom_fonts(verbose: bool = False) -> bool:
         for font_dir in font_dirs:
             if os.path.exists(font_dir):
                 if verbose:
-                    print(f"🔍 Checking font directory: {font_dir}")
+                    log.debug(f"🔍 Checking font directory: {font_dir}")
                 font_files = font_manager.findSystemFonts(fontpaths=[font_dir])
                 for font_file in font_files:
                     try:
                         font_manager.fontManager.addfont(font_file)
                         fonts_loaded = True
                         if verbose:
-                            print(f"✓ Added font: {os.path.basename(font_file)}")
+                            log.debug(f"✓ Added font: {os.path.basename(font_file)}")
                     except Exception as e:
                         if verbose:
-                            print(f"Warning: Could not add font {font_file}: {e}")
+                            log.warning(f"Warning: Could not add font {font_file}: {e}")
 
         # Rebuild font cache if fonts were loaded
         if fonts_loaded:
@@ -224,17 +230,17 @@ def setup_custom_fonts(verbose: bool = False) -> bool:
         available_fonts = set(f.name for f in font_manager.fontManager.ttflist)
         if "Arial" in available_fonts:
             if verbose:
-                print("✓ Arial font loaded successfully")
+                log.debug("✓ Arial font loaded successfully")
         else:
             if verbose:
-                print("⚠ Arial font not found, using default fonts")
+                log.warning("⚠ Arial font not found, using default fonts")
 
         _FONTS_INITIALIZED = True
         return True
 
     except Exception as e:
         if verbose:
-            print(f"Warning: Font setup failed: {e}")
+            log.warning(f"Warning: Font setup failed: {e}")
         return False
 
 
@@ -258,18 +264,18 @@ def load_paper_style(verbose: bool = False) -> bool:
             if os.path.exists(style_path):
                 plt.style.use(style_path)
                 if verbose:
-                    print(f"✓ Loaded paper style from: {style_path}")
+                    log.debug(f"✓ Loaded paper style from: {style_path}")
                 _STYLE_INITIALIZED = True
                 return True
 
         if verbose:
-            print("⚠ paper.mplstyle not found, using default style")
+            log.warning("⚠ paper.mplstyle not found, using default style")
         _STYLE_INITIALIZED = True
         return False
 
     except Exception as e:
         if verbose:
-            print(f"Warning: Could not load paper style: {e}")
+            log.warning(f"Warning: Could not load paper style: {e}")
         _STYLE_INITIALIZED = True
         return False
 
@@ -290,7 +296,7 @@ def apply_custom_colors(colors: Dict[str, str]) -> None:
             plt.rcParams["grid.color"] = colors["grid"]
 
     except Exception as e:
-        print(f"Warning: Could not apply custom colors: {e}")
+        log.warning(f"Warning: Could not apply custom colors: {e}")
 
 
 class MMPPlotter:
@@ -326,6 +332,12 @@ class MMPPlotter:
 
         self.mmpp = mmpp_instance
         self.config = PlotConfig()
+
+        # Set up logging level based on parent debug mode
+        debug_mode = getattr(mmpp_instance, 'debug', False) if mmpp_instance else False
+        setup_mmpp_logging(debug=debug_mode, logger_name="mmpp.plot")
+            
+        log.debug(f"MMPPlotter initialized with {len(self.results)} results")
 
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError(
@@ -369,7 +381,7 @@ class MMPPlotter:
                     if self.config.style in plt.style.available:
                         plt.style.use(self.config.style)
                 except Exception as e:
-                    print(f"Warning: Could not load style '{self.config.style}': {e}")
+                    log.warning(f"Warning: Could not load style '{self.config.style}': {e}")
 
             # Apply custom colors
             apply_custom_colors(self.config.colors)
@@ -378,7 +390,7 @@ class MMPPlotter:
             _STYLING_SETUP_COMPLETED = True
 
         except Exception as e:
-            print(f"Warning: Styling setup failed: {e}")
+            log.error(f"Warning: Styling setup failed: {e}")
             # Even if setup failed, mark as completed to avoid retries
             _STYLING_SETUP_COMPLETED = True
 
@@ -522,7 +534,7 @@ MMPP Plotter:
                 if key == "style":
                     style_changed = True
             else:
-                print(f"Warning: Unknown configuration option '{key}'")
+                log.warning(f"Warning: Unknown configuration option '{key}'")
 
         # Apply style if changed
         if style_changed:
@@ -569,9 +581,9 @@ MMPP Plotter:
             else:
                 plt.style.use(style_name)
                 self.config.style = style_name
-                print(f"✓ Applied style: {style_name}")
+                log.debug(f"✓ Applied style: {style_name}")
         except Exception as e:
-            print(f"Warning: Could not apply style '{style_name}': {e}")
+            log.warning(f"Warning: Could not apply style '{style_name}': {e}")
 
         return self
 
@@ -641,7 +653,7 @@ MMPP Plotter:
                 else:
                     # Try to get from dataset attributes
                     x_data = np.arange(len(dataset))
-                    print(f"Warning: '{x_series}' not found, using indices")
+                    log.warning(f"Warning: '{x_series}' not found, using indices")
 
             # Extract y-axis data
             y_data = dataset[...]
@@ -652,7 +664,7 @@ MMPP Plotter:
                 if y_data.ndim > comp_idx:
                     y_data = y_data[..., comp_idx]
                 else:
-                    print(f"Warning: Component {comp} not available, using full data")
+                    log.warning(f"Warning: Component {comp} not available, using full data")
 
             # Apply averaging if specified
             if average is not None:
@@ -677,7 +689,7 @@ MMPP Plotter:
             return x_data, y_data, metadata
 
         except Exception as e:
-            print(f"Error extracting data from {job.path}: {e}")
+            log.error(f"Error extracting data from {job.path}: {e}")
             return None, None, None
 
     def plot(
@@ -740,7 +752,7 @@ MMPP Plotter:
             (figure, axes) matplotlib objects
         """
         if not self.results:
-            print("No results to plot")
+            log.warning("No results to plot")
             return None, None
 
         # Apply paper-ready styling if requested
@@ -834,7 +846,7 @@ MMPP Plotter:
                     )
 
             except Exception as e:
-                print(f"Error plotting {result.path}: {e}")
+                log.error(f"Error plotting {result.path}: {e}")
                 continue
 
         # Customize plot
@@ -890,7 +902,7 @@ MMPP Plotter:
         # Save if requested
         if save_path:
             fig.savefig(save_path, dpi=self.config.dpi, bbox_inches="tight")
-            print(f"Figure saved to: {save_path}")
+            log.info(f"Figure saved to: {save_path}")
 
         # Store plot data for further analysis
         self._last_plot_data = plotted_data
@@ -958,7 +970,7 @@ MMPP Plotter:
             (figure, axes) matplotlib objects
         """
         if not self.results:
-            print("No results to plot")
+            log.warning("No results to plot")
             return None, None
 
         fig, axes = plt.subplots(1, 3, figsize=(15, 5), dpi=self.config.dpi)
@@ -985,7 +997,7 @@ MMPP Plotter:
                         )
 
                 except Exception as e:
-                    print(f"Error plotting component {comp} for {result.path}: {e}")
+                    log.error(f"Error plotting component {comp} for {result.path}: {e}")
                     continue
 
             ax.set_title(f"{dataset} - {comp.upper()} component")
@@ -1013,7 +1025,7 @@ MMPP Plotter:
         if hasattr(self, "_last_plot_data"):
             return self._last_plot_data
         else:
-            print("No plot data available. Run a plot method first.")
+            log.warning("No plot data available. Run a plot method first.")
             return []
 
     def save_all_data(self, filename: str, format: str = "npz") -> None:
@@ -1028,7 +1040,7 @@ MMPP Plotter:
             Format ('npz', 'csv', 'json')
         """
         if not hasattr(self, "_last_plot_data"):
-            print("No plot data to save. Run a plot method first.")
+            log.warning("No plot data to save. Run a plot method first.")
             return
 
         if format == "npz":
@@ -1050,7 +1062,7 @@ MMPP Plotter:
             df = pd.DataFrame(df_dict)
             df.to_csv(filename, index=False)
 
-        print(f"Data saved to: {filename}")
+        log.info(f"Data saved to: {filename}")
 
     def _sort_results_by_parameters(self, results: List[Any]) -> List[Any]:
         """

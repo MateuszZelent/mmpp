@@ -8,6 +8,7 @@ Provides low-level FFT calculations without user interface elements.
 from typing import Optional, Dict, List, Union, Any, Tuple, Literal
 import numpy as np
 import time
+import logging
 from dataclasses import dataclass
 
 # Import psutil for memory monitoring
@@ -37,6 +38,12 @@ except ImportError:
     PYFFTW_AVAILABLE = False
 
 from pyzfn import Pyzfn
+
+# Import shared logging configuration
+from ..logging_config import setup_mmpp_logging, get_mmpp_logger
+
+# Get logger for FFT module  
+log = get_mmpp_logger("mmpp.fft")
 
 
 # Type hints
@@ -113,13 +120,13 @@ class FFTComputeResult:
         # Create dataset group within fft/
         if dataset_name not in fft_main_group:
             fft_group = fft_main_group.create_group(dataset_name)
-            print(f"Created new FFT dataset group: fft/{dataset_name}")
+            log.debug(f"Created new FFT dataset group: fft/{dataset_name}")
         else:
             fft_group = fft_main_group[dataset_name]
             if not force:
-                print(f"FFT dataset fft/{dataset_name} already exists. Use force=True to overwrite.")
+                log.warning(f"FFT dataset fft/{dataset_name} already exists. Use force=True to overwrite.")
                 return
-            print(f"Overwriting existing FFT dataset: fft/{dataset_name}")
+            log.info(f"Overwriting existing FFT dataset: fft/{dataset_name}")
         
         # Disable chunking for FFT data to avoid unnecessary fragmentation
         spectrum_chunks = None
@@ -151,9 +158,20 @@ class FFTCompute:
     Handles low-level FFT calculations without user interface elements.
     """
     
-    def __init__(self):
-        """Initialize FFT compute engine."""
+    def __init__(self, debug: bool = False):
+        """Initialize FFT compute engine.
+        
+        Parameters:
+        -----------
+        debug : bool, optional
+            Enable debug logging (default: False)
+        """
         self.config = FFTComputeConfig()
+        
+        # Set logging level based on debug flag
+        setup_mmpp_logging(debug=debug, logger_name="mmpp.fft")
+        if debug:
+            log.debug("FFT debug logging enabled")
         
         # Available window functions
         self.AVAILABLE_WINDOWS = {
@@ -500,8 +518,8 @@ class FFTCompute:
             process = psutil.Process()
             initial_memory = process.memory_info().rss / 1024 / 1024  # MB
         
-        print(f"📂 Loading data from zarr: {zarr_path}")
-        print(f"   Dataset: {dataset}, z_layer: {z_layer}")
+        log.info(f"Loading data from zarr: {zarr_path}")
+        log.debug(f"Dataset: {dataset}, z_layer: {z_layer}")
         
         job = Pyzfn(zarr_path)
         
@@ -516,30 +534,30 @@ class FFTCompute:
         data = data_set[...]
         data_load_time = time.time() - data_load_start
         
-        print(f"   ⏱️  Data loading time: {data_load_time:.3f}s")
+        log.debug(f"Data loading time: {data_load_time:.3f}s")
         
         # Calculate data size and loading speed
         data_size_mb = data.nbytes / 1024 / 1024
         loading_speed = data_size_mb / data_load_time if data_load_time > 0 else 0
-        print(f"   📊 Data size: {data_size_mb:.1f} MB")
-        print(f"   🚀 Loading speed: {loading_speed:.1f} MB/s")
+        log.debug(f"Data size: {data_size_mb:.1f} MB")
+        log.debug(f"Loading speed: {loading_speed:.1f} MB/s")
         
         # Handle z-layer selection
         layer_select_start = time.time()
         if len(data.shape) == 5:  # (t, z, y, x, comp)
             if z_layer == -1:
                 data = data[:, -1, :, :, :]  # Take last layer
-                print(f"   📍 Selected last z-layer")
+                log.debug("Selected last z-layer")
             else:
                 data = data[:, z_layer, :, :, :]
-                print(f"   📍 Selected z-layer {z_layer}")
+                log.debug(f"Selected z-layer {z_layer}")
         elif len(data.shape) == 4:  # (t, y, x, comp)
-            print(f"   📍 No z-dimension in data")
+            log.debug("No z-dimension in data")
         else:
             raise ValueError(f"Unsupported data shape: {data.shape}")
         
         layer_select_time = time.time() - layer_select_start
-        print(f"   ⏱️  Layer selection time: {layer_select_time:.3f}s")
+        log.debug(f"Layer selection time: {layer_select_time:.3f}s")
         
         # Get time step
         dt = getattr(job, 't_sampl', 1e-12)
@@ -549,10 +567,9 @@ class FFTCompute:
         if PSUTIL_AVAILABLE:
             final_memory = process.memory_info().rss / 1024 / 1024  # MB
             memory_increase = final_memory - initial_memory
-            print(f"   🧠 Memory increase: {memory_increase:.1f} MB")
+            log.debug(f"Memory increase: {memory_increase:.1f} MB")
         
-        print(f"   ✅ Total loading time: {total_time:.3f}s")
-        print(f"   📐 Final data shape: {data.shape}")
+        log.info(f"Data loaded successfully in {total_time:.3f}s, shape: {data.shape}")
         
         return data, dt
     
@@ -591,15 +608,15 @@ class FFTCompute:
                 process = psutil.Process()
                 initial_memory = process.memory_info().rss / 1024 / 1024  # MB
             
-            print(f"📂 Loading existing FFT data from: {zarr_path}")
-            print(f"   FFT dataset: fft/{dataset_name}")
+            log.debug(f"Loading existing FFT data from: {zarr_path}")
+            log.debug(f"FFT dataset: fft/{dataset_name}")
             
             import zarr
             z = zarr.open(zarr_path, mode='r')
             
             fft_path = f"fft/{dataset_name}"
             if fft_path not in z:
-                print(f"   ❌ FFT dataset {fft_path} not found")
+                log.debug(f"FFT dataset {fft_path} not found")
                 return None
             
             fft_group = z[fft_path]
@@ -610,16 +627,16 @@ class FFTCompute:
             frequencies = np.array(fft_group["frequencies"])
             data_load_time = time.time() - data_load_start
             
-            print(f"   ⏱️  FFT data loading time: {data_load_time:.3f}s")
+            log.debug(f"FFT data loading time: {data_load_time:.3f}s")
             
             # Calculate data sizes
             spectrum_size_mb = spectrum.nbytes / 1024 / 1024
             freq_size_mb = frequencies.nbytes / 1024 / 1024
             total_size_mb = spectrum_size_mb + freq_size_mb
             
-            print(f"   📊 Spectrum size: {spectrum_size_mb:.1f} MB")
-            print(f"   📊 Frequencies size: {freq_size_mb:.1f} MB")
-            print(f"   📊 Total FFT data size: {total_size_mb:.1f} MB")
+            log.debug(f"Spectrum size: {spectrum_size_mb:.1f} MB")
+            log.debug(f"Frequencies size: {freq_size_mb:.1f} MB")
+            log.debug(f"Total FFT data size: {total_size_mb:.1f} MB")
             
             # Load metadata
             metadata = dict(fft_group.attrs)
@@ -638,11 +655,9 @@ class FFTCompute:
             if PSUTIL_AVAILABLE:
                 final_memory = process.memory_info().rss / 1024 / 1024  # MB
                 memory_increase = final_memory - initial_memory
-                print(f"   🧠 Memory increase: {memory_increase:.1f} MB")
+                log.debug(f"Memory increase: {memory_increase:.1f} MB")
             
-            print(f"   ✅ Total FFT loading time: {total_time:.3f}s")
-            print(f"   📐 Spectrum shape: {spectrum.shape}")
-            print(f"   📐 Frequencies shape: {frequencies.shape}")
+            log.info(f"Loaded existing FFT data in {total_time:.3f}s, spectrum shape: {spectrum.shape}")
             
             return FFTComputeResult(
                 frequencies=frequencies,
@@ -652,7 +667,7 @@ class FFTCompute:
             )
             
         except Exception as e:
-            print(f"❌ Warning: Could not load existing FFT data: {e}")
+            log.warning(f"Could not load existing FFT data: {e}")
             return None
     
     def _verify_fft_parameters(self, existing_result: FFTComputeResult, 
@@ -730,7 +745,7 @@ class FFTCompute:
         FFTComputeResult
             FFT computation result
         """
-        print(f"[DEBUG] calculate_fft_data called with: {dataset}, z_layer={z_layer}, method={method}, save={save}, force={force}")
+        log.debug(f"calculate_fft_data called with: {dataset}, z_layer={z_layer}, method={method}, save={save}, force={force}")
         
         # Generate save dataset name if not provided
         if save_dataset_name is None:
@@ -738,24 +753,24 @@ class FFTCompute:
         
         # Try to load existing data if not forcing recalculation
         if not force:
-            print(f"Checking for existing FFT data: fft/{save_dataset_name}")
+            log.debug(f"Checking for existing FFT data: fft/{save_dataset_name}")
             existing_result = self.load_existing_fft_data(zarr_path, save_dataset_name)
             if existing_result is not None:
                 # Verify that parameters match
                 if self._verify_fft_parameters(existing_result, z_layer=z_layer, 
                                                source_dataset=dataset, **kwargs):
-                    print(f"✓ Loaded existing FFT data for {save_dataset_name} (parameters verified)")
+                    log.info(f"✓ Loaded existing FFT data for {save_dataset_name} (parameters verified)")
                     return existing_result
                 else:
-                    print(f"⚠ Existing FFT data found but parameters don't match, recalculating...")
+                    log.warning(f"Existing FFT data found but parameters don't match, recalculating...")
                     force = True  # Force recalculation if parameters don't match
             else:
-                print(f"No existing FFT data found, calculating new FFT...")
+                log.info(f"No existing FFT data found, calculating new FFT...")
         else:
-            print(f"Force recalculation enabled, computing new FFT...")
+            log.info(f"Force recalculation enabled, computing new FFT...")
         
         # Load data
-        print(f"Loading data from {dataset} (z_layer={z_layer})...")
+        log.info(f"Loading data from {dataset} (z_layer={z_layer})...")
         
         # Measure loading time and memory usage
         import time
@@ -791,26 +806,26 @@ class FFTCompute:
         
         # Display results
         load_time = load_end_time - load_start_time
-        print(f"Data shape: {data.shape}, dt: {dt}")
-        print(f"⏱️  Data loading time: {load_time:.3f}s")
-        print(f"💾 Data size: {data_size_mb:.1f} MB ({data_size_gb:.2f} GB)")
+        log.info(f"Data shape: {data.shape}, dt: {dt}")
+        log.debug(f"⏱️  Data loading time: {load_time:.3f}s")
+        log.debug(f"💾 Data size: {data_size_mb:.1f} MB ({data_size_gb:.2f} GB)")
         
         if psutil_available:
-            print(f"🧠 Memory usage change: {memory_used:+.1f} MB (before: {memory_before:.1f} MB, after: {memory_after:.1f} MB)")
+            log.debug(f"🧠 Memory usage change: {memory_used:+.1f} MB (before: {memory_before:.1f} MB, after: {memory_after:.1f} MB)")
         else:
-            print(f"🧠 Memory monitoring unavailable (install psutil for memory stats)")
+            log.debug(f"🧠 Memory monitoring unavailable (install psutil for memory stats)")
         
         # Calculate loading speed
         if load_time > 0:
             loading_speed_mbps = data_size_mb / load_time
-            print(f"🚀 Loading speed: {loading_speed_mbps:.1f} MB/s")
+            log.debug(f"🚀 Loading speed: {loading_speed_mbps:.1f} MB/s")
         
         # Extract configuration from kwargs
         window = kwargs.get('window', self.config.window_function)
         filter_type = kwargs.get('filter_type', self.config.filter_type)
         engine = kwargs.get('engine', self.config.fft_engine)
         
-        print(f"Computing FFT with method {method} (window: {window}, filter: {filter_type}, engine: {engine})...")
+        log.info(f"Computing FFT with method {method} (window: {window}, filter: {filter_type}, engine: {engine})...")
         
         # Calculate FFT using specified method
         if method == 1:
@@ -820,7 +835,7 @@ class FFTCompute:
         else:
             raise ValueError(f"Unsupported FFT method: {method}")
         
-        print(f"✓ FFT calculation completed in {result.metadata.get('calculation_time', 0):.3f}s")
+        log.info(f"✓ FFT calculation completed in {result.metadata.get('calculation_time', 0):.3f}s")
         
         # Add additional metadata
         result.metadata.update({
@@ -833,12 +848,12 @@ class FFTCompute:
         # Save to zarr if requested
         if save:
             try:
-                print(f"Saving FFT data to fft/{save_dataset_name}...")
+                log.info(f"Saving FFT data to fft/{save_dataset_name}...")
                 result.save_to_zarr(zarr_path, save_dataset_name, force=force)
-                print(f"✓ Successfully saved FFT data to fft/{save_dataset_name}")
+                log.info(f"✓ Successfully saved FFT data to fft/{save_dataset_name}")
             except Exception as e:
-                print(f"❌ Warning: Could not save FFT data: {e}")
+                log.warning(f"Could not save FFT data: {e}")
         else:
-            print("FFT calculation completed (not saved)")
+            log.debug("FFT calculation completed (not saved)")
         
         return result

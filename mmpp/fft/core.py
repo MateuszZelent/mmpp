@@ -33,8 +33,9 @@ class FFT:
         self.job_result = job_result
         self.mmpp = mmpp_instance
         
-        # Initialize compute engine
-        self._compute = FFTCompute()
+        # Initialize compute engine with debug mode from parent MMPP if available
+        debug_mode = getattr(mmpp_instance, 'debug', False) if mmpp_instance else False
+        self._compute = FFTCompute(debug=debug_mode)
         
         # Initialize plotter (lazy loaded)
         self._plotter = None

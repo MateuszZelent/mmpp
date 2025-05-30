@@ -16,20 +16,13 @@ import numpy as np
 import zarr
 from pyzfn import Pyzfn
 import logging
+from .logging_config import setup_mmpp_logging, get_mmpp_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('mmpp.log', mode='a')
-    ]
-)
-log = logging.getLogger(__name__)
+# Initialize rich logging - will be configured in MMPP.__init__
+log = get_mmpp_logger("mmpp")
 
 # Type aliases for numpy arrays
 if TYPE_CHECKING:
@@ -161,7 +154,7 @@ class ZarrJobResult:
         Returns:
             Optional[Syntax]: Syntax-highlighted script or None if no file found
         """
-        print("dupa")
+        log.debug("Debug marker reached")
         try:
             
             # Get the zarr path and name
@@ -253,7 +246,7 @@ class ZarrJobResult:
     @property
     def p(self) -> None:
         """Print the zarr tree."""
-        print(self.name, self.z.tree())
+        log.info(f"Database: {self.name}, Structure: {self.z.tree()}")
 
     def rm(self, dset: str) -> None:
         """
@@ -556,7 +549,7 @@ class MMPP:
     """
 
     def __init__(
-        self, base_path: str, max_workers: int = 8, database_name: str = "mmpy_database"
+        self, base_path: str, max_workers: int = 8, database_name: str = "mmpy_database", debug: bool = False
     ) -> None:
         """
         Initialize the MMPP.
@@ -569,14 +562,21 @@ class MMPP:
             Maximum number of worker threads for scanning (default: 8)
         database_name : str, optional
             Name of the database file (without extension, default: "mmpy_database")
+        debug : bool, optional
+            Enable debug logging (default: False)
         """
         self.base_path: str = os.path.abspath(base_path)
         self.max_workers: int = max_workers
         self.database_name: str = database_name
+        self.debug: bool = debug
         self._lock: threading.Lock = threading.Lock()
         self._interactive_mode: bool = True  # Enable interactive mode by default
         self._single_zarr_mode: bool = False
         self._zarr_results: List[ZarrJobResult] = []
+        
+        # Configure rich logging for this instance
+        global log
+        log = setup_mmpp_logging(debug=debug, logger_name="mmpp")
 
         # Check if base_path is a direct .zarr file
         if self.base_path.endswith('.zarr') and os.path.isdir(self.base_path):
@@ -602,7 +602,7 @@ class MMPP:
             scan_result = self._scan_single_zarr(self.base_path)
             
             if scan_result.error:
-                print(f"Error loading zarr file {self.base_path}: {scan_result.error}")
+                log.error(f"Error loading zarr file {self.base_path}: {scan_result.error}")
                 return
             
             # Create ZarrJobResult
@@ -610,10 +610,10 @@ class MMPP:
             result._set_mmpp_ref(self)
             self._zarr_results = [result]
             
-            print(f"Loaded single zarr file: {self.base_path}")
+            log.info(f"Loaded single zarr file: {self.base_path}")
             
         except Exception as e:
-            print(f"Error loading single zarr file: {e}")
+            log.error(f"Error loading single zarr file: {e}")
             self._zarr_results = []
 
     def __len__(self) -> int:
@@ -761,7 +761,7 @@ class MMPP:
                 path_params.update(component_params)
 
         except Exception as e:
-            print(f"Warning: Error parsing path parameters from {zarr_path}: {e}")
+            log.warning(f"Error parsing path parameters from {zarr_path}: {e}")
 
         return path_params
 
@@ -853,7 +853,7 @@ class MMPP:
                 params[component] = True
 
         except Exception as e:
-            print(f"Warning: Error parsing component '{component}': {e}")
+            log.warning(f"Error parsing component '{component}': {e}")
 
         return params
 
@@ -917,7 +917,7 @@ class MMPP:
         """
         results: List[ScanResult] = []
 
-        print(
+        log.info(
             f"Scanning {len(zarr_folders)} zarr folders using {self.max_workers} threads..."
         )
 
@@ -935,11 +935,11 @@ class MMPP:
 
                 # Print progress
                 if i % 10 == 0 or i == len(zarr_folders):
-                    print(f"Progress: {i}/{len(zarr_folders)} folders processed")
+                    log.debug(f"Progress: {i}/{len(zarr_folders)} folders processed")
 
                 # Report errors
                 if result.error:
-                    print(f"Error processing {result.path}: {result.error}")
+                    log.error(f"Error processing {result.path}: {result.error}")
 
         return results
 
@@ -967,14 +967,14 @@ class MMPP:
                 data_rows.append(row)
 
         if not data_rows:
-            print("Warning: No valid zarr folders found!")
+            log.warning("No valid zarr folders found!")
             return pd.DataFrame()
 
         # Create DataFrame
         df = pd.DataFrame(data_rows)
 
-        print(f"Created database with {len(df)} entries and {len(df.columns)} columns")
-        print(f"Columns: {list(df.columns)}")
+        log.info(f"Created database with {len(df)} entries and {len(df.columns)} columns")
+        log.debug(f"Columns: {list(df.columns)}")
 
         return df
 
@@ -985,9 +985,9 @@ class MMPP:
                 try:
                     with open(self.database_path, "wb") as f:
                         pickle.dump(self.dataframe, f)
-                    print(f"Database saved to: {self.database_path}")
+                    log.info(f"Database saved to: {self.database_path}")
                 except Exception as e:
-                    print(f"Error saving database: {e}")
+                    log.error(f"Error saving database: {e}")
 
     def _load_database(self) -> bool:
         """
@@ -1002,11 +1002,11 @@ class MMPP:
             try:
                 with open(self.database_path, "rb") as f:
                     self.dataframe = pickle.load(f)
-                print(f"Loaded existing database from: {self.database_path}")
-                print(f"Database contains {len(self.dataframe)} entries")
+                log.info(f"Loaded existing database from: {self.database_path}")
+                log.debug(f"Database contains {len(self.dataframe)} entries")
                 return True
             except Exception as e:
-                print(f"Error loading database: {e}")
+                log.error(f"Error loading database: {e}")
                 return False
         return False
 
@@ -1025,23 +1025,23 @@ class MMPP:
             The resulting database DataFrame
         """
         if self._single_zarr_mode:
-            print("Single zarr mode - no scanning needed.")
+            log.debug("Single zarr mode - no scanning needed.")
             return pd.DataFrame()  # Return empty DataFrame for single zarr mode
             
         # Check if we need to scan
         if not force and self.dataframe is not None:
-            print("Database already loaded. Use force=True to rescan.")
+            log.info("Database already loaded. Use force=True to rescan.")
             return self.dataframe
 
         # Find all zarr folders
-        print(f"Searching for zarr folders in: {self.base_path}")
+        log.info(f"Searching for zarr folders in: {self.base_path}")
         zarr_folders = self._find_zarr_folders()
 
         if not zarr_folders:
-            print("No zarr folders found!")
+            log.warning("No zarr folders found!")
             return pd.DataFrame()
 
-        print(f"Found {len(zarr_folders)} zarr folders")
+        log.info(f"Found {len(zarr_folders)} zarr folders")
 
         # Scan all folders
         scan_results = self._scan_all_zarr_folders(zarr_folders)
@@ -1063,7 +1063,7 @@ class MMPP:
         pd.DataFrame
             The resulting database DataFrame
         """
-        print("Forcing complete rescan...")
+        log.info("Forcing complete rescan...")
         return self.scan(force=True)
 
     def get_parsing_examples(self, zarr_path: str) -> Dict[str, Any]:
@@ -1142,7 +1142,7 @@ class MMPP:
                     if matches:
                         matching_results.append(result)
                 
-                print(f"Found {len(matching_results)} results matching criteria: {kwargs}")
+                log.debug(f"Found {len(matching_results)} results matching criteria: {kwargs}")
                 if PLOTTING_AVAILABLE:
                     return PlotterProxy(matching_results, self)
                 else:
@@ -1150,7 +1150,7 @@ class MMPP:
         
         # Original database mode logic
         if self.dataframe is None or self.dataframe.empty:
-            print("No database available. Run scan() first.")
+            log.warning("No database available. Run scan() first.")
             if PLOTTING_AVAILABLE:
                 return PlotterProxy([], self)
             else:
@@ -1162,7 +1162,7 @@ class MMPP:
         # Apply each filter criterion
         for key, value in kwargs.items():
             if key not in self.dataframe.columns:
-                print(f"Warning: Column '{key}' not found in database")
+                log.warning(f"Warning: Column '{key}' not found in database")
                 continue
 
             # Handle different types of comparisons
@@ -1189,7 +1189,7 @@ class MMPP:
             result._set_mmpp_ref(self)
             results.append(result)
 
-        print(f"Found {len(results)} folders matching criteria: {kwargs}")
+        log.debug(f"Found {len(results)} folders matching criteria: {kwargs}")
 
         if PLOTTING_AVAILABLE:
             return PlotterProxy(results, self)
@@ -1228,7 +1228,7 @@ class MMPP:
             List of ZarrJobResult objects matching the criteria
         """
         if self.dataframe is None or self.dataframe.empty:
-            print("No database available. Run scan() first.")
+            log.warning("No database available. Run scan() first.")
             return []
 
         # Start with all rows

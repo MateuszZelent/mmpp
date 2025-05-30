@@ -7,6 +7,12 @@ Specialized plotting functionality for FFT analysis results.
 from typing import Optional, Dict, List, Union, Any, Tuple
 import numpy as np
 
+# Import shared logging configuration
+from ..logging_config import setup_mmpp_logging, get_mmpp_logger
+
+# Get logger for FFT plotting
+log = get_mmpp_logger("mmpp.fft.plot")
+
 # Import dependencies with error handling
 try:
     import matplotlib.pyplot as plt
@@ -41,12 +47,16 @@ class FFTPlotter:
         else:
             self.results = results
             
-        print(f"[DEBUG] FFTPlotter.__init__: Received {type(results)} with {len(self.results) if hasattr(self, 'results') else 'unknown'} results")
+        # Set up logging level based on parent debug mode
+        debug_mode = getattr(mmpp_instance, 'debug', False) if mmpp_instance else False
+        setup_mmpp_logging(debug=debug_mode, logger_name="mmpp.fft.plot")
+            
+        log.debug(f"FFTPlotter.__init__: Received {type(results)} with {len(self.results) if hasattr(self, 'results') else 'unknown'} results")
         for i, result in enumerate(self.results):
-            print(f"[DEBUG] FFTPlotter.__init__: Result {i}: {type(result)} - {getattr(result, 'path', 'no path')}")
+            log.debug(f"FFTPlotter.__init__: Result {i}: {type(result)} - {getattr(result, 'path', 'no path')}")
             
         self.mmpp = mmpp_instance
-        self.fft_compute = FFTCompute()
+        self.fft_compute = FFTCompute(debug=debug_mode)
         
         # Basic plot configuration
         self.config = {
@@ -121,9 +131,9 @@ class FFTPlotter:
         global_scale_text = ""
         
         # Debug: Check number of results
-        print(f"[DEBUG] Processing {len(self.results)} result(s)")
+        log.debug(f"Processing {len(self.results)} result(s)")
         for i, result in enumerate(self.results):
-            print(f"[DEBUG] Result {i}: {type(result)} - {getattr(result, 'path', 'no path')}")
+            log.debug(f"Result {i}: {type(result)} - {getattr(result, 'path', 'no path')}")
         
         # Analyze all results
         for i, result in enumerate(self.results):
@@ -173,7 +183,7 @@ class FFTPlotter:
                            label=label)
                 
             except Exception as e:
-                print(f"Error analyzing result {i}: {e}")
+                log.error(f"Error analyzing result {i}: {e}")
                 continue
         
         # Customize plot
@@ -229,7 +239,7 @@ class FFTPlotter:
         # Save if requested
         if save_path:
             fig.savefig(save_path, dpi=self.config['dpi'], bbox_inches='tight')
-            print(f"Figure saved to: {save_path}")
+            log.info(f"Figure saved to: {save_path}")
         
         return fig, ax
     
