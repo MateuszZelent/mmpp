@@ -101,7 +101,7 @@ class FFT:
             result = self._compute.calculate_fft_data(
                 self.job_result.path, dataset_name, z_layer, method, 
                 save=save, force=force, save_dataset_name=save_dataset_name,
-                save_dir='fft', chunks=None, **kwargs
+                **kwargs
             )
         except OSError as e:
             if "directory not empty" in str(e).lower():

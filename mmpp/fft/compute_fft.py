@@ -114,23 +114,11 @@ class FFTComputeResult:
                 return
             print(f"Overwriting existing FFT dataset: fft/{dataset_name}")
         
-        # Determine chunking strategy for magnetization components only
-        # Chunk only the last dimension (x, y, z components) with maximum 3 chunks
+        # Disable chunking for FFT data to avoid unnecessary fragmentation
         spectrum_chunks = None
         freq_chunks = None
-        if self.spectrum.ndim > 1 and self.spectrum.shape[-1] <= 3:
-            # For spectrum data with components, chunk each component separately
-            chunk_shape = list(self.spectrum.shape)
-            chunk_shape[-1] = 1  # One component per chunk
-            spectrum_chunks = tuple(chunk_shape)
-        elif self.spectrum.ndim == 2:
-            # For 2D data (freq, components), chunk by components
-            spectrum_chunks = (self.spectrum.shape[0], 1)
         
-        # For frequencies, no chunking needed (1D array)
-        freq_chunks = None
-        
-        # Save spectrum data with appropriate chunking
+        # Save spectrum data without chunking
         fft_group.create_dataset("spectrum", data=self.spectrum, 
                                 chunks=spectrum_chunks, overwrite=force)
         fft_group.create_dataset("frequencies", data=self.frequencies, 
@@ -666,6 +654,8 @@ class FFTCompute:
         FFTComputeResult
             FFT computation result
         """
+        print(f"[DEBUG] calculate_fft_data called with: {dataset}, z_layer={z_layer}, method={method}, save={save}, force={force}")
+        
         # Generate save dataset name if not provided
         if save_dataset_name is None:
             save_dataset_name = f"{dataset}_z{z_layer}_m{method}"

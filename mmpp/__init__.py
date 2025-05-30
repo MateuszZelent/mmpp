@@ -21,19 +21,19 @@ except ImportError:
     class MMPP:
         def __init__(self, *args, **kwargs):
             raise ImportError(
-                "Core dependencies not available. Install with: pip install mmpp2[dev]"
+                "Core dependencies not available. Install with: pip install mmpp[dev]"
             )
 
     class ScanResult:
         def __init__(self, *args, **kwargs):
             raise ImportError(
-                "Core dependencies not available. Install with: pip install mmpp2[dev]"
+                "Core dependencies not available. Install with: pip install mmpp[dev]"
             )
 
     class ZarrJobResult:
         def __init__(self, *args, **kwargs):
             raise ImportError(
-                "Core dependencies not available. Install with: pip install mmpp2[dev]"
+                "Core dependencies not available. Install with: pip install mmppp[dev]"
             )
 
 # Try to import plotting classes

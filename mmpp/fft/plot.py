@@ -41,6 +41,10 @@ class FFTPlotter:
         else:
             self.results = results
             
+        print(f"[DEBUG] FFTPlotter.__init__: Received {type(results)} with {len(self.results) if hasattr(self, 'results') else 'unknown'} results")
+        for i, result in enumerate(self.results):
+            print(f"[DEBUG] FFTPlotter.__init__: Result {i}: {type(result)} - {getattr(result, 'path', 'no path')}")
+            
         self.mmpp = mmpp_instance
         self.fft_compute = FFTCompute()
         
@@ -113,6 +117,14 @@ class FFTPlotter:
         figsize = figsize or self.config['figsize']
         fig, ax = plt.subplots(figsize=figsize, dpi=self.config['dpi'])
         
+        # Initialize scale tracking
+        global_scale_text = ""
+        
+        # Debug: Check number of results
+        print(f"[DEBUG] Processing {len(self.results)} result(s)")
+        for i, result in enumerate(self.results):
+            print(f"[DEBUG] Result {i}: {type(result)} - {getattr(result, 'path', 'no path')}")
+        
         # Analyze all results
         for i, result in enumerate(self.results):
             try:
@@ -131,14 +143,31 @@ class FFTPlotter:
                 # Create label
                 label = self._format_result_label(result)
                 
+                # Determine scale factor for amplitude normalization
+                power_max = np.max(power)
+                if power_max > 0 and not log_scale and not normalize:
+                    scale_factor = 10 ** np.floor(np.log10(power_max))
+                    power_scaled = power / scale_factor
+                    
+                    # Format the scale factor for the label
+                    exponent = int(np.log10(scale_factor))
+                    if exponent != 0:
+                        global_scale_text = f"$10^{{{exponent}}}$"
+                    else:
+                        global_scale_text = ""
+                        power_scaled = power  # No scaling needed
+                else:
+                    power_scaled = power
+                    global_scale_text = ""
+                
                 # Plot
                 if log_scale:
-                    ax.semilogy(fft_result.frequencies, power, 
+                    ax.semilogy(fft_result.frequencies/1e9, power_scaled, 
                                alpha=self.config['line_alpha'],
                                linewidth=self.config['line_width'],
                                label=label)
                 else:
-                    ax.plot(fft_result.frequencies, power,
+                    ax.plot(fft_result.frequencies/1e9, power_scaled,
                            alpha=self.config['line_alpha'], 
                            linewidth=self.config['line_width'],
                            label=label)
@@ -148,11 +177,42 @@ class FFTPlotter:
                 continue
         
         # Customize plot
-        ax.set_xlabel('Frequency (Hz)', fontsize=self.config['label_fontsize'])
-        ylabel = 'Normalized Power' if normalize else 'Power'
+        ax.set_xlabel('Frequency (GHz)', fontsize=self.config['label_fontsize'])
+        
+        # Format Y-axis label with scale factor
+        ylabel = 'Normalized FFT Amplitude' if normalize else 'FFT Amplitude'
+        if global_scale_text and not log_scale:
+            ylabel += f'({global_scale_text} arb. units)'
+        elif not normalize:
+            ylabel += ' (arb. units)'
+            
         if log_scale:
             ylabel += ' (log scale)'
         ax.set_ylabel(ylabel, fontsize=self.config['label_fontsize'])
+        
+        # Handle axis formatting based on scale type
+        try:
+            # Only apply plain formatting if not using log scale
+            if not log_scale:
+                ax.ticklabel_format(style='plain', axis='y', useOffset=False)
+                # Try to disable scientific notation for linear scale
+                y_formatter = ax.yaxis.get_major_formatter()
+                if hasattr(y_formatter, 'set_useOffset'):
+                    y_formatter.set_useOffset(False)
+                if hasattr(y_formatter, 'set_scientific'):
+                    y_formatter.set_scientific(False)
+            
+            # X-axis formatting (frequency axis is always linear)
+            ax.ticklabel_format(style='plain', axis='x', useOffset=False)
+            x_formatter = ax.xaxis.get_major_formatter()
+            if hasattr(x_formatter, 'set_useOffset'):
+                x_formatter.set_useOffset(False)
+            if hasattr(x_formatter, 'set_scientific'):
+                x_formatter.set_scientific(False)
+                
+        except AttributeError:
+            # If formatter doesn't support these methods, skip formatting
+            pass
         
         title = f"Power Spectrum - {dataset_name} (Method {method})"
         ax.set_title(title, fontsize=self.config['title_fontsize'])
