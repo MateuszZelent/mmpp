@@ -433,4 +433,117 @@ class FFTAnalyzer:
         }
     
     def __repr__(self) -> str:
-        return f"FFTAnalyzer({len(self.results)} results, engine={self.config.engine})"
+        """Rich representation of the FFT analyzer."""
+        try:
+            from rich.console import Console
+            from rich.text import Text
+            RICH_AVAILABLE = True
+        except ImportError:
+            RICH_AVAILABLE = False
+            
+        if RICH_AVAILABLE and self.mmpp and getattr(self.mmpp, '_interactive_mode', False):
+            return self._rich_fft_display()
+        else:
+            return self._basic_fft_display()
+            
+    def _rich_fft_display(self) -> str:
+        """Generate rich display for FFT analyzer."""
+        try:
+            from rich.console import Console
+            from rich.text import Text
+            from rich.panel import Panel
+            from rich.columns import Columns
+            
+            console = Console()
+            
+            summary_text = Text()
+            summary_text.append(f"🌊 MMPP FFT Analyzer for {len(self.results)} datasets\n", style="bold cyan")
+            summary_text.append(f"⚙️ Engine: {self.config.engine}\n", style="dim")
+            summary_text.append(f"📊 Window: {self.config.window_function}\n", style="dim")
+            summary_text.append(f"🔍 Zero padding: {'enabled' if self.config.zero_padding else 'disabled'}\n", style="dim")
+
+            methods_text = Text()
+            methods_text.append("🔧 Available methods:\n", style="bold yellow")
+            methods = [
+                ("compute_fft(dataset, **kwargs)", "Compute FFT for dataset"),
+                ("get_power_spectrum(dataset, **kwargs)", "Get power spectrum"),
+                ("find_resonant_frequencies(**kwargs)", "Find resonance peaks"),
+                ("plot_spectrum(dataset, **kwargs)", "Plot frequency spectrum"),
+                ("compare_spectra(datasets, **kwargs)", "Compare multiple spectra"),
+                ("configure(**kwargs)", "Update FFT configuration"),
+            ]
+
+            for method, description in methods:
+                methods_text.append("  • ", style="dim")
+                methods_text.append(method, style="code")
+                methods_text.append(f" - {description}\n", style="dim")
+
+            examples_text = Text()
+            examples_text.append("💡 Usage examples:\n", style="bold green")
+            examples = [
+                "fft.compute_fft('m_z11', method=1)",
+                "fft.plot_spectrum('m_z11', log_scale=True)",
+                "fft.find_resonant_frequencies(threshold=0.1)",
+                "fft.configure(window='hann', zero_padding_factor=4)",
+            ]
+
+            for example in examples:
+                examples_text.append(f"  {example}\n", style="code")
+
+            try:
+                with console.capture() as capture:
+                    console.print(
+                        Panel.fit(
+                            summary_text,
+                            title="[bold blue]MMPP FFT Analyzer[/bold blue]",
+                            border_style="blue",
+                        )
+                    )
+                    console.print("")
+                    console.print(
+                        Columns(
+                            [
+                                Panel.fit(
+                                    methods_text,
+                                    title="[bold yellow]Methods[/bold yellow]",
+                                    border_style="yellow",
+                                ),
+                                Panel.fit(
+                                    examples_text,
+                                    title="[bold green]Examples[/bold green]",
+                                    border_style="green",
+                                ),
+                            ]
+                        )
+                    )
+                return capture.get()
+            except Exception:
+                pass
+
+            return str(summary_text) + "\n" + str(methods_text) + "\n" + str(examples_text)
+            
+        except Exception:
+            return self._basic_fft_display()
+            
+    def _basic_fft_display(self) -> str:
+        """Generate basic display for FFT analyzer."""
+        return f"""
+MMPP FFT Analyzer:
+=================
+🌊 Datasets: {len(self.results)}
+⚙️ Engine: {self.config.engine}
+📊 Window: {self.config.window_function}
+🔍 Zero padding: {'enabled' if self.config.zero_padding else 'disabled'}
+
+🔧 Main methods:
+  • compute_fft(dataset, **kwargs) - Compute FFT for dataset
+  • get_power_spectrum(dataset, **kwargs) - Get power spectrum
+  • find_resonant_frequencies(**kwargs) - Find resonance peaks
+  • plot_spectrum(dataset, **kwargs) - Plot frequency spectrum
+  • compare_spectra(datasets, **kwargs) - Compare multiple spectra
+  • configure(**kwargs) - Update FFT configuration
+
+💡 Example: fft.plot_spectrum('m_z11', log_scale=True, z_layer=0)
+
+🎯 Mode analysis: Use .modes property for advanced mode visualization
+"""

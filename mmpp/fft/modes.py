@@ -5,10 +5,12 @@ Professional implementation for visualizing FMR modes with interactive spectrum.
 Provides both programmatic and interactive interfaces for mode analysis.
 """
 
-from typing import Optional, Dict, List, Union, Any, Tuple, Callable
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import matplotlib.colors as mcolors
+from typing import Optional, Dict, List, Union, Any, Tuple, Callable
 from dataclasses import dataclass
-import warnings
 from datetime import datetime
 
 # Import shared logging configuration
@@ -17,33 +19,172 @@ from ..logging_config import setup_mmpp_logging, get_mmpp_logger
 # Get logger for FMR modes
 log = get_mmpp_logger("mmpp.fft.modes")
 
+# Import styling functions from plotting module
+try:
+    from ..plotting import setup_custom_fonts, load_paper_style, apply_custom_colors
+    STYLING_AVAILABLE = True
+except ImportError:
+    STYLING_AVAILABLE = False
+    log.warning("Styling functions not available - using default matplotlib styling")
+
 # Import dependencies with error handling
-try:
-    import matplotlib.pyplot as plt
-    import matplotlib as mpl
-    from matplotlib.figure import Figure
-    from matplotlib.axes import Axes
-    from matplotlib.backend_bases import MouseEvent
-    import matplotlib.gridspec as gridspec
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
-    log.warning("Matplotlib not available - mode visualization disabled")
-
-try:
-    import scipy.signal
-    from scipy.signal import find_peaks
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-    log.warning("SciPy not available - peak detection features limited")
-
 try:
     import zarr
     ZARR_AVAILABLE = True
 except ImportError:
     ZARR_AVAILABLE = False
     log.error("Zarr not available - mode analysis disabled")
+
+try:
+    from matplotlib.figure import Figure
+    from matplotlib.axes import Axes
+    from matplotlib.backend_bases import MouseEvent
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    log.warning("Matplotlib not available - mode visualization disabled")
+
+try:
+    from scipy.signal import find_peaks
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    log.warning("SciPy not available - peak detection features limited")
+
+# Check for animation support
+try:
+    from matplotlib.animation import FuncAnimation, PillowWriter
+    ANIMATION_AVAILABLE = True
+    
+    # Check for FFmpeg support
+    try:
+        from matplotlib.animation import FFMpegWriter
+        FFMPEG_AVAILABLE = True
+        log.debug("FFmpeg available for MP4 animations")
+    except ImportError:
+        FFMPEG_AVAILABLE = False
+        log.debug("FFmpeg not available - MP4 animations will fallback to GIF")
+        
+except ImportError:
+    ANIMATION_AVAILABLE = False
+    FFMPEG_AVAILABLE = False
+    log.warning("Animation support not available")
+
+
+class MidpointNormalize(mcolors.Normalize):
+    """
+    Matplotlib normalization class with symmetric colormap around midpoint.
+    
+    Useful for data that has meaningful zero point (like magnetic field components)
+    where you want symmetric color scaling around zero.
+    """
+    
+    def __init__(self, vmin=None, vmax=None, midpoint=0, clip=False):
+        """
+        Initialize normalization.
+        
+        Parameters:
+        -----------
+        vmin : float, optional
+            Minimum value for normalization
+        vmax : float, optional  
+            Maximum value for normalization
+        midpoint : float, optional
+            Value that should map to center of colormap (default: 0)
+        clip : bool, optional
+            Whether to clip values outside [vmin, vmax]
+        """
+        self.midpoint = midpoint
+        mcolors.Normalize.__init__(self, vmin, vmax, clip)
+
+    def __call__(self, value, clip=None):
+        """Apply normalization to values."""
+        # Handle the case where vmin, vmax, or midpoint could be None
+        if self.vmin is None or self.vmax is None:
+            return mcolors.Normalize.__call__(self, value, clip)
+            
+        # Calculate normalized positions for min, mid, max
+        normalized_min = max(0, 1 / 2 * (1 - abs((self.midpoint - self.vmin) / (self.midpoint - self.vmax))))
+        normalized_max = min(1, 1 / 2 * (1 + abs((self.vmax - self.midpoint) / (self.midpoint - self.vmin))))
+        normalized_mid = 0.5
+        
+        # Interpolate
+        x = [self.vmin, self.midpoint, self.vmax]
+        y = [normalized_min, normalized_mid, normalized_max]
+        
+        return np.ma.masked_array(np.interp(value, x, y))
+
+
+def setup_animation_styling(use_paper_style: bool = True, use_custom_fonts: bool = True) -> bool:
+    """
+    Setup styling for FMR mode animations using MMPP paper style.
+    
+    Parameters:
+    -----------
+    use_paper_style : bool, optional
+        Whether to apply paper.mplstyle styling (default: True)
+    use_custom_fonts : bool, optional
+        Whether to setup custom fonts (default: True)
+        
+    Returns:
+    --------
+    bool
+        True if styling was successfully applied
+    """
+    if not STYLING_AVAILABLE:
+        log.warning("Styling functions not available - using default matplotlib styling")
+        return False
+        
+    try:
+        success = True
+        
+        # Setup custom fonts if requested
+        if use_custom_fonts:
+            font_success = setup_custom_fonts(verbose=False)
+            if not font_success:
+                log.warning("Custom font setup failed - using default fonts")
+                success = False
+        
+        # Load paper style if requested
+        if use_paper_style:
+            style_success = load_paper_style(verbose=False)
+            if style_success:
+                log.debug("✓ Applied paper.mplstyle to mode animations")
+            else:
+                log.warning("Paper style loading failed - using default style")
+                success = False
+                
+        # Apply custom colors for better visibility
+        custom_colors = {
+            "text": "#2E2E2E",      # Dark gray for text
+            "axes": "#2E2E2E",      # Dark gray for axes
+            "grid": "#CCCCCC"       # Light gray for grid
+        }
+        apply_custom_colors(custom_colors)
+        
+        return success
+        
+    except Exception as e:
+        log.warning(f"Animation styling setup failed: {e}")
+        return False
+
+
+def check_ffmpeg_available() -> bool:
+    """
+    Check if ffmpeg is available for MP4 animations.
+    
+    Returns:
+    --------
+    bool
+        True if ffmpeg is available
+    """
+    try:
+        import subprocess
+        result = subprocess.run(['ffmpeg', '-version'], 
+                              capture_output=True, text=True, timeout=5)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 
 @dataclass
@@ -65,7 +206,10 @@ class ModeVisualizationConfig:
     show_combined: bool = True
     colormap_magnitude: str = "inferno"
     colormap_phase: str = "hsv"
+    colormap_animation: str = "balance"  # cmocean.cm.balance for animations, RdBu_r fallback
     interpolation: str = "nearest"
+    use_midpoint_norm: bool = False  # Use MidpointNormalize for diverging data
+    animation_time_steps: int = 60  # Number of time steps for one full phase cycle
     
     # Frequency range for analysis
     f_min: float = 0.0
@@ -579,6 +723,9 @@ class FMRModeAnalyzer:
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib is required for plotting")
             
+        # Setup professional styling for mode plots
+        setup_animation_styling(use_paper_style=True, use_custom_fonts=True)
+            
         components = components or ['x', 'y', 'z']
         mode_data = self.get_mode(frequency, z_layer)
         
@@ -1018,76 +1165,331 @@ class FMRModeAnalyzer:
         self.zarr_file = zarr.open(self.zarr_path, mode='r')
         self._load_data()
 
-    def save_modes_animation(self, frequency_range: Tuple[float, float],
-                            save_path: str,
-                            fps: int = 10,
+    def save_modes_animation(self, frequency_range: Tuple[float, float] = None,
+                            frequency: float = None,
+                            save_path: str = "mode_animation.gif",
+                            fps: int = 15,
                             z_layer: int = 0,
-                            component: Union[str, int] = 'z') -> None:
+                            component: Union[str, int] = 'z',
+                            animation_type: str = 'temporal',
+                            colormap: str = None,
+                            use_midpoint_norm: bool = None,
+                            figsize: Tuple[float, float] = None) -> None:
         """
-        Save animation of modes across frequency range.
+        Save animation of FMR modes.
         
         Parameters:
         -----------
-        frequency_range : tuple
-            (f_min, f_max) in GHz
+        frequency_range : tuple, optional
+            (f_min, f_max) in GHz for frequency sweep animation
+        frequency : float, optional
+            Single frequency for temporal animation (in GHz)
         save_path : str
             Output file path (.gif or .mp4)
+        fps : int
+            Frames per second (default: 15)
         z_layer : int
-            Z-layer to animate
+            Z-layer to animate (default: 0)
         component : str or int
-            Component to animate
+            Component to animate (default: 'z')
+        animation_type : str
+            Type of animation:
+            - 'temporal': Real part of mode oscillating in time at fixed frequency
+            - 'frequency': Mode amplitude across frequency range
+            - 'phase': Phase evolution at fixed frequency
+        colormap : str, optional
+            Colormap name. If None, uses config defaults
+        use_midpoint_norm : bool, optional
+            Use symmetric normalization around zero (default: from config)
+        figsize : tuple, optional
+            Figure size (width, height)
         """
-        if not MATPLOTLIB_AVAILABLE:
-            raise ImportError("Matplotlib is required for animations")
+        if not MATPLOTLIB_AVAILABLE or not ANIMATION_AVAILABLE:
+            raise ImportError("Matplotlib and animation support are required for animations")
+            
+        # Setup professional styling for animations
+        setup_animation_styling(use_paper_style=True, use_custom_fonts=True)
             
         try:
             from matplotlib.animation import FuncAnimation
+            import matplotlib.cm as cm
             
-            # Get frequency indices
-            f_min, f_max = frequency_range
-            freq_mask = (self.frequencies >= f_min) & (self.frequencies <= f_max)
-            freq_indices = np.where(freq_mask)[0]
+            # Parameter validation
+            if frequency_range is None and frequency is None:
+                raise ValueError("Either frequency_range or frequency must be specified")
             
-            if len(freq_indices) == 0:
-                raise ValueError("No frequencies found in specified range")
+            if frequency_range is not None and frequency is not None:
+                raise ValueError("Specify either frequency_range OR frequency, not both")
+            
+            # Set defaults with intelligent choices for animation type
+            figsize = figsize or (10, 8)
+            colormap = colormap or self.config.colormap_animation
+            
+            # Auto-enable MidpointNormalize for temporal animations if not explicitly set
+            if use_midpoint_norm is None:
+                if animation_type == 'temporal':
+                    use_midpoint_norm = True  # Temporal animations benefit from symmetric normalization
+                else:
+                    use_midpoint_norm = self.config.use_midpoint_norm
+            
+            # Choose better colormap for temporal oscillations if default 'balance'
+            if animation_type == 'temporal' and colormap == 'balance':
+                log.info("Using diverging colormap 'balance' - perfect for oscillating modes")
+            
+            # Try to get cmocean colormaps for better scientific visualization
+            try:
+                import cmocean
+                if colormap == 'balance':
+                    cmap = cmocean.cm.balance  # Perfect for data with +/- symmetry
+                elif colormap == 'diff':
+                    cmap = cmocean.cm.diff    # Another good diverging colormap
+                elif colormap == 'curl':
+                    cmap = cmocean.cm.curl    # Good for circular/phase data
+                elif colormap == 'delta':
+                    cmap = cmocean.cm.delta   # Good for deviations from mean
+                elif colormap == 'tarn':
+                    cmap = cmocean.cm.tarn    # Good for complex data
+                else:
+                    # Try as regular matplotlib colormap
+                    cmap = plt.get_cmap(colormap)
+            except ImportError:
+                log.warning("cmocean not available, using matplotlib colormaps")
+                if colormap == 'balance':
+                    cmap = plt.get_cmap('RdBu_r')  # Best fallback for balance
+                elif colormap == 'diff':
+                    cmap = plt.get_cmap('RdBu')    # Alternative diverging
+                elif colormap == 'curl' or colormap == 'tarn':
+                    cmap = plt.get_cmap('RdYlBu_r')  # Complex fallback
+                elif colormap == 'delta':
+                    cmap = plt.get_cmap('PuOr_r')  # Another diverging option
+                else:
+                    cmap = plt.get_cmap(colormap)
             
             # Setup figure
-            fig, ax = plt.subplots(figsize=(8, 6), dpi=self.config.dpi)
+            fig, ax = plt.subplots(figsize=figsize, dpi=self.config.dpi)
             
-            def animate(frame):
-                ax.clear()
-                freq_idx = freq_indices[frame]
-                frequency = self.frequencies[freq_idx]
+            if animation_type == 'temporal' and frequency is not None:
+                # Temporal animation: Real part oscillating in time (true physical dynamics)
+                # Shows how the mode would actually oscillate at this frequency
+                log.info(f"Creating temporal animation at {frequency:.3f} GHz")
                 
                 # Get mode data
                 mode_data = self.get_mode(frequency, z_layer)
                 comp_data = mode_data.get_component(component)
                 
-                # Plot magnitude
-                magnitude = np.abs(comp_data)
-                im = ax.imshow(magnitude, 
-                              cmap=self.config.colormap_magnitude,
+                # Get amplitude and phase - this is the complex mode from FFT
+                amplitude = np.abs(comp_data)
+                phase = np.angle(comp_data)
+                
+                # Setup normalization - MidpointNormalize is perfect for oscillating data
+                if use_midpoint_norm:
+                    vmax = np.max(amplitude)
+                    norm = MidpointNormalize(vmin=-vmax, vmax=vmax, midpoint=0)
+                else:
+                    vmax = np.max(amplitude)
+                    norm = plt.Normalize(vmin=-vmax, vmax=vmax)
+                
+                # Time steps for one full oscillation period
+                time_steps = np.linspace(0, 2*np.pi, self.config.animation_time_steps)
+                
+                # Create initial plot for colorbar setup
+                t = time_steps[0]
+                real_part = amplitude * np.cos(phase + t)
+                im = ax.imshow(real_part, 
+                              cmap=cmap,
+                              norm=norm,
                               extent=mode_data.extent,
                               aspect='equal',
                               origin='lower',
                               interpolation=self.config.interpolation)
                 
-                ax.set_title(f'|m_{component}| @ {frequency:.3f} GHz')
+                # Create colorbar once
+                cbar = plt.colorbar(im, ax=ax)
+                cbar.set_label(f'Magnetization (arb. units)')
+                
+                # Set labels once (they won't change)
                 ax.set_xlabel('x (nm)')
                 ax.set_ylabel('y (nm)')
                 
-                return [im]
+                def animate_temporal(frame):
+                    # Calculate real part at this time step: Re[A * e^(i*φ) * e^(i*ω*t)]
+                    # This is exactly: amplitude * cos(phase + ωt) where ωt = time_steps[frame]
+                    t = time_steps[frame]
+                    real_part = amplitude * np.cos(phase + t)
+                    
+                    # Update image data instead of recreating
+                    im.set_array(real_part)
+                    
+                    # Show fraction of period completed
+                    period_fraction = t / (2*np.pi)
+                    ax.set_title(f'Re[m_{component}] @ {frequency:.3f} GHz (t = {period_fraction:.2f}T)')
+                    
+                    return [im]
+                
+                # Create animation
+                anim = FuncAnimation(fig, animate_temporal, frames=len(time_steps),
+                                   interval=1000/fps, blit=True, repeat=True)
+                
+            elif animation_type == 'frequency' and frequency_range is not None:
+                # Frequency sweep animation
+                f_min, f_max = frequency_range
+                freq_mask = (self.frequencies >= f_min) & (self.frequencies <= f_max)
+                freq_indices = np.where(freq_mask)[0]
+                
+                if len(freq_indices) == 0:
+                    raise ValueError("No frequencies found in specified range")
+                
+                log.info(f"Creating frequency sweep animation: {f_min:.3f} - {f_max:.3f} GHz")
+                
+                # Pre-calculate all mode data for consistent normalization
+                all_amplitudes = []
+                for freq_idx in freq_indices:
+                    freq = self.frequencies[freq_idx]
+                    mode_data = self.get_mode(freq, z_layer)
+                    comp_data = mode_data.get_component(component)
+                    all_amplitudes.append(np.abs(comp_data))
+                
+                # Global normalization
+                global_max = np.max([np.max(amp) for amp in all_amplitudes])
+                norm = plt.Normalize(vmin=0, vmax=global_max)
+                
+                # Create initial plot for colorbar setup
+                mode_data = self.get_mode(self.frequencies[freq_indices[0]], z_layer)
+                im = ax.imshow(all_amplitudes[0], 
+                              cmap=cmap,
+                              norm=norm,
+                              extent=mode_data.extent,
+                              aspect='equal',
+                              origin='lower',
+                              interpolation=self.config.interpolation)
+                
+                # Create colorbar once
+                cbar = plt.colorbar(im, ax=ax)
+                cbar.set_label(f'|Magnetization| (arb. units)')
+                
+                # Set labels once (they won't change)
+                ax.set_xlabel('x (nm)')
+                ax.set_ylabel('y (nm)')
+                
+                def animate_frequency(frame):
+                    freq_idx = freq_indices[frame]
+                    frequency = self.frequencies[freq_idx]
+                    amplitude = all_amplitudes[frame]
+                    
+                    # Update image data instead of recreating
+                    im.set_array(amplitude)
+                    
+                    ax.set_title(f'|m_{component}| @ {frequency:.3f} GHz')
+                    
+                    return [im]
+                
+                # Create animation
+                anim = FuncAnimation(fig, animate_frequency, frames=len(freq_indices),
+                                   interval=1000/fps, blit=True, repeat=True)
+                
+            elif animation_type == 'phase' and frequency is not None:
+                # Phase evolution animation
+                log.info(f"Creating phase animation at {frequency:.3f} GHz")
+                
+                mode_data = self.get_mode(frequency, z_layer)
+                comp_data = mode_data.get_component(component)
+                
+                amplitude = np.abs(comp_data)
+                phase = np.angle(comp_data)
+                
+                # Phase steps
+                phase_steps = np.linspace(0, 2*np.pi, self.config.animation_time_steps)
+                
+                # Create initial plot for colorbar setup
+                current_phase = (phase + phase_steps[0]) % (2*np.pi)
+                im = ax.imshow(current_phase, 
+                              cmap='hsv',  # HSV is perfect for phase
+                              vmin=0, vmax=2*np.pi,
+                              extent=mode_data.extent,
+                              aspect='equal',
+                              origin='lower',
+                              interpolation=self.config.interpolation)
+                
+                # Create colorbar once
+                cbar = plt.colorbar(im, ax=ax)
+                cbar.set_label('Phase (rad)')
+                cbar.set_ticks([0, np.pi/2, np.pi, 3*np.pi/2, 2*np.pi])
+                cbar.set_ticklabels(['0', 'π/2', 'π', '3π/2', '2π'])
+                
+                # Set labels once (they won't change)
+                ax.set_xlabel('x (nm)')
+                ax.set_ylabel('y (nm)')
+                
+                def animate_phase(frame):
+                    # Add phase offset
+                    current_phase = (phase + phase_steps[frame]) % (2*np.pi)
+                    
+                    # Update image data instead of recreating
+                    im.set_array(current_phase)
+                    
+                    ax.set_title(f'Phase[m_{component}] @ {frequency:.3f} GHz (φ offset = {phase_steps[frame]:.2f})')
+                    
+                    return [im]
+                
+                # Create animation
+                anim = FuncAnimation(fig, animate_phase, frames=len(phase_steps),
+                                   interval=1000/fps, blit=True, repeat=True)
             
-            # Create animation
-            anim = FuncAnimation(fig, animate, frames=len(freq_indices),
-                               interval=1000/fps, blit=False, repeat=True)
+            else:
+                raise ValueError(f"Invalid animation_type '{animation_type}' for given parameters")
             
             # Save animation
-            anim.save(save_path, fps=fps, dpi=self.config.dpi)
-            log.info(f"Saved animation to {save_path}")
+            plt.tight_layout()
             
-        except ImportError:
-            log.error("Animation requires matplotlib.animation")
+            # Choose writer based on file extension with fallback support
+            if save_path.endswith('.mp4'):
+                # Check if ffmpeg is actually available on the system
+                if FFMPEG_AVAILABLE and check_ffmpeg_available():
+                    writer = 'ffmpeg'
+                    log.info("Using FFmpeg writer for MP4 format")
+                else:
+                    log.warning("FFmpeg not available on system, converting to GIF format")
+                    save_path = save_path.replace('.mp4', '.gif')
+                    writer = 'pillow'
+            elif save_path.endswith('.gif'):
+                writer = 'pillow'
+            else:
+                writer = 'pillow'  # Default to GIF
+                if not save_path.endswith('.gif'):
+                    save_path += '.gif'
+            
+            log.info(f"Saving animation to {save_path} (this may take a while...)")
+            
+            try:
+                # For MP4, use higher quality settings
+                if writer == 'ffmpeg' and save_path.endswith('.mp4'):
+                    anim.save(save_path, writer=writer, fps=fps, dpi=self.config.dpi//2,
+                             extra_args=['-vcodec', 'libx264', '-pix_fmt', 'yuv420p'])
+                else:
+                    anim.save(save_path, writer=writer, fps=fps, dpi=self.config.dpi//2)
+                    
+                log.info(f"✅ Animation saved successfully!")
+                
+            except Exception as save_error:
+                log.error(f"Failed to save animation with {writer}: {save_error}")
+                
+                # Fallback to GIF if MP4 fails
+                if writer == 'ffmpeg' and save_path.endswith('.mp4'):
+                    log.info("Attempting fallback to GIF format...")
+                    fallback_path = save_path.replace('.mp4', '.gif')
+                    try:
+                        anim.save(fallback_path, writer='pillow', fps=fps, dpi=self.config.dpi//2)
+                        log.info(f"✅ Animation saved as GIF: {fallback_path}")
+                    except Exception as gif_error:
+                        log.error(f"Fallback to GIF also failed: {gif_error}")
+                        raise save_error
+                else:
+                    raise save_error
+            
+            plt.close(fig)
+            
+        except ImportError as e:
+            log.error(f"Animation requires additional packages: {e}")
             raise
         except Exception as e:
             log.error(f"Failed to create animation: {e}")
@@ -1110,6 +1512,124 @@ class FFTModeInterface:
     def __getitem__(self, frequency_index: int) -> "FrequencyModeInterface":
         """Get mode interface for specific frequency index."""
         return FrequencyModeInterface(frequency_index, self)
+        
+    def __repr__(self) -> str:
+        """Rich representation of the FFT mode interface."""
+        try:
+            from rich.console import Console
+            from rich.text import Text
+            RICH_AVAILABLE = True
+        except ImportError:
+            RICH_AVAILABLE = False
+            
+        if RICH_AVAILABLE and self.parent_fft.mmpp and getattr(self.parent_fft.mmpp, '_interactive_mode', False):
+            return self._rich_modes_display()
+        else:
+            return self._basic_modes_display()
+            
+    def _rich_modes_display(self) -> str:
+        """Generate rich display for FFT modes interface."""
+        try:
+            from rich.console import Console
+            from rich.text import Text
+            from rich.panel import Panel
+            from rich.columns import Columns
+            
+            console = Console()
+            
+            summary_text = Text()
+            summary_text.append("🎯 MMPP FFT Mode Analyzer\n", style="bold cyan")
+            summary_text.append(f"📁 Dataset: {getattr(self.mode_analyzer, 'dataset_name', 'Not loaded')}\n", style="dim")
+            summary_text.append(f"🌊 Modes available: {'Yes' if getattr(self.mode_analyzer, 'modes_available', False) else 'No'}\n", style="dim")
+            summary_text.append(f"📊 Z-layers: {getattr(self.mode_analyzer, 'n_z_layers', 'Unknown')}\n", style="dim")
+
+            methods_text = Text()
+            methods_text.append("🔧 Available methods:\n", style="bold yellow")
+            methods = [
+                ("interactive_spectrum(dset=None, **kwargs)", "Interactive spectrum with modes"),
+                ("plot_modes(frequency, dset=None, **kwargs)", "Plot mode at specific frequency"),
+                ("save_modes_animation(**kwargs)", "Create mode animations"),
+                ("compute_modes(dset=None, **kwargs)", "Compute/recompute modes"),
+                ("[freq_index].plot_modes(**kwargs)", "Plot modes at frequency index"),
+            ]
+
+            for method, description in methods:
+                methods_text.append("  • ", style="dim")
+                methods_text.append(method, style="code")
+                methods_text.append(f" - {description}\n", style="dim")
+
+            examples_text = Text()
+            examples_text.append("💡 Usage examples:\n", style="bold green")
+            examples = [
+                "modes.interactive_spectrum(dset='m_z11')",
+                "modes.plot_modes(frequency=1.5, dset='m_z11')",
+                "modes.save_modes_animation(frequency=1.5, animation_type='temporal')",
+                "modes[0][150].plot_modes()  # freq index 0, freq point 150",
+                "modes.compute_modes(dset='m_z5-8')",
+            ]
+
+            for example in examples:
+                examples_text.append(f"  {example}\n", style="code")
+
+            try:
+                with console.capture() as capture:
+                    console.print(
+                        Panel.fit(
+                            summary_text,
+                            title="[bold blue]MMPP FFT Modes[/bold blue]",
+                            border_style="blue",
+                        )
+                    )
+                    console.print("")
+                    console.print(
+                        Columns(
+                            [
+                                Panel.fit(
+                                    methods_text,
+                                    title="[bold yellow]Methods[/bold yellow]",
+                                    border_style="yellow",
+                                ),
+                                Panel.fit(
+                                    examples_text,
+                                    title="[bold green]Examples[/bold green]",
+                                    border_style="green",
+                                ),
+                            ]
+                        )
+                    )
+                return capture.get()
+            except Exception:
+                pass
+
+            return str(summary_text) + "\n" + str(methods_text) + "\n" + str(examples_text)
+            
+        except Exception:
+            return self._basic_modes_display()
+            
+    def _basic_modes_display(self) -> str:
+        """Generate basic display for FFT modes interface."""
+        return f"""
+MMPP FFT Mode Analyzer:
+======================
+🎯 Advanced FMR mode visualization and analysis
+📁 Dataset: {getattr(self.mode_analyzer, 'dataset_name', 'Not loaded')}
+🌊 Modes available: {'Yes' if getattr(self.mode_analyzer, 'modes_available', False) else 'No'}
+📊 Z-layers: {getattr(self.mode_analyzer, 'n_z_layers', 'Unknown')}
+
+🔧 Main methods:
+  • interactive_spectrum(dset=None, **kwargs) - Interactive spectrum with modes
+  • plot_modes(frequency, dset=None, **kwargs) - Plot mode at specific frequency  
+  • save_modes_animation(**kwargs) - Create mode animations
+  • compute_modes(dset=None, **kwargs) - Compute/recompute modes
+  • [freq_index].plot_modes(**kwargs) - Plot modes at frequency index
+
+💡 Animation examples:
+  • modes.save_modes_animation(frequency=1.5, animation_type='temporal')
+  • modes.save_modes_animation(frequency_range=(1.0, 3.0), animation_type='frequency')
+  
+🎬 Animation types: 'temporal', 'frequency', 'phase'
+🎨 Supports MP4 (ffmpeg) and GIF (pillow) output formats
+"""
         
     @property 
     def mode_analyzer(self) -> FMRModeAnalyzer:
@@ -1176,29 +1696,38 @@ class FFTModeInterface:
                 
             return self.mode_analyzer.plot_modes(frequency, **kwargs)
         
-    def save_modes_animation(self, frequency_range: Tuple[float, float],
-                            save_path: str,
+    def save_modes_animation(self, frequency_range: Tuple[float, float] = None,
+                            frequency: float = None,
+                            save_path: str = "mode_animation.gif",
                             dset: str = None,
-                            fps: int = 10,
+                            fps: int = 15,
                             z_layer: int = 0,
-                            component: Union[str, int] = 'z') -> None:
+                            component: Union[str, int] = 'z',
+                            animation_type: str = 'temporal',
+                            **kwargs) -> None:
         """
-        Save animation of modes across frequency range.
+        Save animation of FMR modes.
         
         Parameters:
         -----------
-        frequency_range : tuple
-            (f_min, f_max) in GHz
+        frequency_range : tuple, optional
+            (f_min, f_max) in GHz for frequency sweep animation
+        frequency : float, optional
+            Single frequency for temporal animation (in GHz)
         save_path : str
             Output file path (.gif or .mp4)
         dset : str, optional
             Dataset name. If None, uses default analyzer
         fps : int
-            Frames per second (default: 10)
+            Frames per second (default: 15)
         z_layer : int
             Z-layer to animate (default: 0)
         component : str or int
             Component to animate (default: 'z')
+        animation_type : str
+            Type of animation ('temporal', 'frequency', 'phase')
+        **kwargs
+            Additional arguments passed to FMRModeAnalyzer.save_modes_animation
         """
         # If dset is specified, create a new analyzer for that dataset
         if dset is not None and dset != self.mode_analyzer.dataset_name:
@@ -1211,14 +1740,32 @@ class FFTModeInterface:
                 log.info(f"Computing modes for dataset '{dset}'...")
                 temp_analyzer.compute_modes(save=True)
                 
-            return temp_analyzer.save_modes_animation(frequency_range, save_path, fps, z_layer, component)
+            return temp_analyzer.save_modes_animation(
+                frequency_range=frequency_range, 
+                frequency=frequency,
+                save_path=save_path, 
+                fps=fps, 
+                z_layer=z_layer, 
+                component=component,
+                animation_type=animation_type,
+                **kwargs
+            )
         else:
             # Use default analyzer
             if not self.mode_analyzer.modes_available:
                 log.info(f"Computing modes for dataset '{self.mode_analyzer.dataset_name}'...")
                 self.mode_analyzer.compute_modes(save=True)
                 
-            return self.mode_analyzer.save_modes_animation(frequency_range, save_path, fps, z_layer, component)
+            return self.mode_analyzer.save_modes_animation(
+                frequency_range=frequency_range, 
+                frequency=frequency,
+                save_path=save_path, 
+                fps=fps, 
+                z_layer=z_layer, 
+                component=component,
+                animation_type=animation_type,
+                **kwargs
+            )
 
 
 class FrequencyModeInterface:
@@ -1241,3 +1788,82 @@ class FrequencyModeInterface:
     def get_mode(self, **kwargs) -> FMRModeData:
         """Get mode data at this frequency.""" 
         return self.parent.mode_analyzer.get_mode(self.frequency, **kwargs)
+    
+    def __repr__(self) -> str:
+        """Rich string representation of FrequencyModeInterface."""
+        try:
+            # Try rich display first
+            return self._rich_frequency_display()
+        except ImportError:
+            # Fallback to basic display
+            return self._basic_frequency_display()
+    
+    def _rich_frequency_display(self) -> str:
+        """Rich display with styling and detailed information."""
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+        from rich.table import Table
+        from rich.syntax import Syntax
+        import io
+        
+        console = Console(file=io.StringIO(), width=100, force_terminal=True)
+        
+        # Main header
+        header = Text("FrequencyModeInterface", style="bold cyan")
+        
+        # Frequency information table
+        freq_table = Table(show_header=False, box=None, padding=(0, 1))
+        freq_table.add_column("Property", style="bold yellow")
+        freq_table.add_column("Value", style="white")
+        
+        freq_table.add_row("🎯 Frequency Index", f"{self.frequency_index}")
+        freq_table.add_row("⚡ Frequency Value", f"{self.frequency:.2e} Hz")
+        freq_table.add_row("📊 Parent Modes", f"{len(self.parent.mode_analyzer.frequencies)} frequencies")
+        
+        # Available methods
+        methods_text = Text("Available Methods:", style="bold green")
+        methods_list = [
+            "• plot_modes(**kwargs) → Tuple[Figure, np.ndarray]",
+            "• get_mode(**kwargs) → FMRModeData", 
+            "• frequency → float (property)"
+        ]
+        methods_content = "\n".join(methods_list)
+        
+        # Usage examples
+        example_code = f'''# Access frequency-specific operations
+freq_interface = modes[{self.frequency_index}]
+
+# Plot modes at this frequency
+fig, axes = freq_interface.plot_modes()
+
+# Get mode data
+mode_data = freq_interface.get_mode()
+
+# Check frequency value
+print(f"Frequency: {{freq_interface.frequency:.2e}} Hz")'''
+        
+        syntax = Syntax(example_code, "python", theme="monokai", background_color="default")
+        
+        # Build the panel content
+        content_parts = [freq_table, "", methods_text, Text(methods_content), "", 
+                        Text("Usage Examples:", style="bold blue"), syntax]
+        
+        panel = Panel(
+            "\n".join(str(part) for part in content_parts),
+            title=str(header),
+            border_style="cyan",
+            width=98
+        )
+        
+        console.print(panel)
+        return console.file.getvalue()
+    
+    def _basic_frequency_display(self) -> str:
+        """Basic fallback display without rich formatting."""
+        return (
+            f"FrequencyModeInterface(frequency_index={self.frequency_index}, "
+            f"frequency={self.frequency:.2e} Hz)\n"
+            f"Methods: plot_modes(), get_mode(), frequency (property)\n"
+            f"Parent analyzer has {len(self.parent.mode_analyzer.frequencies)} frequencies"
+        )
