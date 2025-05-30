@@ -693,6 +693,12 @@ class FMRModeAnalyzer:
             raise ValueError(f"Too many components ({n_components}). Maximum supported: 5")
         
         # Create figure with custom layout
+        try:
+            import matplotlib
+            matplotlib.use("module://ipympl", force=True)
+        except Exception as e:
+            log.error(f"Failed to enable interactive mode: {e}")
+            raise ImportError("Matplotlib widget backend is required for interactive plotting")
         self._interactive_fig = plt.figure(figsize=self.config.figsize, dpi=self.config.dpi)
         
         # Create grid layout: spectrum on left, modes on right
@@ -977,7 +983,7 @@ class FMRModeAnalyzer:
             modes_group.attrs["z_slice"] = str(z_slice)
             modes_group.attrs["dt"] = dt
             
-            zarr_write.close()
+            # zarr groups don't have close() method, just let it go out of scope
             log.info("✅ Mode computation completed and saved")
         
         # Reload data
