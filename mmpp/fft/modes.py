@@ -70,6 +70,23 @@ except ImportError:
     FFMPEG_AVAILABLE = False
     log.warning("Animation support not available")
 
+# Check for scientific colormaps
+try:
+    import cmcrameri.cm as cmc
+    CMCRAMERI_AVAILABLE = True
+    log.debug("cmcrameri colormaps available")
+except ImportError:
+    CMCRAMERI_AVAILABLE = False
+    log.debug("cmcrameri not available - using standard matplotlib colormaps")
+
+try:
+    import cmocean
+    CMOCEAN_AVAILABLE = True
+    log.debug("cmocean colormaps available")
+except ImportError:
+    CMOCEAN_AVAILABLE = False
+    log.debug("cmocean not available - using standard matplotlib colormaps")
+
 
 class MidpointNormalize(mcolors.Normalize):
     """
@@ -204,9 +221,9 @@ class ModeVisualizationConfig:
     show_magnitude: bool = True
     show_phase: bool = True
     show_combined: bool = True
-    colormap_magnitude: str = "inferno"
-    colormap_phase: str = "hsv"
-    colormap_animation: str = "balance"  # cmocean.cm.balance for animations, RdBu_r fallback
+    colormap_magnitude: str = "cmc.berlin"      # cmcrameri berlin for amplitude data
+    colormap_phase: str = "cmc.romaO"           # cmcrameri romaO for phase data
+    colormap_animation: str = "balance"     # cmocean.cm.balance for animations, RdBu_r fallback
     interpolation: str = "nearest"
     use_midpoint_norm: bool = False  # Use MidpointNormalize for diverging data
     animation_time_steps: int = 60  # Number of time steps for one full phase cycle
@@ -238,11 +255,42 @@ class ModeVisualizationConfig:
             
         # Validate colormaps
         try:
-            import matplotlib.pyplot as plt
-            plt.get_cmap(self.colormap_magnitude)
-            plt.get_cmap(self.colormap_phase)
+            self._resolve_colormap(self.colormap_magnitude)
+            self._resolve_colormap(self.colormap_phase)
         except Exception as e:
             log.warning(f"Colormap validation failed: {e}")
+    
+    def _resolve_colormap(self, cmap_name: str):
+        """
+        Resolve colormap from various sources (cmcrameri, cmocean, matplotlib).
+        
+        Parameters:
+        -----------
+        cmap_name : str
+            Name of the colormap
+            
+        Returns:
+        --------
+        matplotlib colormap object
+        """
+        # Try cmcrameri first (scientific colormaps)
+        if CMCRAMERI_AVAILABLE:
+            try:
+                return getattr(cmc, cmap_name)
+            except AttributeError:
+                pass
+        
+        # Try cmocean (oceanographic colormaps)
+        if CMOCEAN_AVAILABLE:
+            try:
+                import cmocean
+                return getattr(cmocean.cm, cmap_name)
+            except AttributeError:
+                pass
+        
+        # Fallback to matplotlib
+        import matplotlib.pyplot as plt
+        return plt.get_cmap(cmap_name)
 
 
 @dataclass 
@@ -753,7 +801,7 @@ class FMRModeAnalyzer:
             # Magnitude plot
             if self.config.show_magnitude:
                 im1 = axes[row, i].imshow(magnitude, 
-                                        cmap=self.config.colormap_magnitude,
+                                        cmap=self.config._resolve_colormap(self.config.colormap_magnitude),
                                         extent=mode_data.extent,
                                         aspect='equal',
                                         interpolation=self.config.interpolation,
@@ -768,7 +816,7 @@ class FMRModeAnalyzer:
             # Phase plot  
             if self.config.show_phase:
                 im2 = axes[row, i].imshow(phase,
-                                        cmap=self.config.colormap_phase,
+                                        cmap=self.config._resolve_colormap(self.config.colormap_phase),
                                         extent=mode_data.extent,
                                         aspect='equal',
                                         interpolation=self.config.interpolation,
@@ -783,16 +831,17 @@ class FMRModeAnalyzer:
             
             # Combined plot (phase with magnitude as alpha)
             if self.config.show_combined:
-                alpha = magnitude / np.max(magnitude)
-                im3 = axes[row, i].imshow(phase,
-                                        cmap=self.config.colormap_phase,
+                # Create combined visualization: magnitude * cos(phase) for real part
+                combined_data = magnitude * np.cos(phase)  # Real part
+                # Alternative: combined_data = magnitude * np.sin(phase)  # Imaginary part
+                
+                im3 = axes[row, i].imshow(combined_data,
+                                        cmap=self.config._resolve_colormap(self.config.colormap_phase),
                                         extent=mode_data.extent,
                                         aspect='equal',
                                         interpolation=self.config.interpolation,
-                                        alpha=alpha,
-                                        vmin=-np.pi, vmax=np.pi,
                                         origin='lower')
-                axes[row, i].set_title(f'm_{comp} (phase+mag) @ {frequency:.3f} GHz')
+                axes[row, i].set_title(f'm_{comp} combined (mag×cos(φ)) @ {frequency:.3f} GHz')
                 axes[row, i].set_xlabel('x (nm)')
                 if i == 0:
                     axes[row, i].set_ylabel('y (nm)')
@@ -827,7 +876,20 @@ class FMRModeAnalyzer:
         show : bool, optional
             Whether to automatically display the figure (default: True)
         **kwargs : dict
-            Additional keyword arguments
+            Additional keyword arguments:
+            - figsize : tuple, optional
+                Figure size (width, height) in inches (default: from config)
+            - dpi : int, optional
+                Figure resolution in dots per inch (default: from config)
+            - cmap : str, optional
+                Colormap for all mode visualizations (overrides config colormaps)
+                Examples: 'viridis', 'inferno', 'plasma', 'cividis', 'balance'
+            - acmap : str, optional
+                Colormap specifically for amplitude/magnitude plots (overrides cmap for magnitude)
+                Examples: 'viridis', 'inferno', 'plasma', 'hot'
+            - pcmap : str, optional
+                Colormap specifically for phase plots (overrides cmap for phase)
+                Examples: 'hsv', 'twilight', 'twilight_shifted', 'phase'
             
         Returns:
         --------
@@ -839,6 +901,14 @@ class FMRModeAnalyzer:
             
         if self.spectrum is None:
             raise ValueError("No spectrum data available for interactive mode")
+        
+        # Apply paper style for consistent visualization
+        if STYLING_AVAILABLE:
+            try:
+                load_paper_style(verbose=False)
+                log.debug("Applied paper style to interactive spectrum")
+            except Exception as e:
+                log.warning(f"Could not apply paper style: {e}")
             
         # Handle method parameter
         if method not in [1, 2]:
@@ -847,6 +917,36 @@ class FMRModeAnalyzer:
             
         components = components or ['x', 'y', 'z']
         n_components = len(components)
+        
+        # Extract parameters from kwargs
+        figsize = kwargs.get('figsize', self.config.figsize)
+        dpi = kwargs.get('dpi', self.config.dpi)
+        cmap = kwargs.get('cmap', None)
+        acmap = kwargs.get('acmap', None)  # Amplitude/magnitude colormap
+        pcmap = kwargs.get('pcmap', None)  # Phase colormap
+        
+        # Update colormaps if provided
+        if cmap or acmap or pcmap:
+            # Create a temporary copy of config with updated colormaps
+            import copy
+            temp_config = copy.deepcopy(self.config)
+            
+            # If cmap is provided, use it for all types unless specifically overridden
+            if cmap:
+                temp_config.colormap_magnitude = cmap
+                temp_config.colormap_phase = cmap
+            
+            # Override with specific colormaps if provided
+            if acmap:
+                temp_config.colormap_magnitude = acmap
+            if pcmap:
+                temp_config.colormap_phase = pcmap
+                
+            self.config = temp_config
+        
+        # Update figure settings from kwargs
+        self.config.figsize = figsize
+        self.config.dpi = dpi
         
         # Validate number of components for layout
         if n_components > 5:
@@ -862,7 +962,7 @@ class FMRModeAnalyzer:
         except Exception as e:
             log.warning(f"Could not check matplotlib backend: {e}")
             
-        self._interactive_fig = plt.figure(figsize=self.config.figsize, dpi=self.config.dpi)
+        self._interactive_fig = plt.figure(figsize=figsize, dpi=dpi)
         
         # Create grid layout: spectrum on left, modes on right
         # Use dynamic number of rows (3 for all visualization types)
@@ -1000,7 +1100,7 @@ class FMRModeAnalyzer:
                 # Magnitude plot (if enabled)
                 if self.config.show_magnitude:
                     im1 = self._mode_axes[row_idx, i].imshow(magnitude,
-                                                     cmap=self.config.colormap_magnitude,
+                                                     cmap=self.config._resolve_colormap(self.config.colormap_magnitude),
                                                      extent=mode_data.extent,
                                                      aspect='equal',
                                                      interpolation=self.config.interpolation,
@@ -1011,7 +1111,7 @@ class FMRModeAnalyzer:
                 # Phase plot (if enabled)
                 if self.config.show_phase:
                     im2 = self._mode_axes[row_idx, i].imshow(phase,
-                                                     cmap=self.config.colormap_phase,
+                                                     cmap=self.config._resolve_colormap(self.config.colormap_phase),
                                                      extent=mode_data.extent,
                                                      aspect='equal',
                                                      interpolation=self.config.interpolation,
@@ -1022,16 +1122,19 @@ class FMRModeAnalyzer:
                 
                 # Combined plot (if enabled)
                 if self.config.show_combined:
-                    alpha = magnitude / np.max(magnitude) if np.max(magnitude) > 0 else magnitude
-                    im3 = self._mode_axes[row_idx, i].imshow(phase,
-                                                     cmap=self.config.colormap_phase,
+                    # Create combined visualization: magnitude * cos(phase) for real part
+                    # or magnitude * sin(phase) for imaginary part
+                    # This shows the actual complex amplitude with sign
+                    combined_data = magnitude * np.cos(phase)  # Real part
+                    # Alternative: combined_data = magnitude * np.sin(phase)  # Imaginary part
+                    
+                    im3 = self._mode_axes[row_idx, i].imshow(combined_data,
+                                                     cmap=self.config._resolve_colormap(self.config.colormap_phase),
                                                      extent=mode_data.extent,
                                                      aspect='equal',
                                                      interpolation=self.config.interpolation,
-                                                     alpha=alpha,
-                                                     vmin=-np.pi, vmax=np.pi,
                                                      origin='lower')
-                    self._mode_axes[row_idx, i].set_title(f'm_{comp} combined')
+                    self._mode_axes[row_idx, i].set_title(f'm_{comp} combined (mag×cos(φ))')
                 
             except Exception as e:
                 log.error(f"Failed to plot component {comp}: {e}")

@@ -10,11 +10,11 @@ import logging
 from typing import Optional, Dict, List, Union, Tuple, Any
 import time
 
-# Configure logging with rich integration
-from rich.logging import RichHandler
+# Import shared logging configuration optimized for dark themes
+from .logging_config import get_default_logger, get_mmpp_logger
 
-logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[RichHandler()])
-log = logging.getLogger("rich")
+# Get logger for simulation module with dark theme optimization
+log = get_mmpp_logger("mmpp.simulation")
 
 
 def upgrade_log_level(current_level: str, new_level: str) -> str:

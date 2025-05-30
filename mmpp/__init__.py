@@ -180,3 +180,12 @@ __features__ = {
     "simulation": _SIMULATION_AVAILABLE,
     "mmpp": _CORE_AVAILABLE,
 }
+
+# Auto-load paper style if available
+if _PLOTTING_AVAILABLE:
+    try:
+        from .plotting import load_paper_style
+        load_paper_style(verbose=False)
+    except Exception:
+        # Silently fail if style loading fails
+        pass

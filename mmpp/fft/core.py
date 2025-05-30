@@ -333,7 +333,274 @@ class FFT:
         self._cache.clear()
     
     def __repr__(self) -> str:
-        return f"FFT(path='{self.job_result.path}')"
+        """Rich documentation display for FFT interface."""
+        try:
+            return self._rich_fft_display()
+        except Exception:
+            return self._basic_fft_display()
+    
+    def _rich_fft_display(self) -> str:
+        """Create rich documentation display with panels and proper styling."""
+        try:
+            from rich.console import Console
+            from rich.text import Text
+            from rich.panel import Panel
+            from rich.columns import Columns
+            from rich.table import Table
+            from rich.syntax import Syntax
+            import io
+            
+            console = Console(file=io.StringIO(), width=120, force_terminal=True)
+            
+            # Get basic info
+            path = self.job_result.path
+            cache_size = len(self._cache)
+            has_modes = MODES_AVAILABLE
+            
+            # Summary panel content
+            summary_text = Text()
+            summary_text.append("🔬 MMPP FFT Analysis Interface\n", style="bold cyan")
+            summary_text.append(f"📁 Job Path: {path}\n", style="dim")
+            summary_text.append(f"💾 Cache Entries: {cache_size}\n", style="dim") 
+            summary_text.append(f"🎯 Mode Analysis: {'✓ Available' if has_modes else '✗ Unavailable'}\n", style="green" if has_modes else "red")
+            
+            # Core methods panel content
+            core_methods_text = Text()
+            core_methods_text.append("🔧 Core FFT Methods:\n", style="bold yellow")
+            methods = [
+                ("spectrum()", "Get complex FFT spectrum"),
+                ("frequencies()", "Get frequency array"), 
+                ("power()", "Get power spectrum |FFT|²"),
+                ("magnitude()", "Get magnitude |FFT|"),
+                ("phase()", "Get phase spectrum"),
+                ("plot_spectrum()", "Plot power spectrum"),
+                ("clear_cache()", "Clear computation cache"),
+            ]
+            
+            for method, desc in methods:
+                core_methods_text.append("  • ", style="dim")
+                core_methods_text.append(method, style="code")
+                core_methods_text.append(f" - {desc}\n", style="dim")
+            
+            # Mode methods panel content (if available)
+            if has_modes:
+                mode_methods_text = Text()
+                mode_methods_text.append("🌊 Mode Analysis Methods:\n", style="bold blue")
+                mode_methods = [
+                    ("modes", "Access mode interface"),
+                    ("[index]", "Index-based mode access"),
+                    ("plot_modes(frequency)", "Plot modes at frequency"),
+                    ("interactive_spectrum()", "Interactive spectrum+modes"),
+                ]
+                
+                for method, desc in mode_methods:
+                    mode_methods_text.append("  • ", style="dim")
+                    mode_methods_text.append(method, style="code")
+                    mode_methods_text.append(f" - {desc}\n", style="dim")
+            else:
+                mode_methods_text = Text()
+                mode_methods_text.append("🌊 Mode Analysis: Not Available\n", style="bold red")
+                mode_methods_text.append("Install mode visualization dependencies to enable", style="dim")
+            
+            # Parameters table
+            params_table = Table(show_header=False, box=None, padding=(0, 1))
+            params_table.add_column("Parameter", style="bold yellow")
+            params_table.add_column("Description", style="white")
+            params_table.add_column("Values", style="cyan")
+            
+            params = [
+                ("dset", "Dataset name", "'m_z11', 'm_x11', 'm_y11'"),
+                ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
+                ("method", "FFT method", "1 (default), 2, 3"),
+                ("save", "Save to zarr", "True/False"),
+                ("force", "Force recalculation", "True/False"),
+            ]
+            
+            for param, desc, values in params:
+                params_table.add_row(param, desc, values)
+            
+            # Usage examples
+            example_code = '''# Basic FFT operations
+power = op[0].fft.power('m_z11')
+freqs = op[0].fft.frequencies()
+spectrum = op[0].fft.spectrum(save=True, force=True)
+
+# Plotting
+fig, ax = op[0].fft.plot_spectrum(log_scale=True)
+
+# Mode analysis (if available)
+op[0].fft.modes.interactive_spectrum()
+op[0].fft[0][200].plot_modes()  # Elegant syntax
+op[0].fft.plot_modes(frequency=1.5)
+
+# Advanced usage
+op[0].fft.plotter.power_spectrum(normalize=True)
+help(op[0].fft.spectrum)  # Detailed documentation'''
+            
+            syntax = Syntax(example_code, "python", theme="monokai", background_color="default")
+            
+            # Build panels
+            with console.capture() as capture:
+                # Main summary panel
+                console.print(
+                    Panel.fit(
+                        summary_text,
+                        title="[bold cyan]MMPP FFT Interface[/bold cyan]",
+                        border_style="cyan",
+                    )
+                )
+                console.print("")
+                
+                # Method panels side by side
+                console.print(
+                    Columns(
+                        [
+                            Panel.fit(
+                                core_methods_text,
+                                title="[bold yellow]Core Methods[/bold yellow]",
+                                border_style="yellow",
+                            ),
+                            Panel.fit(
+                                mode_methods_text,
+                                title="[bold blue]Mode Methods[/bold blue]",
+                                border_style="blue" if has_modes else "red",
+                            ),
+                        ]
+                    )
+                )
+                console.print("")
+                
+                # Parameters panel
+                console.print(
+                    Panel.fit(
+                        params_table,
+                        title="[bold green]Common Parameters[/bold green]",
+                        border_style="green",
+                    )
+                )
+                console.print("")
+                
+                # Examples panel
+                console.print(
+                    Panel.fit(
+                        syntax,
+                        title="[bold magenta]Usage Examples[/bold magenta]",
+                        border_style="magenta",
+                    )
+                )
+            
+            return capture.get()
+            
+        except Exception:
+            # Fallback to basic text display if rich fails
+            return self._basic_fft_display_enhanced()
+    
+    def _basic_fft_display(self) -> str:
+        """Fallback basic display if rich display fails."""
+        return f"FFT(path='{self.job_result.path}', cache_entries={len(self._cache)})"
+        
+    def _basic_fft_display_enhanced(self) -> str:
+        """Enhanced fallback display with more details if rich display fails."""
+        path = self.job_result.path
+        cache_size = len(self._cache)
+        has_modes = MODES_AVAILABLE
+        
+        output = []
+        output.append("=" * 70)
+        output.append("🔬 MMPP FFT Analysis Interface")
+        output.append("=" * 70)
+        output.append(f"📁 Job Path: {path}")
+        output.append(f"💾 Cache Entries: {cache_size}")
+        output.append(f"🎯 Mode Analysis: {'✓ Available' if has_modes else '✗ Unavailable'}")
+        output.append("")
+        
+        # Core FFT Methods
+        output.append("🔧 CORE FFT METHODS:")
+        output.append("─" * 50)
+        methods = [
+            ("spectrum()", "Get complex FFT spectrum", "op[0].fft.spectrum('m_z11', z_layer=-1)"),
+            ("frequencies()", "Get frequency array", "op[0].fft.frequencies()"),
+            ("power()", "Get power spectrum |FFT|²", "op[0].fft.power()"),
+            ("magnitude()", "Get magnitude |FFT|", "op[0].fft.magnitude()"),
+            ("phase()", "Get phase spectrum", "op[0].fft.phase()"),
+            ("plot_spectrum()", "Plot power spectrum", "fig, ax = op[0].fft.plot_spectrum()"),
+            ("clear_cache()", "Clear computation cache", "op[0].fft.clear_cache()"),
+        ]
+        
+        for method, desc, example in methods:
+            output.append(f"  • {method:<15} {desc}")
+            output.append(f"    └─ {example}")
+        
+        output.append("")
+        
+        # Mode Analysis (if available)
+        if has_modes:
+            output.append("🌊 MODE ANALYSIS METHODS:")
+            output.append("─" * 50)
+            mode_methods = [
+                ("modes", "Access mode interface", "op[0].fft.modes.interactive_spectrum()"),
+                ("[index]", "Index-based mode access", "op[0].fft[0][200].plot_modes()"),
+                ("plot_modes()", "Plot modes at frequency", "op[0].fft.plot_modes(frequency=1.5)"),
+                ("interactive_spectrum()", "Interactive spectrum+modes", "op[0].fft.interactive_spectrum()"),
+            ]
+            
+            for method, desc, example in mode_methods:
+                output.append(f"  • {method:<20} {desc}")
+                output.append(f"    └─ {example}")
+        else:
+            output.append("🌊 MODE ANALYSIS: Not Available")
+            output.append("   Install mode visualization dependencies to enable")
+        
+        output.append("")
+        
+        # Common Parameters
+        output.append("⚙️  COMMON PARAMETERS:")
+        output.append("─" * 50)
+        params = [
+            ("dset", "Dataset name", "'m_z11', 'm_x11', 'm_y11'"),
+            ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
+            ("method", "FFT method", "1 (default), 2, 3"),
+            ("save", "Save to zarr", "True/False"),
+            ("force", "Force recalculation", "True/False"),
+        ]
+        
+        for param, desc, values in params:
+            output.append(f"  • {param:<12} {desc:<20} {values}")
+        
+        output.append("")
+        
+        # Quick Examples
+        output.append("🚀 QUICK START EXAMPLES:")
+        output.append("─" * 50)
+        examples = [
+            "# Basic FFT operations",
+            "power = op[0].fft.power('m_z11')",
+            "freqs = op[0].fft.frequencies()",
+            "spectrum = op[0].fft.spectrum(save=True, force=True)",
+            "",
+            "# Plotting",
+            "fig, ax = op[0].fft.plot_spectrum(log_scale=True)",
+            "",
+            "# Mode analysis (if available)",
+            "op[0].fft.modes.interactive_spectrum()",
+            "op[0].fft[0][200].plot_modes()  # Elegant syntax",
+            "op[0].fft.plot_modes(frequency=1.5)",
+            "",
+            "# Advanced usage",
+            "op[0].fft.plotter.power_spectrum(normalize=True)",
+            "help(op[0].fft.spectrum)  # Detailed documentation",
+        ]
+        
+        for example in examples:
+            output.append(f"  {example}")
+        
+        output.append("")
+        output.append("=" * 70)
+        output.append("📖 For detailed docs: help(op[0].fft.spectrum)")
+        output.append("🔧 Clear cache: op[0].fft.clear_cache()")
+        output.append("=" * 70)
+        
+        return "\n".join(output)
     
     @property
     def modes(self) -> "FFTModeInterface":
@@ -414,6 +681,7 @@ class FFT:
         return analyzer.plot_modes(frequency=frequency, z_layer=z_layer, **kwargs)
 
     def interactive_spectrum(self, dset: str = "m_z11", **kwargs) -> Any:
+        
         """
         Create interactive spectrum plot with mode visualization.
         
