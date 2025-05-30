@@ -10,6 +10,13 @@ import numpy as np
 import time
 from dataclasses import dataclass
 
+# Import psutil for memory monitoring
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
 # Import dependencies with error handling
 try:
     import scipy.signal
@@ -487,6 +494,15 @@ class FFTCompute:
         tuple
             (data, dt) where data is the loaded array and dt is time step
         """
+        # Start timing and memory monitoring
+        start_time = time.time()
+        if PSUTIL_AVAILABLE:
+            process = psutil.Process()
+            initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+        
+        print(f"📂 Loading data from zarr: {zarr_path}")
+        print(f"   Dataset: {dataset}, z_layer: {z_layer}")
+        
         job = Pyzfn(zarr_path)
         
         # Get dataset
@@ -495,22 +511,48 @@ class FFTCompute:
         else:
             raise ValueError(f"Dataset '{dataset}' not found")
         
-        # Load data
+        # Load data with timing
+        data_load_start = time.time()
         data = data_set[...]
+        data_load_time = time.time() - data_load_start
+        
+        print(f"   ⏱️  Data loading time: {data_load_time:.3f}s")
+        
+        # Calculate data size and loading speed
+        data_size_mb = data.nbytes / 1024 / 1024
+        loading_speed = data_size_mb / data_load_time if data_load_time > 0 else 0
+        print(f"   📊 Data size: {data_size_mb:.1f} MB")
+        print(f"   🚀 Loading speed: {loading_speed:.1f} MB/s")
         
         # Handle z-layer selection
+        layer_select_start = time.time()
         if len(data.shape) == 5:  # (t, z, y, x, comp)
             if z_layer == -1:
                 data = data[:, -1, :, :, :]  # Take last layer
+                print(f"   📍 Selected last z-layer")
             else:
                 data = data[:, z_layer, :, :, :]
+                print(f"   📍 Selected z-layer {z_layer}")
         elif len(data.shape) == 4:  # (t, y, x, comp)
-            pass  # No z dimension
+            print(f"   📍 No z-dimension in data")
         else:
             raise ValueError(f"Unsupported data shape: {data.shape}")
         
+        layer_select_time = time.time() - layer_select_start
+        print(f"   ⏱️  Layer selection time: {layer_select_time:.3f}s")
+        
         # Get time step
         dt = getattr(job, 't_sampl', 1e-12)
+        
+        # Final timing and memory measurement
+        total_time = time.time() - start_time
+        if PSUTIL_AVAILABLE:
+            final_memory = process.memory_info().rss / 1024 / 1024  # MB
+            memory_increase = final_memory - initial_memory
+            print(f"   🧠 Memory increase: {memory_increase:.1f} MB")
+        
+        print(f"   ✅ Total loading time: {total_time:.3f}s")
+        print(f"   📐 Final data shape: {data.shape}")
         
         return data, dt
     
@@ -543,18 +585,41 @@ class FFTCompute:
             Loaded FFT result or None if not found
         """
         try:
+            # Start timing and memory monitoring
+            start_time = time.time()
+            if PSUTIL_AVAILABLE:
+                process = psutil.Process()
+                initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+            
+            print(f"📂 Loading existing FFT data from: {zarr_path}")
+            print(f"   FFT dataset: fft/{dataset_name}")
+            
             import zarr
             z = zarr.open(zarr_path, mode='r')
             
             fft_path = f"fft/{dataset_name}"
             if fft_path not in z:
+                print(f"   ❌ FFT dataset {fft_path} not found")
                 return None
             
             fft_group = z[fft_path]
             
-            # Load data
+            # Load data with timing
+            data_load_start = time.time()
             spectrum = np.array(fft_group["spectrum"])
             frequencies = np.array(fft_group["frequencies"])
+            data_load_time = time.time() - data_load_start
+            
+            print(f"   ⏱️  FFT data loading time: {data_load_time:.3f}s")
+            
+            # Calculate data sizes
+            spectrum_size_mb = spectrum.nbytes / 1024 / 1024
+            freq_size_mb = frequencies.nbytes / 1024 / 1024
+            total_size_mb = spectrum_size_mb + freq_size_mb
+            
+            print(f"   📊 Spectrum size: {spectrum_size_mb:.1f} MB")
+            print(f"   📊 Frequencies size: {freq_size_mb:.1f} MB")
+            print(f"   📊 Total FFT data size: {total_size_mb:.1f} MB")
             
             # Load metadata
             metadata = dict(fft_group.attrs)
@@ -568,6 +633,17 @@ class FFTCompute:
                 nfft=metadata.pop("nfft", None)
             )
             
+            # Final timing and memory measurement
+            total_time = time.time() - start_time
+            if PSUTIL_AVAILABLE:
+                final_memory = process.memory_info().rss / 1024 / 1024  # MB
+                memory_increase = final_memory - initial_memory
+                print(f"   🧠 Memory increase: {memory_increase:.1f} MB")
+            
+            print(f"   ✅ Total FFT loading time: {total_time:.3f}s")
+            print(f"   📐 Spectrum shape: {spectrum.shape}")
+            print(f"   📐 Frequencies shape: {frequencies.shape}")
+            
             return FFTComputeResult(
                 frequencies=frequencies,
                 spectrum=spectrum,
@@ -576,7 +652,7 @@ class FFTCompute:
             )
             
         except Exception as e:
-            print(f"Warning: Could not load existing FFT data: {e}")
+            print(f"❌ Warning: Could not load existing FFT data: {e}")
             return None
     
     def _verify_fft_parameters(self, existing_result: FFTComputeResult, 
@@ -680,8 +756,54 @@ class FFTCompute:
         
         # Load data
         print(f"Loading data from {dataset} (z_layer={z_layer})...")
+        
+        # Measure loading time and memory usage
+        import time
+        import os
+        
+        # Try to use psutil for memory monitoring, fallback if not available
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            memory_before = process.memory_info().rss / 1024 / 1024  # MB
+            psutil_available = True
+        except ImportError:
+            memory_before = 0
+            psutil_available = False
+        
+        # Time the data loading
+        load_start_time = time.time()
         data, dt = self.load_data_from_zarr(zarr_path, dataset, z_layer)
+        load_end_time = time.time()
+        
+        # Memory after loading (if psutil available)
+        if psutil_available:
+            memory_after = process.memory_info().rss / 1024 / 1024  # MB
+            memory_used = memory_after - memory_before
+        else:
+            memory_after = 0
+            memory_used = 0
+        
+        # Calculate data size in memory
+        data_size_bytes = data.nbytes
+        data_size_mb = data_size_bytes / 1024 / 1024
+        data_size_gb = data_size_mb / 1024
+        
+        # Display results
+        load_time = load_end_time - load_start_time
         print(f"Data shape: {data.shape}, dt: {dt}")
+        print(f"⏱️  Data loading time: {load_time:.3f}s")
+        print(f"💾 Data size: {data_size_mb:.1f} MB ({data_size_gb:.2f} GB)")
+        
+        if psutil_available:
+            print(f"🧠 Memory usage change: {memory_used:+.1f} MB (before: {memory_before:.1f} MB, after: {memory_after:.1f} MB)")
+        else:
+            print(f"🧠 Memory monitoring unavailable (install psutil for memory stats)")
+        
+        # Calculate loading speed
+        if load_time > 0:
+            loading_speed_mbps = data_size_mb / load_time
+            print(f"🚀 Loading speed: {loading_speed_mbps:.1f} MB/s")
         
         # Extract configuration from kwargs
         window = kwargs.get('window', self.config.window_function)
