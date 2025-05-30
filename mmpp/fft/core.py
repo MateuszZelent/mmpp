@@ -7,8 +7,16 @@ Main FFT class providing unified interface for FFT analysis.
 from typing import Optional, Dict, List, Union, Any, Tuple
 import numpy as np
 
+# Import from our own modules
 from .compute_fft import FFTCompute, FFTComputeResult
 from .plot import FFTPlotter
+
+# Import mode visualization capabilities
+try:
+    from .modes import FFTModeInterface, FMRModeAnalyzer, ModeVisualizationConfig
+    MODES_AVAILABLE = True
+except ImportError:
+    MODES_AVAILABLE = False
 
 
 class FFT:
@@ -326,3 +334,105 @@ class FFT:
     
     def __repr__(self) -> str:
         return f"FFT(path='{self.job_result.path}')"
+    
+    @property
+    def modes(self) -> "FFTModeInterface":
+        """
+        Get mode visualization interface.
+        
+        Returns:
+        --------
+        FFTModeInterface
+            Interface for mode operations
+        
+        Examples:
+        ---------
+        >>> op[0].fft.modes.interactive_spectrum()
+        >>> op[0].fft.modes.plot_modes(frequency=1.5)
+        >>> op[0].fft[0][200].plot_modes()  # Elegant syntax
+        """
+        if not MODES_AVAILABLE:
+            raise ImportError("Mode visualization not available. Check modes module import.")
+        
+        if not hasattr(self, '_mode_interface'):
+            self._mode_interface = FFTModeInterface(0, self)
+        return self._mode_interface
+
+    def __getitem__(self, index: int) -> "FFTModeInterface":
+        """
+        Get FFT result by index for mode operations.
+        
+        Parameters:
+        -----------
+        index : int
+            FFT result index (usually 0 for latest)
+            
+        Returns:
+        --------
+        FFTModeInterface
+            Interface for mode operations at specific FFT result
+        
+        Examples:
+        ---------
+        >>> op[0].fft[0].interactive_spectrum()
+        >>> op[0].fft[0][200].plot_modes()
+        """
+        if not MODES_AVAILABLE:
+            raise ImportError("Mode visualization not available. Check modes module import.")
+        
+        return FFTModeInterface(index, self)
+
+    def plot_modes(self, frequency: float, 
+                   dset: str = "m_z11",
+                   z_layer: int = 0,
+                   **kwargs) -> Tuple[Any, Any]:
+        """
+        Plot FMR modes at specific frequency.
+        
+        Parameters:
+        -----------
+        frequency : float
+            Frequency in GHz
+        dset : str
+            Dataset name
+        z_layer : int
+            Z-layer index
+        **kwargs
+            Additional arguments for mode plotting
+            
+        Returns:
+        --------
+        Tuple[Figure, np.ndarray]
+            Matplotlib figure and axes
+        """
+        if not MODES_AVAILABLE:
+            raise ImportError("Mode visualization not available. Check modes module import.")
+        
+        # Create temporary mode analyzer 
+        debug_mode = getattr(self.mmpp, 'debug', False) if self.mmpp else False
+        analyzer = FMRModeAnalyzer(self.job_result.path, dataset_name=dset, debug=debug_mode)
+        return analyzer.plot_modes(frequency=frequency, z_layer=z_layer, **kwargs)
+
+    def interactive_spectrum(self, dset: str = "m_z11", **kwargs) -> Any:
+        """
+        Create interactive spectrum plot with mode visualization.
+        
+        Parameters:
+        -----------
+        dset : str
+            Dataset name
+        **kwargs
+            Additional arguments for interactive plotting
+            
+        Returns:
+        --------
+        Figure
+            Interactive matplotlib figure
+        """
+        if not MODES_AVAILABLE:
+            raise ImportError("Mode visualization not available. Check modes module import.")
+            
+        # Create temporary mode analyzer
+        debug_mode = getattr(self.mmpp, 'debug', False) if self.mmpp else False
+        analyzer = FMRModeAnalyzer(self.job_result.path, dataset_name=dset, debug=debug_mode)
+        return analyzer.interactive_spectrum(**kwargs)
