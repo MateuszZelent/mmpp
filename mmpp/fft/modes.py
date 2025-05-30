@@ -660,7 +660,7 @@ class FMRModeAnalyzer:
         return fig, axes
         
     def interactive_spectrum(self, components: Optional[List[Union[int, str]]] = None,
-                           z_layer: int = 0) -> Figure:
+                           z_layer: int = 0, method: int = 1, show: bool = True, **kwargs) -> Figure:
         """
         Create interactive spectrum plot with mode visualization.
         
@@ -673,6 +673,14 @@ class FMRModeAnalyzer:
             List of components to plot (default: ['x', 'y', 'z'])
         z_layer : int, optional
             Z-layer index (default: 0)
+        method : int, optional
+            Visualization method (default: 1)
+            1 = Standard interactive plot
+            2 = Alternative layout (if implemented)
+        show : bool, optional
+            Whether to automatically display the figure (default: True)
+        **kwargs : dict
+            Additional keyword arguments
             
         Returns:
         --------
@@ -685,6 +693,11 @@ class FMRModeAnalyzer:
         if self.spectrum is None:
             raise ValueError("No spectrum data available for interactive mode")
             
+        # Handle method parameter
+        if method not in [1, 2]:
+            log.warning(f"Unknown method {method}, using default method 1")
+            method = 1
+            
         components = components or ['x', 'y', 'z']
         n_components = len(components)
         
@@ -693,12 +706,15 @@ class FMRModeAnalyzer:
             raise ValueError(f"Too many components ({n_components}). Maximum supported: 5")
         
         # Create figure with custom layout
+        # Try to use interactive backend if available, but don't force it
         try:
             import matplotlib
-            matplotlib.use("module://ipympl", force=True)
+            current_backend = matplotlib.get_backend()
+            if 'ipympl' not in current_backend.lower() and 'widget' not in current_backend.lower():
+                log.info(f"Current backend: {current_backend}. Interactive features may be limited.")
         except Exception as e:
-            log.error(f"Failed to enable interactive mode: {e}")
-            raise ImportError("Matplotlib widget backend is required for interactive plotting")
+            log.warning(f"Could not check matplotlib backend: {e}")
+            
         self._interactive_fig = plt.figure(figsize=self.config.figsize, dpi=self.config.dpi)
         
         # Create grid layout: spectrum on left, modes on right
@@ -793,7 +809,12 @@ class FMRModeAnalyzer:
         plt.tight_layout()
         log.info("Interactive spectrum plot created. Click to select frequency, right-click to snap to peaks.")
         
-        return self._interactive_fig
+        # Control figure display to avoid double showing
+        if show:
+            plt.show()
+            return None  # Don't return figure to avoid Jupyter auto-display
+        else:
+            return self._interactive_fig
         
     def _update_mode_plots(self, components: List[Union[int, str]], z_layer: int) -> None:
         """Update mode plots for current frequency."""
@@ -827,36 +848,43 @@ class FMRModeAnalyzer:
                 magnitude = np.abs(comp_data)
                 phase = np.angle(comp_data)
                 
-                # Magnitude (row 0)
-                im1 = self._mode_axes[0, i].imshow(magnitude,
-                                                 cmap=self.config.colormap_magnitude,
-                                                 extent=mode_data.extent,
-                                                 aspect='equal',
-                                                 interpolation=self.config.interpolation,
-                                                 origin='lower')
-                self._mode_axes[0, i].set_title(f'|m_{comp}|')
+                row_idx = 0
                 
-                # Phase (row 1)  
-                im2 = self._mode_axes[1, i].imshow(phase,
-                                                 cmap=self.config.colormap_phase,
-                                                 extent=mode_data.extent,
-                                                 aspect='equal',
-                                                 interpolation=self.config.interpolation,
-                                                 vmin=-np.pi, vmax=np.pi,
-                                                 origin='lower')
-                self._mode_axes[1, i].set_title(f'arg(m_{comp})')
+                # Magnitude plot (if enabled)
+                if self.config.show_magnitude:
+                    im1 = self._mode_axes[row_idx, i].imshow(magnitude,
+                                                     cmap=self.config.colormap_magnitude,
+                                                     extent=mode_data.extent,
+                                                     aspect='equal',
+                                                     interpolation=self.config.interpolation,
+                                                     origin='lower')
+                    self._mode_axes[row_idx, i].set_title(f'|m_{comp}|')
+                    row_idx += 1
                 
-                # Combined (row 2)
-                alpha = magnitude / np.max(magnitude) if np.max(magnitude) > 0 else magnitude
-                im3 = self._mode_axes[2, i].imshow(phase,
-                                                 cmap=self.config.colormap_phase,
-                                                 extent=mode_data.extent,
-                                                 aspect='equal',
-                                                 interpolation=self.config.interpolation,
-                                                 alpha=alpha,
-                                                 vmin=-np.pi, vmax=np.pi,
-                                                 origin='lower')
-                self._mode_axes[2, i].set_title(f'm_{comp} combined')
+                # Phase plot (if enabled)
+                if self.config.show_phase:
+                    im2 = self._mode_axes[row_idx, i].imshow(phase,
+                                                     cmap=self.config.colormap_phase,
+                                                     extent=mode_data.extent,
+                                                     aspect='equal',
+                                                     interpolation=self.config.interpolation,
+                                                     vmin=-np.pi, vmax=np.pi,
+                                                     origin='lower')
+                    self._mode_axes[row_idx, i].set_title(f'arg(m_{comp})')
+                    row_idx += 1
+                
+                # Combined plot (if enabled)
+                if self.config.show_combined:
+                    alpha = magnitude / np.max(magnitude) if np.max(magnitude) > 0 else magnitude
+                    im3 = self._mode_axes[row_idx, i].imshow(phase,
+                                                     cmap=self.config.colormap_phase,
+                                                     extent=mode_data.extent,
+                                                     aspect='equal',
+                                                     interpolation=self.config.interpolation,
+                                                     alpha=alpha,
+                                                     vmin=-np.pi, vmax=np.pi,
+                                                     origin='lower')
+                    self._mode_axes[row_idx, i].set_title(f'm_{comp} combined')
                 
             except Exception as e:
                 log.error(f"Failed to plot component {comp}: {e}")
@@ -1004,8 +1032,6 @@ class FMRModeAnalyzer:
             (f_min, f_max) in GHz
         save_path : str
             Output file path (.gif or .mp4)
-        fps : int
-            Frames per second
         z_layer : int
             Z-layer to animate
         component : str or int
@@ -1150,6 +1176,50 @@ class FFTModeInterface:
                 
             return self.mode_analyzer.plot_modes(frequency, **kwargs)
         
+    def save_modes_animation(self, frequency_range: Tuple[float, float],
+                            save_path: str,
+                            dset: str = None,
+                            fps: int = 10,
+                            z_layer: int = 0,
+                            component: Union[str, int] = 'z') -> None:
+        """
+        Save animation of modes across frequency range.
+        
+        Parameters:
+        -----------
+        frequency_range : tuple
+            (f_min, f_max) in GHz
+        save_path : str
+            Output file path (.gif or .mp4)
+        dset : str, optional
+            Dataset name. If None, uses default analyzer
+        fps : int
+            Frames per second (default: 10)
+        z_layer : int
+            Z-layer to animate (default: 0)
+        component : str or int
+            Component to animate (default: 'z')
+        """
+        # If dset is specified, create a new analyzer for that dataset
+        if dset is not None and dset != self.mode_analyzer.dataset_name:
+            zarr_path = self.parent_fft.job_result.path
+            debug_mode = getattr(self.parent_fft.mmpp, 'debug', False) if self.parent_fft.mmpp else False
+            temp_analyzer = FMRModeAnalyzer(zarr_path, dataset_name=dset, debug=debug_mode)
+            
+            # Check if modes exist, if not compute them
+            if not temp_analyzer.modes_available:
+                log.info(f"Computing modes for dataset '{dset}'...")
+                temp_analyzer.compute_modes(save=True)
+                
+            return temp_analyzer.save_modes_animation(frequency_range, save_path, fps, z_layer, component)
+        else:
+            # Use default analyzer
+            if not self.mode_analyzer.modes_available:
+                log.info(f"Computing modes for dataset '{self.mode_analyzer.dataset_name}'...")
+                self.mode_analyzer.compute_modes(save=True)
+                
+            return self.mode_analyzer.save_modes_animation(frequency_range, save_path, fps, z_layer, component)
+
 
 class FrequencyModeInterface:
     """Interface for mode operations at a specific frequency."""
