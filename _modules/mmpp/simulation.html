@@ -1,0 +1,580 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mmpp.simulation &mdash; MMPP 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search"  style="background: #2980B9" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            MMPP
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../tutorials/index.html">Tutorials</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu"  style="background: #2980B9" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">MMPP</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">mmpp.simulation</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for mmpp.simulation</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">filecmp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">errno</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">itertools</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">zarr</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Union</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Any</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="c1"># Import shared logging configuration optimized for dark themes</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.logging_config</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_default_logger</span><span class="p">,</span> <span class="n">get_mmpp_logger</span>
+
+<span class="c1"># Get logger for simulation module with dark theme optimization</span>
+<span class="n">log</span> <span class="o">=</span> <span class="n">get_mmpp_logger</span><span class="p">(</span><span class="s2">&quot;mmpp.simulation&quot;</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="upgrade_log_level">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.upgrade_log_level">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">upgrade_log_level</span><span class="p">(</span><span class="n">current_level</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">new_level</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Pomocnicza funkcja do &quot;promowania&quot; poziomu logowania.</span>
+<span class="sd">    Zwraca &quot;najgorszy&quot; (najwyższy priorytetem) z podanych.</span>
+<span class="sd">    Priorytet: ERROR &gt; WARNING &gt; INFO</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">levels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;INFO&quot;</span><span class="p">,</span> <span class="s2">&quot;WARNING&quot;</span><span class="p">,</span> <span class="s2">&quot;ERROR&quot;</span><span class="p">]</span>
+    <span class="c1"># Wybieramy poziom, który ma &quot;wyższy&quot; indeks w liście</span>
+    <span class="k">return</span> <span class="n">levels</span><span class="p">[</span><span class="nb">max</span><span class="p">(</span><span class="n">levels</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">current_level</span><span class="p">),</span> <span class="n">levels</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">new_level</span><span class="p">))]</span></div>
+
+
+
+<div class="viewcode-block" id="SimulationManager">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">SimulationManager</span><span class="p">:</span>
+<div class="viewcode-block" id="SimulationManager.__init__">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">main_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">destination_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">main_path</span> <span class="o">=</span> <span class="n">main_path</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">destination_path</span> <span class="o">=</span> <span class="n">destination_path</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">prefix</span> <span class="o">=</span> <span class="n">prefix</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.create_path_if_not_exists">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.create_path_if_not_exists">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">create_path_if_not_exists</span><span class="p">(</span><span class="n">file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Ensure the directory for a given file path exists.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">file_path</span><span class="p">)):</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">file_path</span><span class="p">))</span>
+            <span class="k">except</span> <span class="ne">OSError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">!=</span> <span class="n">errno</span><span class="o">.</span><span class="n">EEXIST</span><span class="p">:</span>
+                    <span class="k">raise</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.verify_or_replace_file">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.verify_or_replace_file">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">verify_or_replace_file</span><span class="p">(</span><span class="n">new_file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">existing_file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check if a file needs replacing and replace if necessary.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">existing_file_path</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">filecmp</span><span class="o">.</span><span class="n">cmp</span><span class="p">(</span><span class="n">new_file_path</span><span class="p">,</span> <span class="n">existing_file_path</span><span class="p">,</span> <span class="n">shallow</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">new_file_path</span><span class="p">)</span>
+                <span class="k">return</span> <span class="kc">True</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">existing_file_path</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.find_status_file">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.find_status_file">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">find_status_file</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">sim_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">status</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Locate a status file based on its name and type.&quot;&quot;&quot;</span>
+        <span class="n">pattern</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">rf</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sim_name</span><span class="si">}</span><span class="s2">\.mx3_status\.</span><span class="si">{</span><span class="n">status</span><span class="si">}</span><span class="s2">.*&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">file</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">pattern</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">file</span><span class="p">):</span>
+                <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">file</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.get_file_status">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.get_file_status">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_file_status</span><span class="p">(</span><span class="n">file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Determine the status of a file based on its name.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="s2">&quot;.mx3_status.lock&quot;</span> <span class="ow">in</span> <span class="n">file_path</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;locked&quot;</span>
+        <span class="k">elif</span> <span class="s2">&quot;.mx3_status.done&quot;</span> <span class="ow">in</span> <span class="n">file_path</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;finished&quot;</span>
+        <span class="k">elif</span> <span class="s2">&quot;.mx3_status.interrupted&quot;</span> <span class="ow">in</span> <span class="n">file_path</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;interrupted&quot;</span>
+        <span class="k">return</span> <span class="s2">&quot;unknown&quot;</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.extract_sim_key">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.extract_sim_key">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">extract_sim_key</span><span class="p">(</span><span class="n">file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Extract a concise simulation key from a file path.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">file_path</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.mx3_status&quot;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.check_simulation_completion">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.check_simulation_completion">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_simulation_completion</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Check if a simulation represented by a .zarr directory is complete</span>
+<span class="sd">        and return a tuple (is_complete, file_count).</span>
+
+<span class="sd">        is_complete: bool</span>
+<span class="sd">            True jeśli spełniony warunek &gt;= 3000 plików w grupie &#39;m&#39; oraz obecny &#39;end_time&#39;.</span>
+<span class="sd">            False w przeciwnym razie, np. gdy brakuje &#39;end_time&#39;, &#39;m&#39; albo jest &lt; 3000 plików.</span>
+
+<span class="sd">        file_count: int</span>
+<span class="sd">            Rzeczywista liczba plików (kroków) w grupie &#39;m&#39;; 0 w razie błędu lub braku danych.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">file_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">zarr_store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;r&quot;</span><span class="p">)</span>
+            <span class="c1"># Sprawdzamy, czy atrybut &#39;end_time&#39; istnieje</span>
+            <span class="k">if</span> <span class="s2">&quot;end_time&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">zarr_store</span><span class="o">.</span><span class="n">attrs</span><span class="p">:</span>
+                <span class="k">return</span> <span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">file_count</span><span class="p">)</span>
+            <span class="c1"># Sprawdzamy, czy istnieje grupa &#39;m&#39;</span>
+            <span class="k">if</span> <span class="s2">&quot;m&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">zarr_store</span><span class="p">:</span>
+                <span class="k">return</span> <span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">file_count</span><span class="p">)</span>
+            <span class="c1"># Grupa &#39;m&#39;</span>
+            <span class="n">m_group</span> <span class="o">=</span> <span class="n">zarr_store</span><span class="p">[</span><span class="s2">&quot;m&quot;</span><span class="p">]</span>
+            <span class="n">file_count</span> <span class="o">=</span> <span class="n">m_group</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">m_group</span><span class="p">,</span> <span class="s2">&quot;shape&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="mi">0</span>
+            <span class="c1"># Warunek 3000 plików</span>
+            <span class="k">if</span> <span class="n">file_count</span> <span class="o">&gt;=</span> <span class="mi">3000</span><span class="p">:</span>
+                <span class="k">return</span> <span class="p">(</span><span class="kc">True</span><span class="p">,</span> <span class="n">file_count</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">file_count</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="c1"># Jeśli cokolwiek się wykrzaczy, zwracamy (False, 0)</span>
+            <span class="k">return</span> <span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">file_count</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.submit_python_code">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.submit_python_code">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">submit_python_code</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">code_to_execute</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">last_param_name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">cleanup</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">sbatch</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">check</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">full_name</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Submit a Python simulation based on provided parameters.</span>
+<span class="sd">        Zmodyfikowana tak, aby wszystkie komunikaty na końcu łączyć w jeden raport.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">report_lines</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">report_log_level</span> <span class="o">=</span> <span class="s2">&quot;INFO&quot;</span>  <span class="c1"># Poziom logowania: INFO / WARNING / ERROR</span>
+        <span class="n">restart_required</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># Czy powtarzać / uruchamiać symulację?</span>
+        <span class="c1"># skip_further_checks = (</span>
+        <span class="c1">#     False  # Gdy np. mamy lock, done, itp. i nie chcemy powielać sprawdzeń</span>
+        <span class="c1"># )</span>
+        <span class="n">sim_status_str</span> <span class="o">=</span> <span class="s2">&quot;unknown&quot;</span>
+        <span class="n">zarr_status_str</span> <span class="o">=</span> <span class="s2">&quot;N/A&quot;</span>  <span class="c1"># Informacja o stanie plików .zarr</span>
+
+        <span class="c1"># -----------------------------</span>
+        <span class="c1"># 2. Przygotowanie nazw i ścieżek</span>
+        <span class="c1"># -----------------------------</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">last_param_name</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">last_param_name</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">keys</span><span class="p">())[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+        <span class="c1"># Build simulation parameters string (unused but kept for potential future use)</span>
+        <span class="c1"># sim_params = &quot;_&quot;.join(</span>
+        <span class="c1">#     [</span>
+        <span class="c1">#         f&quot;{key}_{format(val, &#39;.5g&#39;) if isinstance(val, (int, float)) else val}&quot;</span>
+        <span class="c1">#         for key, val in kwargs.items()</span>
+        <span class="c1">#         if key not in [last_param_name, &quot;i&quot;, &quot;prefix&quot;, &quot;template&quot;]</span>
+        <span class="c1">#     ]</span>
+        <span class="c1"># )</span>
+
+        <span class="c1"># par_sep = &quot;,&quot;</span>
+        <span class="n">val_sep</span> <span class="o">=</span> <span class="s2">&quot;_&quot;</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">main_path</span><span class="si">}{</span><span class="n">kwargs</span><span class="p">[</span><span class="s1">&#39;prefix&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">/&quot;</span>
+            <span class="o">+</span> <span class="s2">&quot;/&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">key</span><span class="si">}{</span><span class="n">val_sep</span><span class="si">}{</span><span class="nb">format</span><span class="p">(</span><span class="n">val</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;.5g&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="nb">int</span><span class="p">,</span><span class="w"> </span><span class="nb">float</span><span class="p">))</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="n">val</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+                    <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="n">last_param_name</span><span class="p">,</span> <span class="s2">&quot;i&quot;</span><span class="p">,</span> <span class="s2">&quot;prefix&quot;</span><span class="p">,</span> <span class="s2">&quot;template&quot;</span><span class="p">]</span>
+                <span class="p">]</span>
+            <span class="p">)</span>
+            <span class="o">+</span> <span class="s2">&quot;/&quot;</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Wyjmujemy ostatni klucz/wartość jako klucz parametru</span>
+        <span class="n">last_key</span><span class="p">,</span> <span class="n">last_val</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">popitem</span><span class="p">()</span>
+        <span class="n">sim_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">last_key</span><span class="si">}{</span><span class="n">val_sep</span><span class="si">}{</span><span class="nb">format</span><span class="p">(</span><span class="n">last_val</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;.5g&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+
+        <span class="c1"># Informacja początkowa</span>
+        <span class="n">report_lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Checking simulation &#39;</span><span class="si">{</span><span class="n">sim_name</span><span class="si">}</span><span class="s2">&#39;, PATH: </span><span class="si">{</span><span class="n">path</span><span class="si">}{</span><span class="n">sim_name</span><span class="si">}</span><span class="s2">.zarr&quot;</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">create_path_if_not_exists</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+
+        <span class="n">lock_file</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">find_status_file</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">sim_name</span><span class="p">,</span> <span class="s2">&quot;lock&quot;</span><span class="p">)</span>
+        <span class="n">done_file</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">find_status_file</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">sim_name</span><span class="p">,</span> <span class="s2">&quot;done&quot;</span><span class="p">)</span>
+        <span class="n">interrupted_file</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">find_status_file</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">sim_name</span><span class="p">,</span> <span class="s2">&quot;interrupted&quot;</span><span class="p">)</span>
+        <span class="n">zarr_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}{</span><span class="n">sim_name</span><span class="si">}</span><span class="s2">.zarr&quot;</span>
+        <span class="n">new_file_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}{</span><span class="n">sim_name</span><span class="si">}</span><span class="s2">.mx3.tmp&quot;</span>
+        <span class="n">existing_file_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}{</span><span class="n">sim_name</span><span class="si">}</span><span class="s2">.mx3&quot;</span>
+
+        <span class="c1"># -----------------------------</span>
+        <span class="c1"># 3. Logika sprawdzania plików statusu</span>
+        <span class="c1"># -----------------------------</span>
+
+        <span class="c1"># (A) lock_file =&gt; symulacja zablokowana</span>
+        <span class="k">if</span> <span class="n">lock_file</span><span class="p">:</span>
+            <span class="n">sim_status_str</span> <span class="o">=</span> <span class="s2">&quot;locked&quot;</span>
+            <span class="n">zarr_status_str</span> <span class="o">=</span> <span class="s2">&quot;not checked&quot;</span>
+            <span class="c1"># skip_further_checks = True</span>
+            <span class="c1"># Dodatkowo możemy (opcjonalnie) sprawdzić, czy .zarr jest kompletne</span>
+            <span class="c1"># ale z Twoich założeń: &quot;nie ma sensu sprawdzać dalej&quot; - więc pomijamy.</span>
+
+        <span class="c1"># (B) done_file =&gt; symulacja zakończona</span>
+        <span class="k">elif</span> <span class="n">done_file</span><span class="p">:</span>
+            <span class="n">sim_status_str</span> <span class="o">=</span> <span class="s2">&quot;finished&quot;</span>
+            <span class="c1"># Sprawdź jednak .zarr, bo może być niekompletne</span>
+            <span class="n">zarr_file_complete</span><span class="p">,</span> <span class="n">zarr_file_count</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">check_simulation_completion</span><span class="p">(</span>
+                <span class="n">zarr_path</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="n">zarr_file_complete</span><span class="p">:</span>
+                <span class="n">zarr_status_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;complete (</span><span class="si">{</span><span class="n">zarr_file_count</span><span class="si">}</span><span class="s2"> files)&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">zarr_status_str</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;incomplete (</span><span class="si">{</span><span class="n">zarr_file_count</span><span class="si">}</span><span class="s2"> files) =&gt; restart requaired&quot;</span>
+                <span class="p">)</span>
+                <span class="n">restart_required</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">report_log_level</span> <span class="o">=</span> <span class="n">upgrade_log_level</span><span class="p">(</span><span class="n">report_log_level</span><span class="p">,</span> <span class="s2">&quot;ERROR&quot;</span><span class="p">)</span>
+            <span class="c1"># skip_further_checks = True</span>
+
+        <span class="c1"># (C) interrupted_file =&gt; symulacja przerwana</span>
+        <span class="k">elif</span> <span class="n">interrupted_file</span><span class="p">:</span>
+            <span class="n">sim_status_str</span> <span class="o">=</span> <span class="s2">&quot;interrupted =&gt; will restart&quot;</span>
+            <span class="n">zarr_status_str</span> <span class="o">=</span> <span class="s2">&quot;not checked&quot;</span>
+            <span class="n">restart_required</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="c1"># skip_further_checks = True</span>
+            <span class="c1"># Usuwamy plik, żeby móc wystartować ponownie</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">interrupted_file</span><span class="p">)</span>
+
+        <span class="c1"># (D) Brak statusu =&gt; sprawdzamy .zarr (o ile istnieje)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">):</span>
+                <span class="n">zarr_file_complete</span><span class="p">,</span> <span class="n">zarr_file_count</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">check_simulation_completion</span><span class="p">(</span>
+                    <span class="n">zarr_path</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="n">zarr_file_complete</span><span class="p">:</span>
+                    <span class="n">sim_status_str</span> <span class="o">=</span> <span class="s2">&quot;done =&gt; no status file&quot;</span>
+                    <span class="n">zarr_status_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;complete (</span><span class="si">{</span><span class="n">zarr_file_count</span><span class="si">}</span><span class="s2"> files)&quot;</span>
+                    <span class="c1"># W takim wypadku niby nic nie trzeba robić</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">sim_status_str</span> <span class="o">=</span> <span class="s2">&quot;zarr incomplete =&gt; restart&quot;</span>
+                    <span class="n">zarr_status_str</span> <span class="o">=</span> <span class="s2">&quot;incomplete =&gt; restart&quot;</span>
+                    <span class="n">restart_required</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">sim_status_str</span> <span class="o">=</span> <span class="s2">&quot;no status =&gt; new =&gt; restart&quot;</span>
+                <span class="n">zarr_status_str</span> <span class="o">=</span> <span class="s2">&quot;no .zarr =&gt; start&quot;</span>
+                <span class="n">restart_required</span> <span class="o">=</span> <span class="kc">True</span>
+
+        <span class="c1"># -----------------------------</span>
+        <span class="c1"># 4. Jeśli restart_required =&gt; generujemy plik .mx3 i ewentualnie odpalamy sbatch</span>
+        <span class="c1"># -----------------------------</span>
+        <span class="k">if</span> <span class="n">restart_required</span><span class="p">:</span>
+            <span class="c1"># Tworzymy nowy plik .mx3 (nadpisujemy istniejący, jeśli jest)</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">new_file_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">code_to_execute</span><span class="p">)</span>
+
+            <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">new_file_path</span><span class="p">,</span> <span class="n">existing_file_path</span><span class="p">)</span>
+
+            <span class="c1"># Uruchomienie (o ile sbatch == True)</span>
+            <span class="k">if</span> <span class="n">sbatch</span><span class="p">:</span>
+                <span class="n">sim_sbatch_path</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">main_path</span><span class="si">}{</span><span class="n">kwargs</span><span class="p">[</span><span class="s1">&#39;prefix&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">/sbatch/</span><span class="si">{</span><span class="n">sim_name</span><span class="si">}</span><span class="s2">.sb&quot;</span>
+                <span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">create_path_if_not_exists</span><span class="p">(</span><span class="n">sim_sbatch_path</span><span class="p">)</span>
+                <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">sim_sbatch_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gen_sbatch_script</span><span class="p">(</span><span class="n">sim_name</span><span class="p">,</span> <span class="n">path</span> <span class="o">+</span> <span class="n">sim_name</span><span class="p">))</span>
+                <span class="n">subprocess</span><span class="o">.</span><span class="n">call</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;sbatch &lt; </span><span class="si">{</span><span class="n">sim_sbatch_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+                <span class="n">sim_status_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sim_status_str</span><span class="si">}</span><span class="s2"> =&gt; submitted&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">report_log_level</span> <span class="o">=</span> <span class="n">upgrade_log_level</span><span class="p">(</span><span class="n">report_log_level</span><span class="p">,</span> <span class="s2">&quot;ERROR&quot;</span><span class="p">)</span>
+                <span class="n">sim_status_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sim_status_str</span><span class="si">}</span><span class="s2">, but not submitted (sbatch=False)&quot;</span>
+
+        <span class="c1"># -----------------------------</span>
+        <span class="c1"># 5. Budujemy ostateczny raport (jednorazowy komunikat)</span>
+        <span class="c1"># -----------------------------</span>
+        <span class="n">report_lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Simulation status: </span><span class="si">{</span><span class="n">sim_status_str</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">report_lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Simulation results condition: </span><span class="si">{</span><span class="n">zarr_status_str</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">report_message</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">report_lines</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">report_log_level</span> <span class="o">==</span> <span class="s2">&quot;ERROR&quot;</span><span class="p">:</span>
+            <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="n">report_message</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">report_log_level</span> <span class="o">==</span> <span class="s2">&quot;WARNING&quot;</span><span class="p">:</span>
+            <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">report_message</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">report_message</span><span class="p">)</span></div>
+
+        <span class="c1"># Koniec funkcji</span>
+
+<div class="viewcode-block" id="SimulationManager.gen_sbatch_script">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.gen_sbatch_script">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">gen_sbatch_script</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Generate an sbatch script for submitting jobs.&quot;&quot;&quot;</span>
+        <span class="n">mx3_file</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">.mx3&quot;</span>
+        <span class="n">lock_file</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">.mx3_status.lock&quot;</span>
+        <span class="n">done_file</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">.mx3_status.done&quot;</span>
+        <span class="n">interrupted_file</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">.mx3_status.interrupted&quot;</span>
+        <span class="c1"># final_path = self.destination_path + path.replace(self.main_path, &quot;&quot;) + &quot;.zarr&quot;</span>
+
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;#!/bin/bash -l</span>
+<span class="s2">#SBATCH --job-name=&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="s2">#SBATCH --mail-type=NONE</span>
+<span class="s2">#SBATCH --time=168:00:00</span>
+<span class="s2">#SBATCH --nodes=1</span>
+<span class="s2">#SBATCH --mem=149GB</span>
+<span class="s2">#SBATCH --ntasks-per-core=1</span>
+<span class="s2">#SBATCH --ntasks-per-node=1</span>
+<span class="s2">#SBATCH --partition=proxima</span>
+<span class="s2">#SBATCH --gpus-per-node=1</span>
+<span class="s2">#SBATCH --gres=gpu:1</span>
+<span class="s2">#SBATCH --exclude=gpu39</span>
+
+<span class="s2">sleep 10</span>
+
+<span class="s2"># Log node name</span>
+<span class="s2">echo &quot;Running on node: $SLURMD_NODENAME&quot;</span>
+
+<span class="s2">nvidia-smi</span>
+<span class="s2">echo &quot;CUDA_VISIBLE_DEVICES = $CUDA_VISIBLE_DEVICES&quot;</span>
+
+<span class="s2">source /mnt/storage_3/home/kkingdyoun/.bashrc</span>
+<span class="s2">export TMPDIR=&quot;/mnt/storage_3/home/kkingstoun/pl0095-01/scratch/tmp/&quot;</span>
+
+<span class="s2">mv &quot;</span><span class="si">{</span><span class="n">mx3_file</span><span class="si">}</span><span class="s2">&quot; &quot;</span><span class="si">{</span><span class="n">lock_file</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="s2">/mnt/storage_3/home/kkingstoun/pl0095-01/scratch/bin/amumax -f --hide-progress-bar -o &quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">.zarr&quot; &quot;</span><span class="si">{</span><span class="n">lock_file</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="s2">RESULT=$?</span>
+
+<span class="s2">if [ $RESULT -eq 0 ]; then</span>
+<span class="s2">    echo &quot;FINISHED&quot;</span>
+<span class="s2">    mv &quot;</span><span class="si">{</span><span class="n">lock_file</span><span class="si">}</span><span class="s2">&quot; &quot;</span><span class="si">{</span><span class="n">done_file</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="s2">else</span>
+<span class="s2">    echo &quot;INTERRUPTED&quot;</span>
+<span class="s2">    mv &quot;</span><span class="si">{</span><span class="n">lock_file</span><span class="si">}</span><span class="s2">&quot; &quot;</span><span class="si">{</span><span class="n">interrupted_file</span><span class="si">}</span><span class="s2">&quot;</span>
+
+<span class="s2">    # Check if it was a CUDA error</span>
+<span class="s2">    if grep -q &quot;CUDA_ERROR&quot; &quot;</span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">.zarr/amumax.out&quot; || nvidia-smi | grep -q &quot;No devices were found&quot;; then</span>
+<span class="s2">        # Add this node to the bad nodes list if not already present</span>
+<span class="s2">    fi</span>
+<span class="s2">fi</span>
+<span class="s2">    &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.replace_variables_in_template">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.replace_variables_in_template">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">replace_variables_in_template</span><span class="p">(</span>
+        <span class="n">file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">variables</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Replace placeholders in a template file with actual values.&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">file_path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
+            <span class="n">content</span> <span class="o">=</span> <span class="n">file</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">variables</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">content</span> <span class="o">=</span> <span class="n">content</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">{{</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="se">}}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">content</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.raw_code">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.raw_code">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">raw_code</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Generate the raw code by filling in a template with parameters.&quot;&quot;&quot;</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+        <span class="n">t</span> <span class="o">=</span> <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;template&quot;</span><span class="p">]</span>
+        <span class="n">template_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">os</span><span class="o">.</span><span class="n">getcwd</span><span class="p">()</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="n">SimulationManager</span><span class="o">.</span><span class="n">replace_variables_in_template</span><span class="p">(</span><span class="n">template_path</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="SimulationManager.submit_all_simulations">
+<a class="viewcode-back" href="../../api/simulation.html#mmpp.simulation.SimulationManager.submit_all_simulations">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">submit_all_simulations</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>  <span class="c1"># Changed from np.ndarray to Any to accept numpy arrays</span>
+        <span class="n">last_param_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">minsim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+        <span class="n">maxsim</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">sbatch</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">cleanup</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">template</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;template.mx3&quot;</span><span class="p">,</span>
+        <span class="n">check</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">pairs</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Submit all simulations based on parameter combinations.</span>
+
+<span class="sd">        If pairs=False (default), generates all combinations using itertools.product.</span>
+<span class="sd">        If pairs=True, generates paired values (par1[i], par2[i], ...) where each parameter</span>
+<span class="sd">        must have the same number of values.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">param_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">params</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+        <span class="k">if</span> <span class="n">pairs</span><span class="p">:</span>
+            <span class="c1"># Check that all parameter arrays have the same length</span>
+            <span class="n">param_lengths</span> <span class="o">=</span> <span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="n">name</span><span class="p">])</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">param_names</span><span class="p">]</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">param_lengths</span><span class="p">))</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">&quot;When using pairs=True, all parameter arrays must have the same length. &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;Found lengths: </span><span class="si">{</span><span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">param_names</span><span class="p">,</span><span class="w"> </span><span class="n">param_lengths</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="p">)</span>
+
+            <span class="c1"># Zip parameter values instead of computing product</span>
+            <span class="n">value_sets</span> <span class="o">=</span> <span class="nb">zip</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">params</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">param_names</span><span class="p">])</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Original behavior - compute Cartesian product</span>
+            <span class="n">value_sets</span> <span class="o">=</span> <span class="n">itertools</span><span class="o">.</span><span class="n">product</span><span class="p">(</span><span class="o">*</span><span class="n">params</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">values</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">value_sets</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">minsim</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="k">if</span> <span class="n">maxsim</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">i</span> <span class="o">&gt;=</span> <span class="n">maxsim</span><span class="p">:</span>
+                <span class="k">break</span>
+
+            <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;prefix&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">prefix</span><span class="p">,</span> <span class="s2">&quot;i&quot;</span><span class="p">:</span> <span class="n">i</span><span class="p">,</span> <span class="s2">&quot;template&quot;</span><span class="p">:</span> <span class="n">template</span><span class="p">}</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">param_names</span><span class="p">,</span> <span class="n">values</span><span class="p">):</span>
+                <span class="n">kwargs</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">submit_python_code</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">raw_code</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">),</span>
+                <span class="n">last_param_name</span><span class="o">=</span><span class="n">last_param_name</span><span class="p">,</span>
+                <span class="n">sbatch</span><span class="o">=</span><span class="n">sbatch</span><span class="p">,</span>
+                <span class="n">cleanup</span><span class="o">=</span><span class="n">cleanup</span><span class="p">,</span>
+                <span class="n">check</span><span class="o">=</span><span class="n">check</span><span class="p">,</span>
+                <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+            <span class="p">)</span></div>
+</div>
+
+
+
+<span class="c1"># -----------------------</span>
+<span class="c1"># PRZYKŁAD UŻYCIA</span>
+<span class="c1"># -----------------------</span>
+<span class="c1"># if __name__ == &quot;__main__&quot;:</span>
+<span class="c1">#     import itertools</span>
+
+<span class="c1">#     params = {</span>
+<span class="c1">#         &quot;b0&quot;: np.linspace(0.0001, 0.01, 7),</span>
+<span class="c1">#         &quot;fcut&quot;: np.linspace(2.6, 2.8, 25),</span>
+<span class="c1">#     }</span>
+<span class="c1">#     num_cases = len(list(itertools.product(*params.values())))</span>
+<span class="c1">#     log.info(f&quot;Total number of cases: {num_cases}&quot;)</span>
+
+<span class="c1">#     manager = SimulationManager(</span>
+<span class="c1">#         main_path=&quot;/mnt/storage_2/scratch/pl0095-01/jakzwo/simulations/&quot;,</span>
+<span class="c1">#         destination_path=&quot;/mnt/storage_2/scratch/pl0095-01/jakzwo/simulations/&quot;,</span>
+<span class="c1">#         prefix=&quot;v5&quot;,</span>
+<span class="c1">#     )</span>
+<span class="c1">#     manager.submit_all_simulations(params, last_param_name=&quot;fcut&quot;, minsim=0,</span>
+<span class="c1">#                                     maxsim=None,</span>
+<span class="c1">#                                     sbatch=0</span>
+<span class="c1">#                                 )</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Mateusz Zelent.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

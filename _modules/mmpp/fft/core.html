@@ -1,0 +1,943 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mmpp.fft.core &mdash; MMPP 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search"  style="background: #2980B9" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            MMPP
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorials/index.html">Tutorials</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu"  style="background: #2980B9" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">MMPP</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">mmpp.fft.core</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for mmpp.fft.core</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">FFT Core Module</span>
+
+<span class="sd">Main FFT class providing unified interface for FFT analysis.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Union</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Tuple</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># Import from our own modules</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.compute_fft</span><span class="w"> </span><span class="kn">import</span> <span class="n">FFTCompute</span><span class="p">,</span> <span class="n">FFTComputeResult</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.plot</span><span class="w"> </span><span class="kn">import</span> <span class="n">FFTPlotter</span>
+
+<span class="c1"># Import mode visualization capabilities</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.modes</span><span class="w"> </span><span class="kn">import</span> <span class="n">FFTModeInterface</span><span class="p">,</span> <span class="n">FMRModeAnalyzer</span><span class="p">,</span> <span class="n">ModeVisualizationConfig</span>
+
+    <span class="n">MODES_AVAILABLE</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">MODES_AVAILABLE</span> <span class="o">=</span> <span class="kc">False</span>
+
+
+<div class="viewcode-block" id="FFT">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">FFT</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Main FFT analysis class providing numpy.fft-like interface.</span>
+
+<span class="sd">    This class aggregates FFT computation and plotting capabilities</span>
+<span class="sd">    for MMPP job results.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="FFT.__init__">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">job_result</span><span class="p">,</span> <span class="n">mmpp_instance</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize FFT analyzer for a job result.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        job_result : ZarrJobResult</span>
+<span class="sd">            Job result to analyze</span>
+<span class="sd">        mmpp_instance : MMPP, optional</span>
+<span class="sd">            Reference to parent MMPP instance</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">job_result</span> <span class="o">=</span> <span class="n">job_result</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mmpp</span> <span class="o">=</span> <span class="n">mmpp_instance</span>
+
+        <span class="c1"># Initialize compute engine with debug mode from parent MMPP if available</span>
+        <span class="n">debug_mode</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">mmpp_instance</span><span class="p">,</span> <span class="s2">&quot;debug&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="k">if</span> <span class="n">mmpp_instance</span> <span class="k">else</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_compute</span> <span class="o">=</span> <span class="n">FFTCompute</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="n">debug_mode</span><span class="p">)</span>
+
+        <span class="c1"># Initialize plotter (lazy loaded)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_plotter</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="c1"># Cache for FFT results</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span> <span class="o">=</span> <span class="p">{}</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">plotter</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FFTPlotter</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get plotter instance (lazy initialization).&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plotter</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_plotter</span> <span class="o">=</span> <span class="n">FFTPlotter</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">job_result</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">mmpp</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plotter</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_cache_key</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">dataset_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">method</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Generate cache key for FFT results.&quot;&quot;&quot;</span>
+        <span class="n">key_parts</span> <span class="o">=</span> <span class="p">[</span><span class="n">dataset_name</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">z_layer</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">method</span><span class="p">)]</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+            <span class="n">key_parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">=</span><span class="si">{</span><span class="n">v</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="s2">&quot;|&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">key_parts</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_compute_fft</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dataset_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span>
+        <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">method</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">use_cache</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">save</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">save_dataset_name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FFTComputeResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Compute FFT with caching and optional saving.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        dataset_name : str, optional</span>
+<span class="sd">            Dataset name (default: &quot;m_z11&quot;)</span>
+<span class="sd">        z_layer : int, optional</span>
+<span class="sd">            Z-layer (default: -1)</span>
+<span class="sd">        method : int, optional</span>
+<span class="sd">            FFT method (default: 1)</span>
+<span class="sd">        use_cache : bool, optional</span>
+<span class="sd">            Use memory cache (default: True)</span>
+<span class="sd">        save : bool, optional</span>
+<span class="sd">            Save result to zarr file (default: False)</span>
+<span class="sd">        force : bool, optional</span>
+<span class="sd">            Force recalculation and overwrite existing (default: False)</span>
+<span class="sd">        save_dataset_name : str, optional</span>
+<span class="sd">            Custom name for saved dataset (default: auto-generated)</span>
+<span class="sd">        **kwargs : Any</span>
+<span class="sd">            Additional FFT configuration options</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        FFTComputeResult</span>
+<span class="sd">            FFT computation result</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">cache_key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_cache_key</span><span class="p">(</span><span class="n">dataset_name</span><span class="p">,</span> <span class="n">z_layer</span><span class="p">,</span> <span class="n">method</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="c1"># Check memory cache only if not forcing and not saving</span>
+        <span class="k">if</span> <span class="n">use_cache</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">force</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">save</span> <span class="ow">and</span> <span class="n">cache_key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">cache_key</span><span class="p">]</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compute</span><span class="o">.</span><span class="n">calculate_fft_data</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">job_result</span><span class="o">.</span><span class="n">path</span><span class="p">,</span>
+                <span class="n">dataset_name</span><span class="p">,</span>
+                <span class="n">z_layer</span><span class="p">,</span>
+                <span class="n">method</span><span class="p">,</span>
+                <span class="n">save</span><span class="o">=</span><span class="n">save</span><span class="p">,</span>
+                <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">,</span>
+                <span class="n">save_dataset_name</span><span class="o">=</span><span class="n">save_dataset_name</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">except</span> <span class="ne">OSError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s2">&quot;directory not empty&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+                <span class="nb">print</span><span class="p">(</span>
+                    <span class="s2">&quot;Warning: FFT directory already exists and is not empty. Use force=True to overwrite.&quot;</span>
+                <span class="p">)</span>
+            <span class="k">raise</span>
+
+        <span class="c1"># Cache result only if not forcing</span>
+        <span class="k">if</span> <span class="n">use_cache</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">force</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">cache_key</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span>
+
+        <span class="k">return</span> <span class="n">result</span>
+
+<div class="viewcode-block" id="FFT.spectrum">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.spectrum">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">spectrum</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dset</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span>
+        <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">method</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">save</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">save_dataset_name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Compute FFT spectrum.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        dset : str, optional</span>
+<span class="sd">            Dataset name (default: &quot;m_z11&quot;)</span>
+<span class="sd">        z_layer : int, optional</span>
+<span class="sd">            Z-layer (default: -1)</span>
+<span class="sd">        method : int, optional</span>
+<span class="sd">            FFT method (default: 1)</span>
+<span class="sd">        save : bool, optional</span>
+<span class="sd">            Save result to zarr file (default: False)</span>
+<span class="sd">        force : bool, optional</span>
+<span class="sd">            Force recalculation and overwrite existing (default: False)</span>
+<span class="sd">        save_dataset_name : str, optional</span>
+<span class="sd">            Custom name for saved dataset (default: auto-generated)</span>
+<span class="sd">        **kwargs : Any</span>
+<span class="sd">            Additional FFT configuration options</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        np.ndarray</span>
+<span class="sd">            Complex FFT spectrum</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compute_fft</span><span class="p">(</span>
+            <span class="n">dset</span><span class="p">,</span>
+            <span class="n">z_layer</span><span class="p">,</span>
+            <span class="n">method</span><span class="p">,</span>
+            <span class="n">save</span><span class="o">=</span><span class="n">save</span><span class="p">,</span>
+            <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">,</span>
+            <span class="n">save_dataset_name</span><span class="o">=</span><span class="n">save_dataset_name</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">spectrum</span></div>
+
+
+<div class="viewcode-block" id="FFT.frequencies">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.frequencies">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">frequencies</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dset</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span>
+        <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">method</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">save</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">save_dataset_name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get frequency array for FFT.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        dset : str, optional</span>
+<span class="sd">            Dataset name (default: &quot;m_z11&quot;)</span>
+<span class="sd">        z_layer : int, optional</span>
+<span class="sd">            Z-layer (default: -1)</span>
+<span class="sd">        method : int, optional</span>
+<span class="sd">            FFT method (default: 1)</span>
+<span class="sd">        save : bool, optional</span>
+<span class="sd">            Save result to zarr file (default: False)</span>
+<span class="sd">        force : bool, optional</span>
+<span class="sd">            Force recalculation and overwrite existing (default: False)</span>
+<span class="sd">        save_dataset_name : str, optional</span>
+<span class="sd">            Custom name for saved dataset (default: auto-generated)</span>
+<span class="sd">        **kwargs : Any</span>
+<span class="sd">            Additional FFT configuration options</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        np.ndarray</span>
+<span class="sd">            Frequency array</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compute_fft</span><span class="p">(</span>
+            <span class="n">dset</span><span class="p">,</span>
+            <span class="n">z_layer</span><span class="p">,</span>
+            <span class="n">method</span><span class="p">,</span>
+            <span class="n">save</span><span class="o">=</span><span class="n">save</span><span class="p">,</span>
+            <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">,</span>
+            <span class="n">save_dataset_name</span><span class="o">=</span><span class="n">save_dataset_name</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">frequencies</span></div>
+
+
+<div class="viewcode-block" id="FFT.power">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.power">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">power</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dset</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span>
+        <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">method</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">save</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">save_dataset_name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Compute power spectrum.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        dset : str, optional</span>
+<span class="sd">            Dataset name (default: &quot;m_z11&quot;)</span>
+<span class="sd">        z_layer : int, optional</span>
+<span class="sd">            Z-layer (default: -1)</span>
+<span class="sd">        method : int, optional</span>
+<span class="sd">            FFT method (default: 1)</span>
+<span class="sd">        save : bool, optional</span>
+<span class="sd">            Save result to zarr file (default: False)</span>
+<span class="sd">        force : bool, optional</span>
+<span class="sd">            Force recalculation and overwrite existing (default: False)</span>
+<span class="sd">        save_dataset_name : str, optional</span>
+<span class="sd">            Custom name for saved dataset (default: auto-generated)</span>
+<span class="sd">        **kwargs : Any</span>
+<span class="sd">            Additional FFT configuration options</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        np.ndarray</span>
+<span class="sd">            Power spectrum (|FFT|^2)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">spectrum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">spectrum</span><span class="p">(</span>
+            <span class="n">dset</span><span class="p">,</span>
+            <span class="n">z_layer</span><span class="p">,</span>
+            <span class="n">method</span><span class="p">,</span>
+            <span class="n">save</span><span class="o">=</span><span class="n">save</span><span class="p">,</span>
+            <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">,</span>
+            <span class="n">save_dataset_name</span><span class="o">=</span><span class="n">save_dataset_name</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">spectrum</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span></div>
+
+
+<div class="viewcode-block" id="FFT.phase">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.phase">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">phase</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">dset</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span> <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">method</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Compute phase spectrum.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        dset : str, optional</span>
+<span class="sd">            Dataset name (default: &quot;m_z11&quot;)</span>
+<span class="sd">        z_layer : int, optional</span>
+<span class="sd">            Z-layer (default: -1)</span>
+<span class="sd">        method : int, optional</span>
+<span class="sd">            FFT method (default: 1)</span>
+<span class="sd">        **kwargs : Any</span>
+<span class="sd">            Additional FFT configuration options</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        np.ndarray</span>
+<span class="sd">            Phase spectrum</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">spectrum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">spectrum</span><span class="p">(</span><span class="n">dset</span><span class="p">,</span> <span class="n">z_layer</span><span class="p">,</span> <span class="n">method</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">angle</span><span class="p">(</span><span class="n">spectrum</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FFT.magnitude">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.magnitude">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">magnitude</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">dset</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span> <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">method</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Compute magnitude spectrum.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        dset : str, optional</span>
+<span class="sd">            Dataset name (default: &quot;m_z11&quot;)</span>
+<span class="sd">        z_layer : int, optional</span>
+<span class="sd">            Z-layer (default: -1)</span>
+<span class="sd">        method : int, optional</span>
+<span class="sd">            FFT method (default: 1)</span>
+<span class="sd">        \\*\\*kwargs : Any</span>
+<span class="sd">            Additional FFT configuration options</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        np.ndarray</span>
+<span class="sd">            Magnitude spectrum (\\|FFT\\|)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">spectrum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">spectrum</span><span class="p">(</span><span class="n">dset</span><span class="p">,</span> <span class="n">z_layer</span><span class="p">,</span> <span class="n">method</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">spectrum</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FFT.plot_spectrum">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.plot_spectrum">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">plot_spectrum</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dset</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span>
+        <span class="n">method</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">log_scale</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">normalize</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">save</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">save_dataset_name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Plot power spectrum.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        dset : str, optional</span>
+<span class="sd">            Dataset name (default: &quot;m_z11&quot;)</span>
+<span class="sd">        method : int, optional</span>
+<span class="sd">            FFT method (default: 1)</span>
+<span class="sd">        z_layer : int, optional</span>
+<span class="sd">            Z-layer (default: -1)</span>
+<span class="sd">        log_scale : bool, optional</span>
+<span class="sd">            Use logarithmic scale (default: True)</span>
+<span class="sd">        normalize : bool, optional</span>
+<span class="sd">            Normalize spectrum (default: False)</span>
+<span class="sd">        save : bool, optional</span>
+<span class="sd">            Save FFT result to zarr file (default: True)</span>
+<span class="sd">        force : bool, optional</span>
+<span class="sd">            Force recalculation and overwrite existing (default: False)</span>
+<span class="sd">        save_dataset_name : str, optional</span>
+<span class="sd">            Custom name for saved dataset (default: auto-generated)</span>
+<span class="sd">        **kwargs : Any</span>
+<span class="sd">            Additional plotting options</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        tuple</span>
+<span class="sd">            (figure, axes) matplotlib objects</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">plotter</span><span class="o">.</span><span class="n">power_spectrum</span><span class="p">(</span>
+            <span class="n">dataset_name</span><span class="o">=</span><span class="n">dset</span><span class="p">,</span>
+            <span class="n">method</span><span class="o">=</span><span class="n">method</span><span class="p">,</span>
+            <span class="n">z_layer</span><span class="o">=</span><span class="n">z_layer</span><span class="p">,</span>
+            <span class="n">log_scale</span><span class="o">=</span><span class="n">log_scale</span><span class="p">,</span>
+            <span class="n">normalize</span><span class="o">=</span><span class="n">normalize</span><span class="p">,</span>
+            <span class="n">save</span><span class="o">=</span><span class="n">save</span><span class="p">,</span>
+            <span class="n">force</span><span class="o">=</span><span class="n">force</span><span class="p">,</span>
+            <span class="n">save_dataset_name</span><span class="o">=</span><span class="n">save_dataset_name</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FFT.clear_cache">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.clear_cache">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">clear_cache</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Clear FFT computation cache.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="FFT.__repr__">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.__repr__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Rich documentation display for FFT interface.&quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_rich_fft_display</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_basic_fft_display</span><span class="p">()</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_rich_fft_display</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Create rich documentation display with panels and proper styling.&quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">rich.console</span><span class="w"> </span><span class="kn">import</span> <span class="n">Console</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">rich.text</span><span class="w"> </span><span class="kn">import</span> <span class="n">Text</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">rich.panel</span><span class="w"> </span><span class="kn">import</span> <span class="n">Panel</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">rich.columns</span><span class="w"> </span><span class="kn">import</span> <span class="n">Columns</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">rich.table</span><span class="w"> </span><span class="kn">import</span> <span class="n">Table</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">rich.syntax</span><span class="w"> </span><span class="kn">import</span> <span class="n">Syntax</span>
+            <span class="kn">import</span><span class="w"> </span><span class="nn">io</span>
+
+            <span class="n">console</span> <span class="o">=</span> <span class="n">Console</span><span class="p">(</span><span class="n">file</span><span class="o">=</span><span class="n">io</span><span class="o">.</span><span class="n">StringIO</span><span class="p">(),</span> <span class="n">width</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span> <span class="n">force_terminal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+            <span class="c1"># Get basic info</span>
+            <span class="n">path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">job_result</span><span class="o">.</span><span class="n">path</span>
+            <span class="n">cache_size</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">)</span>
+            <span class="n">has_modes</span> <span class="o">=</span> <span class="n">MODES_AVAILABLE</span>
+
+            <span class="c1"># Summary panel content</span>
+            <span class="n">summary_text</span> <span class="o">=</span> <span class="n">Text</span><span class="p">()</span>
+            <span class="n">summary_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;🔬 MMPP FFT Analysis Interface</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;bold cyan&quot;</span><span class="p">)</span>
+            <span class="n">summary_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📁 Job Path: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;dim&quot;</span><span class="p">)</span>
+            <span class="n">summary_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;💾 Cache Entries: </span><span class="si">{</span><span class="n">cache_size</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;dim&quot;</span><span class="p">)</span>
+            <span class="n">summary_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;🎯 Mode Analysis: </span><span class="si">{</span><span class="s1">&#39;✓ Available&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">has_modes</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;✗ Unavailable&#39;</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="n">style</span><span class="o">=</span><span class="s2">&quot;green&quot;</span> <span class="k">if</span> <span class="n">has_modes</span> <span class="k">else</span> <span class="s2">&quot;red&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+            <span class="c1"># Core methods panel content</span>
+            <span class="n">core_methods_text</span> <span class="o">=</span> <span class="n">Text</span><span class="p">()</span>
+            <span class="n">core_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;🔧 Core FFT Methods:</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;bold yellow&quot;</span><span class="p">)</span>
+            <span class="n">methods</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="p">(</span><span class="s2">&quot;spectrum()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get complex FFT spectrum&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;frequencies()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get frequency array&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;power()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get power spectrum |FFT|²&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;magnitude()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get magnitude |FFT|&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;phase()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get phase spectrum&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;plot_spectrum()&quot;</span><span class="p">,</span> <span class="s2">&quot;Plot power spectrum&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;clear_cache()&quot;</span><span class="p">,</span> <span class="s2">&quot;Clear computation cache&quot;</span><span class="p">),</span>
+            <span class="p">]</span>
+
+            <span class="k">for</span> <span class="n">method</span><span class="p">,</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">methods</span><span class="p">:</span>
+                <span class="n">core_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;  • &quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;dim&quot;</span><span class="p">)</span>
+                <span class="n">core_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">method</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;code&quot;</span><span class="p">)</span>
+                <span class="n">core_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - </span><span class="si">{</span><span class="n">desc</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;dim&quot;</span><span class="p">)</span>
+
+            <span class="c1"># Mode methods panel content (if available)</span>
+            <span class="k">if</span> <span class="n">has_modes</span><span class="p">:</span>
+                <span class="n">mode_methods_text</span> <span class="o">=</span> <span class="n">Text</span><span class="p">()</span>
+                <span class="n">mode_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="s2">&quot;🌊 Mode Analysis Methods:</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;bold blue&quot;</span>
+                <span class="p">)</span>
+                <span class="n">mode_methods</span> <span class="o">=</span> <span class="p">[</span>
+                    <span class="p">(</span><span class="s2">&quot;modes&quot;</span><span class="p">,</span> <span class="s2">&quot;Access mode interface&quot;</span><span class="p">),</span>
+                    <span class="p">(</span><span class="s2">&quot;[index]&quot;</span><span class="p">,</span> <span class="s2">&quot;Index-based mode access&quot;</span><span class="p">),</span>
+                    <span class="p">(</span><span class="s2">&quot;plot_modes(frequency)&quot;</span><span class="p">,</span> <span class="s2">&quot;Plot modes at frequency&quot;</span><span class="p">),</span>
+                    <span class="p">(</span><span class="s2">&quot;interactive_spectrum()&quot;</span><span class="p">,</span> <span class="s2">&quot;Interactive spectrum+modes&quot;</span><span class="p">),</span>
+                <span class="p">]</span>
+
+                <span class="k">for</span> <span class="n">method</span><span class="p">,</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">mode_methods</span><span class="p">:</span>
+                    <span class="n">mode_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;  • &quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;dim&quot;</span><span class="p">)</span>
+                    <span class="n">mode_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">method</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;code&quot;</span><span class="p">)</span>
+                    <span class="n">mode_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - </span><span class="si">{</span><span class="n">desc</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;dim&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">mode_methods_text</span> <span class="o">=</span> <span class="n">Text</span><span class="p">()</span>
+                <span class="n">mode_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="s2">&quot;🌊 Mode Analysis: Not Available</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;bold red&quot;</span>
+                <span class="p">)</span>
+                <span class="n">mode_methods_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="s2">&quot;Install mode visualization dependencies to enable&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;dim&quot;</span>
+                <span class="p">)</span>
+
+            <span class="c1"># Parameters table</span>
+            <span class="n">params_table</span> <span class="o">=</span> <span class="n">Table</span><span class="p">(</span><span class="n">show_header</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">box</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+            <span class="n">params_table</span><span class="o">.</span><span class="n">add_column</span><span class="p">(</span><span class="s2">&quot;Parameter&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;bold yellow&quot;</span><span class="p">)</span>
+            <span class="n">params_table</span><span class="o">.</span><span class="n">add_column</span><span class="p">(</span><span class="s2">&quot;Description&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;white&quot;</span><span class="p">)</span>
+            <span class="n">params_table</span><span class="o">.</span><span class="n">add_column</span><span class="p">(</span><span class="s2">&quot;Values&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;cyan&quot;</span><span class="p">)</span>
+
+            <span class="n">params</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="p">(</span><span class="s2">&quot;dset&quot;</span><span class="p">,</span> <span class="s2">&quot;Dataset name&quot;</span><span class="p">,</span> <span class="s2">&quot;&#39;m_z11&#39;, &#39;m_x11&#39;, &#39;m_y11&#39;&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;z_layer&quot;</span><span class="p">,</span> <span class="s2">&quot;Z-layer index&quot;</span><span class="p">,</span> <span class="s2">&quot;-1 (top), 0 (bottom), 1, 2, ...&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;method&quot;</span><span class="p">,</span> <span class="s2">&quot;FFT method&quot;</span><span class="p">,</span> <span class="s2">&quot;1 (default), 2, 3&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;save&quot;</span><span class="p">,</span> <span class="s2">&quot;Save to zarr&quot;</span><span class="p">,</span> <span class="s2">&quot;True/False&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="s2">&quot;force&quot;</span><span class="p">,</span> <span class="s2">&quot;Force recalculation&quot;</span><span class="p">,</span> <span class="s2">&quot;True/False&quot;</span><span class="p">),</span>
+            <span class="p">]</span>
+
+            <span class="k">for</span> <span class="n">param</span><span class="p">,</span> <span class="n">desc</span><span class="p">,</span> <span class="n">values</span> <span class="ow">in</span> <span class="n">params</span><span class="p">:</span>
+                <span class="n">params_table</span><span class="o">.</span><span class="n">add_row</span><span class="p">(</span><span class="n">param</span><span class="p">,</span> <span class="n">desc</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
+
+            <span class="c1"># Usage examples</span>
+            <span class="n">example_code</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;# Basic FFT operations</span>
+<span class="s2">power = op[0].fft.power(&#39;m_z11&#39;)</span>
+<span class="s2">freqs = op[0].fft.frequencies()</span>
+<span class="s2">spectrum = op[0].fft.spectrum(save=True, force=True)</span>
+
+<span class="s2"># Plotting</span>
+<span class="s2">fig, ax = op[0].fft.plot_spectrum(log_scale=True)</span>
+
+<span class="s2"># Mode analysis (if available)</span>
+<span class="s2">op[0].fft.modes.interactive_spectrum()</span>
+<span class="s2">op[0].fft[0][200].plot_modes()  # Elegant syntax</span>
+<span class="s2">op[0].fft.plot_modes(frequency=1.5)</span>
+
+<span class="s2"># Advanced usage</span>
+<span class="s2">op[0].fft.plotter.power_spectrum(normalize=True)</span>
+<span class="s2">help(op[0].fft.spectrum)  # Detailed documentation&quot;&quot;&quot;</span>
+
+            <span class="n">syntax</span> <span class="o">=</span> <span class="n">Syntax</span><span class="p">(</span>
+                <span class="n">example_code</span><span class="p">,</span> <span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="n">theme</span><span class="o">=</span><span class="s2">&quot;monokai&quot;</span><span class="p">,</span> <span class="n">background_color</span><span class="o">=</span><span class="s2">&quot;default&quot;</span>
+            <span class="p">)</span>
+
+            <span class="c1"># Build panels</span>
+            <span class="k">with</span> <span class="n">console</span><span class="o">.</span><span class="n">capture</span><span class="p">()</span> <span class="k">as</span> <span class="n">capture</span><span class="p">:</span>
+                <span class="c1"># Main summary panel</span>
+                <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
+                    <span class="n">Panel</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+                        <span class="n">summary_text</span><span class="p">,</span>
+                        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;[bold cyan]MMPP FFT Interface[/bold cyan]&quot;</span><span class="p">,</span>
+                        <span class="n">border_style</span><span class="o">=</span><span class="s2">&quot;cyan&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+                <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+                <span class="c1"># Method panels side by side</span>
+                <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
+                    <span class="n">Columns</span><span class="p">(</span>
+                        <span class="p">[</span>
+                            <span class="n">Panel</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+                                <span class="n">core_methods_text</span><span class="p">,</span>
+                                <span class="n">title</span><span class="o">=</span><span class="s2">&quot;[bold yellow]Core Methods[/bold yellow]&quot;</span><span class="p">,</span>
+                                <span class="n">border_style</span><span class="o">=</span><span class="s2">&quot;yellow&quot;</span><span class="p">,</span>
+                            <span class="p">),</span>
+                            <span class="n">Panel</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+                                <span class="n">mode_methods_text</span><span class="p">,</span>
+                                <span class="n">title</span><span class="o">=</span><span class="s2">&quot;[bold blue]Mode Methods[/bold blue]&quot;</span><span class="p">,</span>
+                                <span class="n">border_style</span><span class="o">=</span><span class="s2">&quot;blue&quot;</span> <span class="k">if</span> <span class="n">has_modes</span> <span class="k">else</span> <span class="s2">&quot;red&quot;</span><span class="p">,</span>
+                            <span class="p">),</span>
+                        <span class="p">]</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+                <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+                <span class="c1"># Parameters panel</span>
+                <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
+                    <span class="n">Panel</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+                        <span class="n">params_table</span><span class="p">,</span>
+                        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;[bold green]Common Parameters[/bold green]&quot;</span><span class="p">,</span>
+                        <span class="n">border_style</span><span class="o">=</span><span class="s2">&quot;green&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+                <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+                <span class="c1"># Examples panel</span>
+                <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
+                    <span class="n">Panel</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+                        <span class="n">syntax</span><span class="p">,</span>
+                        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;[bold magenta]Usage Examples[/bold magenta]&quot;</span><span class="p">,</span>
+                        <span class="n">border_style</span><span class="o">=</span><span class="s2">&quot;magenta&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+
+            <span class="k">return</span> <span class="n">capture</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="c1"># Fallback to basic text display if rich fails</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_basic_fft_display_enhanced</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_basic_fft_display</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Fallback basic display if rich display fails.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;FFT(path=&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">job_result</span><span class="o">.</span><span class="n">path</span><span class="si">}</span><span class="s2">&#39;, cache_entries=</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">)</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_basic_fft_display_enhanced</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Enhanced fallback display with more details if rich display fails.&quot;&quot;&quot;</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">job_result</span><span class="o">.</span><span class="n">path</span>
+        <span class="n">cache_size</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">)</span>
+        <span class="n">has_modes</span> <span class="o">=</span> <span class="n">MODES_AVAILABLE</span>
+
+        <span class="n">output</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;🔬 MMPP FFT Analysis Interface&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📁 Job Path: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;💾 Cache Entries: </span><span class="si">{</span><span class="n">cache_size</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;🎯 Mode Analysis: </span><span class="si">{</span><span class="s1">&#39;✓ Available&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">has_modes</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;✗ Unavailable&#39;</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Core FFT Methods</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;🔧 CORE FFT METHODS:&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;─&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+        <span class="n">methods</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">(</span>
+                <span class="s2">&quot;spectrum()&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;Get complex FFT spectrum&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;op[0].fft.spectrum(&#39;m_z11&#39;, z_layer=-1)&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;frequencies()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get frequency array&quot;</span><span class="p">,</span> <span class="s2">&quot;op[0].fft.frequencies()&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;power()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get power spectrum |FFT|²&quot;</span><span class="p">,</span> <span class="s2">&quot;op[0].fft.power()&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;magnitude()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get magnitude |FFT|&quot;</span><span class="p">,</span> <span class="s2">&quot;op[0].fft.magnitude()&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;phase()&quot;</span><span class="p">,</span> <span class="s2">&quot;Get phase spectrum&quot;</span><span class="p">,</span> <span class="s2">&quot;op[0].fft.phase()&quot;</span><span class="p">),</span>
+            <span class="p">(</span>
+                <span class="s2">&quot;plot_spectrum()&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;Plot power spectrum&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;fig, ax = op[0].fft.plot_spectrum()&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;clear_cache()&quot;</span><span class="p">,</span> <span class="s2">&quot;Clear computation cache&quot;</span><span class="p">,</span> <span class="s2">&quot;op[0].fft.clear_cache()&quot;</span><span class="p">),</span>
+        <span class="p">]</span>
+
+        <span class="k">for</span> <span class="n">method</span><span class="p">,</span> <span class="n">desc</span><span class="p">,</span> <span class="n">example</span> <span class="ow">in</span> <span class="n">methods</span><span class="p">:</span>
+            <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  • </span><span class="si">{</span><span class="n">method</span><span class="si">:</span><span class="s2">&lt;15</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">desc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    └─ </span><span class="si">{</span><span class="n">example</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Mode Analysis (if available)</span>
+        <span class="k">if</span> <span class="n">has_modes</span><span class="p">:</span>
+            <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;🌊 MODE ANALYSIS METHODS:&quot;</span><span class="p">)</span>
+            <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;─&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+            <span class="n">mode_methods</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="p">(</span>
+                    <span class="s2">&quot;modes&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;Access mode interface&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;op[0].fft.modes.interactive_spectrum()&quot;</span><span class="p">,</span>
+                <span class="p">),</span>
+                <span class="p">(</span>
+                    <span class="s2">&quot;[index]&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;Index-based mode access&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;op[0].fft[0][200].plot_modes()&quot;</span><span class="p">,</span>
+                <span class="p">),</span>
+                <span class="p">(</span>
+                    <span class="s2">&quot;plot_modes()&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;Plot modes at frequency&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;op[0].fft.plot_modes(frequency=1.5)&quot;</span><span class="p">,</span>
+                <span class="p">),</span>
+                <span class="p">(</span>
+                    <span class="s2">&quot;interactive_spectrum()&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;Interactive spectrum+modes&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;op[0].fft.interactive_spectrum()&quot;</span><span class="p">,</span>
+                <span class="p">),</span>
+            <span class="p">]</span>
+
+            <span class="k">for</span> <span class="n">method</span><span class="p">,</span> <span class="n">desc</span><span class="p">,</span> <span class="n">example</span> <span class="ow">in</span> <span class="n">mode_methods</span><span class="p">:</span>
+                <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  • </span><span class="si">{</span><span class="n">method</span><span class="si">:</span><span class="s2">&lt;20</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">desc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    └─ </span><span class="si">{</span><span class="n">example</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;🌊 MODE ANALYSIS: Not Available&quot;</span><span class="p">)</span>
+            <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;   Install mode visualization dependencies to enable&quot;</span><span class="p">)</span>
+
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Common Parameters</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;⚙️  COMMON PARAMETERS:&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;─&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">(</span><span class="s2">&quot;dset&quot;</span><span class="p">,</span> <span class="s2">&quot;Dataset name&quot;</span><span class="p">,</span> <span class="s2">&quot;&#39;m_z11&#39;, &#39;m_x11&#39;, &#39;m_y11&#39;&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;z_layer&quot;</span><span class="p">,</span> <span class="s2">&quot;Z-layer index&quot;</span><span class="p">,</span> <span class="s2">&quot;-1 (top), 0 (bottom), 1, 2, ...&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;method&quot;</span><span class="p">,</span> <span class="s2">&quot;FFT method&quot;</span><span class="p">,</span> <span class="s2">&quot;1 (default), 2, 3&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;save&quot;</span><span class="p">,</span> <span class="s2">&quot;Save to zarr&quot;</span><span class="p">,</span> <span class="s2">&quot;True/False&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;force&quot;</span><span class="p">,</span> <span class="s2">&quot;Force recalculation&quot;</span><span class="p">,</span> <span class="s2">&quot;True/False&quot;</span><span class="p">),</span>
+        <span class="p">]</span>
+
+        <span class="k">for</span> <span class="n">param</span><span class="p">,</span> <span class="n">desc</span><span class="p">,</span> <span class="n">values</span> <span class="ow">in</span> <span class="n">params</span><span class="p">:</span>
+            <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  • </span><span class="si">{</span><span class="n">param</span><span class="si">:</span><span class="s2">&lt;12</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">desc</span><span class="si">:</span><span class="s2">&lt;20</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">values</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Quick Examples</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;🚀 QUICK START EXAMPLES:&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;─&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+        <span class="n">examples</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="s2">&quot;# Basic FFT operations&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;power = op[0].fft.power(&#39;m_z11&#39;)&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;freqs = op[0].fft.frequencies()&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;spectrum = op[0].fft.spectrum(save=True, force=True)&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;# Plotting&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;fig, ax = op[0].fft.plot_spectrum(log_scale=True)&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;# Mode analysis (if available)&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;op[0].fft.modes.interactive_spectrum()&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;op[0].fft[0][200].plot_modes()  # Elegant syntax&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;op[0].fft.plot_modes(frequency=1.5)&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;# Advanced usage&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;op[0].fft.plotter.power_spectrum(normalize=True)&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;help(op[0].fft.spectrum)  # Detailed documentation&quot;</span><span class="p">,</span>
+        <span class="p">]</span>
+
+        <span class="k">for</span> <span class="n">example</span> <span class="ow">in</span> <span class="n">examples</span><span class="p">:</span>
+            <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">example</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;📖 For detailed docs: help(op[0].fft.spectrum)&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;🔧 Clear cache: op[0].fft.clear_cache()&quot;</span><span class="p">)</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">modes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;FFTModeInterface&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get mode visualization interface.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        FFTModeInterface</span>
+<span class="sd">            Interface for mode operations</span>
+
+<span class="sd">        Examples:</span>
+<span class="sd">        ---------</span>
+<span class="sd">        &gt;&gt;&gt; op[0].fft.modes.interactive_spectrum()</span>
+<span class="sd">        &gt;&gt;&gt; op[0].fft.modes.plot_modes(frequency=1.5)</span>
+<span class="sd">        &gt;&gt;&gt; op[0].fft[0][200].plot_modes()  # Elegant syntax</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">MODES_AVAILABLE</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span>
+                <span class="s2">&quot;Mode visualization not available. Check modes module import.&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;_mode_interface&quot;</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_mode_interface</span> <span class="o">=</span> <span class="n">FFTModeInterface</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mode_interface</span>
+
+<div class="viewcode-block" id="FFT.__getitem__">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.__getitem__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">index</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;FFTModeInterface&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get FFT result by index for mode operations.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        index : int</span>
+<span class="sd">            FFT result index (usually 0 for latest)</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        FFTModeInterface</span>
+<span class="sd">            Interface for mode operations at specific FFT result</span>
+
+<span class="sd">        Examples:</span>
+<span class="sd">        ---------</span>
+<span class="sd">        &gt;&gt;&gt; op[0].fft[0].interactive_spectrum()</span>
+<span class="sd">        &gt;&gt;&gt; op[0].fft[0][200].plot_modes()</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">MODES_AVAILABLE</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span>
+                <span class="s2">&quot;Mode visualization not available. Check modes module import.&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">FFTModeInterface</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FFT.plot_modes">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.plot_modes">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">plot_modes</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">frequency</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">dset</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span> <span class="n">z_layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Plot FMR modes at specific frequency.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        frequency : float</span>
+<span class="sd">            Frequency in GHz</span>
+<span class="sd">        dset : str</span>
+<span class="sd">            Dataset name</span>
+<span class="sd">        z_layer : int</span>
+<span class="sd">            Z-layer index</span>
+<span class="sd">        **kwargs</span>
+<span class="sd">            Additional arguments for mode plotting</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        Tuple[Figure, np.ndarray]</span>
+<span class="sd">            Matplotlib figure and axes</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">MODES_AVAILABLE</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span>
+                <span class="s2">&quot;Mode visualization not available. Check modes module import.&quot;</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Create temporary mode analyzer</span>
+        <span class="n">debug_mode</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mmpp</span><span class="p">,</span> <span class="s2">&quot;debug&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mmpp</span> <span class="k">else</span> <span class="kc">False</span>
+        <span class="n">analyzer</span> <span class="o">=</span> <span class="n">FMRModeAnalyzer</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">job_result</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="n">dataset_name</span><span class="o">=</span><span class="n">dset</span><span class="p">,</span> <span class="n">debug</span><span class="o">=</span><span class="n">debug_mode</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">analyzer</span><span class="o">.</span><span class="n">plot_modes</span><span class="p">(</span><span class="n">frequency</span><span class="o">=</span><span class="n">frequency</span><span class="p">,</span> <span class="n">z_layer</span><span class="o">=</span><span class="n">z_layer</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FFT.interactive_spectrum">
+<a class="viewcode-back" href="../../../api/fft/core.html#mmpp.fft.core.FFT.interactive_spectrum">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">interactive_spectrum</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dset</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;m_z11&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Create interactive spectrum plot with mode visualization.</span>
+
+<span class="sd">        Parameters:</span>
+<span class="sd">        -----------</span>
+<span class="sd">        dset : str</span>
+<span class="sd">            Dataset name</span>
+<span class="sd">        **kwargs</span>
+<span class="sd">            Additional arguments for interactive plotting</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">        --------</span>
+<span class="sd">        Figure</span>
+<span class="sd">            Interactive matplotlib figure</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">MODES_AVAILABLE</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span>
+                <span class="s2">&quot;Mode visualization not available. Check modes module import.&quot;</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Create temporary mode analyzer</span>
+        <span class="n">debug_mode</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mmpp</span><span class="p">,</span> <span class="s2">&quot;debug&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mmpp</span> <span class="k">else</span> <span class="kc">False</span>
+        <span class="n">analyzer</span> <span class="o">=</span> <span class="n">FMRModeAnalyzer</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">job_result</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="n">dataset_name</span><span class="o">=</span><span class="n">dset</span><span class="p">,</span> <span class="n">debug</span><span class="o">=</span><span class="n">debug_mode</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">analyzer</span><span class="o">.</span><span class="n">interactive_spectrum</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
+</div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Mateusz Zelent.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

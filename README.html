@@ -1,0 +1,260 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MMPP Documentation &mdash; MMPP 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search"  style="background: #2980B9" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            MMPP
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/index.html">Tutorials</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu"  style="background: #2980B9" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">MMPP</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">MMPP Documentation</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/README.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="mmpp-documentation">
+<h1>MMPP Documentation<a class="headerlink" href="#mmpp-documentation" title="Link to this heading"></a></h1>
+<p>This directory contains the documentation for MMPP built with Sphinx.</p>
+<section id="quick-start">
+<h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading"></a></h2>
+<section id="building-documentation-locally">
+<h3>Building Documentation Locally<a class="headerlink" href="#building-documentation-locally" title="Link to this heading"></a></h3>
+<ol class="arabic">
+<li><p><strong>Install dependencies:</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>sphinx<span class="w"> </span>sphinx-rtd-theme<span class="w"> </span>myst-parser<span class="w"> </span>sphinx-autodoc-typehints
+</pre></div>
+</div>
+</li>
+<li><p><strong>Build documentation:</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>docs
+sphinx-build<span class="w"> </span>-b<span class="w"> </span>html<span class="w"> </span>.<span class="w"> </span>_build
+</pre></div>
+</div>
+</li>
+<li><p><strong>View documentation:</strong>
+Open <code class="docutils literal notranslate"><span class="pre">_build/index.html</span></code> in your browser</p></li>
+</ol>
+</section>
+<section id="using-the-build-script">
+<h3>Using the Build Script<a class="headerlink" href="#using-the-build-script" title="Link to this heading"></a></h3>
+<p>We provide a convenience script for building documentation:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Build documentation</span>
+./build_docs.sh
+
+<span class="c1"># Build and serve locally</span>
+./build_docs.sh<span class="w"> </span>--serve
+</pre></div>
+</div>
+</section>
+</section>
+<section id="github-pages-deployment">
+<h2>GitHub Pages Deployment<a class="headerlink" href="#github-pages-deployment" title="Link to this heading"></a></h2>
+<p>Documentation is automatically deployed to GitHub Pages when changes are pushed to the main branch.</p>
+<section id="setup-steps">
+<h3>Setup Steps:<a class="headerlink" href="#setup-steps" title="Link to this heading"></a></h3>
+<ol class="arabic simple">
+<li><p><strong>Enable GitHub Pages:</strong></p>
+<ul class="simple">
+<li><p>Go to Repository → Settings → Pages</p></li>
+<li><p>Source: “Deploy from a branch”</p></li>
+<li><p>Branch: “gh-pages”</p></li>
+</ul>
+</li>
+<li><p><strong>Configure Workflow Permissions:</strong></p>
+<ul class="simple">
+<li><p>Go to Repository → Settings → Actions → General</p></li>
+<li><p>Workflow permissions: “Read and write permissions”</p></li>
+<li><p>Allow GitHub Actions to create pull requests: ✅</p></li>
+</ul>
+</li>
+<li><p><strong>Push changes</strong> - documentation will be automatically deployed</p></li>
+</ol>
+</section>
+<section id="access-documentation">
+<h3>Access Documentation:<a class="headerlink" href="#access-documentation" title="Link to this heading"></a></h3>
+<p>Your documentation will be available at:
+<code class="docutils literal notranslate"><span class="pre">https://&lt;username&gt;.github.io/&lt;repository-name&gt;/</span></code></p>
+</section>
+</section>
+<section id="documentation-structure">
+<h2>Documentation Structure<a class="headerlink" href="#documentation-structure" title="Link to this heading"></a></h2>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>docs/
+├── conf.py                 # Sphinx configuration
+├── index.md               # Main documentation page
+├── api/                   # API reference
+│   ├── index.md
+│   ├── core.md
+│   ├── batch_operations.md
+│   ├── plotting.md
+│   ├── simulation.md
+│   ├── logging_config.md
+│   └── fft/
+│       ├── index.md
+│       └── core.md
+├── tutorials/             # User tutorials
+│   ├── index.md
+│   ├── getting_started.md
+│   ├── batch_operations.md
+│   └── examples.md
+├── _static/              # Static assets
+└── _build/               # Generated documentation (git-ignored)
+</pre></div>
+</div>
+</section>
+<section id="customization">
+<h2>Customization<a class="headerlink" href="#customization" title="Link to this heading"></a></h2>
+<section id="theme-configuration">
+<h3>Theme Configuration<a class="headerlink" href="#theme-configuration" title="Link to this heading"></a></h3>
+<p>The documentation uses the Read the Docs theme. You can customize it in <code class="docutils literal notranslate"><span class="pre">conf.py</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">html_theme_options</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;logo_only&#39;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="s1">&#39;display_version&#39;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="s1">&#39;style_nav_header_background&#39;</span><span class="p">:</span> <span class="s1">&#39;#2980B9&#39;</span><span class="p">,</span>
+    <span class="c1"># ... more options</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="adding-new-pages">
+<h3>Adding New Pages<a class="headerlink" href="#adding-new-pages" title="Link to this heading"></a></h3>
+<ol class="arabic simple">
+<li><p>Create a new <code class="docutils literal notranslate"><span class="pre">.md</span></code> file in the appropriate directory</p></li>
+<li><p>Add it to the <code class="docutils literal notranslate"><span class="pre">toctree</span></code> in the relevant index file</p></li>
+<li><p>Rebuild documentation</p></li>
+</ol>
+</section>
+<section id="api-documentation">
+<h3>API Documentation<a class="headerlink" href="#api-documentation" title="Link to this heading"></a></h3>
+<p>API documentation is automatically generated from docstrings using Sphinx autodoc.</p>
+</section>
+</section>
+<section id="troubleshooting">
+<h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading"></a></h2>
+<section id="common-issues">
+<h3>Common Issues<a class="headerlink" href="#common-issues" title="Link to this heading"></a></h3>
+<ol class="arabic simple">
+<li><p><strong>Import errors during build:</strong></p>
+<ul class="simple">
+<li><p>Ensure MMPP package is installed: <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-e</span> <span class="pre">.</span></code></p></li>
+<li><p>Check that all dependencies are available</p></li>
+</ul>
+</li>
+<li><p><strong>GitHub Pages deployment fails:</strong></p>
+<ul class="simple">
+<li><p>Check the Actions tab for detailed error messages</p></li>
+<li><p>Verify workflow permissions are set correctly</p></li>
+<li><p>Ensure the gh-pages branch exists</p></li>
+</ul>
+</li>
+<li><p><strong>Missing pages:</strong></p>
+<ul class="simple">
+<li><p>Check that new pages are added to the appropriate <code class="docutils literal notranslate"><span class="pre">toctree</span></code></p></li>
+<li><p>Verify file paths are correct</p></li>
+</ul>
+</li>
+<li><p><strong>Formatting issues:</strong></p>
+<ul class="simple">
+<li><p>MyST Parser handles Markdown with Sphinx extensions</p></li>
+<li><p>Use proper syntax for cross-references and directives</p></li>
+</ul>
+</li>
+</ol>
+</section>
+<section id="getting-help">
+<h3>Getting Help<a class="headerlink" href="#getting-help" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p>Check Sphinx documentation: <a class="reference external" href="https://www.sphinx-doc.org/">https://www.sphinx-doc.org/</a></p></li>
+<li><p>MyST Parser docs: <a class="reference external" href="https://myst-parser.readthedocs.io/">https://myst-parser.readthedocs.io/</a></p></li>
+<li><p>Read the Docs theme: <a class="reference external" href="https://sphinx-rtd-theme.readthedocs.io/">https://sphinx-rtd-theme.readthedocs.io/</a></p></li>
+</ul>
+</section>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Mateusz Zelent.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
