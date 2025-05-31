@@ -48,6 +48,8 @@ jobs:
     - name: Build documentation
       run: |
         cd docs
+        # Ensure build directory exists
+        mkdir -p _build
         # Copy .nojekyll to build directory
         cp .nojekyll _build/.nojekyll 2>/dev/null || touch _build/.nojekyll
         sphinx-build -b html . _build -W --keep-going
