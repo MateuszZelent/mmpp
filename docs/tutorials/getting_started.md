@@ -34,41 +34,75 @@ print(f"Available datasets: {list(zarr_data.root.keys())}")
 ### Basic FFT Analysis
 
 ```python
-# Perform FFT analysis
-fft_analyzer = result[0].fft
-spectrum = fft_analyzer.spectrum(dset='m_z5-8')
+import numpy as np
 
+# Perform FFT analysis
+fft = result[0].fft
+
+# Get complex spectrum
+spectrum = fft.spectrum(dset='m_z11')
 print(f"Spectrum shape: {spectrum.shape}")
 
+# Get frequency array
+frequencies = fft.frequencies()
+print(f"Frequency range: {frequencies[0]/1e9:.2f} - {frequencies[-1]/1e9:.2f} GHz")
+
+# Get power spectrum  
+power = fft.power(dset='m_z11')
+print(f"Peak power: {np.max(power):.2e}")
+
 # Plot the spectrum
-fft_analyzer.plot_spectrum()
+fig, ax = fft.plot_spectrum(dset='m_z11', log_scale=True)
 ```
 
 ### FMR Mode Analysis
 
 ```python
 # Analyze FMR modes
-mode_analyzer = fft_analyzer.modes
-modes = mode_analyzer.compute_modes(dset='m_z5-8')
+modes = fft.modes
 
-print(f"Found {len(modes)} modes")
+# Find peaks in spectrum
+peaks = modes.find_peaks(threshold=0.1)
+print(f"Found {len(peaks)} peaks")
 
-# Plot modes
-mode_analyzer.plot_modes()
+# Interactive spectrum visualization
+fig = modes.interactive_spectrum(components=['x', 'y', 'z'])
+
+# Plot modes at specific frequency
+if peaks:
+    peak_freq = peaks[0].freq  # First peak frequency
+    fig, axes = modes.plot_modes(frequency=peak_freq)
+    print(f"Plotted modes at {peak_freq:.3f} GHz")
+
+# Compute spatial modes
+modes.compute_modes(save=True)
 ```
 
 ## Working with Multiple Files
 
 ```python
-# Load multiple simulation results
-op = mmpp.MMPP('path/to/results_directory/')
-print(f"Loaded {len(op)} simulation results")
+# Load multiple simulation results from database
+db = mmpp.open('path/to/results_directory/')
+results = db.find(solver=3, limit=10)
+print(f"Found {len(results)} simulation results")
 
-# Process all files at once
-batch = op[:]  # Get batch operations interface
-results = batch.fft.compute_all('m_z5-8')
+# Analyze each result
+for i, result in enumerate(results):
+    fft = result.fft
+    power = fft.power(dset='m_z11')
+    frequencies = fft.frequencies()
+    
+    # Find peak frequency
+    peak_idx = np.argmax(power)
+    peak_freq = frequencies[peak_idx] / 1e9  # Convert to GHz
+    
+    print(f"Result {i}: Peak at {peak_freq:.3f} GHz")
 
-print(f"Processed {len(results)} files")
+# Use batch operations for parallel processing
+from mmpp.batch_operations import BatchOperations
+batch = BatchOperations(results)
+batch_results = batch.fft.compute_all(dset='m_z11')
+print(f"Processed {len(batch_results)} files in batch")
 ```
 
 ## Next Steps
