@@ -120,7 +120,7 @@ class FFTAnalyzer:
         
         Parameters:
         -----------
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Configuration options matching FFTConfig fields
             
         Returns:
@@ -351,7 +351,7 @@ class FFTAnalyzer:
             Axes to average over
         time_range : tuple, optional
             Time range to analyze
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Additional configuration options
             
         Returns:
