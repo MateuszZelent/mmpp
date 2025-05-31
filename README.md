@@ -28,12 +28,66 @@ pip install -e ".[dev]"
 ## Quick Start
 
 ```python
-from mmpp import MMPPAnalyzer
+import mmpp
 
-# Create analyzer instance
-analyzer = MMPPAnalyzer()
+# Load simulation data
+op = mmpp.MMPP('path/to/simulation.zarr')
 
-# Your code here...
+# Single file analysis
+result = op[0]
+fft_analyzer = result.fft
+spectrum = fft_analyzer.compute_spectrum(dset='m_z5-8')
+
+# Batch processing (NEW!)
+batch = op[:]  # Get all results
+batch_results = batch.fft.compute_spectrum('m_z5-8', parallel=True)
+modes = batch.fft.modes.compute_modes('m_z5-8', parallel=True)
+```
+
+## Key Features
+
+### Batch Operations
+Process multiple simulation files at once:
+```python
+# Process all files in a directory
+op = mmpp.MMPP('simulation_results/')
+batch = op[:]
+
+# Batch FFT analysis
+spectra = batch.fft.compute_spectrum('m_z5-8', parallel=True, progress=True)
+
+# Batch mode computation
+modes = batch.fft.modes.compute_modes('m_z5-8', parallel=True)
+```
+
+### Advanced FFT Analysis
+- Fast Fourier Transform computation
+- FMR mode identification
+- Frequency spectrum analysis
+- Mode visualization and animation
+
+### Rich Plotting Capabilities
+- Custom styling with matplotlib
+- Interactive visualizations
+- Export in multiple formats
+- Publication-ready figures
+
+## Documentation
+
+📖 **Full documentation is available at: [https://yourusername.github.io/mmpp/](https://yourusername.github.io/mmpp/)**
+
+### Local Documentation
+
+Build documentation locally:
+```bash
+./build_docs.sh --serve
+```
+
+Or manually:
+```bash
+cd docs
+pip install sphinx sphinx-rtd-theme myst-parser sphinx-autodoc-typehints
+sphinx-build -b html . _build
 ```
 
 ## Dependencies
