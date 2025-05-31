@@ -29,6 +29,9 @@ jobs:
       with:
         fetch-depth: 0  # Fetch full history for better Git info
     
+    - name: Setup Pages
+      uses: actions/configure-pages@v5
+    
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -68,13 +71,12 @@ jobs:
         # Build docs without treating warnings as errors and continue on errors
         sphinx-build -b html . _build --keep-going -q || echo "Documentation built with warnings/errors, but continuing..."
     
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: ./docs/_build
+    
     - name: Deploy to GitHub Pages
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      uses: peaceiris/actions-gh-pages@v4
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./docs/_build
-        publish_branch: gh-pages
-        force_orphan: true
-        user_name: 'github-actions[bot]'
-        user_email: 'github-actions[bot]@users.noreply.github.com'
+      id: deployment
+      uses: actions/deploy-pages@v4
