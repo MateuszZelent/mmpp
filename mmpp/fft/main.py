@@ -400,7 +400,7 @@ class FFTAnalyzer:
         -----------
         dataset_name : str, optional
             Dataset name (default: "m_z11")
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Additional parameters passed to analyze_single
             
         Returns:

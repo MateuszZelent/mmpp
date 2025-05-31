@@ -19,16 +19,6 @@
    :special-members: __init__
 ```
 
-## Plotting Functions
-
-```{eval-rst}
-.. autofunction:: mmpp.fft.plot.power_spectrum
-```
-
-```{eval-rst}
-.. autofunction:: mmpp.fft.plot.plot_spectrum_comparison
-```
-
 ## Usage Examples
 
 ### Basic Spectrum Plotting

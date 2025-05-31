@@ -272,13 +272,13 @@ class FFT:
             Z-layer (default: -1)
         method : int, optional
             FFT method (default: 1)
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Additional FFT configuration options
             
         Returns:
         --------
         np.ndarray
-            Magnitude spectrum (|FFT|)
+            Magnitude spectrum (\\|FFT\\|)
         """
         spectrum = self.spectrum(dset, z_layer, method, **kwargs)
         return np.abs(spectrum)

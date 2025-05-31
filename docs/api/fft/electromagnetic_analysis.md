@@ -7,17 +7,7 @@
    :show-inheritance:
 ```
 
-## Main Classes
-
-### ElectromagneticAnalyzer
-
-```{eval-rst}
-.. autoclass:: mmpp.fft.electromagnetic_analysis.ElectromagneticAnalyzer
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :special-members: __init__
-```
+## Configuration
 
 ### ElectromagneticAnalysisConfig
 
@@ -29,14 +19,46 @@
    :special-members: __init__
 ```
 
+## Analysis Classes
+
+### PoyntingVectorAnalysis
+
+```{eval-rst}
+.. autoclass:: mmpp.fft.electromagnetic_analysis.PoyntingVectorAnalysis
+   :members:
+   :undoc-members:
+   :show-inheritance:
+   :special-members: __init__
+```
+
+### RadiationPatternAnalysis
+
+```{eval-rst}
+.. autoclass:: mmpp.fft.electromagnetic_analysis.RadiationPatternAnalysis
+   :members:
+   :undoc-members:
+   :show-inheritance:
+   :special-members: __init__
+```
+
+### QFactorAnalysis
+
+```{eval-rst}
+.. autoclass:: mmpp.fft.electromagnetic_analysis.QFactorAnalysis
+   :members:
+   :undoc-members:
+   :show-inheritance:
+   :special-members: __init__
+```
+
 ## Analysis Functions
 
 ```{eval-rst}
-.. autofunction:: mmpp.fft.electromagnetic_analysis.comprehensive_electromagnetic_analysis
+.. autofunction:: mmpp.fft.electromagnetic_analysis.analyze_electromagnetic_properties
 ```
 
 ```{eval-rst}
-.. autofunction:: mmpp.fft.electromagnetic_analysis.visualize_electromagnetic_analysis
+.. autofunction:: mmpp.fft.electromagnetic_analysis.create_comprehensive_em_report
 ```
 
 ## Usage Examples
