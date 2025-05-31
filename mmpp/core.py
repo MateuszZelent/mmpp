@@ -20,6 +20,7 @@ from .logging_config import setup_mmpp_logging, get_mmpp_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+    from .batch_operations import BatchOperations
 
 # Initialize rich logging - will be configured in MMPP.__init__
 log = get_mmpp_logger("mmpp")
@@ -625,20 +626,52 @@ class MMPP:
         else:
             return 0
 
-    def __getitem__(self, index: int) -> ZarrJobResult:
+    def __getitem__(self, index: Union[int, slice]) -> Union[ZarrJobResult, "BatchOperations"]:
         """
-        Get zarr result by index.
+        Get zarr result by index or batch operations by slice.
         
         Parameters:
         -----------
-        index : int
-            Index of the result to get
+        index : Union[int, slice]
+            Index of the result to get or slice for batch operations
             
         Returns:
         --------
-        ZarrJobResult
-            The zarr result at the specified index
+        Union[ZarrJobResult, BatchOperations]
+            Single zarr result for integer index or batch operations for slice
         """
+        # Handle slice notation for batch operations
+        if isinstance(index, slice):
+            # Import here to avoid circular imports
+            from .batch_operations import BatchOperations
+            
+            if self._single_zarr_mode:
+                results = self._zarr_results[index]
+            else:
+                # Database mode
+                if self.dataframe is None or self.dataframe.empty:
+                    raise IndexError("No database available. Run scan() first.")
+                
+                # Get slice of dataframe
+                df_slice = self.dataframe.iloc[index]
+                results = []
+                for _, row in df_slice.iterrows():
+                    path = row["path"]
+                    attributes = {
+                        col: row[col]
+                        for col in self.dataframe.columns
+                        if col != "path" and pd.notna(row[col])
+                    }
+                    result = ZarrJobResult(path=path, attributes=attributes)
+                    result._set_mmpp_ref(self)
+                    results.append(result)
+            
+            return BatchOperations(results, self)
+        
+        # Handle integer index for single result
+        if not isinstance(index, int):
+            raise TypeError(f"Index must be int or slice, got {type(index)}")
+            
         if self._single_zarr_mode:
             if 0 <= index < len(self._zarr_results):
                 return self._zarr_results[index]

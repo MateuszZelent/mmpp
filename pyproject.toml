@@ -43,6 +43,10 @@ dev = [
     "mypy",
     "build",
     "twine",
+    "sphinx>=4.0",
+    "sphinx-rtd-theme",
+    "sphinx-autodoc-typehints",
+    "myst-parser",
 ]
 interactive = [
     "itables",
