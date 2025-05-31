@@ -7,9 +7,10 @@ on:
     branches: [ main, master ]
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
+  actions: read
 
 jobs:
   build-docs:
@@ -68,3 +69,5 @@ jobs:
         publish_dir: ./docs/_build
         publish_branch: gh-pages
         force_orphan: true
+        user_name: 'github-actions[bot]'
+        user_email: 'github-actions[bot]@users.noreply.github.com'
