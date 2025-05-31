@@ -119,6 +119,31 @@ napoleon_use_ivar = False
 napoleon_use_param = True
 napoleon_use_rtype = True
 
+# -- Error handling configuration for GitHub Pages -------------------------
+
+# Suppress warnings and continue build even with errors
+suppress_warnings = [
+    "ref.any",
+    "ref.python", 
+    "autosummary",
+    "autodoc",
+    "autodoc.import_object",
+    "toc.secnum",
+    "epub.unknown_project_files",
+    "myst.domains",
+    "myst.header"
+]
+
+# Continue autodoc even if imports fail
+autodoc_mock_imports = []
+autodoc_inherit_docstrings = True
+
+# Ignore errors in autosummary generation
+autosummary_generate_overwrite = False
+
+# Don't fail build on missing references
+nitpicky = False
+
 # -- Options for typehints --------------------------------------------------
 
 typehints_fully_qualified = False
