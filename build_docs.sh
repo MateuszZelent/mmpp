@@ -25,7 +25,7 @@ pip install -e .
 echo "🏗️  Building documentation..."
 cd docs
 rm -rf _build
-sphinx-build -b html . _build
+sphinx-build -b html -W . _build
 
 # Copy .nojekyll file
 cp .nojekyll _build/.nojekyll 2>/dev/null || touch _build/.nojekyll
