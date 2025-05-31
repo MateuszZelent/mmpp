@@ -84,11 +84,12 @@ op = mmpp.MMPP('path/to/simulation.zarr')
 # 🔍 Single file analysis
 result = op[0]
 fft_analyzer = result.fft
-spectrum = fft_analyzer.compute_spectrum(dset='m_z5-8')
+spectrum = fft_analyzer.spectrum(dset='m_z5-8')
+power_spectrum = fft_analyzer.power(dset='m_z5-8')
 
 # ⚡ Batch processing - NEW!
 batch = op[:]  # Get all results
-batch_results = batch.fft.compute_spectrum('m_z5-8', parallel=True)
+# Note: Batch operations use different API (see batch section)
 modes = batch.fft.modes.compute_modes('m_z5-8', parallel=True)
 ```
 
@@ -103,7 +104,8 @@ op = mmpp.MMPP('simulation_results/')
 batch = op[:]
 
 # ⚡ Parallel FFT analysis with progress tracking
-spectra = batch.fft.compute_spectrum('m_z5-8', parallel=True, progress=True)
+# Note: Batch operations may use different methods
+# spectra = batch.fft.compute_all('m_z5-8', parallel=True, progress=True)
 
 # 🎭 Batch mode computation
 modes = batch.fft.modes.compute_modes('m_z5-8', parallel=True)
@@ -113,14 +115,20 @@ modes = batch.fft.modes.compute_modes('m_z5-8', parallel=True)
 Comprehensive frequency domain analysis:
 
 ```python
-# 📊 Compute frequency spectrum
-spectrum = fft_analyzer.compute_spectrum(dset='m_z5-8')
+# 📊 Compute frequency spectrum (complex)
+spectrum = fft_analyzer.spectrum(dset='m_z5-8')
+
+# ⚡ Compute power spectrum  
+power_spectrum = fft_analyzer.power(dset='m_z5-8')
+
+# 📈 Get frequency array
+frequencies = fft_analyzer.frequencies(dset='m_z5-8')
 
 # 🎯 Identify FMR modes
 modes = fft_analyzer.modes.compute_modes('m_z5-8')
 
-# 🎬 Create mode animations
-animation = fft_analyzer.animate_modes(modes, save_path='modes.gif')
+# 🎬 Plot mode visualizations at specific frequency
+plot_result = fft_analyzer.plot_modes(frequency=10.5, dset='m_z5-8')
 ```
 
 ### 🎨 Publication-Ready Visualizations

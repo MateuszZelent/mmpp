@@ -93,8 +93,6 @@ batch_ops = op[:]
 
 api/index
 tutorials/index
-examples/index
-development/index
 ```
 
 ## Indices and tables

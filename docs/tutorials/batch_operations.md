@@ -23,10 +23,8 @@ all_results = op[:]  # Returns BatchOperations instance
 ```python
 # Perform FFT analysis on all results
 batch_fft = all_results.fft
-fft_results = batch_fft.compute_spectrum(
-    dset='m_z5-8',
-    parallel=True,
-    progress=True
+fft_results = batch_fft.compute_all(
+    dset='m_z5-8'
 )
 
 print(f"Processed {len(fft_results)} results")
@@ -64,8 +62,9 @@ def custom_analysis(zarr_result):
     # Your custom processing logic here
     return {"custom_metric": some_value}
 
-# Apply custom function to all results
-custom_results = all_results.apply(custom_analysis, parallel=True)
+# Note: Custom analysis functions would need custom implementation
+# This is an example of what could be possible:
+# custom_results = process_custom_analysis(all_results, custom_analysis)
 ```
 
 ### Error Handling
@@ -73,7 +72,7 @@ custom_results = all_results.apply(custom_analysis, parallel=True)
 The batch operations provide comprehensive error handling:
 
 ```python
-results = all_results.fft.compute_spectrum('m_z5-8')
+results = all_results.fft.compute_all('m_z5-8')
 
 # Check for errors
 errors = [r for r in results if not r['success']]
@@ -118,7 +117,7 @@ print(f"Found {len(batch.zarr_results)} simulation files")
 
 # Compute FFT spectra
 print("Computing FFT spectra...")
-spectra = batch.fft.compute_spectrum(
+spectra = batch.fft.compute_all(
     dset='m_z5-8',
     parallel=True,
     progress=True,

@@ -11,7 +11,7 @@ result = mmpp.MMPP('simulation.zarr')[0]
 
 # Compute FFT spectrum
 fft = result.fft
-spectrum = fft.compute_spectrum(dset='m_z5-8')
+spectrum = fft.spectrum(dset='m_z5-8')
 
 # Plot results
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -49,12 +49,9 @@ batch = op[:]
 
 print(f"Processing {len(batch.zarr_results)} simulation files...")
 
-# Batch FFT analysis
-fft_results = batch.fft.compute_spectrum(
-    dset='m_z5-8',
-    parallel=True,
-    progress=True,
-    max_workers=4
+# Batch FFT analysis - use compute_all for batch operations
+fft_results = batch.fft.compute_all(
+    dset='m_z5-8'
 )
 
 # Batch mode analysis
@@ -101,8 +98,8 @@ def analyze_peak_characteristics(zarr_result):
         fft = zarr_result.fft
         
         # Compute spectrum
-        spectrum = fft.compute_spectrum(dset='m_z5-8')
-        frequencies = fft.get_frequencies()
+        spectrum = fft.spectrum(dset='m_z5-8')
+        frequencies = fft.frequencies()
         
         # Find peaks
         from scipy.signal import find_peaks
@@ -130,11 +127,13 @@ def analyze_peak_characteristics(zarr_result):
 op = mmpp.MMPP('simulation_results/')
 batch = op[:]
 
-custom_results = batch.apply(
-    analyze_peak_characteristics,
-    parallel=True,
-    progress=True
-)
+# Note: Custom analysis functions would need to be implemented
+# For demonstration purposes - this feature may not be available
+# custom_results = batch.process_custom(
+#     analyze_peak_characteristics,
+#     parallel=True,
+#     progress=True
+# )
 
 # Process results
 for result in custom_results:
@@ -178,8 +177,8 @@ print(f"Advanced method found {len(advanced_modes)} modes")
 fig, axes = plt.subplots(2, 2, figsize=(15, 10))
 
 # Plot spectrum
-spectrum = fft.compute_spectrum(dset='m_z5-8')
-frequencies = fft.get_frequencies()
+spectrum = fft.spectrum(dset='m_z5-8')
+frequencies = fft.frequencies()
 
 axes[0,0].plot(frequencies, np.abs(spectrum))
 axes[0,0].set_title('FFT Spectrum')
@@ -252,11 +251,8 @@ def robust_batch_processing(data_directory):
         
         # FFT computation
         logger.info("Computing FFT spectra...")
-        fft_results = batch.fft.compute_spectrum(
-            dset='m_z5-8',
-            parallel=True,
-            progress=True,
-            max_workers=2  # Conservative for stability
+        fft_results = batch.fft.compute_all(
+            dset='m_z5-8'
         )
         
         # Separate successful and failed results

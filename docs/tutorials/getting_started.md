@@ -11,7 +11,7 @@ pip install mmpp
 Or for development:
 
 ```bash
-git clone https://github.com/your-repo/mmpp.git
+git clone https://github.com/kkingstoun/mmpp.git
 cd mmpp
 pip install -e .
 ```
@@ -36,7 +36,7 @@ print(f"Available datasets: {list(zarr_data.root.keys())}")
 ```python
 # Perform FFT analysis
 fft_analyzer = result[0].fft
-spectrum = fft_analyzer.compute_spectrum(dset='m_z5-8')
+spectrum = fft_analyzer.spectrum(dset='m_z5-8')
 
 print(f"Spectrum shape: {spectrum.shape}")
 
@@ -66,7 +66,7 @@ print(f"Loaded {len(op)} simulation results")
 
 # Process all files at once
 batch = op[:]  # Get batch operations interface
-results = batch.fft.compute_spectrum('m_z5-8', parallel=True)
+results = batch.fft.compute_all('m_z5-8')
 
 print(f"Processed {len(results)} files")
 ```
