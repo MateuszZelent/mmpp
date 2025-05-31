@@ -36,6 +36,7 @@ except ImportError:
                 "Core dependencies not available. Install with: pip install mmppp[dev]"
             )
 
+
 # Try to import plotting classes
 try:
     from .plotting import MMPPlotter, PlotConfig, PlotterProxy, fonts
@@ -62,31 +63,31 @@ except ImportError:
             raise ImportError(
                 "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
             )
-    
+
     # Create dummy font manager
     class DummyFontManager:
         def __init__(self):
             pass
-        
+
         @property
         def paths(self):
             return []
-        
+
         @property
         def available(self):
             return []
-        
+
         def add_path(self, path):
             print("Font management not available - install matplotlib")
             return False
-        
+
         def set_default_font(self, font):
             print("Font management not available - install matplotlib")
             return False
-        
+
         def __repr__(self):
             return "FontManager: Not available (matplotlib not installed)"
-    
+
     fonts = DummyFontManager()
 
 
@@ -163,7 +164,7 @@ def open(base_path: str, **kwargs):
 # Make main classes available at package level
 __all__ = [
     "MMPP",
-    "ScanResult", 
+    "ScanResult",
     "ZarrJobResult",
     "MMPPlotter",
     "PlotConfig",
@@ -185,6 +186,7 @@ __features__ = {
 if _PLOTTING_AVAILABLE:
     try:
         from .plotting import load_paper_style
+
         load_paper_style(verbose=False)
     except Exception:
         # Silently fail if style loading fails

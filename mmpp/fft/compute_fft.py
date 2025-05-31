@@ -14,6 +14,7 @@ from dataclasses import dataclass
 # Import psutil for memory monitoring
 try:
     import psutil
+
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
@@ -22,16 +23,18 @@ except ImportError:
 try:
     import scipy.signal
     import scipy.fft
+
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
 
 try:
     import pyfftw
+
     PYFFTW_AVAILABLE = True
     # Configure pyFFTW if available
     pyfftw.config.NUM_THREADS = 4
-    pyfftw.config.PLANNER_EFFORT = 'FFTW_PATIENT'
+    pyfftw.config.PLANNER_EFFORT = "FFTW_PATIENT"
     pyfftw.interfaces.cache.enable()
     pyfftw.interfaces.cache.set_keepalive_time(30)
 except ImportError:
@@ -42,53 +45,59 @@ from pyzfn import Pyzfn
 # Import shared logging configuration
 from ..logging_config import setup_mmpp_logging, get_mmpp_logger
 
-# Get logger for FFT module  
+# Get logger for FFT module
 log = get_mmpp_logger("mmpp.fft")
 
 
 # Type hints
-WINDOW_TYPES = Literal['none', 'hann', 'hamming', 'blackman', 'bartlett', 'kaiser', 'tukey', 'gaussian']
-FILTER_TYPES = Literal['none', 'remove_mean', 'remove_static', 'detrend_linear', 'remove_mean_and_static']
-FFT_ENGINES = Literal['numpy', 'pyfftw', 'scipy', 'auto']
+WINDOW_TYPES = Literal[
+    "none", "hann", "hamming", "blackman", "bartlett", "kaiser", "tukey", "gaussian"
+]
+FILTER_TYPES = Literal[
+    "none", "remove_mean", "remove_static", "detrend_linear", "remove_mean_and_static"
+]
+FFT_ENGINES = Literal["numpy", "pyfftw", "scipy", "auto"]
 
 
 @dataclass
 class FFTComputeConfig:
     """Configuration for FFT computations."""
-    
+
     window_function: WINDOW_TYPES = "hann"
     filter_type: FILTER_TYPES = "remove_mean"
     fft_engine: FFT_ENGINES = "auto"
     zero_padding: bool = True
     nfft: Optional[int] = None
-    
+
     def __post_init__(self) -> None:
         """Validate configuration."""
-        if not SCIPY_AVAILABLE and self.fft_engine == 'scipy':
-            self.fft_engine = 'numpy'
-        if not PYFFTW_AVAILABLE and self.fft_engine == 'pyfftw':
-            self.fft_engine = 'numpy'
+        if not SCIPY_AVAILABLE and self.fft_engine == "scipy":
+            self.fft_engine = "numpy"
+        if not PYFFTW_AVAILABLE and self.fft_engine == "pyfftw":
+            self.fft_engine = "numpy"
 
 
 @dataclass
 class FFTComputeResult:
     """Result of FFT computation."""
-    
+
     frequencies: np.ndarray
     spectrum: np.ndarray
     metadata: Dict[str, Any]
     config: FFTComputeConfig
-    
+
     @property
     def peak_frequency(self) -> float:
         """Get frequency with maximum power."""
         peak_idx = np.argmax(self.spectrum)
         return self.frequencies[peak_idx]
-    
-    def save_to_zarr(self, zarr_path: str, dataset_name: str = "fft", force: bool = False) -> None:
+
+    def save_to_zarr(
+        self, zarr_path: str, dataset_name: str = "fft", force: bool = False
+    ) -> None:
         """
         Save FFT result to zarr file.
-        
+
         Parameters:
         -----------
         zarr_path : str
@@ -100,23 +109,23 @@ class FFTComputeResult:
         """
         import zarr
         import shutil
-        
+
         # Open zarr file
-        z = zarr.open(zarr_path, mode='a')
-        
+        z = zarr.open(zarr_path, mode="a")
+
         # Create dataset path
         fft_path = f"fft/{dataset_name}"
-        
+
         # Remove existing if force=True
         if force and fft_path in z:
             del z[fft_path]
-        
+
         # Create fft group if it doesn't exist
         if "fft" not in z:
             fft_main_group = z.create_group("fft")
         else:
             fft_main_group = z["fft"]
-        
+
         # Create dataset group within fft/
         if dataset_name not in fft_main_group:
             fft_group = fft_main_group.create_group(dataset_name)
@@ -124,24 +133,28 @@ class FFTComputeResult:
         else:
             fft_group = fft_main_group[dataset_name]
             if not force:
-                log.warning(f"FFT dataset fft/{dataset_name} already exists. Use force=True to overwrite.")
+                log.warning(
+                    f"FFT dataset fft/{dataset_name} already exists. Use force=True to overwrite."
+                )
                 return
             log.info(f"Overwriting existing FFT dataset: fft/{dataset_name}")
-        
+
         # Disable chunking for FFT data to avoid unnecessary fragmentation
         spectrum_chunks = None
         freq_chunks = None
-        
+
         # Save spectrum data without chunking
-        fft_group.create_dataset("spectrum", data=self.spectrum, 
-                                chunks=spectrum_chunks, overwrite=force)
-        fft_group.create_dataset("frequencies", data=self.frequencies, 
-                                chunks=freq_chunks, overwrite=force)
-        
+        fft_group.create_dataset(
+            "spectrum", data=self.spectrum, chunks=spectrum_chunks, overwrite=force
+        )
+        fft_group.create_dataset(
+            "frequencies", data=self.frequencies, chunks=freq_chunks, overwrite=force
+        )
+
         # Save metadata as attributes
         for key, value in self.metadata.items():
             fft_group.attrs[key] = value
-        
+
         # Save config as attributes
         fft_group.attrs["window_function"] = self.config.window_function
         fft_group.attrs["filter_type"] = self.config.filter_type
@@ -154,102 +167,120 @@ class FFTComputeResult:
 class FFTCompute:
     """
     Core FFT computation engine.
-    
+
     Handles low-level FFT calculations without user interface elements.
     """
-    
+
     def __init__(self, debug: bool = False):
         """Initialize FFT compute engine.
-        
+
         Parameters:
         -----------
         debug : bool, optional
             Enable debug logging (default: False)
         """
         self.config = FFTComputeConfig()
-        
+
         # Set logging level based on debug flag
         setup_mmpp_logging(debug=debug, logger_name="mmpp.fft")
         if debug:
             log.debug("FFT debug logging enabled")
-        
+
         # Available window functions
         self.AVAILABLE_WINDOWS = {
-            'none': None,
-            'hann': scipy.signal.windows.hann if SCIPY_AVAILABLE else np.hanning,
-            'hamming': scipy.signal.windows.hamming if SCIPY_AVAILABLE else np.hamming,
-            'blackman': scipy.signal.windows.blackman if SCIPY_AVAILABLE else np.blackman,
-            'bartlett': scipy.signal.windows.bartlett if SCIPY_AVAILABLE else np.bartlett,
-            'kaiser': lambda N: scipy.signal.windows.kaiser(N, beta=8.6) if SCIPY_AVAILABLE else np.kaiser(N, 8.6),
-            'tukey': lambda N: scipy.signal.windows.tukey(N, alpha=0.25) if SCIPY_AVAILABLE else np.ones(N),
-            'gaussian': lambda N: scipy.signal.windows.gaussian(N, std=N/6) if SCIPY_AVAILABLE else np.ones(N)
+            "none": None,
+            "hann": scipy.signal.windows.hann if SCIPY_AVAILABLE else np.hanning,
+            "hamming": scipy.signal.windows.hamming if SCIPY_AVAILABLE else np.hamming,
+            "blackman": (
+                scipy.signal.windows.blackman if SCIPY_AVAILABLE else np.blackman
+            ),
+            "bartlett": (
+                scipy.signal.windows.bartlett if SCIPY_AVAILABLE else np.bartlett
+            ),
+            "kaiser": lambda N: (
+                scipy.signal.windows.kaiser(N, beta=8.6)
+                if SCIPY_AVAILABLE
+                else np.kaiser(N, 8.6)
+            ),
+            "tukey": lambda N: (
+                scipy.signal.windows.tukey(N, alpha=0.25)
+                if SCIPY_AVAILABLE
+                else np.ones(N)
+            ),
+            "gaussian": lambda N: (
+                scipy.signal.windows.gaussian(N, std=N / 6)
+                if SCIPY_AVAILABLE
+                else np.ones(N)
+            ),
         }
-        
+
         # Available engines
         self.AVAILABLE_ENGINES = {
-            'numpy': 'NumPy FFT (basic)',
-            'scipy': 'SciPy FFT (recommended)' if SCIPY_AVAILABLE else None,
-            'pyfftw': 'pyFFTW (optimized)' if PYFFTW_AVAILABLE else None,
-            'auto': 'Automatic selection'
+            "numpy": "NumPy FFT (basic)",
+            "scipy": "SciPy FFT (recommended)" if SCIPY_AVAILABLE else None,
+            "pyfftw": "pyFFTW (optimized)" if PYFFTW_AVAILABLE else None,
+            "auto": "Automatic selection",
         }
-        
+
         # Remove unavailable engines
-        self.AVAILABLE_ENGINES = {k: v for k, v in self.AVAILABLE_ENGINES.items() if v is not None}
-    
+        self.AVAILABLE_ENGINES = {
+            k: v for k, v in self.AVAILABLE_ENGINES.items() if v is not None
+        }
+
     def determine_engine(self, data_size: int) -> str:
         """
         Determine best FFT engine based on data size.
-        
+
         Parameters:
         -----------
         data_size : int
             Total number of elements to transform
-            
+
         Returns:
         --------
         str
             Selected engine name
         """
-        if self.config.fft_engine != 'auto':
+        if self.config.fft_engine != "auto":
             return self.config.fft_engine
-        
+
         # Heuristic selection
         if data_size < 100000:
-            return 'numpy'  # Small data - NumPy is fine
+            return "numpy"  # Small data - NumPy is fine
         elif data_size > 1000000 and PYFFTW_AVAILABLE:
-            return 'pyfftw'  # Large data - pyFFTW if available
+            return "pyfftw"  # Large data - pyFFTW if available
         elif SCIPY_AVAILABLE:
-            return 'scipy'  # Default to scipy if available
+            return "scipy"  # Default to scipy if available
         else:
-            return 'numpy'  # Fallback
-    
+            return "numpy"  # Fallback
+
     def apply_window(self, data: np.ndarray, window_type: WINDOW_TYPES) -> np.ndarray:
         """
         Apply window function to data.
-        
+
         Parameters:
         -----------
         data : np.ndarray
             Input data (time axis first)
         window_type : str
             Window function type
-            
+
         Returns:
         --------
         np.ndarray
             Windowed data
         """
-        if window_type == 'none' or self.AVAILABLE_WINDOWS[window_type] is None:
+        if window_type == "none" or self.AVAILABLE_WINDOWS[window_type] is None:
             return data
-        
+
         n_time = data.shape[0]
         window_func = self.AVAILABLE_WINDOWS[window_type]
-        
+
         if callable(window_func):
             window = window_func(n_time)
         else:
             window = np.ones(n_time)
-        
+
         # Apply window along time axis
         if data.ndim == 1:
             return data * window
@@ -259,30 +290,30 @@ class FFTCompute:
             window_shape[0] = n_time
             window = window.reshape(window_shape)
             return data * window
-    
+
     def apply_filter(self, data: np.ndarray, filter_type: FILTER_TYPES) -> np.ndarray:
         """
         Apply filtering to data.
-        
+
         Parameters:
         -----------
         data : np.ndarray
             Input data (time axis first)
         filter_type : str
             Filter type
-            
+
         Returns:
         --------
         np.ndarray
             Filtered data
         """
-        if filter_type == 'none':
+        if filter_type == "none":
             return data
-        elif filter_type == 'remove_mean':
+        elif filter_type == "remove_mean":
             return data - np.mean(data, axis=0, keepdims=True)
-        elif filter_type == 'remove_static':
+        elif filter_type == "remove_static":
             return data - data[0:1, ...]
-        elif filter_type == 'detrend_linear':
+        elif filter_type == "detrend_linear":
             if SCIPY_AVAILABLE:
                 if data.ndim == 1:
                     return scipy.signal.detrend(data)
@@ -290,21 +321,25 @@ class FFTCompute:
                     # Apply detrending along time axis
                     detrended = np.zeros_like(data)
                     for idx in np.ndindex(data.shape[1:]):
-                        detrended[(slice(None),) + idx] = scipy.signal.detrend(data[(slice(None),) + idx])
+                        detrended[(slice(None),) + idx] = scipy.signal.detrend(
+                            data[(slice(None),) + idx]
+                        )
                     return detrended
             else:
                 # Simple linear detrend without scipy
                 return data - np.mean(data, axis=0, keepdims=True)
-        elif filter_type == 'remove_mean_and_static':
+        elif filter_type == "remove_mean_and_static":
             data_filtered = data - np.mean(data, axis=0, keepdims=True)
             return data_filtered - data_filtered[0:1, ...]
         else:
             return data
-    
-    def compute_fft(self, data: np.ndarray, dt: float, engine: str) -> Tuple[np.ndarray, np.ndarray]:
+
+    def compute_fft(
+        self, data: np.ndarray, dt: float, engine: str
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute FFT using specified engine.
-        
+
         Parameters:
         -----------
         data : np.ndarray
@@ -313,37 +348,43 @@ class FFTCompute:
             Time step
         engine : str
             FFT engine to use
-            
+
         Returns:
         --------
         tuple
             (frequencies, fft_data)
         """
         n = data.shape[0]
-        
-        if engine == 'numpy':
+
+        if engine == "numpy":
             fft_data = np.fft.rfft(data, axis=0)
             frequencies = np.fft.rfftfreq(n, dt)
-        elif engine == 'scipy' and SCIPY_AVAILABLE:
+        elif engine == "scipy" and SCIPY_AVAILABLE:
             fft_data = scipy.fft.rfft(data, axis=0)
             frequencies = scipy.fft.rfftfreq(n, dt)
-        elif engine == 'pyfftw' and PYFFTW_AVAILABLE:
-            fft_data = pyfftw.interfaces.numpy_fft.rfft(data, axis=0, threads=pyfftw.config.NUM_THREADS)
+        elif engine == "pyfftw" and PYFFTW_AVAILABLE:
+            fft_data = pyfftw.interfaces.numpy_fft.rfft(
+                data, axis=0, threads=pyfftw.config.NUM_THREADS
+            )
             frequencies = pyfftw.interfaces.numpy_fft.rfftfreq(n, dt)
         else:
             # Fallback to numpy
             fft_data = np.fft.rfft(data, axis=0)
             frequencies = np.fft.rfftfreq(n, dt)
-        
+
         return frequencies, fft_data
-    
-    def calculate_fft_method1(self, data: np.ndarray, dt: float, 
-                             window: WINDOW_TYPES = 'hann',
-                             filter_type: FILTER_TYPES = 'remove_mean',
-                             engine: Optional[str] = None) -> FFTComputeResult:
+
+    def calculate_fft_method1(
+        self,
+        data: np.ndarray,
+        dt: float,
+        window: WINDOW_TYPES = "hann",
+        filter_type: FILTER_TYPES = "remove_mean",
+        engine: Optional[str] = None,
+    ) -> FFTComputeResult:
         """
         FFT Method 1: Apply filtering and windowing, then FFT, then average spatially.
-        
+
         Parameters:
         -----------
         data : np.ndarray
@@ -356,29 +397,29 @@ class FFTCompute:
             Filter type
         engine : str, optional
             FFT engine
-            
+
         Returns:
         --------
         FFTComputeResult
             FFT computation result
         """
         start_time = time.time()
-        
+
         # Determine engine
         selected_engine = engine or self.determine_engine(data.size)
-        
+
         # Apply filtering
         data_filtered = self.apply_filter(data, filter_type)
-        
+
         # Apply windowing
         data_windowed = self.apply_window(data_filtered, window)
-        
+
         # Compute FFT
         frequencies, fft_data = self.compute_fft(data_windowed, dt, selected_engine)
-        
+
         # Calculate magnitude spectrum
         magnitude = np.abs(fft_data)
-        
+
         # Average over spatial dimensions (keep time and component axes)
         if magnitude.ndim > 2:  # (freq, spatial..., components)
             # Average over spatial dimensions (all except first and last)
@@ -389,40 +430,41 @@ class FFTCompute:
                 spectrum = magnitude
         else:
             spectrum = magnitude
-        
+
         calculation_time = time.time() - start_time
-        
+
         metadata = {
-            'method': 1,
-            'window': window,
-            'filter_type': filter_type,
-            'engine': selected_engine,
-            'calculation_time': calculation_time,
-            'data_shape': data.shape,
-            'dt': dt,
-            'frequency_resolution': frequencies[1] - frequencies[0] if len(frequencies) > 1 else 0
+            "method": 1,
+            "window": window,
+            "filter_type": filter_type,
+            "engine": selected_engine,
+            "calculation_time": calculation_time,
+            "data_shape": data.shape,
+            "dt": dt,
+            "frequency_resolution": (
+                frequencies[1] - frequencies[0] if len(frequencies) > 1 else 0
+            ),
         }
-        
+
         config = FFTComputeConfig(
-            window_function=window,
-            filter_type=filter_type,
-            fft_engine=selected_engine
+            window_function=window, filter_type=filter_type, fft_engine=selected_engine
         )
-        
+
         return FFTComputeResult(
-            frequencies=frequencies,
-            spectrum=spectrum,
-            metadata=metadata,
-            config=config
+            frequencies=frequencies, spectrum=spectrum, metadata=metadata, config=config
         )
-    
-    def calculate_fft_method2(self, data: np.ndarray, dt: float,
-                             window: WINDOW_TYPES = 'hann',
-                             filter_type: FILTER_TYPES = 'remove_mean',
-                             engine: Optional[str] = None) -> FFTComputeResult:
+
+    def calculate_fft_method2(
+        self,
+        data: np.ndarray,
+        dt: float,
+        window: WINDOW_TYPES = "hann",
+        filter_type: FILTER_TYPES = "remove_mean",
+        engine: Optional[str] = None,
+    ) -> FFTComputeResult:
         """
         FFT Method 2: Apply filtering, average spatially, then windowing and FFT.
-        
+
         Parameters:
         -----------
         data : np.ndarray
@@ -435,20 +477,20 @@ class FFTCompute:
             Filter type
         engine : str, optional
             FFT engine
-            
+
         Returns:
         --------
         FFTComputeResult
             FFT computation result
         """
         start_time = time.time()
-        
+
         # Determine engine
         selected_engine = engine or self.determine_engine(data.size)
-        
+
         # Apply filtering
         data_filtered = self.apply_filter(data, filter_type)
-        
+
         # Average over spatial dimensions first
         if data_filtered.ndim > 2:  # (time, spatial..., components)
             spatial_axes = tuple(range(1, data_filtered.ndim - 1))
@@ -458,46 +500,45 @@ class FFTCompute:
                 data_averaged = data_filtered
         else:
             data_averaged = data_filtered
-        
+
         # Apply windowing
         data_windowed = self.apply_window(data_averaged, window)
-        
+
         # Compute FFT
         frequencies, fft_data = self.compute_fft(data_windowed, dt, selected_engine)
-        
+
         # Calculate magnitude spectrum
         spectrum = np.abs(fft_data)
-        
+
         calculation_time = time.time() - start_time
-        
+
         metadata = {
-            'method': 2,
-            'window': window,
-            'filter_type': filter_type,
-            'engine': selected_engine,
-            'calculation_time': calculation_time,
-            'data_shape': data.shape,
-            'dt': dt,
-            'frequency_resolution': frequencies[1] - frequencies[0] if len(frequencies) > 1 else 0
+            "method": 2,
+            "window": window,
+            "filter_type": filter_type,
+            "engine": selected_engine,
+            "calculation_time": calculation_time,
+            "data_shape": data.shape,
+            "dt": dt,
+            "frequency_resolution": (
+                frequencies[1] - frequencies[0] if len(frequencies) > 1 else 0
+            ),
         }
-        
+
         config = FFTComputeConfig(
-            window_function=window,
-            filter_type=filter_type,
-            fft_engine=selected_engine
+            window_function=window, filter_type=filter_type, fft_engine=selected_engine
         )
-        
+
         return FFTComputeResult(
-            frequencies=frequencies,
-            spectrum=spectrum,
-            metadata=metadata,
-            config=config
+            frequencies=frequencies, spectrum=spectrum, metadata=metadata, config=config
         )
-    
-    def load_data_from_zarr(self, zarr_path: str, dataset: str, z_layer: int = -1) -> Tuple[np.ndarray, float]:
+
+    def load_data_from_zarr(
+        self, zarr_path: str, dataset: str, z_layer: int = -1
+    ) -> Tuple[np.ndarray, float]:
         """
         Load data from zarr file.
-        
+
         Parameters:
         -----------
         zarr_path : str
@@ -506,7 +547,7 @@ class FFTCompute:
             Dataset name
         z_layer : int
             Z-layer index (-1 for last layer)
-            
+
         Returns:
         --------
         tuple
@@ -517,31 +558,31 @@ class FFTCompute:
         if PSUTIL_AVAILABLE:
             process = psutil.Process()
             initial_memory = process.memory_info().rss / 1024 / 1024  # MB
-        
+
         log.info(f"Loading data from zarr: {zarr_path}")
         log.debug(f"Dataset: {dataset}, z_layer: {z_layer}")
-        
+
         job = Pyzfn(zarr_path)
-        
+
         # Get dataset
         if hasattr(job, dataset):
             data_set = getattr(job, dataset)
         else:
             raise ValueError(f"Dataset '{dataset}' not found")
-        
+
         # Load data with timing
         data_load_start = time.time()
         data = data_set[...]
         data_load_time = time.time() - data_load_start
-        
+
         log.debug(f"Data loading time: {data_load_time:.3f}s")
-        
+
         # Calculate data size and loading speed
         data_size_mb = data.nbytes / 1024 / 1024
         loading_speed = data_size_mb / data_load_time if data_load_time > 0 else 0
         log.debug(f"Data size: {data_size_mb:.1f} MB")
         log.debug(f"Loading speed: {loading_speed:.1f} MB/s")
-        
+
         # Handle z-layer selection
         layer_select_start = time.time()
         if len(data.shape) == 5:  # (t, z, y, x, comp)
@@ -555,47 +596,52 @@ class FFTCompute:
             log.debug("No z-dimension in data")
         else:
             raise ValueError(f"Unsupported data shape: {data.shape}")
-        
+
         layer_select_time = time.time() - layer_select_start
         log.debug(f"Layer selection time: {layer_select_time:.3f}s")
-        
+
         # Get time step
-        dt = getattr(job, 't_sampl', 1e-12)
-        
+        dt = getattr(job, "t_sampl", 1e-12)
+
         # Final timing and memory measurement
         total_time = time.time() - start_time
         if PSUTIL_AVAILABLE:
             final_memory = process.memory_info().rss / 1024 / 1024  # MB
             memory_increase = final_memory - initial_memory
             log.debug(f"Memory increase: {memory_increase:.1f} MB")
-        
+
         log.info(f"Data loaded successfully in {total_time:.3f}s, shape: {data.shape}")
-        
+
         return data, dt
-    
+
     def get_available_options(self) -> Dict[str, Any]:
         """Get available configuration options."""
         return {
-            'windows': list(self.AVAILABLE_WINDOWS.keys()),
-            'filters': ['none', 'remove_mean', 'remove_static', 'detrend_linear', 'remove_mean_and_static'],
-            'engines': list(self.AVAILABLE_ENGINES.keys()),
-            'dependencies': {
-                'scipy': SCIPY_AVAILABLE,
-                'pyfftw': PYFFTW_AVAILABLE
-            }
+            "windows": list(self.AVAILABLE_WINDOWS.keys()),
+            "filters": [
+                "none",
+                "remove_mean",
+                "remove_static",
+                "detrend_linear",
+                "remove_mean_and_static",
+            ],
+            "engines": list(self.AVAILABLE_ENGINES.keys()),
+            "dependencies": {"scipy": SCIPY_AVAILABLE, "pyfftw": PYFFTW_AVAILABLE},
         }
-    
-    def load_existing_fft_data(self, zarr_path: str, dataset_name: str = "fft") -> Optional[FFTComputeResult]:
+
+    def load_existing_fft_data(
+        self, zarr_path: str, dataset_name: str = "fft"
+    ) -> Optional[FFTComputeResult]:
         """
         Load existing FFT data from zarr file.
-        
+
         Parameters:
         -----------
         zarr_path : str
             Path to zarr file
         dataset_name : str, optional
             Dataset name (default: "fft")
-            
+
         Returns:
         --------
         Optional[FFTComputeResult]
@@ -607,120 +653,132 @@ class FFTCompute:
             if PSUTIL_AVAILABLE:
                 process = psutil.Process()
                 initial_memory = process.memory_info().rss / 1024 / 1024  # MB
-            
+
             log.debug(f"Loading existing FFT data from: {zarr_path}")
             log.debug(f"FFT dataset: fft/{dataset_name}")
-            
+
             import zarr
-            z = zarr.open(zarr_path, mode='r')
-            
+
+            z = zarr.open(zarr_path, mode="r")
+
             fft_path = f"fft/{dataset_name}"
             if fft_path not in z:
                 log.debug(f"FFT dataset {fft_path} not found")
                 return None
-            
+
             fft_group = z[fft_path]
-            
+
             # Load data with timing
             data_load_start = time.time()
             spectrum = np.array(fft_group["spectrum"])
             frequencies = np.array(fft_group["frequencies"])
             data_load_time = time.time() - data_load_start
-            
+
             log.debug(f"FFT data loading time: {data_load_time:.3f}s")
-            
+
             # Calculate data sizes
             spectrum_size_mb = spectrum.nbytes / 1024 / 1024
             freq_size_mb = frequencies.nbytes / 1024 / 1024
             total_size_mb = spectrum_size_mb + freq_size_mb
-            
+
             log.debug(f"Spectrum size: {spectrum_size_mb:.1f} MB")
             log.debug(f"Frequencies size: {freq_size_mb:.1f} MB")
             log.debug(f"Total FFT data size: {total_size_mb:.1f} MB")
-            
+
             # Load metadata
             metadata = dict(fft_group.attrs)
-            
+
             # Create config from attributes
             config = FFTComputeConfig(
                 window_function=metadata.pop("window_function", "hann"),
                 filter_type=metadata.pop("filter_type", "remove_mean"),
                 fft_engine=metadata.pop("fft_engine", "auto"),
                 zero_padding=metadata.pop("zero_padding", True),
-                nfft=metadata.pop("nfft", None)
+                nfft=metadata.pop("nfft", None),
             )
-            
+
             # Final timing and memory measurement
             total_time = time.time() - start_time
             if PSUTIL_AVAILABLE:
                 final_memory = process.memory_info().rss / 1024 / 1024  # MB
                 memory_increase = final_memory - initial_memory
                 log.debug(f"Memory increase: {memory_increase:.1f} MB")
-            
-            log.info(f"Loaded existing FFT data in {total_time:.3f}s, spectrum shape: {spectrum.shape}")
-            
+
+            log.info(
+                f"Loaded existing FFT data in {total_time:.3f}s, spectrum shape: {spectrum.shape}"
+            )
+
             return FFTComputeResult(
                 frequencies=frequencies,
                 spectrum=spectrum,
                 metadata=metadata,
-                config=config
+                config=config,
             )
-            
+
         except Exception as e:
             log.warning(f"Could not load existing FFT data: {e}")
             return None
-    
-    def _verify_fft_parameters(self, existing_result: FFTComputeResult, 
-                               **kwargs) -> bool:
+
+    def _verify_fft_parameters(
+        self, existing_result: FFTComputeResult, **kwargs
+    ) -> bool:
         """
         Verify if FFT parameters match existing result.
-        
+
         Parameters:
         -----------
         existing_result : FFTComputeResult
             Existing FFT result to compare against
         **kwargs : Any
             FFT parameters to verify
-            
+
         Returns:
         --------
         bool
             True if parameters match, False otherwise
         """
         # Extract parameters from kwargs with defaults
-        window = kwargs.get('window', self.config.window_function)
-        filter_type = kwargs.get('filter_type', self.config.filter_type)
-        engine = kwargs.get('engine', self.config.fft_engine)
-        zero_padding = kwargs.get('zero_padding', self.config.zero_padding)
-        nfft = kwargs.get('nfft', self.config.nfft)
-        
+        window = kwargs.get("window", self.config.window_function)
+        filter_type = kwargs.get("filter_type", self.config.filter_type)
+        engine = kwargs.get("engine", self.config.fft_engine)
+        zero_padding = kwargs.get("zero_padding", self.config.zero_padding)
+        nfft = kwargs.get("nfft", self.config.nfft)
+
         # Compare with existing config
         config_match = (
-            existing_result.config.window_function == window and
-            existing_result.config.filter_type == filter_type and
-            existing_result.config.fft_engine == engine and
-            existing_result.config.zero_padding == zero_padding and
-            existing_result.config.nfft == nfft
+            existing_result.config.window_function == window
+            and existing_result.config.filter_type == filter_type
+            and existing_result.config.fft_engine == engine
+            and existing_result.config.zero_padding == zero_padding
+            and existing_result.config.nfft == nfft
         )
-        
+
         # Compare metadata that affects FFT calculation
         # (add other relevant metadata fields as needed)
-        metadata_keys_to_check = ['z_layer', 'source_dataset']
+        metadata_keys_to_check = ["z_layer", "source_dataset"]
         metadata_match = True
         for key in metadata_keys_to_check:
             if key in kwargs and key in existing_result.metadata:
                 if kwargs[key] != existing_result.metadata[key]:
                     metadata_match = False
                     break
-        
+
         return config_match and metadata_match
-    
-    def calculate_fft_data(self, zarr_path: str, dataset: str, z_layer: int = -1, 
-                          method: int = 1, save: bool = False, force: bool = False, 
-                          save_dataset_name: Optional[str] = None, **kwargs) -> FFTComputeResult:
+
+    def calculate_fft_data(
+        self,
+        zarr_path: str,
+        dataset: str,
+        z_layer: int = -1,
+        method: int = 1,
+        save: bool = False,
+        force: bool = False,
+        save_dataset_name: Optional[str] = None,
+        **kwargs,
+    ) -> FFTComputeResult:
         """
         Calculate FFT for data from zarr file.
-        
+
         Parameters:
         -----------
         zarr_path : str
@@ -739,58 +797,66 @@ class FFTCompute:
             Custom name for saved dataset (default: auto-generated)
         **kwargs : Any
             Additional FFT configuration options
-            
+
         Returns:
         --------
         FFTComputeResult
             FFT computation result
         """
-        log.debug(f"calculate_fft_data called with: {dataset}, z_layer={z_layer}, method={method}, save={save}, force={force}")
-        
+        log.debug(
+            f"calculate_fft_data called with: {dataset}, z_layer={z_layer}, method={method}, save={save}, force={force}"
+        )
+
         # Generate save dataset name if not provided
         if save_dataset_name is None:
             save_dataset_name = f"{dataset}_z{z_layer}_m{method}"
-        
+
         # Try to load existing data if not forcing recalculation
         if not force:
             log.debug(f"Checking for existing FFT data: fft/{save_dataset_name}")
             existing_result = self.load_existing_fft_data(zarr_path, save_dataset_name)
             if existing_result is not None:
                 # Verify that parameters match
-                if self._verify_fft_parameters(existing_result, z_layer=z_layer, 
-                                               source_dataset=dataset, **kwargs):
-                    log.info(f"✓ Loaded existing FFT data for {save_dataset_name} (parameters verified)")
+                if self._verify_fft_parameters(
+                    existing_result, z_layer=z_layer, source_dataset=dataset, **kwargs
+                ):
+                    log.info(
+                        f"✓ Loaded existing FFT data for {save_dataset_name} (parameters verified)"
+                    )
                     return existing_result
                 else:
-                    log.warning(f"Existing FFT data found but parameters don't match, recalculating...")
+                    log.warning(
+                        f"Existing FFT data found but parameters don't match, recalculating..."
+                    )
                     force = True  # Force recalculation if parameters don't match
             else:
                 log.info(f"No existing FFT data found, calculating new FFT...")
         else:
             log.info(f"Force recalculation enabled, computing new FFT...")
-        
+
         # Load data
         log.info(f"Loading data from {dataset} (z_layer={z_layer})...")
-        
+
         # Measure loading time and memory usage
         import time
         import os
-        
+
         # Try to use psutil for memory monitoring, fallback if not available
         try:
             import psutil
+
             process = psutil.Process(os.getpid())
             memory_before = process.memory_info().rss / 1024 / 1024  # MB
             psutil_available = True
         except ImportError:
             memory_before = 0
             psutil_available = False
-        
+
         # Time the data loading
         load_start_time = time.time()
         data, dt = self.load_data_from_zarr(zarr_path, dataset, z_layer)
         load_end_time = time.time()
-        
+
         # Memory after loading (if psutil available)
         if psutil_available:
             memory_after = process.memory_info().rss / 1024 / 1024  # MB
@@ -798,35 +864,41 @@ class FFTCompute:
         else:
             memory_after = 0
             memory_used = 0
-        
+
         # Calculate data size in memory
         data_size_bytes = data.nbytes
         data_size_mb = data_size_bytes / 1024 / 1024
         data_size_gb = data_size_mb / 1024
-        
+
         # Display results
         load_time = load_end_time - load_start_time
         log.info(f"Data shape: {data.shape}, dt: {dt}")
         log.debug(f"⏱️  Data loading time: {load_time:.3f}s")
         log.debug(f"💾 Data size: {data_size_mb:.1f} MB ({data_size_gb:.2f} GB)")
-        
+
         if psutil_available:
-            log.debug(f"🧠 Memory usage change: {memory_used:+.1f} MB (before: {memory_before:.1f} MB, after: {memory_after:.1f} MB)")
+            log.debug(
+                f"🧠 Memory usage change: {memory_used:+.1f} MB (before: {memory_before:.1f} MB, after: {memory_after:.1f} MB)"
+            )
         else:
-            log.debug(f"🧠 Memory monitoring unavailable (install psutil for memory stats)")
-        
+            log.debug(
+                f"🧠 Memory monitoring unavailable (install psutil for memory stats)"
+            )
+
         # Calculate loading speed
         if load_time > 0:
             loading_speed_mbps = data_size_mb / load_time
             log.debug(f"🚀 Loading speed: {loading_speed_mbps:.1f} MB/s")
-        
+
         # Extract configuration from kwargs
-        window = kwargs.get('window', self.config.window_function)
-        filter_type = kwargs.get('filter_type', self.config.filter_type)
-        engine = kwargs.get('engine', self.config.fft_engine)
-        
-        log.info(f"Computing FFT with method {method} (window: {window}, filter: {filter_type}, engine: {engine})...")
-        
+        window = kwargs.get("window", self.config.window_function)
+        filter_type = kwargs.get("filter_type", self.config.filter_type)
+        engine = kwargs.get("engine", self.config.fft_engine)
+
+        log.info(
+            f"Computing FFT with method {method} (window: {window}, filter: {filter_type}, engine: {engine})..."
+        )
+
         # Calculate FFT using specified method
         if method == 1:
             result = self.calculate_fft_method1(data, dt, window, filter_type, engine)
@@ -834,17 +906,21 @@ class FFTCompute:
             result = self.calculate_fft_method2(data, dt, window, filter_type, engine)
         else:
             raise ValueError(f"Unsupported FFT method: {method}")
-        
-        log.info(f"✓ FFT calculation completed in {result.metadata.get('calculation_time', 0):.3f}s")
-        
+
+        log.info(
+            f"✓ FFT calculation completed in {result.metadata.get('calculation_time', 0):.3f}s"
+        )
+
         # Add additional metadata
-        result.metadata.update({
-            'zarr_path': zarr_path,
-            'source_dataset': dataset,
-            'z_layer': z_layer,
-            'save_dataset_name': save_dataset_name
-        })
-        
+        result.metadata.update(
+            {
+                "zarr_path": zarr_path,
+                "source_dataset": dataset,
+                "z_layer": z_layer,
+                "save_dataset_name": save_dataset_name,
+            }
+        )
+
         # Save to zarr if requested
         if save:
             try:
@@ -855,5 +931,5 @@ class FFTCompute:
                 log.warning(f"Could not save FFT data: {e}")
         else:
             log.debug("FFT calculation completed (not saved)")
-        
+
         return result

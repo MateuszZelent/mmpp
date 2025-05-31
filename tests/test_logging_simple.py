@@ -7,7 +7,10 @@ import sys
 import os
 
 # Add the mmpp module to the path
-sys.path.insert(0, '/mnt/storage_2/scratch/pl0095-01/zelent/mannga/bowtie/mateusz/sinc/solver_test/ammpp')
+sys.path.insert(
+    0,
+    "/mnt/storage_2/scratch/pl0095-01/zelent/mannga/bowtie/mateusz/sinc/solver_test/ammpp",
+)
 
 print("Testing logging configuration...")
 

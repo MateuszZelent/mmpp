@@ -11,29 +11,34 @@ import matplotlib.pyplot as plt
 
 # Import the optimized colorbar functions
 try:
-    from .optimized_colorbar import create_mmpp_mode_colorbar, extract_system_size_from_zarr
+    from .optimized_colorbar import (
+        create_mmpp_mode_colorbar,
+        extract_system_size_from_zarr,
+    )
+
     OPTIMIZED_COLORBAR_AVAILABLE = True
 except ImportError:
     OPTIMIZED_COLORBAR_AVAILABLE = False
     print("Warning: optimized_colorbar module not found. Using standard colorbars.")
 
+
 def create_enhanced_colorbar_for_modes(
     mappable,
     ax,
     zarr_result=None,
-    component: str = 'z',
-    plot_type: str = 'magnitude',
+    component: str = "z",
+    plot_type: str = "magnitude",
     frequency: float = None,
     discrete_levels: int = 10,
     dark_theme: bool = False,
-    shrink: float = 0.8
+    shrink: float = 0.8,
 ):
     """
     Create enhanced colorbar for MMPP mode visualization.
-    
+
     This function can be used as a drop-in replacement for plt.colorbar()
     in the existing MMPP mode visualization code.
-    
+
     Parameters:
     -----------
     mappable : matplotlib mappable
@@ -54,41 +59,41 @@ def create_enhanced_colorbar_for_modes(
         Use dark theme optimization
     shrink : float, default=0.8
         Colorbar shrink factor
-        
+
     Returns:
     --------
     matplotlib.colorbar.Colorbar
         Enhanced colorbar object
     """
-    
+
     if not OPTIMIZED_COLORBAR_AVAILABLE:
         # Fallback to standard colorbar
         return plt.colorbar(mappable, ax=ax, shrink=shrink)
-    
+
     # Determine appropriate colormap and label based on plot type
-    if plot_type == 'magnitude':
-        colormap = 'thermal'  # Good for magnitude data
-        label = f'|m_{component}|'
-        units = 'arb. units'
-    elif plot_type == 'phase':
-        colormap = 'phase'    # HSV-like for phase data
-        label = f'arg(m_{component})'
-        units = 'rad'
+    if plot_type == "magnitude":
+        colormap = "thermal"  # Good for magnitude data
+        label = f"|m_{component}|"
+        units = "arb. units"
+    elif plot_type == "phase":
+        colormap = "phase"  # HSV-like for phase data
+        label = f"arg(m_{component})"
+        units = "rad"
         discrete_levels = None  # Phase is continuous
-    elif plot_type == 'combined':
-        colormap = 'phase'    # Phase with magnitude as alpha
-        label = f'm_{component} (phase+mag)'
-        units = 'rad'
+    elif plot_type == "combined":
+        colormap = "phase"  # Phase with magnitude as alpha
+        label = f"m_{component} (phase+mag)"
+        units = "rad"
         discrete_levels = None
     else:
-        colormap = 'balance'  # Default diverging colormap
-        label = f'm_{component}'
-        units = 'arb. units'
-    
+        colormap = "balance"  # Default diverging colormap
+        label = f"m_{component}"
+        units = "arb. units"
+
     # Add frequency information to label if provided
     if frequency is not None:
-        label += f' @ {frequency:.3f} GHz'
-    
+        label += f" @ {frequency:.3f} GHz"
+
     # Create optimized colorbar
     return create_mmpp_mode_colorbar(
         mappable=mappable,
@@ -98,18 +103,18 @@ def create_enhanced_colorbar_for_modes(
         label=label,
         discrete_levels=discrete_levels,
         dark_theme=dark_theme,
-        shrink=shrink
+        shrink=shrink,
     )
 
 
 def patch_modes_plot_method():
     """
     Example of how to patch the existing FMRModeAnalyzer.plot_modes method.
-    
+
     This shows the minimal changes needed to integrate optimized colorbars.
     """
-    
-    patch_code = '''
+
+    patch_code = """
 # In mmpp/fft/modes.py, in the FMRModeAnalyzer.plot_modes method:
 
 # BEFORE (around line 765):
@@ -159,8 +164,8 @@ cbar3 = create_enhanced_colorbar_for_modes(
     dark_theme=False,
     shrink=0.8
 )
-'''
-    
+"""
+
     return patch_code
 
 
@@ -168,8 +173,8 @@ def patch_animation_colorbars():
     """
     Example of how to patch the animation colorbars in save_modes_animation.
     """
-    
-    patch_code = '''
+
+    patch_code = """
 # In the save_modes_animation method (around line 1307):
 
 # BEFORE:
@@ -188,8 +193,8 @@ cbar = create_enhanced_colorbar_for_modes(
     dark_theme=False,
     shrink=1.0  # Full size for animations
 )
-'''
-    
+"""
+
     return patch_code
 
 
@@ -197,7 +202,7 @@ def demonstrate_system_size_extraction():
     """
     Demonstrate how system size is extracted from zarr metadata.
     """
-    
+
     example_code = '''
 # Example of system size extraction:
 
@@ -225,7 +230,7 @@ def get_system_info_example(zarr_result):
 
 # This information is automatically included in the optimized colorbar labels
 '''
-    
+
     return example_code
 
 
@@ -233,56 +238,56 @@ def recommended_colormap_usage():
     """
     Recommended colormap usage for different types of mode data.
     """
-    
+
     recommendations = {
-        'Mode magnitude': {
-            'colormap': 'thermal',
-            'description': 'Sequential colormap perfect for magnitude data',
-            'discrete_levels': 10,
-            'example': '|m_z| amplitude visualization'
+        "Mode magnitude": {
+            "colormap": "thermal",
+            "description": "Sequential colormap perfect for magnitude data",
+            "discrete_levels": 10,
+            "example": "|m_z| amplitude visualization",
         },
-        'Mode phase': {
-            'colormap': 'phase', 
-            'description': 'Circular colormap (HSV-like) for phase data',
-            'discrete_levels': None,
-            'example': 'arg(m_z) phase visualization'
+        "Mode phase": {
+            "colormap": "phase",
+            "description": "Circular colormap (HSV-like) for phase data",
+            "discrete_levels": None,
+            "example": "arg(m_z) phase visualization",
         },
-        'Diverging modes': {
-            'colormap': 'balance',
-            'description': 'Diverging colormap for data with positive/negative symmetry',
-            'discrete_levels': 12,
-            'example': 'Real part of complex mode data'
+        "Diverging modes": {
+            "colormap": "balance",
+            "description": "Diverging colormap for data with positive/negative symmetry",
+            "discrete_levels": 12,
+            "example": "Real part of complex mode data",
         },
-        'Frequency sweep': {
-            'colormap': 'solar',
-            'description': 'Sequential colormap for frequency-dependent intensity',
-            'discrete_levels': 8,
-            'example': 'Mode amplitude vs frequency'
+        "Frequency sweep": {
+            "colormap": "solar",
+            "description": "Sequential colormap for frequency-dependent intensity",
+            "discrete_levels": 8,
+            "example": "Mode amplitude vs frequency",
         },
-        'Spatial derivatives': {
-            'colormap': 'diff',
-            'description': 'Diverging colormap for derivatives and differences',
-            'discrete_levels': 10,
-            'example': 'Spatial gradients of mode patterns'
-        }
+        "Spatial derivatives": {
+            "colormap": "diff",
+            "description": "Diverging colormap for derivatives and differences",
+            "discrete_levels": 10,
+            "example": "Spatial gradients of mode patterns",
+        },
     }
-    
+
     return recommendations
 
 
 if __name__ == "__main__":
     print("🔧 MMPP Colorbar Integration Guide")
     print("=" * 50)
-    
+
     print("\n📋 Mode Plot Patches:")
     print(patch_modes_plot_method())
-    
+
     print("\n🎬 Animation Patches:")
     print(patch_animation_colorbars())
-    
+
     print("\n📏 System Size Extraction:")
     print(demonstrate_system_size_extraction())
-    
+
     print("\n🎨 Recommended Colormap Usage:")
     recs = recommended_colormap_usage()
     for plot_type, info in recs.items():
@@ -291,7 +296,7 @@ if __name__ == "__main__":
         print(f"  Description: {info['description']}")
         print(f"  Discrete levels: {info['discrete_levels']}")
         print(f"  Example: {info['example']}")
-    
+
     print("\n✅ Integration guide complete!")
     print("\nNext steps:")
     print("1. Copy optimized_colorbar.py to your mmpp directory")

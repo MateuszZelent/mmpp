@@ -76,13 +76,14 @@ except ImportError:
     IPYTHON_AVAILABLE = False
 
 # Import plotting functionality
-PLOTTING_AVAILABLE=True
+PLOTTING_AVAILABLE = True
 from .plotting import MMPPlotter, PlotterProxy
 
 
 # Import FFT functionality
 try:
     from .fft import FFT
+
     FFT_AVAILABLE = True
 except ImportError:
     FFT_AVAILABLE = False
@@ -103,7 +104,7 @@ class ZarrJobResult:
     def __init__(self, path: str, attributes: Dict[str, Any]):
         """
         Initialize ZarrJobResult with path and attributes.
-        
+
         Parameters:
         -----------
         path : str
@@ -123,7 +124,7 @@ class ZarrJobResult:
         if self._z is None:
             if not os.path.exists(self.path):
                 raise FileNotFoundError(f"Path Not Found : '{self.path}'")
-            
+
             z = zarr.open(self.path)
             if not isinstance(z, zarr.Group):
                 raise TypeError(f"Path is not a zarr group : '{self.path}'")
@@ -145,53 +146,52 @@ class ZarrJobResult:
             self._name = self._path_obj.name.replace(self._path_obj.suffix, "")
         return self._name
 
-
     @property
     def script(self) -> Optional[Syntax]:
         """
         Check if there's a .mx3* file in the parent directory with the same name as the zarr simulation.
         If found, return syntax-highlighted content using rich.
-        
+
         Returns:
             Optional[Syntax]: Syntax-highlighted script or None if no file found
         """
         log.debug("Debug marker reached")
         try:
-            
+
             # Get the zarr path and name
             zarr_path = self.path
-            
+
             # Get zarr filename without extension
             zarr_filename = os.path.basename(zarr_path)
-            base_name = zarr_filename.replace('.zarr', '')
-            
+            base_name = zarr_filename.replace(".zarr", "")
+
             # Go to parent directory
             parent_dir = os.path.dirname(zarr_path)
-            
+
             # Search for .mx3* file with the same name
             mx3_pattern = os.path.join(parent_dir, f"{base_name}.mx3*")
             mx3_files = glob.glob(mx3_pattern)
-            
+
             if not mx3_files:
                 log.info(f"No .mx3 file found for simulation {base_name}")
                 return None
-            
+
             # Take the first matching file
             mx3_file = mx3_files[0]
-            
+
             # Read file content
-            with open(mx3_file, 'r', encoding='utf-8') as f:
+            with open(mx3_file, "r", encoding="utf-8") as f:
                 mx3_content = f.read()
-            
+
             # Create syntax-highlighted script
             syntax = Syntax(mx3_content, "go", theme="monokai", line_numbers=True)
-            
+
             return syntax
-            
+
         except Exception as e:
             log.error(f"Error while retrieving script: {str(e)}")
             return None
-    
+
     def display_script(self) -> None:
         """
         Display syntax-highlighted .mx3 script in console.
@@ -202,7 +202,7 @@ class ZarrJobResult:
             console.print(script)
         else:
             log.warning("No script found to display.")
-                
+
     def __getitem__(self, item: str) -> Union[zarr.Array, zarr.Group]:
         """Get zarr dataset or group by key."""
         self._ensure_zarr_loaded()
@@ -222,9 +222,11 @@ class ZarrJobResult:
 
     def __getattr__(self, name: str) -> Union[zarr.Array, zarr.Group, int, float, str]:
         """Get zarr attribute or dataset by name."""
-        if name.startswith('_') or name in ['path', 'attributes']:
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-        
+        if name.startswith("_") or name in ["path", "attributes"]:
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}'"
+            )
+
         self._ensure_zarr_loaded()
         if name in dir(self._z):
             return getattr(self._z, name)
@@ -252,7 +254,7 @@ class ZarrJobResult:
     def rm(self, dset: str) -> None:
         """
         Remove a group or dataset.
-        
+
         Parameters:
         -----------
         dset : str
@@ -273,7 +275,7 @@ class ZarrJobResult:
     def mkdir(self, name: str) -> None:
         """
         Create nested directories.
-        
+
         Parameters:
         -----------
         name : str
@@ -281,23 +283,25 @@ class ZarrJobResult:
         """
         os.makedirs(f"{self.path}/{name}", exist_ok=True)
 
-    def get_raw(self, dset: str, slices: ArraySlice = slice(None)) -> Union[zarr.Array, np.ndarray]:
+    def get_raw(
+        self, dset: str, slices: ArraySlice = slice(None)
+    ) -> Union[zarr.Array, np.ndarray]:
         """
         Get raw zarr dataset or data using direct indexing.
         Handles datasets with special characters (like minus) in names.
-        
+
         Parameters:
         -----------
         dset : str
             Dataset name (can contain special characters)
         slices : ArraySlice, optional
             Array slicing specification (default: all data)
-            
+
         Returns:
         --------
         Union[zarr.Array, np.ndarray]
             Raw zarr dataset or numpy array if sliced
-            
+
         Example:
         --------
         # For dataset names with special characters like "m_z5-8"
@@ -315,20 +319,18 @@ class ZarrJobResult:
                 return dataset[slices]
         except KeyError:
             raise NameError(f"{self.path}: The dataset `{dset}` does not exist.")
-        
-    
 
     def get_raw_data(self, dset: str, slices: ArraySlice = slice(None)) -> np.ndarray:
         """
         Get raw data as numpy array from dataset with special characters.
-        
+
         Parameters:
         -----------
         dset : str
             Dataset name (can contain special characters)
         slices : ArraySlice, optional
             Array slicing specification (default: all data)
-            
+
         Returns:
         --------
         np.ndarray
@@ -340,14 +342,14 @@ class ZarrJobResult:
     def get_raw_f32(self, dset: str, slices: ArraySlice = slice(None)) -> np.ndarray:
         """
         Get raw data as float32 array from dataset with special characters.
-        
+
         Parameters:
         -----------
         dset : str
             Dataset name (can contain special characters)
         slices : ArraySlice, optional
             Array slicing specification (default: all data)
-            
+
         Returns:
         --------
         npf32
@@ -358,14 +360,14 @@ class ZarrJobResult:
     def get_raw_c64(self, dset: str, slices: ArraySlice = slice(None)) -> npc64:
         """
         Get raw data as complex64 array from dataset with special characters.
-        
+
         Parameters:
         -----------
         dset : str
             Dataset name (can contain special characters)
         slices : ArraySlice, optional
             Array slicing specification (default: all data)
-            
+
         Returns:
         --------
         npc64
@@ -377,7 +379,7 @@ class ZarrJobResult:
         """
         List all available datasets in the zarr group.
         Useful for finding datasets with special characters.
-        
+
         Returns:
         --------
         List[str]
@@ -385,7 +387,7 @@ class ZarrJobResult:
         """
         self._ensure_zarr_loaded()
         datasets = []
-        
+
         def collect_datasets(group, prefix=""):
             for key in group.keys():
                 full_key = f"{prefix}{key}" if prefix else key
@@ -394,37 +396,38 @@ class ZarrJobResult:
                     datasets.append(full_key)
                 elif isinstance(item, zarr.Group):
                     collect_datasets(item, f"{full_key}/")
-        
+
         collect_datasets(self._z)
         return datasets
 
     def find_datasets(self, pattern: str) -> List[str]:
         """
         Find datasets matching a pattern (supports wildcards).
-        
+
         Parameters:
         -----------
         pattern : str
             Pattern to match (supports * and ? wildcards)
-            
+
         Returns:
         --------
         List[str]
             List of matching dataset names
         """
         import fnmatch
+
         datasets = self.list_datasets()
         return [dset for dset in datasets if fnmatch.fnmatch(dset, pattern)]
 
     def get_dset(self, dset: str) -> zarr.Array:
         """
         Get zarr dataset.
-        
+
         Parameters:
         -----------
         dset : str
             Dataset name
-            
+
         Returns:
         --------
         zarr.Array
@@ -438,14 +441,14 @@ class ZarrJobResult:
     def get_f32(self, dset: str, slices: ArraySlice) -> npf32:
         """
         Get float32 array from dataset.
-        
+
         Parameters:
         -----------
         dset : str
             Dataset name
         slices : ArraySlice
             Array slicing specification
-            
+
         Returns:
         --------
         npf32
@@ -456,14 +459,14 @@ class ZarrJobResult:
     def get_c64(self, dset: str, slices: ArraySlice) -> npc64:
         """
         Get complex64 array from dataset.
-        
+
         Parameters:
         -----------
         dset : str
             Dataset name
         slices : ArraySlice
             Array slicing specification
-            
+
         Returns:
         --------
         npc64
@@ -532,14 +535,13 @@ class ZarrJobResult:
                 "FFT functionality not available. Check fft module import."
             )
         if self._mmpp_ref is None:
-            raise ValueError(
-                "MMPP reference not set. Use results from MMPP instance."
-            )
+            raise ValueError("MMPP reference not set. Use results from MMPP instance.")
         return FFT(self, self._mmpp_ref)
 
     def calculate_fft_data(self, **kwargs):
         """Direct method for FFT calculation."""
         return self.fft._compute_fft(**kwargs)
+
 
 class MMPP:
     """
@@ -550,7 +552,11 @@ class MMPP:
     """
 
     def __init__(
-        self, base_path: str, max_workers: int = 8, database_name: str = "mmpy_database", debug: bool = False
+        self,
+        base_path: str,
+        max_workers: int = 8,
+        database_name: str = "mmpy_database",
+        debug: bool = False,
     ) -> None:
         """
         Initialize the MMPP.
@@ -574,20 +580,22 @@ class MMPP:
         self._interactive_mode: bool = True  # Enable interactive mode by default
         self._single_zarr_mode: bool = False
         self._zarr_results: List[ZarrJobResult] = []
-        
+
         # Configure rich logging for this instance
         global log
         log = setup_mmpp_logging(debug=debug, logger_name="mmpp")
 
         # Check if base_path is a direct .zarr file
-        if self.base_path.endswith('.zarr') and os.path.isdir(self.base_path):
+        if self.base_path.endswith(".zarr") and os.path.isdir(self.base_path):
             self._single_zarr_mode = True
             self.database_path = None
             self.dataframe = None
             self._load_single_zarr()
         else:
             # Original directory scanning mode
-            self.database_path: str = os.path.join(self.base_path, f"{database_name}.pkl")
+            self.database_path: str = os.path.join(
+                self.base_path, f"{database_name}.pkl"
+            )
             self.dataframe: Optional[pd.DataFrame] = None
             # Try to load existing database
             self._load_database()
@@ -601,18 +609,22 @@ class MMPP:
         try:
             # Scan the single zarr file
             scan_result = self._scan_single_zarr(self.base_path)
-            
+
             if scan_result.error:
-                log.error(f"Error loading zarr file {self.base_path}: {scan_result.error}")
+                log.error(
+                    f"Error loading zarr file {self.base_path}: {scan_result.error}"
+                )
                 return
-            
+
             # Create ZarrJobResult
-            result = ZarrJobResult(path=scan_result.path, attributes=scan_result.attributes)
+            result = ZarrJobResult(
+                path=scan_result.path, attributes=scan_result.attributes
+            )
             result._set_mmpp_ref(self)
             self._zarr_results = [result]
-            
+
             log.info(f"Loaded single zarr file: {self.base_path}")
-            
+
         except Exception as e:
             log.error(f"Error loading single zarr file: {e}")
             self._zarr_results = []
@@ -626,15 +638,17 @@ class MMPP:
         else:
             return 0
 
-    def __getitem__(self, index: Union[int, slice]) -> Union[ZarrJobResult, "BatchOperations"]:
+    def __getitem__(
+        self, index: Union[int, slice]
+    ) -> Union[ZarrJobResult, "BatchOperations"]:
         """
         Get zarr result by index or batch operations by slice.
-        
+
         Parameters:
         -----------
         index : Union[int, slice]
             Index of the result to get or slice for batch operations
-            
+
         Returns:
         --------
         Union[ZarrJobResult, BatchOperations]
@@ -644,14 +658,14 @@ class MMPP:
         if isinstance(index, slice):
             # Import here to avoid circular imports
             from .batch_operations import BatchOperations
-            
+
             if self._single_zarr_mode:
                 results = self._zarr_results[index]
             else:
                 # Database mode
                 if self.dataframe is None or self.dataframe.empty:
                     raise IndexError("No database available. Run scan() first.")
-                
+
                 # Get slice of dataframe
                 df_slice = self.dataframe.iloc[index]
                 results = []
@@ -665,23 +679,25 @@ class MMPP:
                     result = ZarrJobResult(path=path, attributes=attributes)
                     result._set_mmpp_ref(self)
                     results.append(result)
-            
+
             return BatchOperations(results, self)
-        
+
         # Handle integer index for single result
         if not isinstance(index, int):
             raise TypeError(f"Index must be int or slice, got {type(index)}")
-            
+
         if self._single_zarr_mode:
             if 0 <= index < len(self._zarr_results):
                 return self._zarr_results[index]
             else:
-                raise IndexError(f"Index {index} out of range for {len(self._zarr_results)} results")
+                raise IndexError(
+                    f"Index {index} out of range for {len(self._zarr_results)} results"
+                )
         else:
             # Database mode
             if self.dataframe is None or self.dataframe.empty:
                 raise IndexError("No database available. Run scan() first.")
-                
+
             if 0 <= index < len(self.dataframe):
                 row = self.dataframe.iloc[index]
                 path = row["path"]
@@ -694,7 +710,9 @@ class MMPP:
                 result._set_mmpp_ref(self)
                 return result
             else:
-                raise IndexError(f"Index {index} out of range for {len(self.dataframe)} results")
+                raise IndexError(
+                    f"Index {index} out of range for {len(self.dataframe)} results"
+                )
 
     def __iter__(self):
         """Make MMPP iterable."""
@@ -708,7 +726,7 @@ class MMPP:
             raise ImportError(
                 "Plotting functionality not available. Check plotting.py import."
             )
-        
+
         if self._single_zarr_mode:
             return MMPPlotter(self._zarr_results, self)
         else:
@@ -727,7 +745,7 @@ class MMPP:
             raise ImportError(
                 "FFT functionality not available. Check fft module import."
             )
-        
+
         # For single zarr mode, return FFT for the first result
         if self._single_zarr_mode and self._zarr_results:
             return FFT(self._zarr_results[0], self)
@@ -1006,7 +1024,9 @@ class MMPP:
         # Create DataFrame
         df = pd.DataFrame(data_rows)
 
-        log.info(f"Created database with {len(df)} entries and {len(df.columns)} columns")
+        log.info(
+            f"Created database with {len(df)} entries and {len(df.columns)} columns"
+        )
         log.debug(f"Columns: {list(df.columns)}")
 
         return df
@@ -1060,7 +1080,7 @@ class MMPP:
         if self._single_zarr_mode:
             log.debug("Single zarr mode - no scanning needed.")
             return pd.DataFrame()  # Return empty DataFrame for single zarr mode
-            
+
         # Check if we need to scan
         if not force and self.dataframe is not None:
             log.info("Database already loaded. Use force=True to rescan.")
@@ -1169,18 +1189,23 @@ class MMPP:
                 for result in self._zarr_results:
                     matches = True
                     for key, value in kwargs.items():
-                        if key not in result.attributes or result.attributes[key] != value:
+                        if (
+                            key not in result.attributes
+                            or result.attributes[key] != value
+                        ):
                             matches = False
                             break
                     if matches:
                         matching_results.append(result)
-                
-                log.debug(f"Found {len(matching_results)} results matching criteria: {kwargs}")
+
+                log.debug(
+                    f"Found {len(matching_results)} results matching criteria: {kwargs}"
+                )
                 if PLOTTING_AVAILABLE:
                     return PlotterProxy(matching_results, self)
                 else:
                     return matching_results
-        
+
         # Original database mode logic
         if self.dataframe is None or self.dataframe.empty:
             log.warning("No database available. Run scan() first.")
@@ -1535,7 +1560,7 @@ class MMPP:
         """Rich representation of MMPP object when printed."""
         if self._single_zarr_mode:
             return f"MMPP(single_zarr='{self.base_path}', results={len(self._zarr_results)})"
-        
+
         if not self._interactive_mode:
             return f"MMPP(base_path='{self.base_path}', entries={len(self.dataframe) if self.dataframe is not None else 0})"
 

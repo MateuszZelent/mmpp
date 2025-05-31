@@ -1,7 +1,7 @@
 from mmpp import MMPP
 
 
-op=MMPP("/zfn2/mannga/jobs/vortices/spectrum/d100_sinc4.zarr", debug=False)
+op = MMPP("/zfn2/mannga/jobs/vortices/spectrum/d100_sinc4.zarr", debug=False)
 
 # op[0].fft.plot_spectrum(
 #     dset="m_z5-8",
@@ -14,8 +14,4 @@ op=MMPP("/zfn2/mannga/jobs/vortices/spectrum/d100_sinc4.zarr", debug=False)
 #     save=False, # Whether to save the plot
 #     force=True, # Don't force - check if cache works
 # )
-op[0].fft.modes.interactive_spectrum(
-    dset="m_z5-8",
-    z_layer=0,
-    method=1
-)
+op[0].fft.modes.interactive_spectrum(dset="m_z5-8", z_layer=0, method=1)

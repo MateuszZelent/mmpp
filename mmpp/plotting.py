@@ -77,7 +77,7 @@ class PlotConfig:
     font_family: str = "Arial"
     colors: Optional[Dict[str, str]] = None
     max_legend_params: int = 4  # Maximum number of parameters to show in legend
-    sort_results: bool = True   # Whether to sort results by parameters
+    sort_results: bool = True  # Whether to sort results by parameters
 
     def __post_init__(self) -> None:
         """Initialize default colors."""
@@ -87,16 +87,16 @@ class PlotConfig:
 
 class FontManager:
     """Font management utilities for plotting."""
-    
+
     @staticmethod
     def get_available_fonts() -> List[str]:
         """Get list of available fonts on the system."""
         if not MATPLOTLIB_AVAILABLE:
             return []
-        
+
         try:
             # Get fonts from matplotlib font manager
-            font_list = font_manager.findSystemFonts(fontpaths=None, fontext='ttf')
+            font_list = font_manager.findSystemFonts(fontpaths=None, fontext="ttf")
             font_names = []
             for font_path in font_list:
                 try:
@@ -107,37 +107,37 @@ class FontManager:
             return sorted(list(set(font_names)))
         except Exception:
             return []
-    
+
     @staticmethod
     def setup_custom_fonts(verbose: bool = True) -> bool:
         """Setup custom fonts from the fonts directory."""
         if not MATPLOTLIB_AVAILABLE:
             return False
-        
+
         try:
             # Get the fonts directory path
             current_dir = os.path.dirname(os.path.abspath(__file__))
             fonts_dir = os.path.join(current_dir, "fonts")
-            
+
             if not os.path.exists(fonts_dir):
                 if verbose:
                     log.warning(f"Fonts directory not found: {fonts_dir}")
                 return False
-            
+
             # Add custom fonts
             font_files = []
             for root, dirs, files in os.walk(fonts_dir):
                 for file in files:
-                    if file.endswith(('.ttf', '.otf')):
+                    if file.endswith((".ttf", ".otf")):
                         font_path = os.path.join(root, file)
                         font_files.append(font_path)
                         font_manager.fontManager.addfont(font_path)
-            
+
             if verbose and font_files:
                 log.info(f"Loaded {len(font_files)} custom fonts from {fonts_dir}")
-            
+
             return len(font_files) > 0
-            
+
         except Exception as e:
             if verbose:
                 log.error(f"Error setting up custom fonts: {e}")
@@ -146,11 +146,11 @@ class FontManager:
 
 class PlotterProxy:
     """Proxy class to provide plotting functionality to search results."""
-    
+
     def __init__(self, results: List[Any], mmpp_instance: Optional[Any] = None):
         """
         Initialize the plotter proxy.
-        
+
         Parameters:
         -----------
         results : List[Any]
@@ -160,18 +160,18 @@ class PlotterProxy:
         """
         self.results = results
         self.mmpp_instance = mmpp_instance
-    
+
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to MMPPlotter."""
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError(
                 "Plotting functionality not available. Install matplotlib to use plotting features."
             )
-        
+
         # Create MMPPlotter instance and delegate
         plotter = MMPPlotter(self.results, self.mmpp_instance)
         return getattr(plotter, name)
-    
+
     def __repr__(self) -> str:
         """String representation of the proxy."""
         if MATPLOTLIB_AVAILABLE:
@@ -185,14 +185,15 @@ _FONTS_INITIALIZED = False
 _STYLE_INITIALIZED = False
 _STYLING_SETUP_COMPLETED = False
 
+
 def setup_custom_fonts(verbose: bool = False) -> bool:
     """Setup custom fonts including Arial."""
     global _FONTS_INITIALIZED
-    
+
     # Skip if already initialized
     if _FONTS_INITIALIZED:
         return True
-        
+
     try:
         # Import fonts from package directory
         package_dir = os.path.dirname(__file__)
@@ -220,7 +221,7 @@ def setup_custom_fonts(verbose: bool = False) -> bool:
 
         # Rebuild font cache if fonts were loaded
         if fonts_loaded:
-            font_manager.fontManager.findfont('Arial', rebuild_if_missing=True)
+            font_manager.fontManager.findfont("Arial", rebuild_if_missing=True)
 
         # Set Arial as default font
         plt.rcParams["font.family"] = "Arial"
@@ -247,11 +248,11 @@ def setup_custom_fonts(verbose: bool = False) -> bool:
 def load_paper_style(verbose: bool = False) -> bool:
     """Load custom paper style."""
     global _STYLE_INITIALIZED
-    
+
     # Skip if already initialized
     if _STYLE_INITIALIZED:
         return True
-        
+
     try:
         # Try to find paper.mplstyle in current directory or relative to this file
         style_paths = [
@@ -334,9 +335,9 @@ class MMPPlotter:
         self.config = PlotConfig()
 
         # Set up logging level based on parent debug mode
-        debug_mode = getattr(mmpp_instance, 'debug', False) if mmpp_instance else False
+        debug_mode = getattr(mmpp_instance, "debug", False) if mmpp_instance else False
         setup_mmpp_logging(debug=debug_mode, logger_name="mmpp.plot")
-            
+
         log.debug(f"MMPPlotter initialized with {len(self.results)} results")
 
         if not MATPLOTLIB_AVAILABLE:
@@ -354,11 +355,11 @@ class MMPPlotter:
     def _setup_styling(self) -> None:
         """Setup custom fonts and styling."""
         global _STYLING_SETUP_COMPLETED
-        
+
         # Skip if styling has already been set up globally
         if _STYLING_SETUP_COMPLETED:
             return
-            
+
         try:
             # Setup custom fonts if enabled
             if self.config.use_custom_fonts:
@@ -381,7 +382,9 @@ class MMPPlotter:
                     if self.config.style in plt.style.available:
                         plt.style.use(self.config.style)
                 except Exception as e:
-                    log.warning(f"Warning: Could not load style '{self.config.style}': {e}")
+                    log.warning(
+                        f"Warning: Could not load style '{self.config.style}': {e}"
+                    )
 
             # Apply custom colors
             apply_custom_colors(self.config.colors)
@@ -497,7 +500,7 @@ MMPP Plotter:
 
         Parameters:
         -----------
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Configuration options:
             - figsize : tuple - Figure size (width, height), default (12, 8)
             - dpi : int - Figure DPI, default 100
@@ -520,7 +523,7 @@ MMPP Plotter:
         --------
         MMPPlotter
             Self for method chaining
-        
+
         Examples:
         ---------
         >>> plotter.configure(sort_results=False, max_legend_params=6)
@@ -664,7 +667,9 @@ MMPP Plotter:
                 if y_data.ndim > comp_idx:
                     y_data = y_data[..., comp_idx]
                 else:
-                    log.warning(f"Warning: Component {comp} not available, using full data")
+                    log.warning(
+                        f"Warning: Component {comp} not available, using full data"
+                    )
 
             # Apply averaging if specified
             if average is not None:
@@ -735,7 +740,7 @@ MMPP Plotter:
         legend_labels : List[str], optional
             Custom legend labels
         legend_variables : List[str], optional
-            Specific variables to show in legend (e.g., ['maxerr', 'f0']). 
+            Specific variables to show in legend (e.g., ['maxerr', 'f0']).
             If provided, overrides automatic varying parameter detection.
         colors : List[str], optional
             Custom colors for each line
@@ -743,7 +748,7 @@ MMPP Plotter:
             Path to save the figure
         paper_ready : bool, optional
             If True, apply paper-ready styling (default: False)
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Additional matplotlib plot arguments
 
         Returns:
@@ -789,15 +794,19 @@ MMPP Plotter:
             sorted_results = self._sort_results_by_parameters(self.results)
         else:
             sorted_results = self.results
-        
+
         # Get varying parameters for smart legend (only show parameters that differ)
         if legend_variables is not None:
             # User specified which variables to show in legend
             varying_params = legend_variables
         else:
             # Auto-detect varying parameters
-            varying_params = self._get_varying_parameters(sorted_results) if len(sorted_results) > 1 else []
-        
+            varying_params = (
+                self._get_varying_parameters(sorted_results)
+                if len(sorted_results) > 1
+                else []
+            )
+
         # Update iterator to use sorted results
         iterator = (
             tqdm(sorted_results, desc="Processing datasets")
@@ -878,7 +887,9 @@ MMPP Plotter:
                     title_parts = [f"{y_series} vs {x_series}"]
                     if comp is not None:
                         title_parts.append(f"component {comp}")
-                    ax.set_title(" - ".join(title_parts), fontsize=self.config.title_fontsize)
+                    ax.set_title(
+                        " - ".join(title_parts), fontsize=self.config.title_fontsize
+                    )
             else:
                 # Static title string
                 ax.set_title(title, fontsize=self.config.title_fontsize)
@@ -931,7 +942,7 @@ MMPP Plotter:
             Component ('x'/'y'/'z' or 0/1/2, default: 'z')
         average : tuple, optional
             Spatial axes to average over (default: (1,2,3))
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Additional arguments passed to plot()
 
         Returns:
@@ -961,7 +972,7 @@ MMPP Plotter:
             Time slice to plot (default: -1 for last)
         average : tuple, optional
             Axes to average over
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Additional plot arguments
 
         Returns:
@@ -1067,24 +1078,35 @@ MMPP Plotter:
     def _sort_results_by_parameters(self, results: List[Any]) -> List[Any]:
         """
         Sort results by all available parameters for consistent ordering.
-        
+
         Parameters:
         -----------
         results : List[Any]
             List of result objects to sort
-            
+
         Returns:
         --------
         List[Any]
             Sorted list of results
         """
+
         def sort_key(result):
             # Collect all sortable attributes
             sort_values = []
-            
+
             # Common parameters in order of importance
-            important_params = ['solver', 'f0', 'maxerr', 'Nx', 'Ny', 'Nz', 'PBCx', 'PBCy', 'PBCz']
-            
+            important_params = [
+                "solver",
+                "f0",
+                "maxerr",
+                "Nx",
+                "Ny",
+                "Nz",
+                "PBCx",
+                "PBCy",
+                "PBCz",
+            ]
+
             for param in important_params:
                 if hasattr(result, param):
                     value = getattr(result, param)
@@ -1097,21 +1119,23 @@ MMPP Plotter:
                         sort_values.append(str(value))
                 else:
                     sort_values.append(0)  # Default value for missing parameters
-                    
+
             # Add any other attributes not in the important list
             for attr_name in sorted(dir(result)):
-                if (not attr_name.startswith('_') and 
-                    attr_name not in important_params and
-                    attr_name not in ['path', 'attributes']):
+                if (
+                    not attr_name.startswith("_")
+                    and attr_name not in important_params
+                    and attr_name not in ["path", "attributes"]
+                ):
                     try:
                         value = getattr(result, attr_name)
                         if isinstance(value, (int, float, str)):
                             sort_values.append(value)
                     except Exception:
                         pass
-                        
+
             return tuple(sort_values)
-        
+
         try:
             return sorted(results, key=sort_key)
         except Exception as e:
@@ -1121,12 +1145,12 @@ MMPP Plotter:
     def _get_varying_parameters(self, results: List[Any]) -> List[str]:
         """
         Identify which parameters vary between results.
-        
+
         Parameters:
         -----------
         results : List[Any]
             List of result objects to analyze
-            
+
         Returns:
         --------
         List[str]
@@ -1134,65 +1158,81 @@ MMPP Plotter:
         """
         if len(results) <= 1:
             return []
-        
+
         # Define parameters to exclude from legend (memory addresses, internal vars, etc.)
         excluded_params = {
             # Memory addresses and pointers
-            'Aex', 'Bext', 'Ms', 'alpha', 'gamma',  # Common MUMAX3 pointers
+            "Aex",
+            "Bext",
+            "Ms",
+            "alpha",
+            "gamma",  # Common MUMAX3 pointers
             # User requested exclusions
-            'end_time', 'maxerr_path', 'port',
+            "end_time",
+            "maxerr_path",
+            "port",
             # Internal/technical parameters
-            'path', 'attributes', 'job_id', 'timestamp', 'uuid',
+            "path",
+            "attributes",
+            "job_id",
+            "timestamp",
+            "uuid",
             # Time-related parameters
-            'start_time', 'runtime',
+            "start_time",
+            "runtime",
             # Very long or non-informative parameters
-            'command_line', 'full_path', 'working_directory'
+            "command_line",
+            "full_path",
+            "working_directory",
         }
-        
+
         def should_exclude_param(name: str, value: Any) -> bool:
             """Check if parameter should be excluded from legend."""
             # Exclude if in explicit exclusion list
             if name in excluded_params:
                 return True
-            
+
             # Exclude memory addresses (hex values starting with 0x)
-            if isinstance(value, str) and value.startswith('0x'):
+            if isinstance(value, str) and value.startswith("0x"):
                 return True
-            
+
             # Exclude very long strings (likely file paths or commands)
             if isinstance(value, str) and len(value) > 50:
                 return True
-            
+
             # Exclude parameters with underscores at start/end (internal vars)
-            if name.startswith('_') or name.endswith('_'):
+            if name.startswith("_") or name.endswith("_"):
                 return True
-            
+
             return False
 
         # Collect all potential parameters - primarily from attributes dict for ZarrJobResult
         all_params = set()
         for result in results:
             # Primary method: Check attributes dict (ZarrJobResult pattern)
-            if hasattr(result, 'attributes') and isinstance(result.attributes, dict):
+            if hasattr(result, "attributes") and isinstance(result.attributes, dict):
                 for attr_name, value in result.attributes.items():
                     # Only consider simple types that can vary meaningfully
-                    if (isinstance(value, (int, float, str, bool)) and 
-                        not should_exclude_param(attr_name, value)):
+                    if isinstance(
+                        value, (int, float, str, bool)
+                    ) and not should_exclude_param(attr_name, value):
                         all_params.add(attr_name)
-            
+
             # Fallback: check direct attributes for non-ZarrJobResult objects
-            elif not hasattr(result, 'attributes'):
+            elif not hasattr(result, "attributes"):
                 for attr_name in dir(result):
-                    if (not attr_name.startswith('_') and 
-                        not callable(getattr(result, attr_name, None))):
+                    if not attr_name.startswith("_") and not callable(
+                        getattr(result, attr_name, None)
+                    ):
                         try:
                             value = getattr(result, attr_name)
-                            if (isinstance(value, (int, float, str, bool)) and
-                                not should_exclude_param(attr_name, value)):
+                            if isinstance(
+                                value, (int, float, str, bool)
+                            ) and not should_exclude_param(attr_name, value):
                                 all_params.add(attr_name)
                         except Exception:
                             pass
-        
+
         # Check which parameters actually vary
         varying_params = []
         for param in all_params:
@@ -1201,16 +1241,16 @@ MMPP Plotter:
                 # Get value - prefer attributes dict, fall back to direct attribute
                 value = None
                 try:
-                    if hasattr(result, 'attributes') and param in result.attributes:
+                    if hasattr(result, "attributes") and param in result.attributes:
                         value = result.attributes[param]
                     elif hasattr(result, param):
                         value = getattr(result, param)
-                    
+
                     if value is not None:
                         values.append(value)
                 except Exception:
                     pass
-            
+
             # Check if values are different (accounting for floating point precision)
             if len(values) > 1:
                 unique_values = set()
@@ -1220,37 +1260,49 @@ MMPP Plotter:
                         unique_values.add(round(val, 10))
                     else:
                         unique_values.add(val)
-                
+
                 if len(unique_values) > 1:
                     varying_params.append(param)
-        
+
         # Sort by priority (important parameters first)
-        priority_params = ['solver', 'f0', 'maxerr', 'dt', 'Nx', 'Ny', 'Nz', 'PBCx', 'PBCy', 'PBCz', 'amp_values']
-        
+        priority_params = [
+            "solver",
+            "f0",
+            "maxerr",
+            "dt",
+            "Nx",
+            "Ny",
+            "Nz",
+            "PBCx",
+            "PBCy",
+            "PBCz",
+            "amp_values",
+        ]
+
         # Sort varying parameters by priority
         sorted_varying = []
         for param in priority_params:
             if param in varying_params:
                 sorted_varying.append(param)
-        
+
         # Add remaining varying parameters alphabetically
         for param in sorted(varying_params):
             if param not in sorted_varying:
                 sorted_varying.append(param)
-        
+
         return sorted_varying
 
     def _format_dynamic_title(self, title_params: List[str], results: List[Any]) -> str:
         """
         Format dynamic title based on parameter values.
-        
+
         Parameters:
         -----------
         title_params : List[str]
             List of parameter names to include in title
         results : List[Any]
             List of result objects
-            
+
         Returns:
         --------
         str
@@ -1258,42 +1310,44 @@ MMPP Plotter:
         """
         if not title_params or not results:
             return ""
-        
+
         # Use first result for parameter values (assuming they're constant across plots)
         result = results[0]
         title_parts = []
-        
+
         # Define formatting rules for title parameters
         format_rules = {
-            'maxerr': '.2e',      # Scientific notation
-            'f0': '.2e', 
-            'dt': '.2e',
-            'amp_values': '.3e',
-            'amp': '.3e',         # Common alias for amp_values
-            'solver': 'd',        # Integer
-            'Nx': 'd', 'Ny': 'd', 'Nz': 'd',  # Grid sizes
+            "maxerr": ".2e",  # Scientific notation
+            "f0": ".2e",
+            "dt": ".2e",
+            "amp_values": ".3e",
+            "amp": ".3e",  # Common alias for amp_values
+            "solver": "d",  # Integer
+            "Nx": "d",
+            "Ny": "d",
+            "Nz": "d",  # Grid sizes
         }
-        
+
         def get_value(result, param):
             """Get parameter value from result."""
             try:
-                if hasattr(result, 'attributes') and param in result.attributes:
+                if hasattr(result, "attributes") and param in result.attributes:
                     return result.attributes[param]
                 elif hasattr(result, param):
                     return getattr(result, param)
             except Exception:
                 pass
             return None
-        
+
         for param in title_params:
             value = get_value(result, param)
             if value is not None:
                 # Format parameter name (capitalize)
-                param_name = param.replace('_', ' ').title()
-                
+                param_name = param.replace("_", " ").title()
+
                 # Format value according to rules
                 if param in format_rules:
-                    if format_rules[param] == 'd':
+                    if format_rules[param] == "d":
                         formatted_value = f"{value:d}"
                     else:
                         formatted_value = f"{value:{format_rules[param]}}"
@@ -1306,49 +1360,51 @@ MMPP Plotter:
                             formatted_value = f"{value:.3f}"
                     else:
                         formatted_value = str(value)
-                
+
                 title_parts.append(f"{param_name} = {formatted_value}")
-        
+
         return ", ".join(title_parts)
 
-    def _format_result_label(self, result: Any, varying_params: Optional[List[str]] = None) -> str:
+    def _format_result_label(
+        self, result: Any, varying_params: Optional[List[str]] = None
+    ) -> str:
         """
         Format result label showing only varying parameters with proper precision.
-        
+
         Parameters:
         -----------
         result : Any
             Result object with attributes
         varying_params : List[str], optional
             List of parameters that vary between results. If None, uses default behavior.
-            
+
         Returns:
         --------
         str
             Formatted label string
         """
         label_parts = []
-        
+
         # Define formatting rules for different parameters
         format_rules = {
-            'maxerr': '.2e',      # Scientific notation with 2 decimal places
-            'f0': '.2e',          # Scientific notation for frequency
-            'dt': '.2e',          # Scientific notation for time step
-            'amp_values': '.3e',  # Scientific notation for amplitude
-            'solver': 'd',        # Integer for solver
-            'Nx': 'd',           # Integer for grid size
-            'Ny': 'd',           # Integer for grid size  
-            'Nz': 'd',           # Integer for grid size
-            'PBCx': 'd',         # Integer for PBC
-            'PBCy': 'd',         # Integer for PBC
-            'PBCz': 'd',         # Integer for PBC
+            "maxerr": ".2e",  # Scientific notation with 2 decimal places
+            "f0": ".2e",  # Scientific notation for frequency
+            "dt": ".2e",  # Scientific notation for time step
+            "amp_values": ".3e",  # Scientific notation for amplitude
+            "solver": "d",  # Integer for solver
+            "Nx": "d",  # Integer for grid size
+            "Ny": "d",  # Integer for grid size
+            "Nz": "d",  # Integer for grid size
+            "PBCx": "d",  # Integer for PBC
+            "PBCy": "d",  # Integer for PBC
+            "PBCz": "d",  # Integer for PBC
         }
-        
+
         def get_value(result, param):
             """Get parameter value from result object, handling both attributes dict and direct attributes."""
             try:
                 # Try attributes dict first (ZarrJobResult pattern)
-                if hasattr(result, 'attributes') and param in result.attributes:
+                if hasattr(result, "attributes") and param in result.attributes:
                     return result.attributes[param]
                 # Try direct attribute access
                 elif hasattr(result, param):
@@ -1357,87 +1413,94 @@ MMPP Plotter:
                     return None
             except Exception:
                 return None
-        
+
         # If varying parameters are provided, use only those
         if varying_params is not None:
-            params_to_show = varying_params[:self.config.max_legend_params]
-            
+            params_to_show = varying_params[: self.config.max_legend_params]
+
             for param in params_to_show:
                 value = get_value(result, param)
                 if value is not None:
-                    format_spec = format_rules.get(param, 'g')
-                    
+                    format_spec = format_rules.get(param, "g")
+
                     try:
-                        if format_spec == 'd':
+                        if format_spec == "d":
                             formatted_value = f"{int(value)}"
-                        elif format_spec.endswith('e'):
+                        elif format_spec.endswith("e"):
                             formatted_value = f"{float(value):{format_spec}}"
                         else:
                             formatted_value = f"{value:{format_spec}}"
-                        
+
                         label_parts.append(f"{param}={formatted_value}")
                     except (ValueError, TypeError):
                         label_parts.append(f"{param}={value}")
-        
+
         else:
             # Fallback to original behavior if no varying parameters specified
-            priority_params = ['solver', 'f0', 'maxerr', 'Nx', 'Ny', 'Nz']
-            
+            priority_params = ["solver", "f0", "maxerr", "Nx", "Ny", "Nz"]
+
             # Add priority parameters first
             for param in priority_params:
                 value = get_value(result, param)
                 if value is not None:
-                    format_spec = format_rules.get(param, 'g')
-                    
+                    format_spec = format_rules.get(param, "g")
+
                     try:
-                        if format_spec == 'd':
+                        if format_spec == "d":
                             formatted_value = f"{int(value)}"
-                        elif format_spec.endswith('e'):
+                        elif format_spec.endswith("e"):
                             formatted_value = f"{float(value):{format_spec}}"
                         else:
                             formatted_value = f"{value:{format_spec}}"
-                        
+
                         label_parts.append(f"{param}={formatted_value}")
                     except (ValueError, TypeError):
                         label_parts.append(f"{param}={value}")
-            
+
             # Add other interesting parameters (limited by max_legend_params to avoid clutter)
-            max_additional = max(0, self.config.max_legend_params - len(priority_params))
+            max_additional = max(
+                0, self.config.max_legend_params - len(priority_params)
+            )
             other_params_added = 0
-            
+
             # Get all available parameters
             available_params = set()
-            if hasattr(result, 'attributes') and isinstance(result.attributes, dict):
+            if hasattr(result, "attributes") and isinstance(result.attributes, dict):
                 available_params.update(result.attributes.keys())
-            
+
             for attr_name in dir(result):
-                if (not attr_name.startswith('_') and 
-                    attr_name not in ['path', 'attributes'] and
-                    not callable(getattr(result, attr_name, None))):
+                if (
+                    not attr_name.startswith("_")
+                    and attr_name not in ["path", "attributes"]
+                    and not callable(getattr(result, attr_name, None))
+                ):
                     available_params.add(attr_name)
-            
+
             for attr_name in sorted(available_params):
-                if (other_params_added >= max_additional or 
-                    attr_name in priority_params):
+                if other_params_added >= max_additional or attr_name in priority_params:
                     continue
-                    
+
                 value = get_value(result, attr_name)
-                if value is not None and isinstance(value, (int, float)) and not callable(value):
-                    format_spec = format_rules.get(attr_name, '.2g')
-                    
+                if (
+                    value is not None
+                    and isinstance(value, (int, float))
+                    and not callable(value)
+                ):
+                    format_spec = format_rules.get(attr_name, ".2g")
+
                     try:
-                        if format_spec == 'd':
+                        if format_spec == "d":
                             formatted_value = f"{int(value)}"
-                        elif format_spec.endswith('e'):
+                        elif format_spec.endswith("e"):
                             formatted_value = f"{float(value):{format_spec}}"
                         else:
                             formatted_value = f"{value:{format_spec}}"
-                        
+
                         label_parts.append(f"{attr_name}={formatted_value}")
                         other_params_added += 1
                     except Exception:
                         pass
-        
+
         return ", ".join(label_parts) if label_parts else "Dataset"
 
     def snapshot(
@@ -1451,7 +1514,7 @@ MMPP Plotter:
     ) -> Axes:
         """
         Create a snapshot visualization of magnetization data.
-        
+
         Parameters:
         -----------
         dset : str, default "m"
@@ -1466,7 +1529,7 @@ MMPP Plotter:
             Number of times to tile the image
         zero : Optional[bool], default None
             Reference time step to subtract (for difference plots)
-            
+
         Returns:
         --------
         Axes
@@ -1474,18 +1537,20 @@ MMPP Plotter:
         """
         if not self.results:
             raise ValueError("No results available for plotting")
-        
+
         # Use the first result for now
         result = self.results[0]
-        
+
         # Get the magnetization data
         arr = result.get_np3d(dset, (t, z, slice(None), slice(None), slice(None)))
         if ax is None:
             shape_ratio = arr.shape[1] / arr.shape[0]
             _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
         if zero is not None:
-            arr -= result.get_np3d(dset, (zero, z, slice(None), slice(None), slice(None)))
-        
+            arr -= result.get_np3d(
+                dset, (zero, z, slice(None), slice(None), slice(None))
+            )
+
         arr = np.tile(arr, (repeat, repeat, 1))
         u = arr[:, :, 0]
         v = arr[:, :, 1]
@@ -1497,7 +1562,7 @@ MMPP Plotter:
         hsl[:, :, 1] = np.sqrt(u**2 + v**2 + w**2)
         hsl[:, :, 2] = (w + 1) / 2
         rgb = hsl2rgb(hsl)
-        
+
         stepx = max(int(u.shape[1] / 20), 1)
         stepy = max(int(u.shape[0] / 20), 1)
         scale = 1 / max(stepx, stepy)
@@ -1505,10 +1570,10 @@ MMPP Plotter:
             np.arange(0, u.shape[1], stepx) * float(result.z.attrs["dx"]) * 1e9,
             np.arange(0, u.shape[0], stepy) * float(result.z.attrs["dy"]) * 1e9,
         )
-        
+
         antidots = np.ma.masked_not_equal(result[dset][0, 0, :, :, 2], 0)
         antidots = np.tile(antidots, (repeat, repeat))
-        
+
         ax.quiver(
             x,
             y,
@@ -1519,7 +1584,7 @@ MMPP Plotter:
             scale_units="xy",
             scale=scale,
         )
-        
+
         ax.imshow(
             rgb,
             interpolation="None",
@@ -1535,24 +1600,24 @@ MMPP Plotter:
                 rgb.shape[0] * float(result.z.attrs["dy"]) * 1e9,
             ),
         )
-        
+
         ax.set(title=result.name, xlabel="x (nm)", ylabel="y (nm)")
-        
+
         # if not isinstance(ax, Axes):
         #     raise ValueError("ax must be a matplotlib Axes object")
-        
+
         return ax
 
 
 def hsl2rgb(hsl: np.ndarray) -> np.ndarray:
     """
     Convert HSL color space to RGB.
-    
+
     Parameters:
     -----------
     hsl : np.ndarray
         HSL color array with shape (..., 3)
-        
+
     Returns:
     --------
     np.ndarray
@@ -1576,12 +1641,12 @@ def hsl2rgb(hsl: np.ndarray) -> np.ndarray:
 def rgb2hsl(rgb: np.ndarray) -> np.ndarray:
     """
     Convert RGB color space to HSL.
-    
+
     Parameters:
     -----------
     rgb : np.ndarray
         RGB color array with shape (..., 3)
-        
+
     Returns:
     --------
     np.ndarray
@@ -1602,12 +1667,12 @@ def load_paper_style(verbose: bool = True) -> bool:
     """Load paper-ready plotting style."""
     if not MATPLOTLIB_AVAILABLE:
         return False
-    
+
     try:
         # Get the style file path
         current_dir = os.path.dirname(os.path.abspath(__file__))
         style_file = os.path.join(current_dir, "paper.mplstyle")
-        
+
         if os.path.exists(style_file):
             plt.style.use(style_file)
             if verbose:
@@ -1617,7 +1682,7 @@ def load_paper_style(verbose: bool = True) -> bool:
             if verbose:
                 print(f"Paper style file not found: {style_file}")
             return False
-            
+
     except Exception as e:
         if verbose:
             print(f"Error loading paper style: {e}")
@@ -1633,7 +1698,7 @@ def apply_custom_colors(colors: Dict[str, str]) -> None:
     """Apply custom color scheme to matplotlib."""
     if not MATPLOTLIB_AVAILABLE:
         return
-    
+
     try:
         # Apply text colors
         if "text" in colors:
@@ -1641,7 +1706,7 @@ def apply_custom_colors(colors: Dict[str, str]) -> None:
             plt.rcParams["axes.labelcolor"] = colors["text"]
             plt.rcParams["xtick.color"] = colors["text"]
             plt.rcParams["ytick.color"] = colors["text"]
-        
+
         # Apply axes colors
         if "axes" in colors:
             plt.rcParams["axes.edgecolor"] = colors["axes"]
@@ -1649,11 +1714,11 @@ def apply_custom_colors(colors: Dict[str, str]) -> None:
             plt.rcParams["axes.spines.bottom"] = True
             plt.rcParams["axes.spines.top"] = False
             plt.rcParams["axes.spines.right"] = False
-        
+
         # Apply grid colors
         if "grid" in colors:
             plt.rcParams["grid.color"] = colors["grid"]
-            
+
     except Exception:
         pass
 
@@ -1661,12 +1726,12 @@ def apply_custom_colors(colors: Dict[str, str]) -> None:
 # Convenience object for font operations
 class FontUtils:
     """Utility object for font management."""
-    
+
     @staticmethod
     def get_available() -> List[str]:
         """Get available fonts."""
         return FontManager.get_available_fonts()
-    
+
     @staticmethod
     def setup_custom(verbose: bool = True) -> bool:
         """Setup custom fonts."""
