@@ -15,7 +15,7 @@ fi
 
 # Install documentation dependencies
 echo "📦 Installing documentation dependencies..."
-pip install sphinx sphinx-rtd-theme myst-parser sphinx-autodoc-typehints
+pip install sphinx sphinx-rtd-theme myst-parser sphinx-autodoc-typehints linkify-it-py
 
 # Install the package
 echo "📦 Installing MMPP package..."
