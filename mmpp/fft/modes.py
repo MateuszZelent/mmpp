@@ -19,6 +19,21 @@ from ..logging_config import setup_mmpp_logging, get_mmpp_logger
 # Get logger for FMR modes
 log = get_mmpp_logger("mmpp.fft.modes")
 
+# Import electromagnetic analysis module
+try:
+    from .electromagnetic_analysis import (
+        ElectromagneticAnalysisConfig,
+        PoyntingVectorAnalysis, 
+        RadiationPatternAnalysis,
+        QFactorAnalysis,
+        analyze_electromagnetic_properties,
+        create_comprehensive_em_report
+    )
+    EM_ANALYSIS_AVAILABLE = True
+except ImportError:
+    EM_ANALYSIS_AVAILABLE = False
+    log.warning("Electromagnetic analysis module not available")
+
 # Import styling functions from plotting module
 try:
     from ..plotting import setup_custom_fonts, load_paper_style, apply_custom_colors
@@ -26,6 +41,21 @@ try:
 except ImportError:
     STYLING_AVAILABLE = False
     log.warning("Styling functions not available - using default matplotlib styling")
+
+# Import electromagnetic analysis module
+try:
+    from .electromagnetic_analysis import (
+        ElectromagneticAnalysisConfig,
+        PoyntingVectorAnalysis, 
+        RadiationPatternAnalysis,
+        QFactorAnalysis,
+        analyze_electromagnetic_properties,
+        create_comprehensive_em_report
+    )
+    EM_ANALYSIS_AVAILABLE = True
+except ImportError:
+    EM_ANALYSIS_AVAILABLE = False
+    log.warning("Electromagnetic analysis module not available")
 
 # Import dependencies with error handling
 try:
