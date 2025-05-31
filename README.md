@@ -213,6 +213,21 @@ pip install mmpp[dev]
 - 🌊 **Enhanced Plotting** (`cmocean`, `seaborn`)
 - 🧪 **Development Tools** (`pytest`, `black`, `flake8`)
 
+## 📚 Additional Documentation
+
+For developers and advanced users, additional documentation is available:
+
+### 🔬 FFT Analysis Documentation
+- **[Complete FFT API Analysis](docs/analysis/KOMPLETNA_ANALIZA_FFT_API.md)** - Detailed technical analysis of FFT functionality
+- **[FFT API Verification](docs/analysis/WERYFIKACJA_POPRAWNOSCI_FFT.md)** - Verification of all FFT examples and methods
+- **[Detailed FFT Analysis](docs/analysis/FFT_API_ANALIZA_SZCZEGOLOWA.md)** - In-depth FFT implementation details
+
+### 🛠️ Development Documentation
+- **[Performance Optimization](docs/development/PERFORMANCE_OPTIMIZATION_SUMMARY.md)** - Performance enhancement strategies
+- **[Smart Legend Documentation](docs/development/SMART_LEGEND_DOCS.md)** - Advanced plotting features
+- **[GitHub Pages Setup](docs/development/GITHUB_PAGES_SETUP.md)** - Documentation deployment guide
+- **[Workflow Fixes](docs/development/WORKFLOW_FIXES.md)** - Development workflow improvements
+
 ## 🤝 Contributing
 
 We welcome contributions! Here's how you can help:

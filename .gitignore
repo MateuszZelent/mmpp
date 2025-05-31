@@ -145,3 +145,7 @@ Thumbs.db
 data/
 results/
 temp/
+
+# Development and debugging files
+interactive_spectrum_fix.ipynb
+mmpp.log
