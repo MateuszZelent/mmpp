@@ -112,7 +112,7 @@ class FFTPlotter:
             Figure size
         save_path : str, optional
             Path to save figure
-        **kwargs : Any
+        \\*\\*kwargs : Any
             Additional FFT configuration options
             
         Returns:

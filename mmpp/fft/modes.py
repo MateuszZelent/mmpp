@@ -905,7 +905,7 @@ class FMRModeAnalyzer:
             2 = Alternative layout (if implemented)
         show : bool, optional
             Whether to automatically display the figure (default: True)
-        **kwargs : dict
+        \\*\\*kwargs : dict
             Additional keyword arguments:
             - figsize : tuple, optional
                 Figure size (width, height) in inches (default: from config)
