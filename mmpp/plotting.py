@@ -2,8 +2,7 @@ import colorsys
 import os
 import platform
 from dataclasses import dataclass
-from typing import (TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple,
-                    Union)
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 

@@ -7,8 +7,7 @@ with the optimized colorbar functionality.
 
 import matplotlib.pyplot as plt
 import numpy as np
-from optimized_colorbar import (create_mmpp_mode_colorbar,
-                                extract_system_size_from_zarr)
+from optimized_colorbar import create_mmpp_mode_colorbar, extract_system_size_from_zarr
 
 from mmpp import MMPP
 

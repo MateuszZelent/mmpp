@@ -21,8 +21,11 @@ def test_fmr_modes():
     try:
         # Test imports
         print("\n📋 Test 1: Module imports")
-        from mmpp.fft.modes import (FFTModeInterface, FMRModeAnalyzer,
-                                    ModeVisualizationConfig)
+        from mmpp.fft.modes import (
+            FFTModeInterface,
+            FMRModeAnalyzer,
+            ModeVisualizationConfig,
+        )
 
         print("✅ Mode modules imported successfully")
 

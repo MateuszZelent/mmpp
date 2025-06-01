@@ -10,8 +10,7 @@ from .core import FFT
 
 # Import mode visualization with error handling
 try:
-    from .modes import (FFTModeInterface, FMRModeAnalyzer,
-                        ModeVisualizationConfig)
+    from .modes import FFTModeInterface, FMRModeAnalyzer, ModeVisualizationConfig
 
     __all__ = [
         "FFT",
