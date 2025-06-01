@@ -1,0 +1,60 @@
+name: Create GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get tag name
+      id: tag
+      run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Get previous tag
+      id: prev_tag
+      run: |
+        PREV_TAG=$(git tag -l --sort=-version:refname | head -2 | tail -1)
+        if [ -z "$PREV_TAG" ]; then
+          PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+        fi
+        echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Create a detailed changelog
+        echo "## 🚀 MMPP ${{ steps.tag.outputs.tag }}: Major Feature Release" > changelog.md
+        echo "" >> changelog.md
+        echo "### 📋 What's Changed" >> changelog.md
+        echo "" >> changelog.md
+        
+        # Get commits since last tag
+        git log ${{ steps.prev_tag.outputs.prev_tag }}..${{ steps.tag.outputs.tag }} --oneline --no-merges | while read line; do
+          echo "- $line" >> changelog.md
+        done
+        
+        echo "" >> changelog.md
+        echo "**Full Changelog**: [${{ steps.prev_tag.outputs.prev_tag }}...${{ steps.tag.outputs.tag }}](https://github.com/${{ github.repository }}/compare/${{ steps.prev_tag.outputs.prev_tag }}...${{ steps.tag.outputs.tag }})" >> changelog.md
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: MMPP ${{ steps.tag.outputs.tag }}
+        body_path: changelog.md
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
