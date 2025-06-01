@@ -4,15 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mmpp"
-# version = "0.5.3"  # Removed: setuptools_scm will manage this
+version = "0.5.3"
 authors = [
     {name = "Mateusz Zelent", email = "mateusz.zelent@amu.edu.pl"}
 ]
 description = "A library for MMPP (Micro Magnetic Post Processing) simulation and analysis"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = {text = "MIT"}
 requires-python = ">=3.9"
-dynamic = ["version"] # Added: only version is dynamic
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

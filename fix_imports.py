@@ -3,9 +3,8 @@
 Script to automatically fix common ruff linting issues.
 """
 
-import subprocess
 import re
-import sys
+import subprocess
 from pathlib import Path
 
 
