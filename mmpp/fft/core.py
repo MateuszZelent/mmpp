@@ -109,7 +109,7 @@ class FFT:
         # Auto-select largest m dataset if none specified
         if dataset_name is None:
             dataset_name = self.job_result.get_largest_m_dataset()
-        
+
         cache_key = self._get_cache_key(dataset_name, z_layer, method, **kwargs)
 
         # Check memory cache only if not forcing and not saving

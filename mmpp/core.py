@@ -545,7 +545,7 @@ class ZarrJobResult:
     def get_largest_m_dataset(self) -> str:
         """
         Automatically find the m dataset with the largest time dimension.
-        
+
         Returns:
         --------
         str
@@ -553,6 +553,7 @@ class ZarrJobResult:
         """
         # Import here to avoid circular import
         from .plotting import _find_largest_m_dataset
+
         return _find_largest_m_dataset(self.path)
 
 
@@ -606,11 +607,15 @@ def find_largest_m_dataset(zarr_path: str) -> str:
                 log.debug(f"Could not check dataset {dataset_name}: {e}")
                 continue
 
-        log.info(f"Auto-selected dataset '{largest_dataset}' with {largest_time_size} time steps")
+        log.info(
+            f"Auto-selected dataset '{largest_dataset}' with {largest_time_size} time steps"
+        )
         return largest_dataset
 
     except Exception as e:
-        log.warning(f"Error finding largest m dataset in {zarr_path}: {e}, using fallback 'm'")
+        log.warning(
+            f"Error finding largest m dataset in {zarr_path}: {e}, using fallback 'm'"
+        )
         return "m"
 
 

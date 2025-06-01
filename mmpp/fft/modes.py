@@ -487,6 +487,7 @@ class FMRModeAnalyzer:
         # Auto-select largest m dataset if none specified
         if dataset_name is None:
             from ..core import find_largest_m_dataset
+
             dataset_name = find_largest_m_dataset(zarr_path)
 
         self.zarr_path = zarr_path

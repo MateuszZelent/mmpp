@@ -395,7 +395,7 @@ class FFTAnalyzer:
             raise IndexError(f"Result index {result_index} out of range")
 
         result = self.results[result_index]
-        
+
         # Auto-select largest m dataset if none specified
         if dataset_name is None:
             dataset_name = result.get_largest_m_dataset()
@@ -425,7 +425,9 @@ class FFTAnalyzer:
 
         return fft_result
 
-    def analyze_all(self, dataset_name: Optional[str] = None, **kwargs) -> List[FFTResult]:
+    def analyze_all(
+        self, dataset_name: Optional[str] = None, **kwargs
+    ) -> List[FFTResult]:
         """
         Analyze all results with FFT.
 
