@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel", "setuptools_scm[toml]>=7.0.0"]
+requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -64,12 +64,12 @@ Issues = "https://github.com/mateuszzelent/mmpp/issues"
 [project.scripts]
 mmpp = "mmpp.cli:main"
 
-[tool.setuptools_scm] # Added section
-write_to = "mmpp/__init__.py"
-write_to_template = "__version__ = \"{version}\""
+[tool.setuptools]
+license-files = []
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["mmpp", "mmpp.*"]
 
 [tool.setuptools.package-data]
 mmpp = ["paper.mplstyle", "fonts/**/*"]
