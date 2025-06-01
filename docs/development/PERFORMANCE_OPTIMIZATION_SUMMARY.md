@@ -42,7 +42,7 @@ Added methods for users who want to see font information:
 import mmpp as mp
 db = mp.open("/path/to/data")
 results = db.find(solver=3, amp_values=0.0022)
-results.matplotlib.plot("time", "my")  # Silent, no font logging
+results.plot("time", "my")  # Silent, no font logging
 ```
 
 ### Verbose Information When Needed
@@ -68,7 +68,7 @@ print(f"Font paths: {mp.fonts.paths}")
 
 ## Backward Compatibility
 - All existing API functionality preserved
-- `results.matplotlib.plot()` works exactly as before
+- `results.plot()` works exactly as before
 - `results.mpl.plot()` alias still available
 - Font management fully functional via `mmpp.fonts`
 

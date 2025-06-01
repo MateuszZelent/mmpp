@@ -137,7 +137,7 @@ def open(base_path: str, **kwargs):
     >>> import mmpp as mp
     >>> db = mp.open("/path/to/simulation/data")
     >>> results = db.find(f0=2.15e+09)
-    >>> results.matplotlib.plot("time", "my")  # Current API
+    >>> results.plot("time", "my")  # Current API
     >>> results.mpl.plot("time", "my")  # Short alias
     """
     if not _CORE_AVAILABLE:

@@ -8,7 +8,7 @@ The MMPP2 plotting functionality now includes **smart legend** capability that a
 ### Before (Old Behavior)
 ```python
 results = jobs.find(solver=(3), amp_values=0.0022)
-results.matplotlib.plot(x_series='t', y_series="m_z11", average=(1,2,3), comp='z')
+results.plot(x_series='t', y_series="m_z11", average=(1,2,3), comp='z')
 ```
 **Old legend would show:** `solver=3, f0=1.00e+09, maxerr=1.00e-06, Nx=64`
 - Includes constant parameters like `solver=3` (same for all datasets)
@@ -17,7 +17,7 @@ results.matplotlib.plot(x_series='t', y_series="m_z11", average=(1,2,3), comp='z
 ### After (New Smart Legend)
 ```python
 results = jobs.find(solver=(3), amp_values=0.0022)
-results.matplotlib.plot(x_series='t', y_series="m_z11", average=(1,2,3), comp='z')
+results.plot(x_series='t', y_series="m_z11", average=(1,2,3), comp='z')
 ```
 **Smart legend shows only:** `f0=1.00e+09, maxerr=1.00e-06, Nx=64`
 - Automatically excludes constant parameters (`solver`, `amp_values`, etc.)
@@ -59,8 +59,7 @@ plotter.configure(sort_results=False)
 ## Configuration Options
 
 ```python
-plotter = results.matplotlib
-plotter.configure(
+results.configure(
     max_legend_params=4,    # Maximum parameters to show in legend
     sort_results=True,      # Enable smart legend and sorting
     style='paper',          # Plotting style
@@ -85,7 +84,6 @@ plotter.configure(
 ```python
 # Some parameters vary, some don't
 results = jobs.find(solver=(1,2,3), amp_values=0.001)
-plotter = results.matplotlib
 # Legend shows: solver=1, f0=1.00e+09, maxerr=1.00e-06
 # Hidden: amp_values=0.001 (constant)
 ```
@@ -94,7 +92,6 @@ plotter = results.matplotlib
 ```python
 # Grid convergence study
 results = jobs.find(f0=1e9, Nx=(32,64,128))
-plotter = results.matplotlib  
 # Legend shows: Nx=32, Nx=64, Nx=128
 # Hidden: f0=1.00e+09 (constant)
 ```
@@ -103,18 +100,16 @@ plotter = results.matplotlib
 ```python
 # Frequency sweep with fixed other parameters
 results = jobs.find(solver=3, f0=(1e9, 2e9, 3e9))
-plotter = results.matplotlib
 # Legend shows: f0=1.00e+09, f0=2.00e+09, f0=3.00e+09  
 # Hidden: solver=3 (constant)
 ```
 
 ## Backward Compatibility
 
-The `.mpl` property is available as an alias for `.matplotlib`:
+The plotting is available directly on the results object:
 ```python
-# Both work identically
-results.matplotlib.plot('t', 'm_z11')
-results.mpl.plot('t', 'm_z11')
+# Correct way to plot
+results.plot('t', 'm_z11')
 ```
 
 ## Testing

@@ -49,19 +49,18 @@ op = mp.open("/path/to/simulations")
 results = op.find(solver=3)
 
 # Create plots
-results.matplotlib.plot("time", "my")
-results.matplotlib.plot("B_ext", "frequency", comp="z")
+results.plot("time", "my")
+results.plot("B_ext", "frequency", comp="z")
 ```
 
 ### Advanced Plotting Options
 
 ```python
 # Customize plot appearance
-plotter = results.matplotlib
-plotter.set_style("paper")
+results.set_style("paper")
 
 # Plot with custom parameters
-plotter.plot(
+results.plot(
     "time", "mx",
     figsize=(10, 6),
     title="Magnetization Evolution",

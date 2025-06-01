@@ -91,7 +91,7 @@ def test_api():
     print("\n=== API Test Complete ===")
     print("\nCorrect usage:")
     print(
-        "  results.matplotlib.plot(x_series='t', y_series='m_z11', average=(1,2,3), comp='z', paper_ready=True, legend_variables=['maxerr'])"
+        "  results.plot(x_series='t', y_series='m_z11', average=(1,2,3), comp='z', paper_ready=True, legend_variables=['maxerr'])"
     )
     print(
         "  results.mpl.plot(x_series='t', y_series='m_z11', legend_variables=['maxerr', 'f0'])"

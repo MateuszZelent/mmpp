@@ -33,7 +33,7 @@ op[:].prepare_report(spectrum=True, modes=True)
 results = op.find(solver=3, amp_values=0.0022)
 
 # Plot comparative results
-results.matplotlib.plot("time", "my")
+results.plot("time", "my")
 
 # Interactive table view
 op.show_interactive()

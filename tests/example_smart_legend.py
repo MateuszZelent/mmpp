@@ -133,7 +133,7 @@ try:
     print(f"\n💡 Usage in your code:")
     print(f"   results = jobs.find(solver=(3), amp_values=0.0022)")
     print(
-        f"   results.matplotlib.plot(x_series='t', y_series='m_z11', average=(1,2,3), comp='z')"
+        f"   results.plot(x_series='t', y_series='m_z11', average=(1,2,3), comp='z')"
     )
     print(
         f"   # Legend will automatically show only: f0, maxerr, Nx, dt (parameters that vary)"
