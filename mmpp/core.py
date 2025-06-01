@@ -2018,6 +2018,30 @@ MMPP Database Summary:
         else:
             print("✓ All interactive display dependencies available!")
 
+    def chunks(self, batch_size: int):
+        """
+        Generate chunks of results for batch processing.
+        
+        Parameters:
+        -----------
+        batch_size : int
+            Number of results per chunk
+            
+        Yields:
+        -------
+        BatchOperations
+            Batch operations object for each chunk
+        """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+            
+        total_results = len(self)
+        
+        for i in range(0, total_results, batch_size):
+            end_idx = min(i + batch_size, total_results)
+            chunk_slice = slice(i, end_idx)
+            yield self[chunk_slice]
+
 
 def mmpp(base_path: str, force: bool = False, **kwargs: Any) -> MMPP:
     """

@@ -151,6 +151,10 @@ modes = batch.fft.modes.compute_modes(parallel=True)  # Auto-selects best datase
 
 # � Or specify dataset explicitly for batch operations
 modes = batch.fft.modes.compute_modes(dset='m_z5-8', parallel=True)
+
+# 🚀 Complete analysis in one call (NEW!)
+results = batch.process(parallel=True, max_workers=4)  # FFT + mode analysis
+print(f"Processed {results['successful']}/{results['total']} files successfully")
 ```
 
 ### 🌊 Advanced FFT Analysis
@@ -210,10 +214,23 @@ spectrum = fft_analyzer.spectrum()  # Faster than manual selection
 
 #### Memory Management
 ```python
-# Process large datasets in chunks
+# Process large datasets in chunks to manage memory usage
+op = mmpp.MMPP('large_simulation_directory/')
+batch_size = 50  # Process 50 results at a time
+
+print(f"Total files: {len(op)}")
 for i in range(0, len(op), batch_size):
     chunk = op[i:i+batch_size]
-    results = chunk.process()
+    results = chunk.process(parallel=True, max_workers=4)
+    
+    chunk_num = i//batch_size + 1
+    total_chunks = (len(op) + batch_size - 1) // batch_size
+    print(f"Chunk {chunk_num}/{total_chunks}: {results['successful']}/{results['total']} successful "
+          f"({results['computation_time']:.1f}s)")
+    
+    # Optional: Clear memory or save intermediate results
+    if results['failed'] > 0:
+        print(f"⚠️  {results['failed']} files failed in chunk {chunk_num}")
 ```
 
 #### Efficient Data Loading
