@@ -9,7 +9,6 @@ from dataclasses import dataclass
 import glob
 from rich.syntax import Syntax
 from rich.console import Console
-from pathlib import Path
 import re
 import shutil
 import numpy as np
@@ -155,7 +154,6 @@ class ZarrJobResult:
         Returns:
             Optional[Syntax]: Syntax-highlighted script or None if no file found
         """
-        log.debug("Debug marker reached")
         try:
 
             # Get the zarr path and name
@@ -188,8 +186,14 @@ class ZarrJobResult:
 
             return syntax
 
-        except Exception as e:
-            log.error(f"Error while retrieving script: {str(e)}")
+        except (FileNotFoundError, PermissionError, OSError) as e:
+            log.debug(f"Script file not found or not accessible: {str(e)}")
+            return None
+        except UnicodeDecodeError as e:
+            log.error(f"Error decoding script file: {str(e)}")
+            return None
+        except ImportError:
+            log.warning("Rich library not available for syntax highlighting")
             return None
 
     def display_script(self) -> None:
@@ -603,8 +607,11 @@ def find_largest_m_dataset(zarr_path: str) -> str:
                     if time_size > largest_time_size:
                         largest_time_size = time_size
                         largest_dataset = dataset_name
-            except Exception as e:
+            except (KeyError, IndexError, ValueError) as e:
                 log.debug(f"Could not check dataset {dataset_name}: {e}")
+                continue
+            except Exception as e:
+                log.debug(f"Unexpected error checking dataset {dataset_name}: {e}")
                 continue
 
         log.info(
@@ -612,9 +619,17 @@ def find_largest_m_dataset(zarr_path: str) -> str:
         )
         return largest_dataset
 
-    except Exception as e:
+    except (OSError, IOError) as e:
         log.warning(
-            f"Error finding largest m dataset in {zarr_path}: {e}, using fallback 'm'"
+            f"File system error accessing {zarr_path}: {e}, using fallback 'm'"
+        )
+        return "m"
+    except ImportError as e:
+        log.warning(f"Missing zarr dependency: {e}, using fallback 'm'")
+        return "m"
+    except Exception as e:
+        log.error(
+            f"Unexpected error finding largest m dataset in {zarr_path}: {e}, using fallback 'm'"
         )
         return "m"
 

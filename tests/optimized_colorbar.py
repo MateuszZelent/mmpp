@@ -8,9 +8,7 @@ MMPP infrastructure, supports dark themes, and includes system size indicators.
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from matplotlib.colors import Normalize
 from typing import Optional, Union, Tuple, Dict, Any
-import warnings
 
 # Import MMPP logging if available
 try:

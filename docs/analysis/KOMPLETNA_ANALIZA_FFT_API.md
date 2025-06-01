@@ -67,15 +67,15 @@ def _basic_fft_display_enhanced(self) -> str:
 
 #### `spectrum()` - Linia 142-174
 ```python
-def spectrum(self, dset: str = "m_z11", z_layer: int = -1, method: int = 1, 
+def spectrum(self, dset: Optional[str] = None, z_layer: int = -1, method: int = 1, 
             save: bool = False, force: bool = False, 
             save_dataset_name: Optional[str] = None, **kwargs) -> np.ndarray:
-    """Compute FFT spectrum."""
+    """Compute FFT spectrum. Auto-selects optimal dataset if dset=None."""
 ```
 
 #### `frequencies()` - Linia 176-208
 ```python
-def frequencies(self, dset: str = "m_z11", z_layer: int = -1, method: int = 1,
+def frequencies(self, dset: Optional[str] = None, z_layer: int = -1, method: int = 1,
                save: bool = False, force: bool = False, 
                save_dataset_name: Optional[str] = None, **kwargs) -> np.ndarray:
     """Get frequency array for FFT."""
@@ -83,15 +83,15 @@ def frequencies(self, dset: str = "m_z11", z_layer: int = -1, method: int = 1,
 
 #### `power()` - Linia 210-242
 ```python
-def power(self, dset: str = "m_z11", z_layer: int = -1, method: int = 1,
+def power(self, dset: Optional[str] = None, z_layer: int = -1, method: int = 1,
          save: bool = False, force: bool = False, 
          save_dataset_name: Optional[str] = None, **kwargs) -> np.ndarray:
-    """Compute power spectrum."""
+    """Compute power spectrum. Auto-selects optimal dataset if dset=None."""
 ```
 
 #### `magnitude()` - Linia 278-298
 ```python
-def magnitude(self, dset: str = "m_z11", z_layer: int = -1, method: int = 1, 
+def magnitude(self, dset: Optional[str] = None, z_layer: int = -1, method: int = 1, 
              **kwargs) -> np.ndarray:
     """Compute magnitude spectrum."""
 ```

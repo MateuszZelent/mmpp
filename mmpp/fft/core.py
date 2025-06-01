@@ -471,7 +471,7 @@ class FFT:
             params_table.add_column("Values", style="cyan")
 
             params = [
-                ("dset", "Dataset name", "'m_z11', 'm_x11', 'm_y11'"),
+                ("dset", "Dataset name", "Auto-selected or explicit: 'm_z11', 'm_x11', 'm_y11'"),
                 ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
                 ("method", "FFT method", "1 (default), 2, 3"),
                 ("save", "Save to zarr", "True/False"),
@@ -482,10 +482,13 @@ class FFT:
                 params_table.add_row(param, desc, values)
 
             # Usage examples
-            example_code = """# Basic FFT operations
-power = op[0].fft.power('m_z11')
+            example_code = """# Basic FFT operations (auto-selects optimal dataset)
+power = op[0].fft.power()
 freqs = op[0].fft.frequencies()
 spectrum = op[0].fft.spectrum(save=True, force=True)
+
+# Or specify dataset explicitly
+power = op[0].fft.power('m_z11')
 
 # Plotting
 fig, ax = op[0].fft.plot_spectrum(log_scale=True)

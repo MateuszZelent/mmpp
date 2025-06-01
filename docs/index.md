@@ -20,8 +20,8 @@ import mmpp as mp
 # Load entire directory of simulations
 op = mp.open("/path/to/simulations")
 
-# Batch FFT mode computation for all results
-op[:].fft.modes.compute_modes(dset="m_z5-8")
+# Batch FFT mode computation for all results (auto-selects optimal dataset)
+op[:].fft.modes.compute_modes()
 
 # Comprehensive reports
 op[:].prepare_report(spectrum=True, modes=True)
