@@ -32,15 +32,21 @@ test:
 # Format code
 format:
     @echo "🎨 Formatting code..."
-    python -m black mmpp/
-    python -m black tests/
+    python -m ruff format mmpp/ tests/ scripts/
     @echo "✅ Formatting complete!"
+
+# Format and fix linting issues
+format-fix:
+    @echo "🎨 Formatting and fixing code..."
+    python -m ruff format mmpp/ tests/ scripts/
+    python -m ruff check --fix --unsafe-fixes mmpp/ tests/ scripts/ || true
+    @echo "✅ Format and fix complete!"
 
 # Lint code
 lint:
     @echo "🔍 Linting code..."
-    python -m flake8 mmpp/
-    python -m mypy mmpp/
+    python -m ruff check mmpp/ tests/ scripts/
+    python -m mypy mmpp/ --ignore-missing-imports
     @echo "✅ Linting complete!"
 
 # Check package before release

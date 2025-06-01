@@ -3,7 +3,6 @@
 Test script for the new legend_variables API
 """
 
-import os
 # Add the project root to path
 import sys
 

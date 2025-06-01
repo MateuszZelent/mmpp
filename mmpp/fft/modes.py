@@ -7,7 +7,7 @@ Provides both programmatic and interactive interfaces for mode analysis.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import matplotlib.colors as mcolors
 import matplotlib.gridspec as gridspec
@@ -22,12 +22,14 @@ log = get_mmpp_logger("mmpp.fft.modes")
 
 # Import electromagnetic analysis module
 try:
-    from .electromagnetic_analysis import (ElectromagneticAnalysisConfig,
-                                           PoyntingVectorAnalysis,
-                                           QFactorAnalysis,
-                                           RadiationPatternAnalysis,
-                                           analyze_electromagnetic_properties,
-                                           create_comprehensive_em_report)
+    from .electromagnetic_analysis import (
+        ElectromagneticAnalysisConfig,
+        PoyntingVectorAnalysis,
+        QFactorAnalysis,
+        RadiationPatternAnalysis,
+        analyze_electromagnetic_properties,
+        create_comprehensive_em_report,
+    )
 
     EM_ANALYSIS_AVAILABLE = True
 except ImportError:
@@ -36,8 +38,7 @@ except ImportError:
 
 # Import styling functions from plotting module
 try:
-    from ..plotting import (apply_custom_colors, load_paper_style,
-                            setup_custom_fonts)
+    from ..plotting import apply_custom_colors, load_paper_style, setup_custom_fonts
 
     STYLING_AVAILABLE = True
 except ImportError:
@@ -46,13 +47,7 @@ except ImportError:
 
 # Import electromagnetic analysis module
 try:
-    from .electromagnetic_analysis import (ElectromagneticAnalysisConfig,
-                                           PoyntingVectorAnalysis,
-                                           QFactorAnalysis,
-                                           RadiationPatternAnalysis,
-                                           analyze_electromagnetic_properties,
-                                           create_comprehensive_em_report)
-
+    # Electromagnetic analysis capabilities available
     EM_ANALYSIS_AVAILABLE = True
 except ImportError:
     EM_ANALYSIS_AVAILABLE = False
@@ -267,7 +262,7 @@ class ModeVisualizationConfig:
     """Configuration for mode visualization."""
 
     # Figure settings
-    figsize: Tuple[float, float] = (16, 10)
+    figsize: tuple[float, float] = (16, 10)
     dpi: int = 100
 
     # Spectrum settings
@@ -378,8 +373,8 @@ class FMRModeData:
         self,
         frequency: float,
         mode_array: np.ndarray,
-        extent: Optional[Tuple[float, float, float, float]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        extent: Optional[tuple[float, float, float, float]] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ):
         """
         Initialize FMR mode data.
@@ -520,7 +515,7 @@ class FMRModeAnalyzer:
             and self.spectrum_path is not None
         )
 
-    def _get_zarr_paths(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def _get_zarr_paths(self) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Unified path resolution for zarr datasets.
 
@@ -655,7 +650,7 @@ class FMRModeAnalyzer:
 
     def _detect_peaks(
         self, spectrum: np.ndarray, frequencies: np.ndarray
-    ) -> List[Peak]:
+    ) -> list[Peak]:
         """
         Detect peaks in spectrum.
 
@@ -813,7 +808,7 @@ class FMRModeAnalyzer:
         threshold: Optional[float] = None,
         min_distance: Optional[int] = None,
         component: int = 0,
-    ) -> List[Peak]:
+    ) -> list[Peak]:
         """
         Find peaks in the spectrum.
 
@@ -881,9 +876,9 @@ class FMRModeAnalyzer:
         self,
         frequency: float,
         z_layer: int = 0,
-        components: Optional[List[Union[int, str]]] = None,
+        components: Optional[list[Union[int, str]]] = None,
         save_path: Optional[str] = None,
-    ) -> Tuple[Figure, np.ndarray]:
+    ) -> tuple[Figure, np.ndarray]:
         """
         Plot mode visualization for a specific frequency.
 
@@ -1010,7 +1005,7 @@ class FMRModeAnalyzer:
 
     def interactive_spectrum(
         self,
-        components: Optional[List[Union[int, str]]] = None,
+        components: Optional[list[Union[int, str]]] = None,
         z_layer: int = 0,
         method: int = 1,
         show: bool = True,
@@ -1262,7 +1257,7 @@ class FMRModeAnalyzer:
             return self._interactive_fig
 
     def _update_mode_plots(
-        self, components: List[Union[int, str]], z_layer: int
+        self, components: list[Union[int, str]], z_layer: int
     ) -> None:
         """Update mode plots for current frequency."""
         if self._mode_axes is None or self._current_frequency is None:
@@ -1307,7 +1302,7 @@ class FMRModeAnalyzer:
 
                 # Magnitude plot (if enabled)
                 if self.config.show_magnitude:
-                    im1 = self._mode_axes[row_idx, i].imshow(
+                    self._mode_axes[row_idx, i].imshow(
                         magnitude,
                         cmap=self.config._resolve_colormap(
                             self.config.colormap_magnitude
@@ -1322,7 +1317,7 @@ class FMRModeAnalyzer:
 
                 # Phase plot (if enabled)
                 if self.config.show_phase:
-                    im2 = self._mode_axes[row_idx, i].imshow(
+                    self._mode_axes[row_idx, i].imshow(
                         phase,
                         cmap=self.config._resolve_colormap(self.config.colormap_phase),
                         extent=mode_data.extent,
@@ -1343,7 +1338,7 @@ class FMRModeAnalyzer:
                     combined_data = magnitude * np.cos(phase)  # Real part
                     # Alternative: combined_data = magnitude * np.sin(phase)  # Imaginary part
 
-                    im3 = self._mode_axes[row_idx, i].imshow(
+                    self._mode_axes[row_idx, i].imshow(
                         combined_data,
                         cmap=self.config._resolve_colormap(self.config.colormap_phase),
                         extent=mode_data.extent,
@@ -1422,7 +1417,7 @@ class FMRModeAnalyzer:
         try:
             t_array = dset.attrs["t"][:]
             dt = (t_array[-1] - t_array[0]) / len(t_array)
-        except:
+        except Exception:
             # Fallback to dt from zarr attrs
             dt = float(self.zarr_file.attrs.get("dt", 1e-12))
             t_array = np.arange(dset.shape[0]) * dt
@@ -1433,7 +1428,7 @@ class FMRModeAnalyzer:
         # Load and process data
         log.info(f"Loading magnetization data: {dset.shape}")
         arr = np.asarray(dset[:, z_slice])
-        log.info(f"Loading magnetization data finished")
+        log.info("Loading magnetization data finished")
 
         # Remove DC component
         arr = arr - arr.mean(axis=0)[None, ...]
@@ -1441,7 +1436,7 @@ class FMRModeAnalyzer:
         # Apply window function
         if window:
             window_func = np.hanning(arr.shape[0])
-            for i in range(arr.ndim - 1):
+            for _i in range(arr.ndim - 1):
                 window_func = window_func[:, None]
             arr = arr * window_func
             log.info("Applied Hanning window")
@@ -1496,7 +1491,7 @@ class FMRModeAnalyzer:
 
     def save_modes_animation(
         self,
-        frequency_range: Tuple[float, float] = None,
+        frequency_range: tuple[float, float] = None,
         frequency: float = None,
         save_path: str = "mode_animation.gif",
         fps: int = 15,
@@ -1505,7 +1500,7 @@ class FMRModeAnalyzer:
         animation_type: str = "temporal",
         colormap: str = None,
         use_midpoint_norm: bool = None,
-        figsize: Tuple[float, float] = None,
+        figsize: tuple[float, float] = None,
     ) -> None:
         """
         Save animation of FMR modes.
@@ -1650,7 +1645,7 @@ class FMRModeAnalyzer:
 
                 # Create colorbar once
                 cbar = plt.colorbar(im, ax=ax)
-                cbar.set_label(f"Magnetization (arb. units)")
+                cbar.set_label("Magnetization (arb. units)")
 
                 # Set labels once (they won't change)
                 ax.set_xlabel("x (nm)")
@@ -1722,7 +1717,7 @@ class FMRModeAnalyzer:
 
                 # Create colorbar once
                 cbar = plt.colorbar(im, ax=ax)
-                cbar.set_label(f"|Magnetization| (arb. units)")
+                cbar.set_label("|Magnetization| (arb. units)")
 
                 # Set labels once (they won't change)
                 ax.set_xlabel("x (nm)")
@@ -1855,7 +1850,7 @@ class FMRModeAnalyzer:
                         save_path, writer=writer, fps=fps, dpi=self.config.dpi // 2
                     )
 
-                log.info(f"✅ Animation saved successfully!")
+                log.info("✅ Animation saved successfully!")
 
             except Exception as save_error:
                 log.error(f"Failed to save animation with {writer}: {save_error}")
@@ -2032,7 +2027,7 @@ MMPP FFT Mode Analyzer:
 
 🔧 Main methods:
   • interactive_spectrum(dset=None, **kwargs) - Interactive spectrum with modes
-  • plot_modes(frequency, dset=None, **kwargs) - Plot mode at specific frequency  
+  • plot_modes(frequency, dset=None, **kwargs) - Plot mode at specific frequency
   • save_modes_animation(**kwargs) - Create mode animations
   • compute_modes(dset=None, **kwargs) - Compute/recompute modes
   • [freq_index].plot_modes(**kwargs) - Plot modes at frequency index
@@ -2040,7 +2035,7 @@ MMPP FFT Mode Analyzer:
 💡 Animation examples:
   • modes.save_modes_animation(frequency=1.5, animation_type='temporal')
   • modes.save_modes_animation(frequency_range=(1.0, 3.0), animation_type='frequency')
-  
+
 🎬 Animation types: 'temporal', 'frequency', 'phase'
 🎨 Supports MP4 (ffmpeg) and GIF (pillow) output formats
 """
@@ -2108,7 +2103,7 @@ MMPP FFT Mode Analyzer:
 
     def plot_modes(
         self, frequency: float, dset: str = None, **kwargs
-    ) -> Tuple[Figure, np.ndarray]:
+    ) -> tuple[Figure, np.ndarray]:
         """Plot modes at specified frequency."""
         # If dset is specified, create a new analyzer for that dataset
         if dset is not None and dset != self.mode_analyzer.dataset_name:
@@ -2140,7 +2135,7 @@ MMPP FFT Mode Analyzer:
 
     def save_modes_animation(
         self,
-        frequency_range: Tuple[float, float] = None,
+        frequency_range: tuple[float, float] = None,
         frequency: float = None,
         save_path: str = "mode_animation.gif",
         dset: str = None,
@@ -2234,7 +2229,7 @@ class FrequencyModeInterface:
         """Get frequency value for this index."""
         return self.parent.mode_analyzer.frequencies[self.frequency_index]
 
-    def plot_modes(self, **kwargs) -> Tuple[Figure, np.ndarray]:
+    def plot_modes(self, **kwargs) -> tuple[Figure, np.ndarray]:
         """Plot modes at this frequency."""
         return self.parent.mode_analyzer.plot_modes(self.frequency, **kwargs)
 

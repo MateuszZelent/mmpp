@@ -1,18 +1,16 @@
 import errno
 import filecmp
 import itertools
-import logging
 import os
 import re
 import subprocess
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
-import numpy as np
 import zarr
 
 # Import shared logging configuration optimized for dark themes
-from .logging_config import get_default_logger, get_mmpp_logger
+from .logging_config import get_mmpp_logger
 
 # Get logger for simulation module with dark theme optimization
 log = get_mmpp_logger("mmpp.simulation")
@@ -82,7 +80,7 @@ class SimulationManager:
         return os.path.basename(file_path).split(".mx3_status")[0]
 
     @staticmethod
-    def check_simulation_completion(zarr_path: str) -> Tuple[bool, int]:
+    def check_simulation_completion(zarr_path: str) -> tuple[bool, int]:
         """
         Check if a simulation represented by a .zarr directory is complete
         and return a tuple (is_complete, file_count).
@@ -130,7 +128,7 @@ class SimulationManager:
         Submit a Python simulation based on provided parameters.
         Zmodyfikowana tak, aby wszystkie komunikaty na końcu łączyć w jeden raport.
         """
-        report_lines: List[str] = []
+        report_lines: list[str] = []
         report_log_level = "INFO"  # Poziom logowania: INFO / WARNING / ERROR
         restart_required = False  # Czy powtarzać / uruchamiać symulację?
         # skip_further_checks = (
@@ -336,10 +334,10 @@ fi
 
     @staticmethod
     def replace_variables_in_template(
-        file_path: str, variables: Dict[str, Union[str, float, int]]
+        file_path: str, variables: dict[str, Union[str, float, int]]
     ) -> str:
         """Replace placeholders in a template file with actual values."""
-        with open(file_path, "r") as file:
+        with open(file_path) as file:
             content = file.read()
         for key, value in variables.items():
             content = content.replace(f"{{{key}}}", str(value))
@@ -356,7 +354,7 @@ fi
 
     def submit_all_simulations(
         self,
-        params: Dict[str, Any],  # Changed from np.ndarray to Any to accept numpy arrays
+        params: dict[str, Any],  # Changed from np.ndarray to Any to accept numpy arrays
         last_param_name: str,
         minsim: int = 0,
         maxsim: Optional[int] = None,

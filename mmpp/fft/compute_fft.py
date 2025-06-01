@@ -5,10 +5,9 @@ Core FFT computation functionality moved from old_fft_module.py and main.py.
 Provides low-level FFT calculations without user interface elements.
 """
 
-import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Literal, Optional
 
 import numpy as np
 
@@ -84,7 +83,7 @@ class FFTComputeResult:
 
     frequencies: np.ndarray
     spectrum: np.ndarray
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     config: FFTComputeConfig
 
     @property
@@ -108,7 +107,6 @@ class FFTComputeResult:
         force : bool, optional
             Overwrite existing data (default: False)
         """
-        import shutil
 
         import zarr
 
@@ -338,7 +336,7 @@ class FFTCompute:
 
     def compute_fft(
         self, data: np.ndarray, dt: float, engine: str
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Compute FFT using specified engine.
 
@@ -537,7 +535,7 @@ class FFTCompute:
 
     def load_data_from_zarr(
         self, zarr_path: str, dataset: str, z_layer: int = -1
-    ) -> Tuple[np.ndarray, float]:
+    ) -> tuple[np.ndarray, float]:
         """
         Load data from zarr file.
 
@@ -616,7 +614,7 @@ class FFTCompute:
 
         return data, dt
 
-    def get_available_options(self) -> Dict[str, Any]:
+    def get_available_options(self) -> dict[str, Any]:
         """Get available configuration options."""
         return {
             "windows": list(self.AVAILABLE_WINDOWS.keys()),
@@ -828,13 +826,13 @@ class FFTCompute:
                     return existing_result
                 else:
                     log.warning(
-                        f"Existing FFT data found but parameters don't match, recalculating..."
+                        "Existing FFT data found but parameters don't match, recalculating..."
                     )
                     force = True  # Force recalculation if parameters don't match
             else:
-                log.info(f"No existing FFT data found, calculating new FFT...")
+                log.info("No existing FFT data found, calculating new FFT...")
         else:
-            log.info(f"Force recalculation enabled, computing new FFT...")
+            log.info("Force recalculation enabled, computing new FFT...")
 
         # Load data
         log.info(f"Loading data from {dataset} (z_layer={z_layer})...")
@@ -884,7 +882,7 @@ class FFTCompute:
             )
         else:
             log.debug(
-                f"🧠 Memory monitoring unavailable (install psutil for memory stats)"
+                "🧠 Memory monitoring unavailable (install psutil for memory stats)"
             )
 
         # Calculate loading speed

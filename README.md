@@ -319,7 +319,7 @@ pip install mmpp[dev]
 ### Optional Dependencies
 - 🪐 **Jupyter Ecosystem** (`itables`, `IPython`, `jupyter`)
 - 🌊 **Enhanced Plotting** (`cmocean`, `seaborn`)
-- 🧪 **Development Tools** (`pytest`, `black`, `flake8`)
+- 🧪 **Development Tools** (`pytest`, `ruff`, `mypy`)
 
 ## 💻 System Requirements
 
@@ -382,8 +382,8 @@ pip install -e ".[dev]"
 pytest tests/
 
 # Check code style
-black --check mmpp/
-flake8 mmpp/
+ruff check mmpp/
+ruff format --check mmpp/
 ```
 
 ## 📄 License

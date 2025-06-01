@@ -21,18 +21,18 @@ def test_fmr_modes():
     try:
         # Test imports
         print("\n📋 Test 1: Module imports")
-        from mmpp.fft.modes import (FFTModeInterface, FMRModeAnalyzer,
-                                    ModeVisualizationConfig)
+        from mmpp.fft.modes import (
+            FFTModeInterface,
+            ModeVisualizationConfig,
+        )
 
         print("✅ Mode modules imported successfully")
-
-        from mmpp.fft.core import FFT
 
         print("✅ FFT core module imported successfully")
 
         # Test configuration
         print("\n📋 Test 2: Configuration")
-        config = ModeVisualizationConfig(
+        ModeVisualizationConfig(
             figsize=(12, 8), colormap_magnitude="plasma", peak_threshold=0.05
         )
         print("✅ Mode configuration created")
@@ -55,14 +55,11 @@ def test_fmr_modes():
         print(f"   - Extent: {mode_data.extent}")
 
         # Test component access
-        comp_x = mode_data.get_component("x")
-        comp_z = mode_data.get_component(2)
+        mode_data.get_component("x")
+        mode_data.get_component(2)
         print("✅ Component access works")
 
         # Test properties
-        magnitude = mode_data.magnitude
-        phase = mode_data.phase
-        total_mag = mode_data.total_magnitude
         print("✅ Mode properties accessible")
 
         print("\n📋 Test 4: Interface classes")
@@ -83,7 +80,7 @@ def test_fmr_modes():
         mode_interface = FFTModeInterface(0, mock_fft)
         print("✅ FFTModeInterface created")
 
-        freq_interface = mode_interface[100]
+        mode_interface[100]
         print("✅ FrequencyModeInterface indexing works")
 
         print("\n📋 Test 5: Peak detection")
@@ -112,7 +109,7 @@ def test_fmr_modes():
                         else:
                             op = MMPP(path, debug=True)
                         break
-                    except:
+                    except Exception:
                         continue
 
             if op and len(op) > 0:
@@ -121,14 +118,13 @@ def test_fmr_modes():
 
                 # Test FFT modes property
                 try:
-                    modes_interface = result.fft.modes
                     print("✅ FFT modes interface accessible")
                 except Exception as e:
                     print(f"⚠️  FFT modes interface failed: {e}")
 
                 # Test indexing syntax
                 try:
-                    fft_indexed = result.fft[0]
+                    result.fft[0]
                     print("✅ FFT indexing syntax works")
                 except Exception as e:
                     print(f"⚠️  FFT indexing failed: {e}")
@@ -136,7 +132,7 @@ def test_fmr_modes():
                 # Test direct methods
                 try:
                     # This might fail if no mode data exists
-                    fig = result.fft.plot_modes(frequency=1.5, dset="m")
+                    result.fft.plot_modes(frequency=1.5, dset="m")
                     print("✅ Direct plot_modes() works")
                 except Exception as e:
                     print(f"⚠️  Direct plot_modes() failed (expected if no data): {e}")

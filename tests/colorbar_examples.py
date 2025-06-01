@@ -7,10 +7,7 @@ with the optimized colorbar functionality.
 
 import matplotlib.pyplot as plt
 import numpy as np
-from optimized_colorbar import (create_mmpp_mode_colorbar,
-                                extract_system_size_from_zarr)
-
-from mmpp import MMPP
+from optimized_colorbar import create_mmpp_mode_colorbar
 
 
 def enhanced_mode_plot_example():
@@ -63,7 +60,7 @@ def enhanced_mode_plot_example():
     )
 
     # Create optimized colorbar with system information
-    cbar2 = create_mmpp_mode_colorbar(
+    create_mmpp_mode_colorbar(
         mappable=im2,
         ax=ax2,
         colormap="balance",  # Scientific colormap
@@ -94,13 +91,13 @@ def integrate_with_mmpp_modes():
     # This is how you would modify the existing mode plotting in MMPP
     example_integration_code = """
     # In your FMRModeAnalyzer.plot_modes method, replace:
-    
+
     # OLD CODE:
     # plt.colorbar(im1, ax=axes[row, i], shrink=0.8)
-    
+
     # NEW CODE:
     from optimized_colorbar import create_mmpp_mode_colorbar
-    
+
     cbar = create_mmpp_mode_colorbar(
         mappable=im1,
         zarr_result=self.zarr_result,  # Pass the zarr result for system info
@@ -148,7 +145,7 @@ def colormap_comparison():
         )
 
         # Use optimized colorbar
-        cbar = create_mmpp_mode_colorbar(
+        create_mmpp_mode_colorbar(
             mappable=im,
             ax=ax,
             colormap=cmap_name,
@@ -192,7 +189,7 @@ def dark_theme_example():
     im = ax.imshow(mode_data, extent=[0, 100, 0, 100], aspect="equal", origin="lower")
 
     # Dark theme optimized colorbar
-    cbar = create_mmpp_mode_colorbar(
+    create_mmpp_mode_colorbar(
         mappable=im,
         ax=ax,
         colormap="balance",

@@ -4,7 +4,7 @@ FFT Plotting Module
 Specialized plotting functionality for FFT analysis results.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 
@@ -24,7 +24,7 @@ except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
 # Import from our own modules
-from .compute_fft import FFTCompute, FFTComputeResult
+from .compute_fft import FFTCompute
 
 
 class FFTPlotter:
@@ -35,7 +35,7 @@ class FFTPlotter:
     """
 
     def __init__(
-        self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None
+        self, results: Union[list[Any], Any], mmpp_instance: Optional[Any] = None
     ):
         """
         Initialize FFT plotter.
@@ -96,10 +96,10 @@ class FFTPlotter:
         save: bool = True,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
-        figsize: Optional[Tuple[float, float]] = None,
+        figsize: Optional[tuple[float, float]] = None,
         save_path: Optional[str] = None,
         **kwargs,
-    ) -> Tuple[Any, Any]:
+    ) -> tuple[Any, Any]:
         """
         Plot power spectrum for all results.
 

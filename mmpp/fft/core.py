@@ -4,7 +4,7 @@ FFT Core Module
 Main FFT class providing unified interface for FFT analysis.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional
 
 import numpy as np
 
@@ -14,8 +14,7 @@ from .plot import FFTPlotter
 
 # Import mode visualization capabilities
 try:
-    from .modes import (FFTModeInterface, FMRModeAnalyzer,
-                        ModeVisualizationConfig)
+    from .modes import FFTModeInterface, FMRModeAnalyzer, ModeVisualizationConfig
 
     MODES_AVAILABLE = True
 except ImportError:
@@ -341,7 +340,7 @@ class FFT:
         force: bool = False,
         save_dataset_name: Optional[str] = None,
         **kwargs,
-    ) -> Tuple[Any, Any]:
+    ) -> tuple[Any, Any]:
         """
         Plot power spectrum.
 
@@ -755,7 +754,7 @@ help(op[0].fft.spectrum)  # Detailed documentation"""
 
     def plot_modes(
         self, frequency: float, dset: str = "m_z11", z_layer: int = 0, **kwargs
-    ) -> Tuple[Any, Any]:
+    ) -> tuple[Any, Any]:
         """
         Plot FMR modes at specific frequency.
 

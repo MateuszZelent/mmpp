@@ -34,7 +34,7 @@
 - `just install-local` - Install package locally for testing
 - `just test` - Run tests
 - `just lint` - Check code quality
-- `just format` - Format code with black
+- `just format` - Format code with ruff
 - `just clean` - Clean build artifacts
 - `just prepare-release` - Prepare package for release
 - `just release` - Release to PyPI
@@ -105,7 +105,7 @@ python -c "import mmpp; print('Success!')"
 - **Continuous Integration**: Runs on every push and PR
 - **Multi-platform testing**: Ubuntu, Windows, macOS
 - **Multi-Python testing**: Python 3.9, 3.10, 3.11
-- **Code quality checks**: flake8, black, mypy
+- **Code quality checks**: ruff, mypy
 - **Test coverage**: pytest with coverage reporting
 
 ## Package Structure

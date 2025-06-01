@@ -3,7 +3,6 @@
 Test script for the updated FFT class __repr__ method with rich panel styling.
 """
 
-import os
 import sys
 
 sys.path.insert(0, "/home/MateuszZelent/git/mmpp")

@@ -2,6 +2,7 @@
 """
 Debug script to understand what's happening with the legend.
 """
+
 import sys
 from pathlib import Path
 
@@ -51,7 +52,7 @@ try:
 
     print("📊 Created mock results that mimic real ZarrJobResult structure:")
     for i, result in enumerate(mock_results):
-        print(f"  Result {i+1}:")
+        print(f"  Result {i + 1}:")
         print(f"    Path: {result.path}")
         print(f"    Attributes: {result.attributes}")
         print(
@@ -64,25 +65,25 @@ try:
     # Test the plotter
     plotter = MMPPlotter(mock_results)
 
-    print(f"\n🔍 Testing _get_varying_parameters():")
+    print("\n🔍 Testing _get_varying_parameters():")
     varying_params = plotter._get_varying_parameters(mock_results)
     print(f"  Detected varying parameters: {varying_params}")
 
-    print(f"\n🏷️  Testing _format_result_label() for each result:")
+    print("\n🏷️  Testing _format_result_label() for each result:")
     for i, result in enumerate(mock_results):
         label = plotter._format_result_label(result, varying_params)
-        print(f"  Result {i+1}: '{label}'")
+        print(f"  Result {i + 1}: '{label}'")
 
     # Test without varying params (old behavior)
-    print(f"\n🏷️  Testing _format_result_label() without varying_params (old behavior):")
+    print("\n🏷️  Testing _format_result_label() without varying_params (old behavior):")
     for i, result in enumerate(mock_results):
         label = plotter._format_result_label(result, None)
-        print(f"  Result {i+1}: '{label}'")
+        print(f"  Result {i + 1}: '{label}'")
 
     # Check if the problem is in accessing attributes
-    print(f"\n🔬 Direct attribute access test:")
+    print("\n🔬 Direct attribute access test:")
     for i, result in enumerate(mock_results):
-        print(f"  Result {i+1}:")
+        print(f"  Result {i + 1}:")
         print(
             f"    result.attributes['solver']: {result.attributes.get('solver', 'MISSING')}"
         )
@@ -106,7 +107,7 @@ try:
         )
         print(f"    test_get_value(result, 'f0'): {test_get_value(result, 'f0')}")
 
-    print(f"\n✅ Debug test completed!")
+    print("\n✅ Debug test completed!")
 
 except Exception as e:
     print(f"❌ Error: {e}")

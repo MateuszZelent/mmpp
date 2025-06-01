@@ -5,7 +5,7 @@ This module provides an enhanced colorbar function that integrates with the exis
 MMPP infrastructure, supports dark themes, and includes system size indicators.
 """
 
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Optional
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -39,8 +39,8 @@ def create_optimized_colorbar(
     colormap: str = "balance",
     label: str = "Magnetization",
     units: str = "arb. units",
-    system_size: Optional[Tuple[float, float]] = None,
-    spatial_resolution: Optional[Tuple[float, float]] = None,
+    system_size: Optional[tuple[float, float]] = None,
+    spatial_resolution: Optional[tuple[float, float]] = None,
     n_ticks: int = 7,
     discrete_levels: Optional[int] = None,
     dark_theme: bool = False,
@@ -228,8 +228,8 @@ def _setup_colorbar_ticks(cbar, n_ticks: int, discrete_levels: Optional[int]):
 def _create_enhanced_label(
     label: str,
     units: str,
-    system_size: Optional[Tuple[float, float]],
-    spatial_resolution: Optional[Tuple[float, float]],
+    system_size: Optional[tuple[float, float]],
+    spatial_resolution: Optional[tuple[float, float]],
     show_scale_info: bool,
 ) -> str:
     """Create enhanced label with system information."""
@@ -283,7 +283,7 @@ def _enhance_colorbar_visibility(cbar, dark_theme: bool):
     cbar.ax.yaxis.label.set_color(label_color)
 
 
-def extract_system_size_from_zarr(zarr_result) -> Optional[Dict[str, Any]]:
+def extract_system_size_from_zarr(zarr_result) -> Optional[dict[str, Any]]:
     """
     Extract system size and spatial resolution from MMPP zarr result.
 
@@ -346,7 +346,7 @@ def create_mmpp_mode_colorbar(
     mappable,
     ax,
     data_type: str = "magnitude",
-    system_size: Optional[Dict[str, Any]] = None,
+    system_size: Optional[dict[str, Any]] = None,
     frequency: Optional[float] = None,
     colormap: str = "balance",
     discrete_levels: int = 10,

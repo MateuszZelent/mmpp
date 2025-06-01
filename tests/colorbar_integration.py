@@ -5,15 +5,14 @@ This file provides the necessary modifications to integrate the optimized
 colorbar functionality into the existing MMPP mode visualization system.
 """
 
-from typing import Optional, Tuple, Union
-
 import matplotlib.pyplot as plt
-import numpy as np
 
 # Import the optimized colorbar functions
 try:
-    from .optimized_colorbar import (create_mmpp_mode_colorbar,
-                                     extract_system_size_from_zarr)
+    from .optimized_colorbar import (
+        create_mmpp_mode_colorbar,
+        extract_system_size_from_zarr,
+    )
 
     OPTIMIZED_COLORBAR_AVAILABLE = True
 except ImportError:
@@ -73,21 +72,17 @@ def create_enhanced_colorbar_for_modes(
     if plot_type == "magnitude":
         colormap = "thermal"  # Good for magnitude data
         label = f"|m_{component}|"
-        units = "arb. units"
     elif plot_type == "phase":
         colormap = "phase"  # HSV-like for phase data
         label = f"arg(m_{component})"
-        units = "rad"
         discrete_levels = None  # Phase is continuous
     elif plot_type == "combined":
         colormap = "phase"  # Phase with magnitude as alpha
         label = f"m_{component} (phase+mag)"
-        units = "rad"
         discrete_levels = None
     else:
         colormap = "balance"  # Default diverging colormap
         label = f"m_{component}"
-        units = "arb. units"
 
     # Add frequency information to label if provided
     if frequency is not None:
@@ -207,24 +202,24 @@ def demonstrate_system_size_extraction():
 
 def get_system_info_example(zarr_result):
     """Example of extracting system information."""
-    
+
     # Get spatial resolution
     dx = float(zarr_result.z.attrs.get("dx", 1e-9)) * 1e9  # nm
     dy = float(zarr_result.z.attrs.get("dy", 1e-9)) * 1e9  # nm
-    
+
     # Get system dimensions from magnetization data
     if 'm' in zarr_result.z:
         dset = zarr_result.z['m']
         ny, nx = dset.shape[-3], dset.shape[-2]  # spatial dimensions
         width = nx * dx   # total width in nm
         height = ny * dy  # total height in nm
-        
+
         print(f"System size: {width:.1f} × {height:.1f} nm")
         print(f"Resolution: {dx:.3f} × {dy:.3f} nm/pixel")
         print(f"Grid points: {nx} × {ny}")
-        
+
         return (width, height), (dx, dy)
-    
+
     return None, (dx, dy)
 
 # This information is automatically included in the optimized colorbar labels

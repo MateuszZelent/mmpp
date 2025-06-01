@@ -9,8 +9,6 @@ where only varying parameters are shown in the legend.
 import sys
 from pathlib import Path
 
-import numpy as np
-
 # Add mmpp to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -102,45 +100,45 @@ try:
                     value = getattr(result, attr)
                     if isinstance(value, (int, float, str, bool)):
                         all_params.add(attr)
-                except:
+                except Exception:
                     pass
 
     constant_params = all_params - set(varying_params)
     print(f"📌 Constant parameters (hidden from legend): {sorted(constant_params)}")
 
     # Test label formatting with smart legend
-    print(f"\n🏷️  Smart legend labels (showing only varying parameters):")
+    print("\n🏷️  Smart legend labels (showing only varying parameters):")
     for i, result in enumerate(results):
         label = plotter._format_result_label(result, varying_params)
         print(f"  Dataset {i + 1}: {label}")
 
     # Compare with old-style labels (showing all priority parameters)
-    print(f"\n🏷️  Old-style labels (for comparison):")
+    print("\n🏷️  Old-style labels (for comparison):")
     for i, result in enumerate(results):
         label = plotter._format_result_label(result, None)  # None = use old behavior
         print(f"  Dataset {i + 1}: {label}")
 
     # Test configuration
-    print(f"\n⚙️  Testing configuration options:")
+    print("\n⚙️  Testing configuration options:")
     plotter.configure(max_legend_params=3, sort_results=True)
-    print(f"   - max_legend_params set to 3")
-    print(f"   - sort_results enabled")
+    print("   - max_legend_params set to 3")
+    print("   - sort_results enabled")
 
     # Test with limited parameters
-    print(f"\n🏷️  Limited smart legend labels (max 3 params):")
+    print("\n🏷️  Limited smart legend labels (max 3 params):")
     for i, result in enumerate(results):
         label = plotter._format_result_label(result, varying_params[:3])
         print(f"  Dataset {i + 1}: {label}")
 
-    print(f"\n✅ Smart legend functionality test completed!")
-    print(f"\n💡 Usage in your code:")
-    print(f"   results = jobs.find(solver=(3), amp_values=0.0022)")
-    print(f"   results.plot(x_series='t', y_series='m_z11', average=(1,2,3), comp='z')")
+    print("\n✅ Smart legend functionality test completed!")
+    print("\n💡 Usage in your code:")
+    print("   results = jobs.find(solver=(3), amp_values=0.0022)")
+    print("   results.plot(x_series='t', y_series='m_z11', average=(1,2,3), comp='z')")
     print(
-        f"   # Legend will automatically show only: f0, maxerr, Nx, dt (parameters that vary)"
+        "   # Legend will automatically show only: f0, maxerr, Nx, dt (parameters that vary)"
     )
     print(
-        f"   # Hidden from legend: solver, amp_values, Ny, Nz, PBCx, PBCy, PBCz (constant parameters)"
+        "   # Hidden from legend: solver, amp_values, Ny, Nz, PBCx, PBCy, PBCz (constant parameters)"
     )
 
 except ImportError as e:

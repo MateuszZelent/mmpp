@@ -28,14 +28,12 @@ Thank you for your interest in contributing to MMPP (Micro Magnetic Post Process
 
 We use several tools to maintain code quality:
 
-- **Black** for code formatting
-- **Flake8** for linting
+- **Ruff** for code formatting and linting
 - **MyPy** for type checking
 
 Run these tools before submitting:
 ```bash
-black mmpp/
-flake8 mmpp/
+ruff format mmpp/
 mypy mmpp/
 ```
 
@@ -84,8 +82,8 @@ Before requesting a feature:
 3. **Test Your Changes**
    ```bash
    pytest tests/
-   black --check mmpp/
-   flake8 mmpp/
+   ruff check mmpp/
+   ruff format --check mmpp/
    ```
 
 4. **Commit and Push**
@@ -130,10 +128,10 @@ pip install -e ".[dev]"
 pytest tests/ -v
 
 # Format code
-black mmpp/ tests/
+ruff format mmpp/ tests/ scripts/
 
 # Lint code
-flake8 mmpp/ tests/
+ruff check mmpp/ tests/ scripts/
 
 # Type checking
 mypy mmpp/

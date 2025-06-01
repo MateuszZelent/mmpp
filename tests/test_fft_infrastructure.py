@@ -6,7 +6,6 @@ Simplified test script for FFT save/cache functionality without pyzfn dependency
 import os
 import sys
 import tempfile
-from pathlib import Path
 
 import numpy as np
 import zarr
@@ -94,7 +93,7 @@ def test_zarr_save_structure():
         # Open and inspect the zarr file
         z = zarr.open(test_zarr_path, mode="r+")
 
-        print(f"✓ Zarr file created successfully")
+        print("✓ Zarr file created successfully")
         print(f"  - Root datasets: {list(z.keys())}")
         print(f"  - Root attributes: {list(z.attrs.keys())}")
 
@@ -123,7 +122,7 @@ def test_zarr_save_structure():
             chunk_shape[-1] = min(chunk_shape[-1], 3)  # Chunk magnetization components
             spectrum_chunks = tuple(chunk_shape)
 
-        print(f"\n2. Testing chunking strategy")
+        print("\n2. Testing chunking strategy")
         print("-" * 50)
         print(f"  - Spectrum shape: {spectrum.shape}")
         print(f"  - Calculated chunks: {spectrum_chunks}")
@@ -243,14 +242,14 @@ def test_parameter_verification():
         print("✗ Identical parameters incorrectly flagged as different")
 
     # Test different FFT parameters
-    print(f"\nComparing params1 vs params2 (different window):")
+    print("\nComparing params1 vs params2 (different window):")
     if not compare_parameters(params1, params2):
         print("✓ Different FFT parameters correctly identified")
     else:
         print("✗ Different FFT parameters not detected")
 
     # Test different metadata parameters
-    print(f"\nComparing params1 vs params3 (different z_layer):")
+    print("\nComparing params1 vs params3 (different z_layer):")
     if not compare_parameters(params1, params3):
         print("✓ Different metadata parameters correctly identified")
     else:

@@ -10,14 +10,12 @@ Advanced electromagnetic analysis tools for FMR modes including:
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.constants as const
-from scipy import integrate
-from scipy.signal import hilbert
 
 # Import shared logging configuration
 from ..logging_config import get_mmpp_logger
@@ -49,7 +47,7 @@ class ElectromagneticAnalysisConfig:
     radiation_phi_points: int = 361  # Number of phi points for radiation pattern
 
     # Visualization settings
-    figsize: Tuple[float, float] = (15, 10)
+    figsize: tuple[float, float] = (15, 10)
     dpi: int = 150
     poynting_colormap: str = "cmc.hawaii"  # For energy flow
     radiation_colormap: str = "cmc.tokyo"  # For radiation patterns
@@ -99,7 +97,7 @@ class PoyntingVectorAnalysis:
         H_field: np.ndarray,
         epsilon_r: float = 1.0,
         mu_r: float = 1.0,
-    ) -> Dict[str, np.ndarray]:
+    ) -> dict[str, np.ndarray]:
         """
         Compute electromagnetic energy density.
 
@@ -137,7 +135,7 @@ class PoyntingVectorAnalysis:
         self,
         poynting_vector: np.ndarray,
         energy_density: np.ndarray,
-        extent: Tuple[float, float, float, float] = None,
+        extent: tuple[float, float, float, float] = None,
         title: str = "Electromagnetic Energy Flow",
     ) -> plt.Figure:
         """
@@ -239,9 +237,9 @@ class RadiationPatternAnalysis:
     def compute_far_field(
         self,
         current_density: np.ndarray,
-        spatial_extent: Tuple[float, float, float, float],
+        spatial_extent: tuple[float, float, float, float],
         frequency: float,
-    ) -> Dict[str, np.ndarray]:
+    ) -> dict[str, np.ndarray]:
         """
         Compute far-field radiation pattern from current density.
 
@@ -353,7 +351,7 @@ class RadiationPatternAnalysis:
         }
 
     def visualize_radiation_pattern(
-        self, far_field_data: Dict[str, np.ndarray], title: str = "Radiation Pattern"
+        self, far_field_data: dict[str, np.ndarray], title: str = "Radiation Pattern"
     ) -> plt.Figure:
         """
         Visualize 3D radiation pattern.
@@ -488,7 +486,7 @@ class QFactorAnalysis:
 
 def analyze_electromagnetic_properties(
     mode_data, config: ElectromagneticAnalysisConfig = None
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Comprehensive electromagnetic analysis of FMR mode data.
 
@@ -509,7 +507,7 @@ def analyze_electromagnetic_properties(
     # Initialize analysis modules
     poynting_analyzer = PoyntingVectorAnalysis(config)
     radiation_analyzer = RadiationPatternAnalysis(config)
-    q_analyzer = QFactorAnalysis(config)
+    QFactorAnalysis(config)
 
     results = {}
 
@@ -565,7 +563,7 @@ def analyze_electromagnetic_properties(
 
 def create_comprehensive_em_report(
     mode_data,
-    analysis_results: Dict[str, Any],
+    analysis_results: dict[str, Any],
     config: ElectromagneticAnalysisConfig = None,
 ) -> plt.Figure:
     """
@@ -697,19 +695,19 @@ def create_comprehensive_em_report(
 
         summary_text = f"""
         ELECTROMAGNETIC ANALYSIS SUMMARY
-        
+
         Mode Frequency: {mode_data.frequency:.3f} GHz
-        
+
         Energy Analysis:
         • Total Energy: {total_energy:.2e} J
         • Average Energy Flow: {avg_poynting:.2e} W/m²
         • Energy Confinement: {np.std(energy_total) / np.mean(energy_total):.2f}
-        
+
         Radiation Analysis:
         • Peak Radiation Intensity: {max_radiation:.2e} W/m²/sr
         • Radiation Efficiency: Calculated from energy balance
         • Dominant Radiation Direction: θ={far_field["theta"][np.unravel_index(np.argmax(far_field["radiation_intensity"]), far_field["radiation_intensity"].shape)[0]]:.2f} rad
-        
+
         Mode Characteristics:
         • Spatial Extent: {mode_data.extent[1] - mode_data.extent[0]:.1f} × {mode_data.extent[3] - mode_data.extent[2]:.1f} nm²
         • Mode Volume: Estimated from energy distribution
@@ -724,7 +722,7 @@ def create_comprehensive_em_report(
             fontsize=11,
             verticalalignment="top",
             fontfamily="monospace",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.8),
+            bbox={"boxstyle": "round,pad=0.5", "facecolor": "lightgray", "alpha": 0.8},
         )
 
     else:

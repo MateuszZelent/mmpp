@@ -3,7 +3,6 @@
 Debug script to test smart legend functionality with real data
 """
 
-import os
 # Add the project root to path
 import sys
 
@@ -67,7 +66,7 @@ def debug_smart_legend():
 
             # Check what types of values we have
             simple_types_count = 0
-            for attr_name, value in result1.attributes.items():
+            for _attr_name, value in result1.attributes.items():
                 if isinstance(value, (int, float, str, bool)):
                     simple_types_count += 1
 

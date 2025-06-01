@@ -6,13 +6,11 @@ mode analysis, and other operations across entire directories of simulation resu
 slice notation like `op[:].fft.modes.compute_modes()` (auto-selects optimal dataset).
 """
 
-import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional
 
 import numpy as np
-from tqdm import tqdm
 
 from .logging_config import get_mmpp_logger
 
@@ -31,7 +29,7 @@ except ImportError:
 class BatchFFT:
     """Batch FFT operations handler."""
 
-    def __init__(self, results: List[Any], mmpp_ref: Any):
+    def __init__(self, results: list[Any], mmpp_ref: Any):
         """
         Initialize batch FFT operations.
 
@@ -50,7 +48,7 @@ class BatchFFT:
         """Get batch mode analyzer."""
         return BatchModeAnalyzer(self.results, self.mmpp_ref)
 
-    def compute_all(self, **kwargs) -> Dict[str, Any]:
+    def compute_all(self, **kwargs) -> dict[str, Any]:
         """
         Compute FFT for all results in batch.
 
@@ -103,7 +101,7 @@ class BatchFFT:
 class BatchModeAnalyzer:
     """Batch mode analysis operations handler."""
 
-    def __init__(self, results: List[Any], mmpp_ref: Any):
+    def __init__(self, results: list[Any], mmpp_ref: Any):
         """
         Initialize batch mode analyzer.
 
@@ -123,7 +121,7 @@ class BatchModeAnalyzer:
         parallel: bool = True,
         max_workers: Optional[int] = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Compute FMR modes for all results in batch.
 
@@ -289,7 +287,7 @@ class BatchModeAnalyzer:
 
         return summary
 
-    def analyze_all(self, **kwargs) -> Dict[str, Any]:
+    def analyze_all(self, **kwargs) -> dict[str, Any]:
         """
         Analyze all modes for all results in batch.
 
@@ -360,7 +358,7 @@ class BatchOperations:
     - `op[:].fft.compute_all()`
     """
 
-    def __init__(self, results: List[Any], mmpp_ref: Any):
+    def __init__(self, results: list[Any], mmpp_ref: Any):
         """
         Initialize batch operations.
 
@@ -399,7 +397,7 @@ class BatchOperations:
         parallel: bool = True,
         max_workers: Optional[int] = None,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Process all results in batch with comprehensive analysis.
 
@@ -474,7 +472,7 @@ class BatchOperations:
 
     def prepare_report(
         self, spectrum: bool = True, modes: bool = True, parallel: bool = True, **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Prepare comprehensive report for all results (future functionality).
 
@@ -525,7 +523,7 @@ class BatchOperations:
 
         return report
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """
         Get summary of all results in batch.
 

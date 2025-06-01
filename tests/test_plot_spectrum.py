@@ -32,7 +32,6 @@ class MockPyzfn:
 sys.modules["pyzfn"] = type("MockModule", (), {"Pyzfn": MockPyzfn})()
 
 # Now import our FFT modules
-from mmpp.fft.compute_fft import FFTCompute, FFTComputeConfig, FFTComputeResult
 from mmpp.fft.core import FFT
 
 
@@ -243,7 +242,7 @@ def test_plot_spectrum_interface():
 
         # Final verification of zarr structure
         z = zarr.open(zarr_path, mode="r")
-        print(f"\n📊 Final zarr structure:")
+        print("\n📊 Final zarr structure:")
         print(f"   - Root datasets: {list(z.keys())}")
         if "fft" in z:
             print(f"   - FFT datasets: {list(z['fft'].keys())}")

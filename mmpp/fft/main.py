@@ -5,7 +5,7 @@ Core FFT analysis functionality for time series data from micromagnetic simulati
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 
@@ -26,7 +26,6 @@ except ImportError:
     PYZFN_AVAILABLE = False
 
 # Import from our own modules
-from .compute_fft import FFTCompute, FFTComputeConfig, FFTComputeResult
 
 
 @dataclass
@@ -40,7 +39,7 @@ class FFTConfig:
     scaling: str = "density"  # Scaling for PSD ('density' or 'spectrum')
     engine: str = "scipy"  # FFT engine ('scipy', 'numpy')
     cache_results: bool = True  # Whether to cache FFT results
-    frequency_range: Optional[Tuple[float, float]] = None  # Frequency range to analyze
+    frequency_range: Optional[tuple[float, float]] = None  # Frequency range to analyze
     zero_padding: bool = True  # Whether to apply zero padding
 
     def __post_init__(self) -> None:
@@ -64,7 +63,7 @@ class FFTResult:
     power_spectrum: np.ndarray
     phase_spectrum: np.ndarray
     complex_spectrum: np.ndarray
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     config: FFTConfig
 
     @property
@@ -80,7 +79,7 @@ class FFTResult:
 
     def get_frequency_range(
         self, f_min: float, f_max: float
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Extract power spectrum within frequency range."""
         mask = (self.frequencies >= f_min) & (self.frequencies <= f_max)
         return self.frequencies[mask], self.power_spectrum[mask]
@@ -95,7 +94,7 @@ class FFTAnalyzer:
     """
 
     def __init__(
-        self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None
+        self, results: Union[list[Any], Any], mmpp_instance: Optional[Any] = None
     ):
         """
         Initialize FFT analyzer.
@@ -123,7 +122,7 @@ class FFTAnalyzer:
             )
 
         # Cache for FFT results
-        self._fft_cache: Dict[str, FFTResult] = {}
+        self._fft_cache: dict[str, FFTResult] = {}
 
     def configure(self, **kwargs) -> "FFTAnalyzer":
         """
@@ -156,9 +155,9 @@ class FFTAnalyzer:
         job: Pyzfn,
         dataset_name: str,
         comp: Optional[Union[str, int]] = None,
-        average: Optional[Tuple[Any, ...]] = None,
-        time_range: Optional[Tuple[float, float]] = None,
-    ) -> Tuple[np.ndarray, np.ndarray, Dict]:
+        average: Optional[tuple[Any, ...]] = None,
+        time_range: Optional[tuple[float, float]] = None,
+    ) -> tuple[np.ndarray, np.ndarray, dict]:
         """
         Extract time series data for FFT analysis.
 
@@ -264,7 +263,7 @@ class FFTAnalyzer:
         return signal * window
 
     def _compute_fft(
-        self, time_data: np.ndarray, signal_data: np.ndarray, metadata: Dict[str, Any]
+        self, time_data: np.ndarray, signal_data: np.ndarray, metadata: dict[str, Any]
     ) -> FFTResult:
         """
         Compute FFT of the signal.
@@ -362,8 +361,8 @@ class FFTAnalyzer:
         result_index: int = 0,
         dataset_name: Optional[str] = None,
         comp: Optional[Union[str, int]] = None,
-        average: Optional[Tuple[Any, ...]] = None,
-        time_range: Optional[Tuple[float, float]] = None,
+        average: Optional[tuple[Any, ...]] = None,
+        time_range: Optional[tuple[float, float]] = None,
         **kwargs,
     ) -> FFTResult:
         """
@@ -428,7 +427,7 @@ class FFTAnalyzer:
 
     def analyze_all(
         self, dataset_name: Optional[str] = None, **kwargs
-    ) -> List[FFTResult]:
+    ) -> list[FFTResult]:
         """
         Analyze all results with FFT.
 
@@ -460,7 +459,7 @@ class FFTAnalyzer:
         self._fft_cache.clear()
         print("FFT cache cleared")
 
-    def get_cache_info(self) -> Dict[str, Any]:
+    def get_cache_info(self) -> dict[str, Any]:
         """Get information about FFT cache."""
         return {
             "cached_results": len(self._fft_cache),

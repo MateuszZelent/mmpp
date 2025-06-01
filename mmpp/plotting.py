@@ -1,11 +1,10 @@
 import colorsys
 import os
-import platform
 from dataclasses import dataclass
-from typing import (TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple,
-                    Union)
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
+from pyzfn import Pyzfn
 
 # Import shared logging configuration
 from .logging_config import get_mmpp_logger, setup_mmpp_logging
@@ -84,7 +83,6 @@ else:
 
 # Import for plotting
 try:
-    import matplotlib as mpl
     import matplotlib.pyplot as plt
     from matplotlib import font_manager
 
@@ -115,8 +113,6 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
 
-from pyzfn import Pyzfn
-
 # Import type aliases from core
 try:
     from .core import np3d
@@ -141,7 +137,7 @@ class PlotConfig:
     tick_fontsize: int = 10
     use_custom_fonts: bool = True
     font_family: str = "Arial"
-    colors: Optional[Dict[str, str]] = None
+    colors: Optional[dict[str, str]] = None
     max_legend_params: int = 4  # Maximum number of parameters to show in legend
     sort_results: bool = True  # Whether to sort results by parameters
 
@@ -155,7 +151,7 @@ class FontManager:
     """Font management utilities for plotting."""
 
     @staticmethod
-    def get_available_fonts() -> List[str]:
+    def get_available_fonts() -> list[str]:
         """Get list of available fonts on the system."""
         if not MATPLOTLIB_AVAILABLE:
             return []
@@ -170,50 +166,17 @@ class FontManager:
                     font_names.append(font_prop.get_name())
                 except Exception:
                     continue
-            return sorted(list(set(font_names)))
+            return sorted(set(font_names))
         except Exception:
             return []
 
-    @staticmethod
-    def setup_custom_fonts(verbose: bool = True) -> bool:
-        """Setup custom fonts from the fonts directory."""
-        if not MATPLOTLIB_AVAILABLE:
-            return False
 
-        try:
-            # Get the fonts directory path
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            fonts_dir = os.path.join(current_dir, "fonts")
-
-            if not os.path.exists(fonts_dir):
-                if verbose:
-                    log.warning(f"Fonts directory not found: {fonts_dir}")
-                return False
-
-            # Add custom fonts
-            font_files = []
-            for root, dirs, files in os.walk(fonts_dir):
-                for file in files:
-                    if file.endswith((".ttf", ".otf")):
-                        font_path = os.path.join(root, file)
-                        font_files.append(font_path)
-                        font_manager.fontManager.addfont(font_path)
-
-            if verbose and font_files:
-                log.info(f"Loaded {len(font_files)} custom fonts from {fonts_dir}")
-
-            return len(font_files) > 0
-
-        except Exception as e:
-            if verbose:
-                log.error(f"Error setting up custom fonts: {e}")
-            return False
 
 
 class PlotterProxy:
     """Proxy class to provide plotting functionality to search results."""
 
-    def __init__(self, results: List[Any], mmpp_instance: Optional[Any] = None):
+    def __init__(self, results: list[Any], mmpp_instance: Optional[Any] = None):
         """
         Initialize the plotter proxy.
 
@@ -294,7 +257,7 @@ def setup_custom_fonts(verbose: bool = False) -> bool:
         plt.rcParams["font.sans-serif"] = ["Arial"] + plt.rcParams["font.sans-serif"]
 
         # Check if Arial is available
-        available_fonts = set(f.name for f in font_manager.fontManager.ttflist)
+        available_fonts = {f.name for f in font_manager.fontManager.ttflist}
         if "Arial" in available_fonts:
             if verbose:
                 log.debug("✓ Arial font loaded successfully")
@@ -347,7 +310,7 @@ def load_paper_style(verbose: bool = False) -> bool:
         return False
 
 
-def apply_custom_colors(colors: Dict[str, str]) -> None:
+def apply_custom_colors(colors: dict[str, str]) -> None:
     """Apply custom colors to matplotlib rcParams."""
     try:
         if "text" in colors:
@@ -379,7 +342,7 @@ class MMPPlotter:
     """
 
     def __init__(
-        self, results: Union[List[Any], Any], mmpp_instance: Optional[Any] = None
+        self, results: Union[list[Any], Any], mmpp_instance: Optional[Any] = None
     ) -> None:
         """
         Initialize the plotter.
@@ -656,7 +619,7 @@ MMPP Plotter:
 
         return self
 
-    def get_available_styles(self) -> List[str]:
+    def get_available_styles(self) -> list[str]:
         """
         Get list of available matplotlib styles.
 
@@ -685,7 +648,7 @@ MMPP Plotter:
         dataset_name: str,
         x_series: Optional[str] = None,
         comp: Optional[Union[str, int]] = None,
-        average: Optional[Tuple[Any, ...]] = None,
+        average: Optional[tuple[Any, ...]] = None,
     ) -> tuple:
         """
         Extract data from a Pyzfn job.
@@ -768,14 +731,14 @@ MMPP Plotter:
         x_series: str,
         y_series: str,
         comp: Optional[Union[str, int]] = None,
-        average: Optional[Tuple[Any, ...]] = None,
-        figsize: Optional[Tuple[Any, ...]] = None,
-        title: Optional[Union[str, List[str]]] = None,
+        average: Optional[tuple[Any, ...]] = None,
+        figsize: Optional[tuple[Any, ...]] = None,
+        title: Optional[Union[str, list[str]]] = None,
         xlabel: Optional[str] = None,
         ylabel: Optional[str] = None,
-        legend_labels: Optional[List[str]] = None,
-        legend_variables: Optional[List[str]] = None,
-        colors: Optional[List[str]] = None,
+        legend_labels: Optional[list[str]] = None,
+        legend_variables: Optional[list[str]] = None,
+        colors: Optional[list[str]] = None,
         save_path: Optional[str] = None,
         paper_ready: bool = False,
         **kwargs: Any,
@@ -1093,7 +1056,7 @@ MMPP Plotter:
         plt.tight_layout()
         return fig, axes
 
-    def get_plot_data(self) -> List[Dict]:
+    def get_plot_data(self) -> list[dict]:
         """
         Get data from the last plot for further analysis.
 
@@ -1144,7 +1107,7 @@ MMPP Plotter:
 
         log.info(f"Data saved to: {filename}")
 
-    def _sort_results_by_parameters(self, results: List[Any]) -> List[Any]:
+    def _sort_results_by_parameters(self, results: list[Any]) -> list[Any]:
         """
         Sort results by all available parameters for consistent ordering.
 
@@ -1211,7 +1174,7 @@ MMPP Plotter:
             print(f"Warning: Could not sort results: {e}")
             return results
 
-    def _get_varying_parameters(self, results: List[Any]) -> List[str]:
+    def _get_varying_parameters(self, results: list[Any]) -> list[str]:
         """
         Identify which parameters vary between results.
 
@@ -1361,7 +1324,7 @@ MMPP Plotter:
 
         return sorted_varying
 
-    def _format_dynamic_title(self, title_params: List[str], results: List[Any]) -> str:
+    def _format_dynamic_title(self, title_params: list[str], results: list[Any]) -> str:
         """
         Format dynamic title based on parameter values.
 
@@ -1435,7 +1398,7 @@ MMPP Plotter:
         return ", ".join(title_parts)
 
     def _format_result_label(
-        self, result: Any, varying_params: Optional[List[str]] = None
+        self, result: Any, varying_params: Optional[list[str]] = None
     ) -> str:
         """
         Format result label showing only varying parameters with proper precision.
@@ -1738,79 +1701,19 @@ def rgb2hsl(rgb: np.ndarray) -> np.ndarray:
     return hsl
 
 
-def load_paper_style(verbose: bool = True) -> bool:
-    """Load paper-ready plotting style."""
-    if not MATPLOTLIB_AVAILABLE:
-        return False
-
-    try:
-        # Get the style file path
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        style_file = os.path.join(current_dir, "paper.mplstyle")
-
-        if os.path.exists(style_file):
-            plt.style.use(style_file)
-            if verbose:
-                print(f"Loaded paper style from: {style_file}")
-            return True
-        else:
-            if verbose:
-                print(f"Paper style file not found: {style_file}")
-            return False
-
-    except Exception as e:
-        if verbose:
-            print(f"Error loading paper style: {e}")
-        return False
-
-
-def setup_custom_fonts(verbose: bool = True) -> bool:
-    """Setup custom fonts - convenience function."""
-    return FontManager.setup_custom_fonts(verbose)
-
-
-def apply_custom_colors(colors: Dict[str, str]) -> None:
-    """Apply custom color scheme to matplotlib."""
-    if not MATPLOTLIB_AVAILABLE:
-        return
-
-    try:
-        # Apply text colors
-        if "text" in colors:
-            plt.rcParams["text.color"] = colors["text"]
-            plt.rcParams["axes.labelcolor"] = colors["text"]
-            plt.rcParams["xtick.color"] = colors["text"]
-            plt.rcParams["ytick.color"] = colors["text"]
-
-        # Apply axes colors
-        if "axes" in colors:
-            plt.rcParams["axes.edgecolor"] = colors["axes"]
-            plt.rcParams["axes.spines.left"] = True
-            plt.rcParams["axes.spines.bottom"] = True
-            plt.rcParams["axes.spines.top"] = False
-            plt.rcParams["axes.spines.right"] = False
-
-        # Apply grid colors
-        if "grid" in colors:
-            plt.rcParams["grid.color"] = colors["grid"]
-
-    except Exception:
-        pass
-
-
 # Convenience object for font operations
 class FontUtils:
     """Utility object for font management."""
 
     @staticmethod
-    def get_available() -> List[str]:
+    def get_available() -> list[str]:
         """Get available fonts."""
         return FontManager.get_available_fonts()
 
     @staticmethod
     def setup_custom(verbose: bool = True) -> bool:
         """Setup custom fonts."""
-        return FontManager.setup_custom_fonts(verbose)
+        return setup_custom_fonts(verbose)
 
 
 # Create a fonts instance for backward compatibility

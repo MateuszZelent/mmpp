@@ -7,7 +7,7 @@ import sys
 
 def bump_version(bump_type):
     """Bump version in pyproject.toml."""
-    with open("pyproject.toml", "r") as f:
+    with open("pyproject.toml") as f:
         content = f.read()
 
     version_pattern = r'version = "(\d+)\.(\d+)\.(\d+)"'

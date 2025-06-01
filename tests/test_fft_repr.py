@@ -3,7 +3,6 @@
 Test script for FFT class __repr__ method.
 """
 
-import os
 import sys
 
 # Add the current directory to Python path to import mmpp

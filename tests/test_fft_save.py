@@ -6,7 +6,6 @@ Test script for FFT spectrum plotting with save/cache functionality
 import os
 import sys
 import tempfile
-from pathlib import Path
 
 import numpy as np
 import zarr
@@ -16,7 +15,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 # Import our modules
-from mmpp.fft.compute_fft import FFTCompute, FFTComputeConfig, FFTComputeResult
+from mmpp.fft.compute_fft import FFTCompute
 
 
 def create_test_zarr_file(zarr_path: str):
@@ -110,7 +109,7 @@ def test_fft_save_functionality():
             engine="numpy",
         )
 
-        print(f"FFT calculated:")
+        print("FFT calculated:")
         print(f"  - Frequencies shape: {result1.frequencies.shape}")
         print(f"  - Spectrum shape: {result1.spectrum.shape}")
         print(f"  - Peak frequency: {result1.peak_frequency / 1e9:.2f} GHz")
@@ -289,7 +288,7 @@ def test_high_level_interface():
             save_dataset_name=None,  # Auto-generate name
         )
 
-        print(f"✓ FFT calculation completed")
+        print("✓ FFT calculation completed")
         print(
             f"  - Auto-generated dataset name: {result.metadata.get('save_dataset_name', 'N/A')}"
         )

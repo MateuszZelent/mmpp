@@ -1,5 +1,4 @@
 import glob
-import logging
 import os
 import pickle
 import re
@@ -8,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -50,8 +49,7 @@ ArraySlice = Union[slice, tuple, int]
 
 # Import for interactive display
 try:
-    from itables import init_notebook_mode, show
-
+    # Import only if needed for interactive display
     ITABLES_AVAILABLE = True
 except ImportError:
     ITABLES_AVAILABLE = False
@@ -70,8 +68,6 @@ except ImportError:
     RICH_AVAILABLE = False
 
 try:
-    import json
-
     from IPython.display import HTML, display
 
     IPYTHON_AVAILABLE = True
@@ -96,14 +92,14 @@ class ScanResult:
     """Data class for storing scan results from a single zarr folder."""
 
     path: str
-    attributes: Dict[str, Any]
+    attributes: dict[str, Any]
     error: Optional[str] = None
 
 
 class ZarrJobResult:
     """Enhanced zarr job result with integrated Pyzfn functionality."""
 
-    def __init__(self, path: str, attributes: Dict[str, Any]):
+    def __init__(self, path: str, attributes: dict[str, Any]):
         """
         Initialize ZarrJobResult with path and attributes.
 
@@ -180,7 +176,7 @@ class ZarrJobResult:
             mx3_file = mx3_files[0]
 
             # Read file content
-            with open(mx3_file, "r", encoding="utf-8") as f:
+            with open(mx3_file, encoding="utf-8") as f:
                 mx3_content = f.read()
 
             # Create syntax-highlighted script
@@ -323,8 +319,8 @@ class ZarrJobResult:
                 return dataset
             else:
                 return dataset[slices]
-        except KeyError:
-            raise NameError(f"{self.path}: The dataset `{dset}` does not exist.")
+        except KeyError as e:
+            raise NameError(f"{self.path}: The dataset `{dset}` does not exist.") from e
 
     def get_raw_data(self, dset: str, slices: ArraySlice = slice(None)) -> np.ndarray:
         """
@@ -381,7 +377,7 @@ class ZarrJobResult:
         """
         return np.asarray(self.get_raw(dset, slices), dtype=np.complex64)
 
-    def list_datasets(self) -> List[str]:
+    def list_datasets(self) -> list[str]:
         """
         List all available datasets in the zarr group.
         Useful for finding datasets with special characters.
@@ -406,7 +402,7 @@ class ZarrJobResult:
         collect_datasets(self._z)
         return datasets
 
-    def find_datasets(self, pattern: str) -> List[str]:
+    def find_datasets(self, pattern: str) -> list[str]:
         """
         Find datasets matching a pattern (supports wildcards).
 
@@ -621,7 +617,7 @@ def find_largest_m_dataset(zarr_path: str) -> str:
         )
         return largest_dataset
 
-    except (OSError, IOError) as e:
+    except OSError as e:
         log.warning(f"File system error accessing {zarr_path}: {e}, using fallback 'm'")
         return "m"
     except ImportError as e:
@@ -670,7 +666,7 @@ class MMPP:
         self._lock: threading.Lock = threading.Lock()
         self._interactive_mode: bool = True  # Enable interactive mode by default
         self._single_zarr_mode: bool = False
-        self._zarr_results: List[ZarrJobResult] = []
+        self._zarr_results: list[ZarrJobResult] = []
 
         # Configure rich logging for this instance
         global log
@@ -848,7 +844,7 @@ class MMPP:
             else:
                 raise ValueError("No results available for FFT analysis")
 
-    def _find_zarr_folders(self) -> List[str]:
+    def _find_zarr_folders(self) -> list[str]:
         """
         Recursively find all .zarr folders in the base path.
 
@@ -857,9 +853,9 @@ class MMPP:
         List[str]
             List of paths to zarr folders
         """
-        zarr_folders: List[str] = []
+        zarr_folders: list[str] = []
 
-        for root, dirs, files in os.walk(self.base_path):
+        for root, dirs, _files in os.walk(self.base_path):
             # Check if current directory is a zarr folder
             if root.endswith(".zarr") and os.path.isdir(root):
                 zarr_folders.append(root)
@@ -868,7 +864,7 @@ class MMPP:
 
         return zarr_folders
 
-    def _parse_path_parameters(self, zarr_path: str) -> Dict[str, Any]:
+    def _parse_path_parameters(self, zarr_path: str) -> dict[str, Any]:
         """
         Parse parameters from the folder path structure, including zarr folder name.
 
@@ -877,7 +873,7 @@ class MMPP:
         zarr_path : str
             Dictionary of parameters extracted from the path
         """
-        path_params: Dict[str, Any] = {}
+        path_params: dict[str, Any] = {}
 
         try:
             # Get relative path from base_path to zarr folder
@@ -907,7 +903,7 @@ class MMPP:
 
         return path_params
 
-    def _parse_single_path_component(self, component: str) -> Dict[str, Any]:
+    def _parse_single_path_component(self, component: str) -> dict[str, Any]:
         """
         Parse parameters from a single path component.
 
@@ -921,7 +917,7 @@ class MMPP:
         Dict[str, Any]
             Dictionary of parameters extracted from this component
         """
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
 
         try:
             # Handle comma-separated parameters in a single component
@@ -1018,7 +1014,7 @@ class MMPP:
             job = Pyzfn(zarr_path)
 
             # Extract all attributes from Pyzfn
-            attributes: Dict[str, Any] = {}
+            attributes: dict[str, Any] = {}
             for attr_name, attr_value in job.attrs.items():
                 # Convert numpy arrays to lists for pandas compatibility
                 if hasattr(attr_value, "tolist"):
@@ -1043,7 +1039,7 @@ class MMPP:
         except Exception as e:
             return ScanResult(path=zarr_path, attributes={}, error=str(e))
 
-    def _scan_all_zarr_folders(self, zarr_folders: List[str]) -> List[ScanResult]:
+    def _scan_all_zarr_folders(self, zarr_folders: list[str]) -> list[ScanResult]:
         """
         Scan all zarr folders using multiple threads.
 
@@ -1057,7 +1053,7 @@ class MMPP:
         List[ScanResult]
             List of scan results
         """
-        results: List[ScanResult] = []
+        results: list[ScanResult] = []
 
         log.info(
             f"Scanning {len(zarr_folders)} zarr folders using {self.max_workers} threads..."
@@ -1085,7 +1081,7 @@ class MMPP:
 
         return results
 
-    def _create_dataframe(self, scan_results: List[ScanResult]) -> pd.DataFrame:
+    def _create_dataframe(self, scan_results: list[ScanResult]) -> pd.DataFrame:
         """
         Create pandas DataFrame from scan results.
 
@@ -1100,7 +1096,7 @@ class MMPP:
             DataFrame with paths and attributes
         """
         # Collect all data for DataFrame
-        data_rows: List[Dict[str, Any]] = []
+        data_rows: list[dict[str, Any]] = []
 
         for result in scan_results:
             if not result.error:  # Only include successful scans
@@ -1210,7 +1206,7 @@ class MMPP:
         log.info("Forcing complete rescan...")
         return self.scan(force=True)
 
-    def get_parsing_examples(self, zarr_path: str) -> Dict[str, Any]:
+    def get_parsing_examples(self, zarr_path: str) -> dict[str, Any]:
         """
         Get examples of how a specific path would be parsed.
         Useful for debugging path parsing.
@@ -1251,7 +1247,7 @@ class MMPP:
 
         return examples
 
-    def find(self, **kwargs: Any) -> Union["PlotterProxy", List["ZarrJobResult"]]:
+    def find(self, **kwargs: Any) -> Union["PlotterProxy", list["ZarrJobResult"]]:
         """
         Find zarr folders that match the given criteria.
         Now returns a PlotterProxy with plotting capabilities.
@@ -1345,7 +1341,7 @@ class MMPP:
         else:
             return results
 
-    def find_paths(self, **kwargs: Any) -> List[str]:
+    def find_paths(self, **kwargs: Any) -> list[str]:
         """
         Find zarr folder paths that match the given criteria.
 
@@ -1362,7 +1358,7 @@ class MMPP:
         results = self.find(**kwargs)
         return [result.path for result in results]
 
-    def find_by_path_param(self, **kwargs: Any) -> List[ZarrJobResult]:
+    def find_by_path_param(self, **kwargs: Any) -> list[ZarrJobResult]:
         """
         Find zarr folders that match path-extracted parameters specifically.
 
@@ -1419,7 +1415,7 @@ class MMPP:
 
         return results
 
-    def find_by_path_param_paths(self, **kwargs: Any) -> List[str]:
+    def find_by_path_param_paths(self, **kwargs: Any) -> list[str]:
         """
         Find zarr folder paths that match path-extracted parameters specifically.
 
@@ -1467,7 +1463,7 @@ class MMPP:
         }
         return ZarrJobResult(path=path, attributes=attributes)
 
-    def get_all_jobs(self) -> List[ZarrJobResult]:
+    def get_all_jobs(self) -> list[ZarrJobResult]:
         """
         Get all jobs as ZarrJobResult objects.
 
@@ -1503,7 +1499,7 @@ class MMPP:
         """
         return self.dataframe
 
-    def get_unique_values(self, column: str) -> List[Any]:
+    def get_unique_values(self, column: str) -> list[Any]:
         """
         Get unique values for a specific column.
 
@@ -1523,7 +1519,7 @@ class MMPP:
 
         return sorted(self.dataframe[column].dropna().unique().tolist())
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """
         Get a summary of the database.
 
@@ -1544,7 +1540,7 @@ class MMPP:
 
         return summary
 
-    def get_path_parameters(self, zarr_path: str) -> Dict[str, Any]:
+    def get_path_parameters(self, zarr_path: str) -> dict[str, Any]:
         """
         Get parameters extracted from a specific zarr path.
 
@@ -1560,7 +1556,7 @@ class MMPP:
         """
         return self._parse_path_parameters(zarr_path)
 
-    def get_path_parameter_summary(self) -> Dict[str, List[Any]]:
+    def get_path_parameter_summary(self) -> dict[str, list[Any]]:
         """
         Get a summary of all path-extracted parameters and their unique values.
 
@@ -1879,7 +1875,7 @@ MMPP Database Summary:
                 table.add_column(col, style="white")
 
         # Add rows
-        for i, (_, row) in enumerate(df.head(max_rows).iterrows()):
+        for _i, (_, row) in enumerate(df.head(max_rows).iterrows()):
             row_data = []
             for col in df.columns:
                 value = row[col]

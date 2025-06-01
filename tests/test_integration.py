@@ -4,9 +4,6 @@ Integration test for FMR mode visualization with MMPP
 """
 
 import sys
-from pathlib import Path
-
-import numpy as np
 
 
 def test_integration():
@@ -39,9 +36,9 @@ def test_integration():
         # Check modes property exists
         assert hasattr(fft, "modes"), "FFT should have modes property"
         assert hasattr(fft, "plot_modes"), "FFT should have plot_modes method"
-        assert hasattr(
-            fft, "interactive_spectrum"
-        ), "FFT should have interactive_spectrum method"
+        assert hasattr(fft, "interactive_spectrum"), (
+            "FFT should have interactive_spectrum method"
+        )
 
         print("✅ FFT has all required mode methods")
     except Exception as e:
