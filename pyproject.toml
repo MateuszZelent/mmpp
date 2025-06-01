@@ -111,6 +111,20 @@ python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+disable_error_code = "unused-ignore"
+mypy_path = "mmpp"
+check_untyped_defs = true
+disallow_any_generics = true
+ignore_missing_imports = true
+no_implicit_optional = true
+show_error_codes = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unreachable = true
+no_implicit_reexport = true
+disallow_untyped_calls = false
+strict = true
+plugins = "numpy.typing.mypy_plugin"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
