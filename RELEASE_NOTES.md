@@ -1,3 +1,50 @@
+# MMPP Library Release v0.5.1
+
+## 🐛 Hotfix: Python Compatibility Fix
+
+### 🎯 What's Fixed in v0.5.1
+
+This is a hotfix release that addresses Python version compatibility issues found in v0.5.0.
+
+### 🔧 Bug Fixes
+
+#### 🐍 **Python Version Compatibility**
+- **Fixed minimum Python version**: Updated from Python 3.8 to Python 3.9
+- **Reason**: Library uses features introduced in Python 3.9 (type hints, newer syntax)
+- **Updated configurations**: Fixed `pyproject.toml`, documentation, and CI workflows
+- **Backward compatibility**: Ensured all dependencies work with Python 3.9+
+
+### 📋 Technical Changes
+
+- Updated `requires-python = ">=3.9"` in `pyproject.toml`
+- Updated Python version classifiers to support 3.9, 3.10, 3.11
+- Updated documentation to reflect correct minimum Python version
+- Updated CI workflows to test against correct Python versions
+
+### 🚀 Installation
+
+```bash
+# Requires Python 3.9 or higher
+pip install mmpp==0.5.1
+
+# Install from source
+git clone https://github.com/MateuszZelent/mmpp
+cd mmpp
+pip install -e .
+```
+
+### 📈 Upgrade from v0.5.0
+
+This is a drop-in replacement for v0.5.0 with no API changes:
+
+```bash
+pip install --upgrade mmpp
+```
+
+All features from v0.5.0 remain unchanged - only Python version requirements were corrected.
+
+---
+
 # MMPP Library Release v0.5.0
 
 ## 🚀 Major Feature Release: Comprehensive Batch Processing & Auto-Selection

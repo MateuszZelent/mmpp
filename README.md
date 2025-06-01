@@ -262,6 +262,7 @@ Typical performance on a modern system (16GB RAM, 8-core CPU):
 | 🎓 **Tutorials** | Step-by-step guides and examples | [Tutorials](https://MateuszZelent.github.io/mmpp/tutorials/) |
 | 🔬 **API Reference** | Detailed function documentation | [API Docs](https://MateuszZelent.github.io/mmpp/api/) |
 | 🚀 **Getting Started** | Quick start guide | [Getting Started](https://MateuszZelent.github.io/mmpp/tutorials/getting_started/) |
+| 🗂️ **PyZFN Library** | ZFN file format handling (dependency) | [PyZFN by Mathieu Moalic](https://github.com/MathieuMoalic/pyzfn) |
 
 </div>
 
@@ -310,6 +311,7 @@ pip install mmpp[dev]
 - 🔢 **NumPy** ≥1.20.0
 - 🐼 **Pandas** ≥1.3.0
 - 📊 **Matplotlib** ≥3.5.0
+- 🗂️ **PyZFN** - ZFN file format handling ([Mathieu Moalic](https://github.com/MathieuMoalic/pyzfn))
 - ⚡ **Zarr** - High-performance data storage
 - 🎨 **Rich** - Beautiful terminal output
 - 📈 **TQDM** - Progress bars
@@ -392,6 +394,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 - Built with ❤️ by [MateuszZelent](https://github.com/MateuszZelent)
 - Powered by the amazing Python scientific computing ecosystem
+- **PyZFN integration**: Utilizes components from [PyZFN](https://github.com/MathieuMoalic/pyzfn) by [Mathieu Moalic](https://github.com/MathieuMoalic) for efficient ZFN file handling
 - Special thanks to all contributors and users
 
 ---

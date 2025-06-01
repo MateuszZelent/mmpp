@@ -5,7 +5,7 @@ A Python library for simulation and analysis of micromagnetic simulations
 with advanced post-processing capabilities.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 __author__ = "Mateusz Zelent"
 __email__ = "mateusz.zelent@amu.edu.pl"
 
