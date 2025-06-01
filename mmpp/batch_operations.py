@@ -75,7 +75,7 @@ class BatchFFT:
         for i, result in enumerate(self.results):
             try:
                 log.debug(
-                    f"Computing FFT for result {i+1}/{len(self.results)}: {result.path}"
+                    f"Computing FFT for result {i + 1}/{len(self.results)}: {result.path}"
                 )
                 fft_analyzer = FFT(result, self.mmpp_ref)
                 fft_analyzer._compute_fft(**kwargs)
@@ -164,7 +164,7 @@ class BatchModeAnalyzer:
 
             try:
                 log.debug(
-                    f"Computing modes for result {i+1}/{len(self.results)}: {result.path}"
+                    f"Computing modes for result {i + 1}/{len(self.results)}: {result.path}"
                 )
 
                 # Get FFT analyzer for this result
@@ -315,7 +315,7 @@ class BatchModeAnalyzer:
         for i, result in enumerate(self.results):
             try:
                 log.debug(
-                    f"Analyzing modes for result {i+1}/{len(self.results)}: {result.path}"
+                    f"Analyzing modes for result {i + 1}/{len(self.results)}: {result.path}"
                 )
 
                 fft_analyzer = FFT(result, self.mmpp_ref)
@@ -393,15 +393,15 @@ class BatchOperations:
         return iter(self.results)
 
     def process(
-        self, 
+        self,
         dset: Optional[str] = None,
-        parallel: bool = True, 
+        parallel: bool = True,
         max_workers: Optional[int] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Process all results in batch with comprehensive analysis.
-        
+
         This method performs complete analysis including FFT computation
         and mode analysis for all results in the batch.
 
@@ -422,7 +422,7 @@ class BatchOperations:
             Comprehensive analysis results
         """
         log.info(f"Processing {len(self.results)} results with comprehensive analysis")
-        
+
         if not self.results:
             return {
                 "total": 0,
@@ -430,36 +430,35 @@ class BatchOperations:
                 "failed": 0,
                 "errors": [],
                 "mode_results": None,
-                "computation_time": 0.0
+                "computation_time": 0.0,
             }
-        
+
         start_time = time.time()
-        
+
         try:
             # Perform mode computation and analysis
             mode_results = self.fft.modes.compute_modes(
-                dset=dset,
-                parallel=parallel,
-                max_workers=max_workers,
-                **kwargs
+                dset=dset, parallel=parallel, max_workers=max_workers, **kwargs
             )
-            
+
             total_time = time.time() - start_time
-            
+
             results = {
                 "total": len(self.results),
                 "successful": mode_results.get("successful", 0),
                 "failed": mode_results.get("failed", 0),
                 "errors": mode_results.get("errors", []),
                 "mode_results": mode_results,
-                "computation_time": total_time
+                "computation_time": total_time,
             }
-            
-            log.info(f"Batch processing completed in {total_time:.2f}s: "
-                    f"{results['successful']} successful, {results['failed']} failed")
-            
+
+            log.info(
+                f"Batch processing completed in {total_time:.2f}s: "
+                f"{results['successful']} successful, {results['failed']} failed"
+            )
+
             return results
-            
+
         except Exception as e:
             total_time = time.time() - start_time
             log.error(f"Batch processing failed after {total_time:.2f}s: {e}")
@@ -469,7 +468,7 @@ class BatchOperations:
                 "failed": len(self.results),
                 "errors": [{"error": str(e), "context": "batch_processing"}],
                 "mode_results": None,
-                "computation_time": total_time
+                "computation_time": total_time,
             }
 
     def prepare_report(

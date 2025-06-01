@@ -233,9 +233,9 @@ def test_mode_computation():
             z["m"].attrs["t"] = t
 
             print(f"✅ Created synthetic data: {mag_data.shape}")
-            print(f"   Time range: {t[0]*1e9:.1f} - {t[-1]*1e9:.1f} ns")
+            print(f"   Time range: {t[0] * 1e9:.1f} - {t[-1] * 1e9:.1f} ns")
             print(f"   Spatial: {nx}x{ny} points")
-            print(f"   Expected peaks at: {f1*1e-9:.1f}, {f2*1e-9:.1f} GHz")
+            print(f"   Expected peaks at: {f1 * 1e-9:.1f}, {f2 * 1e-9:.1f} GHz")
 
             # Test mode analyzer
             from mmpp.fft.modes import FMRModeAnalyzer, ModeVisualizationConfig

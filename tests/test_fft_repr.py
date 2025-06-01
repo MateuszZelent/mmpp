@@ -2,6 +2,7 @@
 """
 Test script for FFT class __repr__ method.
 """
+
 import sys
 import os
 

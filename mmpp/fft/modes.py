@@ -761,7 +761,7 @@ class FMRModeAnalyzer:
         mode_shape = self.zarr_file[self.modes_path].shape
         if z_layer >= mode_shape[1]:
             raise ValueError(
-                f"z_layer {z_layer} out of range. Available layers: 0-{mode_shape[1]-1}"
+                f"z_layer {z_layer} out of range. Available layers: 0-{mode_shape[1] - 1}"
             )
 
         # Load mode data for this frequency with bounds checking
@@ -2028,9 +2028,9 @@ class FFTModeInterface:
 MMPP FFT Mode Analyzer:
 ======================
 🎯 Advanced FMR mode visualization and analysis
-📁 Dataset: {getattr(self.mode_analyzer, 'dataset_name', 'Not loaded')}
-🌊 Modes available: {'Yes' if getattr(self.mode_analyzer, 'modes_available', False) else 'No'}
-📊 Z-layers: {getattr(self.mode_analyzer, 'n_z_layers', 'Unknown')}
+📁 Dataset: {getattr(self.mode_analyzer, "dataset_name", "Not loaded")}
+🌊 Modes available: {"Yes" if getattr(self.mode_analyzer, "modes_available", False) else "No"}
+📊 Z-layers: {getattr(self.mode_analyzer, "n_z_layers", "Unknown")}
 
 🔧 Main methods:
   • interactive_spectrum(dset=None, **kwargs) - Interactive spectrum with modes

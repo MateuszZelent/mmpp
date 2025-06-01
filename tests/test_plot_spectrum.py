@@ -96,7 +96,7 @@ def create_test_data():
 
     print(f"Created test data at: {zarr_path}")
     print(f"Data shape: {m_data.shape}")
-    print(f"Expected resonances: {freq1/1e9:.2f} GHz, {freq2/1e9:.2f} GHz")
+    print(f"Expected resonances: {freq1 / 1e9:.2f} GHz, {freq2 / 1e9:.2f} GHz")
 
     return zarr_path, temp_dir
 
@@ -141,7 +141,7 @@ def test_plot_spectrum_interface():
             print("✓ FFT computation completed successfully")
             print(f"  - Frequencies shape: {result.frequencies.shape}")
             print(f"  - Spectrum shape: {result.spectrum.shape}")
-            print(f"  - Peak frequency: {result.peak_frequency/1e9:.2f} GHz")
+            print(f"  - Peak frequency: {result.peak_frequency / 1e9:.2f} GHz")
 
             # Check if data was saved
             z = zarr.open(zarr_path, mode="r")
@@ -200,7 +200,7 @@ def test_plot_spectrum_interface():
         )
 
         print("✓ Different dataset processed successfully")
-        print(f"  - Peak frequency: {result3.peak_frequency/1e9:.2f} GHz")
+        print(f"  - Peak frequency: {result3.peak_frequency / 1e9:.2f} GHz")
 
         # Verify both datasets are saved
         z = zarr.open(zarr_path, mode="r")
@@ -228,7 +228,7 @@ def test_plot_spectrum_interface():
         )
 
         print("✓ Force recalculation completed")
-        print(f"  - Peak frequency: {result4.peak_frequency/1e9:.2f} GHz")
+        print(f"  - Peak frequency: {result4.peak_frequency / 1e9:.2f} GHz")
 
         print("\n" + "=" * 70)
         print("plot_spectrum Interface Test Summary")

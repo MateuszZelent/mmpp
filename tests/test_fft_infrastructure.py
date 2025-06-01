@@ -71,7 +71,7 @@ def create_simple_test_zarr(zarr_path: str):
 
     print(f"Created test data with shape: {m_data.shape}")
     print(f"Time step: {dt} s")
-    print(f"Expected frequencies: {freq1/1e9:.2f} GHz, {freq2/1e9:.2f} GHz")
+    print(f"Expected frequencies: {freq1 / 1e9:.2f} GHz, {freq2 / 1e9:.2f} GHz")
 
     return zarr_path
 

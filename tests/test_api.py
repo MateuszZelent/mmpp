@@ -86,7 +86,7 @@ def test_api():
 
         for i, result in enumerate(mock_results):
             label = plotter._format_result_label(result, params_to_use)
-            print(f"     Result {i+1}: '{label}'")
+            print(f"     Result {i + 1}: '{label}'")
 
     print("\n=== API Test Complete ===")
     print("\nCorrect usage:")

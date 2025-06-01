@@ -1068,7 +1068,10 @@ MMPP Plotter:
                             value = y_data
 
                         ax.bar(
-                            j, value, alpha=0.7, label=f"Result {j+1}" if i == 0 else ""
+                            j,
+                            value,
+                            alpha=0.7,
+                            label=f"Result {j + 1}" if i == 0 else "",
                         )
 
                 except Exception as e:

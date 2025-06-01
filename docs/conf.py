@@ -124,14 +124,14 @@ napoleon_use_rtype = True
 # Suppress warnings and continue build even with errors
 suppress_warnings = [
     "ref.any",
-    "ref.python", 
+    "ref.python",
     "autosummary",
     "autodoc",
     "autodoc.import_object",
     "toc.secnum",
     "epub.unknown_project_files",
     "myst.domains",
-    "myst.header"
+    "myst.header",
 ]
 
 # Continue autodoc even if imports fail

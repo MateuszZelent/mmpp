@@ -74,7 +74,7 @@ def create_test_zarr_file(zarr_path: str):
 
     print(f"Created test data with shape: {m_data.shape}")
     print(f"Time step: {dt} s")
-    print(f"Expected frequencies: {freq1/1e9:.2f} GHz, {freq2/1e9:.2f} GHz")
+    print(f"Expected frequencies: {freq1 / 1e9:.2f} GHz, {freq2 / 1e9:.2f} GHz")
 
     return zarr_path
 
@@ -112,7 +112,7 @@ def test_fft_save_functionality():
         print(f"FFT calculated:")
         print(f"  - Frequencies shape: {result1.frequencies.shape}")
         print(f"  - Spectrum shape: {result1.spectrum.shape}")
-        print(f"  - Peak frequency: {result1.peak_frequency/1e9:.2f} GHz")
+        print(f"  - Peak frequency: {result1.peak_frequency / 1e9:.2f} GHz")
         print(f"  - Engine used: {result1.config.fft_engine}")
 
         # Check if FFT data was saved

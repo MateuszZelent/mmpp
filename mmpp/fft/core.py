@@ -471,7 +471,11 @@ class FFT:
             params_table.add_column("Values", style="cyan")
 
             params = [
-                ("dset", "Dataset name", "Auto-selected or explicit: 'm_z11', 'm_x11', 'm_y11'"),
+                (
+                    "dset",
+                    "Dataset name",
+                    "Auto-selected or explicit: 'm_z11', 'm_x11', 'm_y11'",
+                ),
                 ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
                 ("method", "FFT method", "1 (default), 2, 3"),
                 ("save", "Save to zarr", "True/False"),

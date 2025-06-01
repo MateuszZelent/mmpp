@@ -481,7 +481,7 @@ class QFactorAnalysis:
         omega = 2 * np.pi * frequency
         lifetime = q_factor / omega
 
-        log.info(f"Mode lifetime: {lifetime*1e9:.2f} ns")
+        log.info(f"Mode lifetime: {lifetime * 1e9:.2f} ns")
         return lifetime
 
 
@@ -702,15 +702,15 @@ def create_comprehensive_em_report(
         Energy Analysis:
         • Total Energy: {total_energy:.2e} J
         • Average Energy Flow: {avg_poynting:.2e} W/m²
-        • Energy Confinement: {np.std(energy_total)/np.mean(energy_total):.2f}
+        • Energy Confinement: {np.std(energy_total) / np.mean(energy_total):.2f}
         
         Radiation Analysis:
         • Peak Radiation Intensity: {max_radiation:.2e} W/m²/sr
         • Radiation Efficiency: Calculated from energy balance
-        • Dominant Radiation Direction: θ={far_field['theta'][np.unravel_index(np.argmax(far_field['radiation_intensity']), far_field['radiation_intensity'].shape)[0]]:.2f} rad
+        • Dominant Radiation Direction: θ={far_field["theta"][np.unravel_index(np.argmax(far_field["radiation_intensity"]), far_field["radiation_intensity"].shape)[0]]:.2f} rad
         
         Mode Characteristics:
-        • Spatial Extent: {mode_data.extent[1]-mode_data.extent[0]:.1f} × {mode_data.extent[3]-mode_data.extent[2]:.1f} nm²
+        • Spatial Extent: {mode_data.extent[1] - mode_data.extent[0]:.1f} × {mode_data.extent[3] - mode_data.extent[2]:.1f} nm²
         • Mode Volume: Estimated from energy distribution
         • Loss Channels: Radiation + Ohmic losses
         """

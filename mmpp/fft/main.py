@@ -583,7 +583,7 @@ MMPP FFT Analyzer:
 🌊 Datasets: {len(self.results)}
 ⚙️ Engine: {self.config.engine}
 📊 Window: {self.config.window_function}
-🔍 Zero padding: {'enabled' if self.config.zero_padding else 'disabled'}
+🔍 Zero padding: {"enabled" if self.config.zero_padding else "disabled"}
 
 🔧 Main methods:
   • compute_fft(dataset, **kwargs) - Compute FFT for dataset

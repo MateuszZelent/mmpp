@@ -5,6 +5,7 @@ Practical example showing the smart legend functionality for MMPP2 plotting.
 This script demonstrates how the smart legend works with different datasets
 where only varying parameters are shown in the legend.
 """
+
 import sys
 from pathlib import Path
 import numpy as np
@@ -75,7 +76,7 @@ try:
     print("\nDataset parameters:")
     for i, result in enumerate(results):
         print(
-            f"  Dataset {i+1}: solver={result.solver}, f0={result.f0:.1e}, "
+            f"  Dataset {i + 1}: solver={result.solver}, f0={result.f0:.1e}, "
             f"maxerr={result.maxerr:.1e}, Nx={result.Nx}, dt={result.dt:.1e}"
         )
 
@@ -109,13 +110,13 @@ try:
     print(f"\n🏷️  Smart legend labels (showing only varying parameters):")
     for i, result in enumerate(results):
         label = plotter._format_result_label(result, varying_params)
-        print(f"  Dataset {i+1}: {label}")
+        print(f"  Dataset {i + 1}: {label}")
 
     # Compare with old-style labels (showing all priority parameters)
     print(f"\n🏷️  Old-style labels (for comparison):")
     for i, result in enumerate(results):
         label = plotter._format_result_label(result, None)  # None = use old behavior
-        print(f"  Dataset {i+1}: {label}")
+        print(f"  Dataset {i + 1}: {label}")
 
     # Test configuration
     print(f"\n⚙️  Testing configuration options:")
@@ -127,14 +128,12 @@ try:
     print(f"\n🏷️  Limited smart legend labels (max 3 params):")
     for i, result in enumerate(results):
         label = plotter._format_result_label(result, varying_params[:3])
-        print(f"  Dataset {i+1}: {label}")
+        print(f"  Dataset {i + 1}: {label}")
 
     print(f"\n✅ Smart legend functionality test completed!")
     print(f"\n💡 Usage in your code:")
     print(f"   results = jobs.find(solver=(3), amp_values=0.0022)")
-    print(
-        f"   results.plot(x_series='t', y_series='m_z11', average=(1,2,3), comp='z')"
-    )
+    print(f"   results.plot(x_series='t', y_series='m_z11', average=(1,2,3), comp='z')")
     print(
         f"   # Legend will automatically show only: f0, maxerr, Nx, dt (parameters that vary)"
     )

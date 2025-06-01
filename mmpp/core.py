@@ -155,7 +155,6 @@ class ZarrJobResult:
             Optional[Syntax]: Syntax-highlighted script or None if no file found
         """
         try:
-
             # Get the zarr path and name
             zarr_path = self.path
 
@@ -620,9 +619,7 @@ def find_largest_m_dataset(zarr_path: str) -> str:
         return largest_dataset
 
     except (OSError, IOError) as e:
-        log.warning(
-            f"File system error accessing {zarr_path}: {e}, using fallback 'm'"
-        )
+        log.warning(f"File system error accessing {zarr_path}: {e}, using fallback 'm'")
         return "m"
     except ImportError as e:
         log.warning(f"Missing zarr dependency: {e}, using fallback 'm'")
@@ -1617,7 +1614,7 @@ class MMPP:
         print(f"\n=== First {display_count} entries ===")
 
         for i, (_, row) in enumerate(self.dataframe.head(display_count).iterrows()):
-            print(f"\n--- Entry {i+1} ---")
+            print(f"\n--- Entry {i + 1} ---")
             print(f"Path: {row['path']}")
 
             # Group parameters by type
@@ -2021,12 +2018,12 @@ MMPP Database Summary:
     def chunks(self, batch_size: int):
         """
         Generate chunks of results for batch processing.
-        
+
         Parameters:
         -----------
         batch_size : int
             Number of results per chunk
-            
+
         Yields:
         -------
         BatchOperations
@@ -2034,9 +2031,9 @@ MMPP Database Summary:
         """
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
-            
+
         total_results = len(self)
-        
+
         for i in range(0, total_results, batch_size):
             end_idx = min(i + batch_size, total_results)
             chunk_slice = slice(i, end_idx)
