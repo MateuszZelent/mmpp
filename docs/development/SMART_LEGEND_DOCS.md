@@ -10,7 +10,7 @@ The MMPP2 plotting functionality now includes **smart legend** capability that a
 results = jobs.find(solver=(3), amp_values=0.0022)
 results.plot(x_series='t', y_series="m_z11", average=(1,2,3), comp='z')
 ```
-**Old legend would show:** `solver=3, f0=1.00e+09, maxerr=1.00e-06, Nx=64`
+**Old legend would show:** `solver=3    , f0=1.00e+09, maxerr=1.00e-06, Nx=64`
 - Includes constant parameters like `solver=3` (same for all datasets)
 - Cluttered with information that doesn't help distinguish between curves
 

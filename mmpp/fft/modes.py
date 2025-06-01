@@ -463,7 +463,7 @@ class FMRModeAnalyzer:
     def __init__(
         self,
         zarr_path: str,
-        dataset_name: str = "m",
+        dataset_name: Optional[str] = None,
         config: Optional[ModeVisualizationConfig] = None,
         debug: bool = False,
     ):
@@ -475,7 +475,7 @@ class FMRModeAnalyzer:
         zarr_path : str
             Path to zarr file containing mode data
         dataset_name : str, optional
-            Base dataset name (default: "m")
+            Base dataset name (default: auto-select largest m dataset)
         config : ModeVisualizationConfig, optional
             Visualization configuration
         debug : bool, optional
@@ -483,6 +483,11 @@ class FMRModeAnalyzer:
         """
         if not ZARR_AVAILABLE:
             raise ImportError("Zarr is required for mode analysis")
+
+        # Auto-select largest m dataset if none specified
+        if dataset_name is None:
+            from ..core import find_largest_m_dataset
+            dataset_name = find_largest_m_dataset(zarr_path)
 
         self.zarr_path = zarr_path
         self.dataset_name = dataset_name

@@ -70,7 +70,7 @@ class FFT:
 
     def _compute_fft(
         self,
-        dataset_name: str = "m_z11",
+        dataset_name: Optional[str] = None,
         z_layer: int = -1,
         method: int = 1,
         use_cache: bool = True,
@@ -85,7 +85,7 @@ class FFT:
         Parameters:
         -----------
         dataset_name : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: auto-select largest m dataset)
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
@@ -106,6 +106,10 @@ class FFT:
         FFTComputeResult
             FFT computation result
         """
+        # Auto-select largest m dataset if none specified
+        if dataset_name is None:
+            dataset_name = self.job_result.get_largest_m_dataset()
+        
         cache_key = self._get_cache_key(dataset_name, z_layer, method, **kwargs)
 
         # Check memory cache only if not forcing and not saving

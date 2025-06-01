@@ -359,7 +359,7 @@ class FFTAnalyzer:
     def analyze_single(
         self,
         result_index: int = 0,
-        dataset_name: str = "m_z11",
+        dataset_name: Optional[str] = None,
         comp: Optional[Union[str, int]] = None,
         average: Optional[Tuple[Any, ...]] = None,
         time_range: Optional[Tuple[float, float]] = None,
@@ -373,7 +373,7 @@ class FFTAnalyzer:
         result_index : int, optional
             Index of result to analyze (default: 0)
         dataset_name : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: auto-select largest m dataset)
         comp : Union[str, int], optional
             Component to analyze
         average : tuple, optional
@@ -395,6 +395,10 @@ class FFTAnalyzer:
             raise IndexError(f"Result index {result_index} out of range")
 
         result = self.results[result_index]
+        
+        # Auto-select largest m dataset if none specified
+        if dataset_name is None:
+            dataset_name = result.get_largest_m_dataset()
 
         # Create cache key
         cache_key = f"{result.path}_{dataset_name}_{comp}_{average}_{time_range}_{hash(str(self.config))}"
@@ -421,14 +425,14 @@ class FFTAnalyzer:
 
         return fft_result
 
-    def analyze_all(self, dataset_name: str = "m_z11", **kwargs) -> List[FFTResult]:
+    def analyze_all(self, dataset_name: Optional[str] = None, **kwargs) -> List[FFTResult]:
         """
         Analyze all results with FFT.
 
         Parameters:
         -----------
         dataset_name : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: auto-select largest m dataset)
         \\*\\*kwargs : Any
             Additional parameters passed to analyze_single
 

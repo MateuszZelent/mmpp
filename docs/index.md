@@ -36,7 +36,7 @@ results = op.find(solver=3, amp_values=0.0022)
 results.plot("time", "my")
 
 # Interactive table view
-op.show_interactive()
+op.show()
 ```
 
 ### 🔍 Advanced FFT Analysis

@@ -11,6 +11,63 @@ from .logging_config import setup_mmpp_logging, get_mmpp_logger
 # Get logger for plotting
 log = get_mmpp_logger("mmpp.plot")
 
+def _find_largest_m_dataset(zarr_path: str) -> str:
+    """
+    Automatically find the m dataset with the largest time dimension.
+    
+    Parameters:
+    -----------
+    zarr_path : str
+        Path to zarr file
+        
+    Returns:
+    --------
+    str
+        Name of the largest m dataset (e.g., "m_z5-8", "m_z11-12", or fallback "m")
+    """
+    try:
+        from pyzfn import Pyzfn
+        job = Pyzfn(zarr_path)
+        
+        # Get all available datasets that start with "m"
+        m_datasets = []
+        for key in job.z.keys():
+            if key.startswith("m") and not key.startswith("m_"):
+                # Include base "m" dataset
+                m_datasets.append(key)
+            elif key.startswith("m_"):
+                # Include cropped datasets like "m_z5-8", "m_z11-12"
+                m_datasets.append(key)
+        
+        if not m_datasets:
+            log.warning(f"No m datasets found in {zarr_path}, using fallback 'm'")
+            return "m"
+        
+        # Find dataset with largest time dimension
+        largest_dataset = "m"
+        largest_time_size = 0
+        
+        for dataset_name in m_datasets:
+            try:
+                dataset = job.z[dataset_name]
+                if hasattr(dataset, 'shape') and len(dataset.shape) >= 1:
+                    time_size = dataset.shape[0]  # First dimension is usually time
+                    log.debug(f"Dataset {dataset_name}: time size = {time_size}")
+                    
+                    if time_size > largest_time_size:
+                        largest_time_size = time_size
+                        largest_dataset = dataset_name
+            except Exception as e:
+                log.debug(f"Could not check dataset {dataset_name}: {e}")
+                continue
+        
+        log.info(f"Auto-selected dataset '{largest_dataset}' with {largest_time_size} time steps")
+        return largest_dataset
+        
+    except Exception as e:
+        log.warning(f"Error finding largest m dataset in {zarr_path}: {e}, using fallback 'm'")
+        return "m"
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 else:
@@ -1505,7 +1562,7 @@ MMPP Plotter:
 
     def snapshot(
         self,
-        dset: str = "m",
+        dset: Optional[str] = None,
         z: int = 0,
         t: int = -1,
         ax: Optional[Axes] = None,
@@ -1517,7 +1574,8 @@ MMPP Plotter:
 
         Parameters:
         -----------
-        dset : str, default "m"
+        dset : str, optional
+            Dataset name. If None, automatically selects the largest m dataset.
             Dataset name to visualize
         z : int, default 0
             Z-slice to display
@@ -1540,6 +1598,11 @@ MMPP Plotter:
 
         # Use the first result for now
         result = self.results[0]
+        
+        # Auto-select dataset if not provided
+        if dset is None:
+            dset = result.get_largest_m_dataset()
+            log.info(f"Auto-selected dataset: {dset}")
 
         # Get the magnetization data
         arr = result.get_np3d(dset, (t, z, slice(None), slice(None), slice(None)))

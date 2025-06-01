@@ -542,6 +542,77 @@ class ZarrJobResult:
         """Direct method for FFT calculation."""
         return self.fft._compute_fft(**kwargs)
 
+    def get_largest_m_dataset(self) -> str:
+        """
+        Automatically find the m dataset with the largest time dimension.
+        
+        Returns:
+        --------
+        str
+            Name of the largest m dataset (e.g., "m_z5-8", "m_z11-12", or fallback "m")
+        """
+        # Import here to avoid circular import
+        from .plotting import _find_largest_m_dataset
+        return _find_largest_m_dataset(self.path)
+
+
+# Dataset utilities
+def find_largest_m_dataset(zarr_path: str) -> str:
+    """
+    Automatically find the m dataset with the largest time dimension.
+
+    Parameters:
+    -----------
+    zarr_path : str
+        Path to zarr file
+
+    Returns:
+    --------
+    str
+        Name of the largest m dataset (e.g., "m_z5-8", "m_z11-12", or fallback "m")
+    """
+    try:
+        job = Pyzfn(zarr_path)
+
+        # Get all available datasets that start with "m"
+        m_datasets = []
+        for key in job.z.keys():
+            if key.startswith("m") and not key.startswith("m_"):
+                # Include base "m" dataset
+                m_datasets.append(key)
+            elif key.startswith("m_"):
+                # Include cropped datasets like "m_z5-8", "m_z11-12"
+                m_datasets.append(key)
+
+        if not m_datasets:
+            log.warning(f"No m datasets found in {zarr_path}, using fallback 'm'")
+            return "m"
+
+        # Find dataset with largest time dimension
+        largest_dataset = "m"
+        largest_time_size = 0
+
+        for dataset_name in m_datasets:
+            try:
+                dataset = job.z[dataset_name]
+                if hasattr(dataset, "shape") and len(dataset.shape) >= 1:
+                    time_size = dataset.shape[0]  # First dimension is usually time
+                    log.debug(f"Dataset {dataset_name}: time size = {time_size}")
+
+                    if time_size > largest_time_size:
+                        largest_time_size = time_size
+                        largest_dataset = dataset_name
+            except Exception as e:
+                log.debug(f"Could not check dataset {dataset_name}: {e}")
+                continue
+
+        log.info(f"Auto-selected dataset '{largest_dataset}' with {largest_time_size} time steps")
+        return largest_dataset
+
+    except Exception as e:
+        log.warning(f"Error finding largest m dataset in {zarr_path}: {e}, using fallback 'm'")
+        return "m"
+
 
 class MMPP:
     """
@@ -1594,7 +1665,7 @@ class MMPP:
         methods_text.append("find(**kwargs)", style="code")
         methods_text.append(" - Search by criteria\n", style="dim")
         methods_text.append("  • ", style="dim")
-        methods_text.append("show_interactive()", style="code")
+        methods_text.append("show()", style="code")
         methods_text.append(" - Interactive table view\n", style="dim")
         methods_text.append("  • ", style="dim")
         methods_text.append("list_data(limit=10)", style="code")
@@ -1666,16 +1737,16 @@ MMPP Database Summary:
 
 🔧 Available methods:
   • find(**kwargs) - Search by criteria
-  • show_interactive() - Interactive table view
+  • show() - Interactive table view
   • list_data(limit=10) - Formatted list view
   • get_summary() - Database summary
   • force_rescan() - Rescan directory
 
-📋 Use 'jobs.show_interactive()' for interactive table view
+📋 Use 'jobs.show()' for interactive table view
 """
         return summary
 
-    def show_interactive(self, max_rows: int = 1000, height: int = 400) -> None:
+    def show(self, max_rows: int = 1000, height: int = 400) -> None:
         """
         Show interactive pandas DataFrame viewer.
 
@@ -1889,7 +1960,7 @@ MMPP Database Summary:
         html += "</table>"
 
         if len(df) > 100:
-            html += f"<p><i>... and {len(df) - 100} more rows. Use show_interactive() with itables for full view.</i></p>"
+            html += f"<p><i>... and {len(df) - 100} more rows. Use show() with itables for full view.</i></p>"
 
         return html
 

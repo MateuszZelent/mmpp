@@ -87,7 +87,7 @@ class FFTPlotter:
 
     def power_spectrum(
         self,
-        dataset_name: str = "m_z11",
+        dataset_name: Optional[str] = None,
         method: int = 1,
         z_layer: int = -1,
         log_scale: bool = True,
@@ -105,7 +105,7 @@ class FFTPlotter:
         Parameters:
         -----------
         dataset_name : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: auto-select largest m dataset)
         method : int, optional
             FFT method (default: 1)
         z_layer : int, optional
@@ -134,6 +134,10 @@ class FFTPlotter:
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
+
+        # Auto-select largest m dataset if none specified
+        if dataset_name is None and self.results:
+            dataset_name = self.results[0].get_largest_m_dataset()
 
         # Setup figure
         figsize = figsize or self.config["figsize"]

@@ -3,7 +3,7 @@ Batch operations module for MMPP - enables serial computation across multiple si
 
 This module provides the BatchOperations class that allows for executing FFT computations,
 mode analysis, and other operations across entire directories of simulation results using
-slice notation like `op[:].fft.modes.compute_modes(dset="m_z5-8")`.
+slice notation like `op[:].fft.modes.compute_modes()` (auto-selects optimal dataset).
 """
 
 from typing import List, Any, Optional, Dict, Union
@@ -118,7 +118,7 @@ class BatchModeAnalyzer:
 
     def compute_modes(
         self,
-        dset: str = "m_z5-8",
+        dset: Optional[str] = None,
         parallel: bool = True,
         max_workers: Optional[int] = None,
         **kwargs,
@@ -128,8 +128,8 @@ class BatchModeAnalyzer:
 
         Parameters:
         -----------
-        dset : str, default="m_z5-8"
-            Dataset name to analyze
+        dset : str, default=None
+            Dataset name to analyze (default: auto-select largest m dataset)
         parallel : bool, default=True
             Whether to use parallel processing
         max_workers : Optional[int]
@@ -144,6 +144,10 @@ class BatchModeAnalyzer:
         """
         if not FFT_AVAILABLE:
             raise ImportError("FFT functionality not available for mode analysis")
+
+        # Auto-select largest m dataset if none specified
+        if dset is None and self.results:
+            dset = self.results[0].get_largest_m_dataset()
 
         log.info(f"Starting batch mode computation for {len(self.results)} results")
         log.info(f"Dataset: {dset}, Parallel: {parallel}")
