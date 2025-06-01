@@ -58,7 +58,7 @@ modes.save_modes_animation(
 ## Quick Start
 
 ```{note}
-Make sure you have Python 3.8+ installed with numpy, pandas, and matplotlib.
+Make sure you have Python 3.9+ installed with numpy, pandas, and matplotlib.
 ```
 
 ### Installation

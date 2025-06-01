@@ -3,7 +3,7 @@
 ## Setup Instructions
 
 ### Prerequisites
-- Python 3.8 or higher
+- Python 3.9 or higher
 - Git
 - Just (command runner) - install with: `cargo install just` or `pip install just-install`
 
@@ -104,7 +104,7 @@ python -c "import mmpp; print('Success!')"
 
 - **Continuous Integration**: Runs on every push and PR
 - **Multi-platform testing**: Ubuntu, Windows, macOS
-- **Multi-Python testing**: Python 3.8, 3.9, 3.10, 3.11
+- **Multi-Python testing**: Python 3.9, 3.10, 3.11
 - **Code quality checks**: flake8, black, mypy
 - **Test coverage**: pytest with coverage reporting
 

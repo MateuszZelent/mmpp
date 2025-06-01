@@ -306,7 +306,7 @@ pip install mmpp[dev]
 ## 📋 Requirements
 
 ### Core Dependencies
-- 🐍 **Python** ≥3.8
+- 🐍 **Python** ≥3.9
 - 🔢 **NumPy** ≥1.20.0
 - 🐼 **Pandas** ≥1.3.0
 - 📊 **Matplotlib** ≥3.5.0
@@ -332,8 +332,7 @@ pip install mmpp[dev]
 - **CPU**: Multi-core processor recommended for parallel operations
 
 ### Python Compatibility
-- ✅ **Python 3.8** - Minimum supported version
-- ✅ **Python 3.9** - Fully supported
+- ✅ **Python 3.9** - Minimum supported version
 - ✅ **Python 3.10** - Fully supported  
 - ✅ **Python 3.11** - Fully supported
 - ⚠️ **Python 3.12** - Beta support (some dependencies may vary)

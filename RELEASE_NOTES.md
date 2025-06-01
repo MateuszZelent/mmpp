@@ -69,7 +69,7 @@ for i in range(0, len(op), batch_size):
 
 #### Package Information
 - **Version**: 0.5.0
-- **Python Compatibility**: 3.8+ 
+- **Python Compatibility**: 3.9+ 
 - **License**: MIT
 - **Author**: Mateusz Zelent (mateusz.zelent@amu.edu.pl)
 
