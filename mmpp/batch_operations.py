@@ -355,7 +355,7 @@ class BatchOperations:
 
     This class is returned when using slice notation on MMPP objects, e.g., `op[:]`.
     It provides access to batch operations like:
-    - `op[:].fft.modes.compute_modes(dset="m_z5-8")`
+    - `op[:].fft.modes.compute_modes()` (auto-selects optimal dataset)
     - `op[:].fft.compute_all()`
     """
 

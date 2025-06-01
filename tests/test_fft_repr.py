@@ -6,7 +6,7 @@ import sys
 import os
 
 # Add the current directory to Python path to import mmpp
-sys.path.insert(0, "/home/kkingstoun/git/mmpp")
+sys.path.insert(0, "/home/MateuszZelent/git/mmpp")
 
 try:
     # Mock a simple job result for testing

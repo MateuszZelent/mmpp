@@ -11,7 +11,7 @@ pip install mmpp
 Or for development:
 
 ```bash
-git clone https://github.com/kkingstoun/mmpp.git
+git clone https://github.com/MateuszZelent/mmpp.git
 cd mmpp
 pip install -e .
 ```

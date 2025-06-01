@@ -6,7 +6,7 @@ Test script for the updated FFT class __repr__ method with rich panel styling.
 import sys
 import os
 
-sys.path.insert(0, "/home/kkingstoun/git/mmpp")
+sys.path.insert(0, "/home/MateuszZelent/git/mmpp")
 
 
 # Mock the required components for testing

@@ -313,10 +313,10 @@ nvidia-smi
 echo "CUDA_VISIBLE_DEVICES = $CUDA_VISIBLE_DEVICES"
 
 source /mnt/storage_3/home/kkingdyoun/.bashrc
-export TMPDIR="/mnt/storage_3/home/kkingstoun/pl0095-01/scratch/tmp/"
+export TMPDIR="/mnt/storage_3/home/MateuszZelent/pl0095-01/scratch/tmp/"
 
 mv "{mx3_file}" "{lock_file}"
-/mnt/storage_3/home/kkingstoun/pl0095-01/scratch/bin/amumax -f --hide-progress-bar -o "{path}.zarr" "{lock_file}"
+/mnt/storage_3/home/MateuszZelent/pl0095-01/scratch/bin/amumax -f --hide-progress-bar -o "{path}.zarr" "{lock_file}"
 RESULT=$?
 
 if [ $RESULT -eq 0 ]; then

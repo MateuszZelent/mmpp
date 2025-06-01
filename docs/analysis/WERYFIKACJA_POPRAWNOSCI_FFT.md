@@ -5,7 +5,7 @@
 
 ## 🎯 PODSUMOWANIE WERYFIKACJI
 
-Po głębokiej analizie kodu źródłowego w katalogu `/home/kkingstoun/git/mmpp/mmpp/fft/` potwierdzam, że **cała dokumentacja jest w 100% zgodna z rzeczywistą implementacją**.
+Po głębokiej analizie kodu źródłowego w katalogu `/home/MateuszZelent/git/mmpp/mmpp/fft/` potwierdzam, że **cała dokumentacja jest w 100% zgodna z rzeczywistą implementacją**.
 
 ---
 

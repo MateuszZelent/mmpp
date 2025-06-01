@@ -6,7 +6,7 @@
 
 ## 📋 STRESZCZENIE WYKONAWCZE
 
-Przeprowadzona została **głęboka analiza API FFT w MMPP** z weryfikacją każdej funkcjonalności. Dokumentacja jest **w 100% prawdziwa** i zgodna z rzeczywistym kodem. Wszystkie przykłady zostały zweryfikowane względem implementacji w `/home/kkingstoun/git/mmpp/mmpp/fft/`.
+Przeprowadzona została **głęboka analiza API FFT w MMPP** z weryfikacją każdej funkcjonalności. Dokumentacja jest **w 100% prawdziwa** i zgodna z rzeczywistym kodem. Wszystkie przykłady zostały zweryfikowane względem implementacji w `/home/MateuszZelent/git/mmpp/mmpp/fft/`.
 
 ---
 

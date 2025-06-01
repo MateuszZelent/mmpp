@@ -4,13 +4,13 @@
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-[![Documentation](https://img.shields.io/badge/Documentation-GitHub%20Pages-blue?style=flat-square)](https://kkingstoun.github.io/mmpp/)
-[![GitHub Issues](https://img.shields.io/github/issues/kkingstoun/mmpp?style=flat-square)](https://github.com/kkingstoun/mmpp/issues)
-[![GitHub Stars](https://img.shields.io/github/stars/kkingstoun/mmpp?style=flat-square)](https://github.com/kkingstoun/mmpp/stargazers)
+[![Documentation](https://img.shields.io/badge/Documentation-GitHub%20Pages-blue?style=flat-square)](https://MateuszZelent.github.io/mmpp/)
+[![GitHub Issues](https://img.shields.io/github/issues/MateuszZelent/mmpp?style=flat-square)](https://github.com/MateuszZelent/mmpp/issues)
+[![GitHub Stars](https://img.shields.io/github/stars/MateuszZelent/mmpp?style=flat-square)](https://github.com/MateuszZelent/mmpp/stargazers)
 
 **A powerful Python library for micromagnetic simulation analysis and visualization**
 
-[📖 Documentation](https://kkingstoun.github.io/mmpp/) • [🚀 Getting Started](#-quick-start) • [🎯 Features](#-features) • [💡 Examples](#-examples)
+[📖 Documentation](https://MateuszZelent.github.io/mmpp/) • [🚀 Getting Started](#-quick-start) • [🎯 Features](#-features) • [💡 Examples](#-examples)
 
 </div>
 
@@ -70,7 +70,7 @@
 pip install mmpp
 
 # Or install latest development version
-pip install git+https://github.com/kkingstoun/mmpp.git
+pip install git+https://github.com/MateuszZelent/mmpp.git
 ```
 
 ### Basic Usage
@@ -152,10 +152,10 @@ mplt.save_figure('spectrum.png', dpi=300, format='png')
 
 | Resource | Description | Link |
 |----------|-------------|------|
-| 📖 **Documentation** | Complete API reference and tutorials | [GitHub Pages](https://kkingstoun.github.io/mmpp/) |
-| 🎓 **Tutorials** | Step-by-step guides and examples | [Tutorials](https://kkingstoun.github.io/mmpp/tutorials/) |
-| 🔬 **API Reference** | Detailed function documentation | [API Docs](https://kkingstoun.github.io/mmpp/api/) |
-| 🚀 **Getting Started** | Quick start guide | [Getting Started](https://kkingstoun.github.io/mmpp/tutorials/getting_started/) |
+| 📖 **Documentation** | Complete API reference and tutorials | [GitHub Pages](https://MateuszZelent.github.io/mmpp/) |
+| 🎓 **Tutorials** | Step-by-step guides and examples | [Tutorials](https://MateuszZelent.github.io/mmpp/tutorials/) |
+| 🔬 **API Reference** | Detailed function documentation | [API Docs](https://MateuszZelent.github.io/mmpp/api/) |
+| 🚀 **Getting Started** | Quick start guide | [Getting Started](https://MateuszZelent.github.io/mmpp/tutorials/getting_started/) |
 
 </div>
 
@@ -180,7 +180,7 @@ pip install mmpp
 
 ### 🛠️ Development Installation
 ```bash
-git clone https://github.com/kkingstoun/mmpp.git
+git clone https://github.com/MateuszZelent/mmpp.git
 cd mmpp
 pip install -e ".[dev]"
 ```
@@ -236,17 +236,17 @@ We welcome contributions! Here's how you can help:
 
 | Type | Description | Action |
 |------|-------------|--------|
-| 🐛 **Bug Reports** | Found an issue? | [Open Issue](https://github.com/kkingstoun/mmpp/issues/new) |
-| 💡 **Feature Requests** | Have an idea? | [Discussion](https://github.com/kkingstoun/mmpp/discussions) |
+| 🐛 **Bug Reports** | Found an issue? | [Open Issue](https://github.com/MateuszZelent/mmpp/issues/new) |
+| 💡 **Feature Requests** | Have an idea? | [Discussion](https://github.com/MateuszZelent/mmpp/discussions) |
 | 🔧 **Pull Requests** | Want to contribute code? | [Contributing Guide](CONTRIBUTING.md) |
-| 📖 **Documentation** | Improve the docs | [Edit on GitHub](https://github.com/kkingstoun/mmpp/tree/main/docs) |
+| 📖 **Documentation** | Improve the docs | [Edit on GitHub](https://github.com/MateuszZelent/mmpp/tree/main/docs) |
 
 </div>
 
 ### 🚀 Quick Contribution Setup
 ```bash
 # Fork and clone the repository
-git clone https://github.com/kkingstoun/mmpp.git
+git clone https://github.com/MateuszZelent/mmpp.git
 cd mmpp
 
 # Install development dependencies
@@ -266,7 +266,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ## 🙏 Acknowledgments
 
-- Built with ❤️ by [kkingstoun](https://github.com/kkingstoun)
+- Built with ❤️ by [MateuszZelent](https://github.com/MateuszZelent)
 - Powered by the amazing Python scientific computing ecosystem
 - Special thanks to all contributors and users
 
@@ -276,6 +276,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 **⭐ Star this repo if you find it useful! ⭐**
 
-[Report Bug](https://github.com/kkingstoun/mmpp/issues) • [Request Feature](https://github.com/kkingstoun/mmpp/discussions) • [Documentation](https://kkingstoun.github.io/mmpp/)
+[Report Bug](https://github.com/MateuszZelent/mmpp/issues) • [Request Feature](https://github.com/MateuszZelent/mmpp/discussions) • [Documentation](https://MateuszZelent.github.io/mmpp/)
 
 </div>

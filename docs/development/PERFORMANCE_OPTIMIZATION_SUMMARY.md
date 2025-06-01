@@ -4,12 +4,12 @@
 The original issue was that font setup was being called repeatedly during plotting operations, causing excessive verbose logging like:
 
 ```
-🔍 Checking font directory: /mnt/local/kkingstoun/admin/.local/lib/python3.12/site-packages/mmpp/fonts
+🔍 Checking font directory: /mnt/local/MateuszZelent/admin/.local/lib/python3.12/site-packages/mmpp/fonts
 ✓ Added font: arialbd.ttf
 ✓ Added font: Arimo Bold for Powerline.ttf
 ...
 ✓ Arial font loaded successfully
-✓ Loaded paper style from: /mnt/local/kkingstoun/admin/.local/lib/python3.12/site-packages/mmpp/paper.mplstyle
+✓ Loaded paper style from: /mnt/local/MateuszZelent/admin/.local/lib/python3.12/site-packages/mmpp/paper.mplstyle
 ```
 
 This was happening for every dataset being processed, causing performance issues and cluttered output.
