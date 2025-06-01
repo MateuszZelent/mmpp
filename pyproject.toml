@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mmpp"
-version = "0.1.0"
+version = "0.5.0"
 authors = [
     {name = "Mateusz Zelent", email = "mateusz.zelent@amu.edu.pl"}
 ]

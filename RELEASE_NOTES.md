@@ -1,93 +1,144 @@
-# MMPP Library Release v0.1.0
+# MMPP Library Release v0.5.0
 
-## 🎉 MMPP is now a PIP-compliant Python package!
+## 🚀 Major Feature Release: Comprehensive Batch Processing & Auto-Selection
 
-### What's New
+### 🎯 What's New in v0.5.0
 
-This release transforms the MMPP code from a collection of scripts into a professional, installable Python library with full automation for development and releases.
+This release introduces powerful new features for efficient batch processing, automatic dataset selection, and enhanced memory management for large-scale micromagnetic simulations.
 
-### 📦 Package Structure
-- **Package Name**: `mmpp` (Micro Magnetic Post Processing)
-- **Version**: 0.1.0
-- **Author**: Mateusz Zelent (mateusz.zelent@amu.edu.pl)
+### 🔥 Key Features
+
+#### 🤖 Automatic Dataset Selection (NEW!)
+- **Smart auto-selection**: MMPP now automatically selects the optimal dataset for analysis
+- **Intelligent detection**: Finds the largest `m_z` dataset for best analysis quality
+- **Zero configuration**: Works out-of-the-box without manual dataset specification
+
+```python
+# Auto-selection in action
+fft_analyzer = op[0].fft
+spectrum = fft_analyzer.spectrum()  # Automatically selects best dataset
+modes = fft_analyzer.modes.compute_modes()  # No dataset needed!
+
+# Batch operations with auto-selection
+batch = op[:]
+modes = batch.fft.modes.compute_modes(parallel=True)  # Auto-selects optimal dataset
+```
+
+#### ⚡ Enhanced Batch Processing
+- **Complete processing pipeline**: New `process()` method for comprehensive analysis
+- **Memory management**: Efficient chunking for large datasets
+- **Progress tracking**: Real-time progress bars and detailed logging
+- **Error handling**: Robust error reporting and recovery
+
+```python
+# Process large datasets efficiently
+for i in range(0, len(op), batch_size):
+    chunk = op[i:i+batch_size]
+    results = chunk.process(parallel=True, max_workers=4)
+    print(f"Processed {results['successful']}/{results['total']} files")
+```
+
+#### 🔧 Implementation Improvements
+- **Fixed parameter names**: Corrected `n_workers` → `max_workers` in all examples
+- **Complete API**: Implemented missing `chunks()` and `process()` methods
+- **Type annotations**: Enhanced type safety and IDE support
+- **Documentation**: Comprehensive README with examples and troubleshooting
+
+### � Full Changelog
+
+#### ✨ New Features
+- **Auto-Selection Engine**: Automatically selects optimal datasets for analysis
+- **BatchOperations.process()**: Complete batch processing with FFT + mode analysis
+- **MMPP.chunks()**: Memory-efficient chunking for large datasets
+- **Enhanced Progress Tracking**: Detailed progress bars and timing information
+- **Comprehensive Error Handling**: Better error reporting and recovery
+
+#### 🔧 Improvements
+- **Parameter Consistency**: Fixed `n_workers` → `max_workers` throughout codebase
+- **Memory Optimization**: Improved memory usage for large batch operations  
+- **Documentation**: Enhanced README with FAQ, troubleshooting, and performance tips
+- **Type Safety**: Added comprehensive type annotations
+- **Logging**: Enhanced logging with structured output
+
+#### 🐛 Bug Fixes
+- Fixed missing implementation for `chunk.process()` method referenced in README
+- Corrected parameter naming inconsistencies in batch operations
+- Fixed examples in documentation to match actual API
+
+### 🏗️ Technical Details
+
+#### Package Information
+- **Version**: 0.5.0
+- **Python Compatibility**: 3.8+ 
 - **License**: MIT
+- **Author**: Mateusz Zelent (mateusz.zelent@amu.edu.pl)
 
-### 🚀 Installation
+### 🚀 Installation & Upgrade
 ```bash
 # Install from PyPI (once published)
 pip install mmpp
 
-# Install from source
-git clone <repository>
-cd mmpp
-just install-local
+```bash
+# Upgrade existing installation
+pip install --upgrade mmpp
 
-# Or install manually
+# Install from source
+git clone https://github.com/MateuszZelent/mmpp
+cd mmpp
 pip install -e .
+
+# Install with development dependencies
+pip install -e ".[dev]"
 ```
 
-### 🎯 Usage
+### 🎯 Usage Examples
+
+#### Basic Usage
 ```python
-# Import the library
 import mmpp
 
-# Use individual components
-from mmpp import MMPPAnalyzer, MMPPlotter, SimulationManager
+# Load simulation data
+op = mmpp.MMPP('simulation_results/')
 
-# CLI usage
-mmpp --help
-mmpp info
+# Auto-selection magic ✨
+result = op[0]
+fft_analyzer = result.fft
+spectrum = fft_analyzer.spectrum()  # Automatically selects best dataset!
+modes = fft_analyzer.modes.compute_modes()
 ```
 
-### 🛠️ Development Automation
+#### Batch Processing
+```python
+# Process all files with auto-selection
+batch = op[:]
+results = batch.process(parallel=True, max_workers=4)
+print(f"Successfully processed {results['successful']}/{results['total']} files")
 
-The project now includes comprehensive automation through `justfile`:
-
-```bash
-# Build and test
-just build          # Build the package
-just test           # Run tests
-just install-local  # Install locally
-
-# Code quality
-just format         # Format code with black
-just lint           # Lint with flake8
-just check          # Run all checks
-
-# Version management
-just bump-patch     # Bump patch version (0.1.0 -> 0.1.1)
-just bump-minor     # Bump minor version (0.1.0 -> 0.2.0)
-just bump-major     # Bump major version (0.1.0 -> 1.0.0)
-
-# Release
-just prepare-release  # Prepare for release
-just release-test     # Test release to TestPyPI
-just release          # Release to PyPI
+# Memory-efficient chunking for large datasets
+batch_size = 50
+for i in range(0, len(op), batch_size):
+    chunk = op[i:i+batch_size]
+    results = chunk.process(parallel=True)
 ```
 
-### 🔄 CI/CD Pipeline
+### � Links & Resources
 
-- **GitHub Actions** for automated testing on multiple Python versions (3.8-3.11)
-- **Cross-platform testing** (Ubuntu, Windows, macOS)
-- **Automated PyPI releases** when git tags are pushed
-- **Dependency updates** via Dependabot
+- **📖 Documentation**: [GitHub Pages](https://MateuszZelent.github.io/mmpp/)
+- **🚀 Getting Started**: [Quick Start Guide](https://MateuszZelent.github.io/mmpp/tutorials/getting_started/)
+- **🔬 API Reference**: [Complete API Docs](https://MateuszZelent.github.io/mmpp/api/)
+- **🎓 Tutorials**: [Step-by-step Guides](https://MateuszZelent.github.io/mmpp/tutorials/)
 
-### 📁 File Structure
-```
-mmpp/
-├── mmpp/                    # Main package
-│   ├── __init__.py         # Package exports
-│   ├── core.py            # Core analysis functions (was main.py)
-│   ├── plotting.py        # Plotting utilities
-│   ├── simulation.py      # Simulation management (was swapper.py)
-│   ├── cli.py             # Command line interface
-│   ├── paper.mplstyle     # Matplotlib style
-│   └── fonts/             # Font assets
-├── tests/                  # Test suite
-├── scripts/               # Utility scripts
-├── .github/               # GitHub Actions workflows
-├── pyproject.toml         # Modern Python packaging config
-├── setup.py              # Legacy setup for compatibility
+### 🙏 Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+**Full Diff**: [v0.1.0...v0.5.0](https://github.com/MateuszZelent/mmpp/compare/v0.1.0...v0.5.0)
 ├── justfile              # Automation commands
 ├── README.md             # User documentation
 ├── DEVELOPMENT.md        # Developer guide
