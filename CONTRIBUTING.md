@@ -8,7 +8,7 @@ Thank you for your interest in contributing to MMPP (Micro Magnetic Post Process
 
 1. **Fork and Clone**
    ```bash
-   git clone https://github.com/yourusername/mmpp.git
+   git clone https://github.com/mateuszzelent/mmpp.git
    cd mmpp
    ```
 

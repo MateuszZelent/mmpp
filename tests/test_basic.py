@@ -1,5 +1,5 @@
 """
-Basic tests for MMPP2 library.
+Basic tests for mmpp library.
 """
 
 import os

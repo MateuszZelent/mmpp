@@ -1,7 +1,7 @@
-# Smart Legend Feature for MMPP2 Plotting
+# Smart Legend Feature for mmpp Plotting
 
 ## Overview
-The MMPP2 plotting functionality now includes **smart legend** capability that automatically detects which parameters vary between datasets and shows only those parameters in the legend, making plots much cleaner and more informative.
+The mmpp plotting functionality now includes **smart legend** capability that automatically detects which parameters vary between datasets and shows only those parameters in the legend, making plots much cleaner and more informative.
 
 ## How It Works
 
@@ -124,4 +124,4 @@ Run tests with:
 python test_comprehensive.py
 ```
 
-This smart legend feature makes MMPP2 plots significantly more readable and professional, especially when comparing multiple simulation results with different parameters.
+This smart legend feature makes mmpp plots significantly more readable and professional, especially when comparing multiple simulation results with different parameters.

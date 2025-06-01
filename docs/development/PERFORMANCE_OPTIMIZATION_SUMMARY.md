@@ -1,4 +1,4 @@
-# MMPP2 Performance Optimization Summary
+# mmpp Performance Optimization Summary
 
 ## Problem Fixed
 The original issue was that font setup was being called repeatedly during plotting operations, causing excessive verbose logging like:

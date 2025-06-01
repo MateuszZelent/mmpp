@@ -171,8 +171,6 @@ class FontManager:
             return []
 
 
-
-
 class PlotterProxy:
     """Proxy class to provide plotting functionality to search results."""
 

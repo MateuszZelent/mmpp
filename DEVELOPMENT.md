@@ -1,4 +1,4 @@
-# MMPP2 Development Guide
+# mmpp Development Guide
 
 ## Setup Instructions
 
@@ -11,8 +11,8 @@
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/mmpp2.git
-   cd mmpp2
+   git clone https://github.com/mateuszzelent/mmpp.git
+   cd mmpp
    ```
 
 2. **Setup development environment**
@@ -111,7 +111,7 @@ python -c "import mmpp; print('Success!')"
 ## Package Structure
 
 ```
-mmpp2/
+mmpp/
 ├── mmpp/                   # Main package
 │   ├── __init__.py        # Package initialization
 │   ├── core.py            # Core functionality (from main.py)
@@ -143,7 +143,7 @@ mmpp2/
 
 3. **Missing dependencies**: Use extras for optional features:
    ```bash
-   pip install mmpp2[plotting,interactive]
+   pip install mmpp[plotting,interactive]
    ```
 
 ### Version Management

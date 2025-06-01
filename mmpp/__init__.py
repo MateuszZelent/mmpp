@@ -1,11 +1,11 @@
 """
-MMPP2 - Micro Magnetic Post Processing Library
+mmpp - Micro Magnetic Post Processing Library
 
 A Python library for simulation and analysis of micromagnetic simulations
 with advanced post-processing capabilities.
 """
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 __author__ = "Mateusz Zelent"
 __email__ = "mateusz.zelent@amu.edu.pl"
 
@@ -49,19 +49,19 @@ except ImportError:
     class MMPPlotter:
         def __init__(self, *args, **kwargs):
             raise ImportError(
-                "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
+                "Plotting dependencies not available. Install with: pip install mmpp[plotting]"
             )
 
     class PlotConfig:
         def __init__(self, *args, **kwargs):
             raise ImportError(
-                "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
+                "Plotting dependencies not available. Install with: pip install mmpp[plotting]"
             )
 
     class PlotterProxy:
         def __init__(self, *args, **kwargs):
             raise ImportError(
-                "Plotting dependencies not available. Install with: pip install mmpp2[plotting]"
+                "Plotting dependencies not available. Install with: pip install mmpp[plotting]"
             )
 
     # Create dummy font manager
@@ -102,7 +102,7 @@ except ImportError:
     class SimulationManager:
         def __init__(self, *args, **kwargs):
             raise ImportError(
-                "Simulation dependencies not available. Install with: pip install mmpp2[dev]"
+                "Simulation dependencies not available. Install with: pip install mmpp[dev]"
             )
 
 
@@ -142,7 +142,7 @@ def open(base_path: str, **kwargs):
     """
     if not _CORE_AVAILABLE:
         raise ImportError(
-            "Core MMPP functionality not available. Install with: pip install mmpp2[dev]"
+            "Core MMPP functionality not available. Install with: pip install mmpp[dev]"
         )
 
     # Extract force parameter for special handling

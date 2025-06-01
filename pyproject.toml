@@ -1,17 +1,18 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=61.0.0", "wheel", "setuptools_scm[toml]>=7.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mmpp"
-version = "0.5.3"
+# version = "0.5.3"  # Removed: setuptools_scm will manage this
 authors = [
     {name = "Mateusz Zelent", email = "mateusz.zelent@amu.edu.pl"}
 ]
-description = "A library for MMPP2 (Micro Magnetic Post Processing) simulation and analysis"
+description = "A library for MMPP (Micro Magnetic Post Processing) simulation and analysis"
 readme = "README.md"
-license = "MIT"
+license = { file = "LICENSE" }
 requires-python = ">=3.9"
+dynamic = ["version"] # Added: only version is dynamic
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -56,12 +57,16 @@ plotting = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/mmpp2"
-Repository = "https://github.com/yourusername/mmpp2"
-Issues = "https://github.com/yourusername/mmpp2/issues"
+Homepage = "https://github.com/mateuszzelent/mmpp"
+Repository = "https://github.com/mateuszzelent/mmpp"
+Issues = "https://github.com/mateuszzelent/mmpp/issues"
 
 [project.scripts]
 mmpp = "mmpp.cli:main"
+
+[tool.setuptools_scm] # Added section
+write_to = "mmpp/__init__.py"
+write_to_template = "__version__ = \"{version}\""
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,4 +1,4 @@
-# Justfile for MMPP2 library automation
+# Justfile for mmpp library automation
 
 # Default recipe
 default:
@@ -87,7 +87,7 @@ setup-env:
 # Show package info
 info:
     @echo "📊 Package Information:"
-    @echo "Name: mmpp2"
+    @echo "Name: mmpp"
     @echo "Version: 0.1.0"
     @echo "Author: Mateusz Zelent"
     @python -c "import sys; print(f'Python: {sys.version}')"

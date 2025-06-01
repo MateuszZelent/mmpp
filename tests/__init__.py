@@ -1,1 +1,1 @@
-# Test package for MMPP2
+# Test package for mmpp

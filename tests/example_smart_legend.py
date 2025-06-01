@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Practical example showing the smart legend functionality for MMPP2 plotting.
+Practical example showing the smart legend functionality for mmpp plotting.
 
 This script demonstrates how the smart legend works with different datasets
 where only varying parameters are shown in the legend.
@@ -17,7 +17,7 @@ try:
 
     from mmpp.plotting import MMPPlotter
 
-    print("🎯 Testing MMPP2 Smart Legend Functionality")
+    print("🎯 Testing mmpp Smart Legend Functionality")
     print("=" * 50)
 
     # Create mock result objects that simulate real MMPP results
