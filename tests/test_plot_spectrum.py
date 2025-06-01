@@ -3,11 +3,12 @@
 Test the high-level plot_spectrum interface with save=True default
 """
 
-import sys
 import os
+import sys
+import tempfile
+
 import numpy as np
 import zarr
-import tempfile
 
 # Add current directory to Python path for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))

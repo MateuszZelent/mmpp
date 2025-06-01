@@ -4,19 +4,20 @@ FFT Plotting Module
 Specialized plotting functionality for FFT analysis results.
 """
 
-from typing import Optional, Dict, List, Union, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 
 # Import shared logging configuration
-from ..logging_config import setup_mmpp_logging, get_mmpp_logger
+from ..logging_config import get_mmpp_logger, setup_mmpp_logging
 
 # Get logger for FFT plotting
 log = get_mmpp_logger("mmpp.fft.plot")
 
 # Import dependencies with error handling
 try:
-    import matplotlib.pyplot as plt
     import matplotlib as mpl
+    import matplotlib.pyplot as plt
 
     MATPLOTLIB_AVAILABLE = True
 except ImportError:

@@ -1,6 +1,5 @@
 from mmpp import MMPP
 
-
 op = MMPP("/zfn2/mannga/jobs/vortices/spectrum/d100_sinc4.zarr", debug=False)
 
 # op[0].fft.plot_spectrum(

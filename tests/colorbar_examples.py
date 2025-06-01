@@ -5,9 +5,11 @@ This example demonstrates how to enhance the existing MMPP mode visualization
 with the optimized colorbar functionality.
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
-from optimized_colorbar import create_mmpp_mode_colorbar, extract_system_size_from_zarr
+import numpy as np
+from optimized_colorbar import (create_mmpp_mode_colorbar,
+                                extract_system_size_from_zarr)
+
 from mmpp import MMPP
 
 

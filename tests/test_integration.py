@@ -4,8 +4,9 @@ Integration test for FMR mode visualization with MMPP
 """
 
 import sys
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 
 
 def test_integration():
@@ -17,7 +18,7 @@ def test_integration():
     try:
         import mmpp
         from mmpp.fft import FFT
-        from mmpp.fft.modes import FMRModeAnalyzer, FFTModeInterface
+        from mmpp.fft.modes import FFTModeInterface, FMRModeAnalyzer
 
         print("✅ All modules imported successfully")
     except ImportError as e:

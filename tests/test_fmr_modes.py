@@ -3,8 +3,8 @@
 Test script for FMR mode visualization functionality.
 """
 
-import sys
 import os
+import sys
 
 # Add the mmpp module to the path
 sys.path.insert(
@@ -21,11 +21,8 @@ def test_fmr_modes():
     try:
         # Test imports
         print("\n📋 Test 1: Module imports")
-        from mmpp.fft.modes import (
-            FMRModeAnalyzer,
-            ModeVisualizationConfig,
-            FFTModeInterface,
-        )
+        from mmpp.fft.modes import (FFTModeInterface, FMRModeAnalyzer,
+                                    ModeVisualizationConfig)
 
         print("✅ Mode modules imported successfully")
 
@@ -174,10 +171,11 @@ def test_mode_computation():
     print("=" * 50)
 
     try:
+        import os
+        import tempfile
+
         import numpy as np
         import zarr
-        import tempfile
-        import os
 
         # Create temporary zarr file with synthetic magnetization data
         with tempfile.TemporaryDirectory() as temp_dir:

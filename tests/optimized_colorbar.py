@@ -5,10 +5,11 @@ This module provides an enhanced colorbar function that integrates with the exis
 MMPP infrastructure, supports dark themes, and includes system size indicators.
 """
 
-import numpy as np
+from typing import Any, Dict, Optional, Tuple, Union
+
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from typing import Optional, Union, Tuple, Dict, Any
+import numpy as np
 
 # Import MMPP logging if available
 try:

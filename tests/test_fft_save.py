@@ -3,12 +3,13 @@
 Test script for FFT spectrum plotting with save/cache functionality
 """
 
-import sys
 import os
-import numpy as np
-import zarr
+import sys
 import tempfile
 from pathlib import Path
+
+import numpy as np
+import zarr
 
 # Add current directory to Python path for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))

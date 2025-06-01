@@ -3,17 +3,17 @@
 Test script for the new legend_variables API
 """
 
+import os
 # Add the project root to path
 import sys
-import os
 
 sys.path.insert(
     0,
     "/mnt/storage_2/scratch/pl0095-01/zelent/mannga/bowtie/mateusz/sinc/solver_test/ammpp",
 )
 
-from mmpp.plotting import MMPPlotter
 from mmpp.core import ZarrJobResult
+from mmpp.plotting import MMPPlotter
 
 
 def test_api():

@@ -3,10 +3,11 @@
 Test script for FFT progress bar functionality.
 """
 
-import numpy as np
-import time
-import sys
 import os
+import sys
+import time
+
+import numpy as np
 
 # Add the mmpp module to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

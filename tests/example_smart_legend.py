@@ -8,14 +8,16 @@ where only varying parameters are shown in the legend.
 
 import sys
 from pathlib import Path
+
 import numpy as np
 
 # Add mmpp to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    from mmpp.plotting import MMPPlotter
     import matplotlib.pyplot as plt
+
+    from mmpp.plotting import MMPPlotter
 
     print("🎯 Testing MMPP2 Smart Legend Functionality")
     print("=" * 50)

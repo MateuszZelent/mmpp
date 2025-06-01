@@ -3,8 +3,8 @@
 Test script for the updated FFT class __repr__ method with rich panel styling.
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, "/home/MateuszZelent/git/mmpp")
 
@@ -77,12 +77,12 @@ def test_import_compatibility():
     print("\nTesting rich import compatibility...")
 
     try:
-        from rich.console import Console
-        from rich.text import Text
-        from rich.panel import Panel
         from rich.columns import Columns
-        from rich.table import Table
+        from rich.console import Console
+        from rich.panel import Panel
         from rich.syntax import Syntax
+        from rich.table import Table
+        from rich.text import Text
 
         print("✅ Rich imports successful")
         return True

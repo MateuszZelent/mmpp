@@ -4,7 +4,8 @@ FFT Core Module
 Main FFT class providing unified interface for FFT analysis.
 """
 
-from typing import Optional, Dict, List, Union, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 
 # Import from our own modules
@@ -13,7 +14,8 @@ from .plot import FFTPlotter
 
 # Import mode visualization capabilities
 try:
-    from .modes import FFTModeInterface, FMRModeAnalyzer, ModeVisualizationConfig
+    from .modes import (FFTModeInterface, FMRModeAnalyzer,
+                        ModeVisualizationConfig)
 
     MODES_AVAILABLE = True
 except ImportError:
@@ -395,13 +397,14 @@ class FFT:
     def _rich_fft_display(self) -> str:
         """Create rich documentation display with panels and proper styling."""
         try:
-            from rich.console import Console
-            from rich.text import Text
-            from rich.panel import Panel
-            from rich.columns import Columns
-            from rich.table import Table
-            from rich.syntax import Syntax
             import io
+
+            from rich.columns import Columns
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.syntax import Syntax
+            from rich.table import Table
+            from rich.text import Text
 
             console = Console(file=io.StringIO(), width=120, force_terminal=True)
 

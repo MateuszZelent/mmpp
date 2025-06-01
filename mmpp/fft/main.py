@@ -4,9 +4,10 @@ Main FFT Analysis Module
 Core FFT analysis functionality for time series data from micromagnetic simulations.
 """
 
-from typing import Optional, Dict, List, Union, Any, Tuple
-import numpy as np
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
 
 # Import dependencies with error handling
 try:
@@ -25,7 +26,7 @@ except ImportError:
     PYZFN_AVAILABLE = False
 
 # Import from our own modules
-from .compute_fft import FFTCompute, FFTComputeResult, FFTComputeConfig
+from .compute_fft import FFTCompute, FFTComputeConfig, FFTComputeResult
 
 
 @dataclass
@@ -489,10 +490,10 @@ class FFTAnalyzer:
     def _rich_fft_display(self) -> str:
         """Generate rich display for FFT analyzer."""
         try:
-            from rich.console import Console
-            from rich.text import Text
-            from rich.panel import Panel
             from rich.columns import Columns
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.text import Text
 
             console = Console()
 

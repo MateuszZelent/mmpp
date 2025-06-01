@@ -4,8 +4,9 @@ Central logging configuration for MMPP using rich formatting optimized for dark 
 
 import logging
 from typing import Optional
-from rich.logging import RichHandler
+
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.theme import Theme
 
 # Create a custom theme optimized for dark backgrounds

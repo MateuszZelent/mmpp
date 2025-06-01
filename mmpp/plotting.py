@@ -1,12 +1,14 @@
-from typing import Optional, Dict, List, Union, Any, Tuple, Iterator, TYPE_CHECKING
-import os
-import numpy as np
-from dataclasses import dataclass
-import platform
 import colorsys
+import os
+import platform
+from dataclasses import dataclass
+from typing import (TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple,
+                    Union)
+
+import numpy as np
 
 # Import shared logging configuration
-from .logging_config import setup_mmpp_logging, get_mmpp_logger
+from .logging_config import get_mmpp_logger, setup_mmpp_logging
 
 # Get logger for plotting
 log = get_mmpp_logger("mmpp.plot")
@@ -82,8 +84,8 @@ else:
 
 # Import for plotting
 try:
-    import matplotlib.pyplot as plt
     import matplotlib as mpl
+    import matplotlib.pyplot as plt
     from matplotlib import font_manager
 
     try:
@@ -104,9 +106,9 @@ except ImportError:
     TQDM_AVAILABLE = False
 
 try:
+    from rich.columns import Columns
     from rich.console import Console
     from rich.panel import Panel
-    from rich.columns import Columns
     from rich.text import Text
 
     RICH_AVAILABLE = True

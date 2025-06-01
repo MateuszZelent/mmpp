@@ -5,11 +5,12 @@ Core FFT computation functionality moved from old_fft_module.py and main.py.
 Provides low-level FFT calculations without user interface elements.
 """
 
-from typing import Optional, Dict, List, Union, Any, Tuple, Literal
-import numpy as np
-import time
 import logging
+import time
 from dataclasses import dataclass
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
+import numpy as np
 
 # Import psutil for memory monitoring
 try:
@@ -21,8 +22,8 @@ except ImportError:
 
 # Import dependencies with error handling
 try:
-    import scipy.signal
     import scipy.fft
+    import scipy.signal
 
     SCIPY_AVAILABLE = True
 except ImportError:
@@ -43,7 +44,7 @@ except ImportError:
 from pyzfn import Pyzfn
 
 # Import shared logging configuration
-from ..logging_config import setup_mmpp_logging, get_mmpp_logger
+from ..logging_config import get_mmpp_logger, setup_mmpp_logging
 
 # Get logger for FFT module
 log = get_mmpp_logger("mmpp.fft")
@@ -107,8 +108,9 @@ class FFTComputeResult:
         force : bool, optional
             Overwrite existing data (default: False)
         """
-        import zarr
         import shutil
+
+        import zarr
 
         # Open zarr file
         z = zarr.open(zarr_path, mode="a")
@@ -838,8 +840,8 @@ class FFTCompute:
         log.info(f"Loading data from {dataset} (z_layer={z_layer})...")
 
         # Measure loading time and memory usage
-        import time
         import os
+        import time
 
         # Try to use psutil for memory monitoring, fallback if not available
         try:

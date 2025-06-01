@@ -8,15 +8,15 @@ This script demonstrates the new batch operations capabilities:
 - op[:].prepare_report(spectrum=True, modes=True) - future comprehensive reports
 """
 
-import sys
 import os
+import sys
 
 # Add the current directory to Python path for testing
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from mmpp.core import MMPP, ZarrJobResult
     from mmpp.batch_operations import BatchOperations
+    from mmpp.core import MMPP, ZarrJobResult
 
     print("✅ Successfully imported MMPP classes")
 except ImportError as e:

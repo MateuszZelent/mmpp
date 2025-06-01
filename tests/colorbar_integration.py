@@ -5,16 +5,15 @@ This file provides the necessary modifications to integrate the optimized
 colorbar functionality into the existing MMPP mode visualization system.
 """
 
-from typing import Optional, Union, Tuple
-import numpy as np
+from typing import Optional, Tuple, Union
+
 import matplotlib.pyplot as plt
+import numpy as np
 
 # Import the optimized colorbar functions
 try:
-    from .optimized_colorbar import (
-        create_mmpp_mode_colorbar,
-        extract_system_size_from_zarr,
-    )
+    from .optimized_colorbar import (create_mmpp_mode_colorbar,
+                                     extract_system_size_from_zarr)
 
     OPTIMIZED_COLORBAR_AVAILABLE = True
 except ImportError:

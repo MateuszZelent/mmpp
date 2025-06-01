@@ -9,11 +9,12 @@ Advanced electromagnetic analysis tools for FMR modes including:
 - Mode coupling analysis
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from typing import Optional, Dict, List, Union, Any, Tuple
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import numpy as np
 import scipy.constants as const
 from scipy import integrate
 from scipy.signal import hilbert

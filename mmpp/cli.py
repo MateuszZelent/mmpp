@@ -33,7 +33,7 @@ def main() -> None:
 
 def show_info() -> None:
     """Show library information."""
-    from . import __version__, __author__
+    from . import __author__, __version__
 
     print(f"MMPP Library v{__version__}")
     print(f"Author: {__author__}")

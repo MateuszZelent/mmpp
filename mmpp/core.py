@@ -1,24 +1,27 @@
-from typing import Optional, Dict, List, Union, Any, TYPE_CHECKING
-import os
-import pandas as pd
-import pickle
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-import threading
-from dataclasses import dataclass
 import glob
-from rich.syntax import Syntax
-from rich.console import Console
+import logging
+import os
+import pickle
 import re
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+
 import numpy as np
+import pandas as pd
 import zarr
 from pyzfn import Pyzfn
-import logging
-from .logging_config import setup_mmpp_logging, get_mmpp_logger
+from rich.console import Console
+from rich.syntax import Syntax
+
+from .logging_config import get_mmpp_logger, setup_mmpp_logging
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
     from .batch_operations import BatchOperations
 
 # Initialize rich logging - will be configured in MMPP.__init__
@@ -47,28 +50,29 @@ ArraySlice = Union[slice, tuple, int]
 
 # Import for interactive display
 try:
-    from itables import show, init_notebook_mode
+    from itables import init_notebook_mode, show
 
     ITABLES_AVAILABLE = True
 except ImportError:
     ITABLES_AVAILABLE = False
 
 try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.syntax import Syntax
-    from rich.panel import Panel
-    from rich.columns import Columns
-    from rich.text import Text
     from rich import print as rprint
+    from rich.columns import Columns
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.syntax import Syntax
+    from rich.table import Table
+    from rich.text import Text
 
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
 
 try:
-    from IPython.display import display, HTML
     import json
+
+    from IPython.display import HTML, display
 
     IPYTHON_AVAILABLE = True
 except ImportError:
@@ -77,7 +81,6 @@ except ImportError:
 # Import plotting functionality
 PLOTTING_AVAILABLE = True
 from .plotting import MMPPlotter, PlotterProxy
-
 
 # Import FFT functionality
 try:

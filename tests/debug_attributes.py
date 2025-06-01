@@ -3,9 +3,9 @@
 Debug script to test smart legend functionality with real data
 """
 
+import os
 # Add the project root to path
 import sys
-import os
 
 sys.path.insert(
     0,

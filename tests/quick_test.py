@@ -3,12 +3,9 @@
 
 try:
     from mmpp.fft.main import FFTAnalyzer
-    from mmpp.fft.modes import (
-        FFTModeInterface,
-        FrequencyModeInterface,
-        check_ffmpeg_available,
-        setup_animation_styling,
-    )
+    from mmpp.fft.modes import (FFTModeInterface, FrequencyModeInterface,
+                                check_ffmpeg_available,
+                                setup_animation_styling)
 
     print("✅ All imports successful")
 

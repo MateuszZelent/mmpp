@@ -2,9 +2,10 @@
 Basic tests for MMPP2 library.
 """
 
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 # Add the mmpp package to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

@@ -5,30 +5,29 @@ Professional implementation for visualizing FMR modes with interactive spectrum.
 Provides both programmatic and interactive interfaces for mode analysis.
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import matplotlib.colors as mcolors
-from typing import Optional, Dict, List, Union, Any, Tuple, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+import matplotlib.colors as mcolors
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import numpy as np
 
 # Import shared logging configuration
-from ..logging_config import setup_mmpp_logging, get_mmpp_logger
+from ..logging_config import get_mmpp_logger, setup_mmpp_logging
 
 # Get logger for FMR modes
 log = get_mmpp_logger("mmpp.fft.modes")
 
 # Import electromagnetic analysis module
 try:
-    from .electromagnetic_analysis import (
-        ElectromagneticAnalysisConfig,
-        PoyntingVectorAnalysis,
-        RadiationPatternAnalysis,
-        QFactorAnalysis,
-        analyze_electromagnetic_properties,
-        create_comprehensive_em_report,
-    )
+    from .electromagnetic_analysis import (ElectromagneticAnalysisConfig,
+                                           PoyntingVectorAnalysis,
+                                           QFactorAnalysis,
+                                           RadiationPatternAnalysis,
+                                           analyze_electromagnetic_properties,
+                                           create_comprehensive_em_report)
 
     EM_ANALYSIS_AVAILABLE = True
 except ImportError:
@@ -37,7 +36,8 @@ except ImportError:
 
 # Import styling functions from plotting module
 try:
-    from ..plotting import setup_custom_fonts, load_paper_style, apply_custom_colors
+    from ..plotting import (apply_custom_colors, load_paper_style,
+                            setup_custom_fonts)
 
     STYLING_AVAILABLE = True
 except ImportError:
@@ -46,14 +46,12 @@ except ImportError:
 
 # Import electromagnetic analysis module
 try:
-    from .electromagnetic_analysis import (
-        ElectromagneticAnalysisConfig,
-        PoyntingVectorAnalysis,
-        RadiationPatternAnalysis,
-        QFactorAnalysis,
-        analyze_electromagnetic_properties,
-        create_comprehensive_em_report,
-    )
+    from .electromagnetic_analysis import (ElectromagneticAnalysisConfig,
+                                           PoyntingVectorAnalysis,
+                                           QFactorAnalysis,
+                                           RadiationPatternAnalysis,
+                                           analyze_electromagnetic_properties,
+                                           create_comprehensive_em_report)
 
     EM_ANALYSIS_AVAILABLE = True
 except ImportError:
@@ -70,9 +68,9 @@ except ImportError:
     log.error("Zarr not available - mode analysis disabled")
 
 try:
-    from matplotlib.figure import Figure
     from matplotlib.axes import Axes
     from matplotlib.backend_bases import MouseEvent
+    from matplotlib.figure import Figure
 
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
@@ -1547,8 +1545,8 @@ class FMRModeAnalyzer:
         setup_animation_styling(use_paper_style=True, use_custom_fonts=True)
 
         try:
-            from matplotlib.animation import FuncAnimation
             import matplotlib.cm as cm
+            from matplotlib.animation import FuncAnimation
 
             # Parameter validation
             if frequency_range is None and frequency is None:
@@ -1929,10 +1927,10 @@ class FFTModeInterface:
     def _rich_modes_display(self) -> str:
         """Generate rich display for FFT modes interface."""
         try:
-            from rich.console import Console
-            from rich.text import Text
-            from rich.panel import Panel
             from rich.columns import Columns
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.text import Text
 
             console = Console()
 
@@ -2255,12 +2253,13 @@ class FrequencyModeInterface:
 
     def _rich_frequency_display(self) -> str:
         """Rich display with styling and detailed information."""
+        import io
+
         from rich.console import Console
         from rich.panel import Panel
-        from rich.text import Text
-        from rich.table import Table
         from rich.syntax import Syntax
-        import io
+        from rich.table import Table
+        from rich.text import Text
 
         console = Console(file=io.StringIO(), width=100, force_terminal=True)
 

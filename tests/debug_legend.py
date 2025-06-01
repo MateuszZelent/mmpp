@@ -9,8 +9,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    from mmpp.plotting import MMPPlotter
     from mmpp.core import ZarrJobResult
+    from mmpp.plotting import MMPPlotter
 
     print("🐛 Debugging Smart Legend Issue")
     print("=" * 50)

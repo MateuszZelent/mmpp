@@ -6,12 +6,13 @@ mode analysis, and other operations across entire directories of simulation resu
 slice notation like `op[:].fft.modes.compute_modes()` (auto-selects optimal dataset).
 """
 
-from typing import List, Any, Optional, Dict, Union
-import numpy as np
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Union
+
+import numpy as np
+from tqdm import tqdm
 
 from .logging_config import get_mmpp_logger
 
