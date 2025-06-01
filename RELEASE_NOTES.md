@@ -1,3 +1,43 @@
+# MMPP Library Release v0.5.2
+
+## 🧹 GitHub Actions Cleanup and Workflow Optimization
+
+### 🎯 What's New in v0.5.2
+
+This release focuses on cleaning up and optimizing the GitHub Actions workflows for better CI/CD reliability and maintenance.
+
+### 🔧 GitHub Actions Improvements
+
+#### 🗑️ **Workflow Cleanup**
+- **Removed redundant workflows**: Deleted `ci.yml` and `github-release.yml`
+- **Consolidated testing**: Moved CI functionality to the main `release.yml` workflow
+- **Simplified maintenance**: Reduced the number of workflow files to manage
+
+#### ⚡ **Workflow Optimization**
+- **Auto-formatting integration**: Release workflow now auto-formats code before testing
+- **Eliminated CI failures**: No more build failures due to black formatting issues
+- **Streamlined pipeline**: Faster builds with optimized job structure
+
+#### 🎨 **Code Quality Automation**
+- **Automatic formatting**: Black and isort applied automatically on push to main
+- **Consistent style**: Ensures uniform code formatting across the codebase
+- **Developer-friendly**: Reduces manual formatting work for contributors
+
+### 📋 Active Workflows
+
+- **`auto-format.yml`** - Automatic code formatting with black and isort
+- **`release.yml`** - Comprehensive testing, formatting, and PyPI publishing  
+- **`docs.yml`** - Documentation building and GitHub Pages deployment
+
+### 🚀 Benefits
+
+- **Reliable builds**: No more formatting-related CI failures
+- **Consistent code style**: Automatic maintenance of code quality
+- **Simplified development**: Fewer workflow files to understand and maintain
+- **Better separation of concerns**: Clear responsibilities for each workflow
+
+---
+
 # MMPP Library Release v0.5.1
 
 ## 🐛 Hotfix: Python Compatibility Fix
@@ -190,7 +230,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ├── README.md             # User documentation
 ├── DEVELOPMENT.md        # Developer guide
 └── LICENSE               # MIT license
-```
 
 ### 🔧 Technical Improvements
 
