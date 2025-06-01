@@ -12,10 +12,8 @@ import numpy as np
 
 # Import the optimized colorbar functions
 try:
-    from .optimized_colorbar import (
-        create_mmpp_mode_colorbar,
-        extract_system_size_from_zarr,
-    )
+    from .optimized_colorbar import (create_mmpp_mode_colorbar,
+                                     extract_system_size_from_zarr)
 
     OPTIMIZED_COLORBAR_AVAILABLE = True
 except ImportError:

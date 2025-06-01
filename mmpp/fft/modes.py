@@ -22,14 +22,12 @@ log = get_mmpp_logger("mmpp.fft.modes")
 
 # Import electromagnetic analysis module
 try:
-    from .electromagnetic_analysis import (
-        ElectromagneticAnalysisConfig,
-        PoyntingVectorAnalysis,
-        QFactorAnalysis,
-        RadiationPatternAnalysis,
-        analyze_electromagnetic_properties,
-        create_comprehensive_em_report,
-    )
+    from .electromagnetic_analysis import (ElectromagneticAnalysisConfig,
+                                           PoyntingVectorAnalysis,
+                                           QFactorAnalysis,
+                                           RadiationPatternAnalysis,
+                                           analyze_electromagnetic_properties,
+                                           create_comprehensive_em_report)
 
     EM_ANALYSIS_AVAILABLE = True
 except ImportError:
@@ -38,7 +36,8 @@ except ImportError:
 
 # Import styling functions from plotting module
 try:
-    from ..plotting import apply_custom_colors, load_paper_style, setup_custom_fonts
+    from ..plotting import (apply_custom_colors, load_paper_style,
+                            setup_custom_fonts)
 
     STYLING_AVAILABLE = True
 except ImportError:
@@ -47,14 +46,12 @@ except ImportError:
 
 # Import electromagnetic analysis module
 try:
-    from .electromagnetic_analysis import (
-        ElectromagneticAnalysisConfig,
-        PoyntingVectorAnalysis,
-        QFactorAnalysis,
-        RadiationPatternAnalysis,
-        analyze_electromagnetic_properties,
-        create_comprehensive_em_report,
-    )
+    from .electromagnetic_analysis import (ElectromagneticAnalysisConfig,
+                                           PoyntingVectorAnalysis,
+                                           QFactorAnalysis,
+                                           RadiationPatternAnalysis,
+                                           analyze_electromagnetic_properties,
+                                           create_comprehensive_em_report)
 
     EM_ANALYSIS_AVAILABLE = True
 except ImportError:

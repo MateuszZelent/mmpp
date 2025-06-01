@@ -14,7 +14,8 @@ from .plot import FFTPlotter
 
 # Import mode visualization capabilities
 try:
-    from .modes import FFTModeInterface, FMRModeAnalyzer, ModeVisualizationConfig
+    from .modes import (FFTModeInterface, FMRModeAnalyzer,
+                        ModeVisualizationConfig)
 
     MODES_AVAILABLE = True
 except ImportError:
