@@ -555,7 +555,9 @@ class SimulationSwapper:
 
         if last_param_name not in self.parameters:
             log.error(f"last_param_name '{last_param_name}' not found in parameters")
-            raise ValueError(f"Parameter '{last_param_name}' not found in parameter list")
+            raise ValueError(
+                f"Parameter '{last_param_name}' not found in parameter list"
+            )
 
         # Stwórz SimulationManager
         manager = self.get_simulation_manager()
@@ -636,7 +638,9 @@ class SimulationSwapper:
         return {
             "config_file": self.config_file,
             "parameters": list(self.parameters.keys()),
-            "parameter_counts": {key: len(values) for key, values in self.parameters.items()},
+            "parameter_counts": {
+                key: len(values) for key, values in self.parameters.items()
+            },
             "total_combinations": total_combinations,
             "config_options": self.config_options,
             "validation_issues": self.validate_config(),
