@@ -594,14 +594,14 @@ class SimulationSwapper:
         parameters = {}
 
         # Sprawdź czy istnieje sekcja 'swap'
-        if 'swap' in self.config_data:
-            for key, value in self.config_data['swap'].items():
+        if "swap" in self.config_data:
+            for key, value in self.config_data["swap"].items():
                 if isinstance(value, list):
                     parameters[key] = value
         else:
             # Fallback do starego formatu (bezpośrednio w root)
             for key, value in self.config_data.items():
-                if key != 'config' and isinstance(value, list):
+                if key != "config" and isinstance(value, list):
                     parameters[key] = value
 
         return parameters
@@ -664,17 +664,23 @@ class SimulationSwapper:
         console = Console()
 
         if not self.parameters:
-            console.print("⚠️  [yellow]No parameters found in configuration file[/yellow]")
+            console.print(
+                "⚠️  [yellow]No parameters found in configuration file[/yellow]"
+            )
             return
 
         # Sprawdź czy last_param_name jest ustawione
         last_param_name = self.config_options.get("last_param_name")
         if not last_param_name:
-            console.print("❌ [red]last_param_name not specified in configuration[/red]")
+            console.print(
+                "❌ [red]last_param_name not specified in configuration[/red]"
+            )
             raise ValueError("last_param_name must be specified in config section")
 
         if last_param_name not in self.parameters:
-            console.print(f"❌ [red]last_param_name '{last_param_name}' not found in parameters[/red]")
+            console.print(
+                f"❌ [red]last_param_name '{last_param_name}' not found in parameters[/red]"
+            )
             raise ValueError(
                 f"Parameter '{last_param_name}' not found in parameter list"
             )
@@ -684,7 +690,9 @@ class SimulationSwapper:
             # Dla pairs sprawdź czy wszystkie parametry mają tę samą długość
             param_lengths = [len(values) for values in self.parameters.values()]
             if len(set(param_lengths)) > 1:
-                console.print("❌ [red]When using pairs=True, all parameter arrays must have the same length[/red]")
+                console.print(
+                    "❌ [red]When using pairs=True, all parameter arrays must have the same length[/red]"
+                )
                 raise ValueError("Parameter length mismatch in pairs mode")
             total_combinations = param_lengths[0] if param_lengths else 0
         else:
@@ -708,25 +716,33 @@ class SimulationSwapper:
         info_table.add_column("Count", style="yellow")
 
         for param, values in self.parameters.items():
-            values_str = str(values) if len(str(values)) < 50 else str(values)[:47] + "..."
+            values_str = (
+                str(values) if len(str(values)) < 50 else str(values)[:47] + "..."
+            )
             info_table.add_row(param, values_str, str(len(values)))
 
-        console.print(Panel(info_table, title="📊 Simulation Parameters", border_style="blue"))
+        console.print(
+            Panel(info_table, title="📊 Simulation Parameters", border_style="blue")
+        )
 
         config_info = f"""
 🚀 Total combinations: [bold green]{total_combinations}[/bold green]
-📁 Working directory: [cyan]{self.config_options['main_path']}[/cyan]
-🏷️  Prefix: [yellow]{self.config_options['prefix']}[/yellow]
-🔧 Template: [blue]{self.config_options['template_name']}[/blue]
+📁 Working directory: [cyan]{self.config_options["main_path"]}[/cyan]
+🏷️  Prefix: [yellow]{self.config_options["prefix"]}[/yellow]
+🔧 Template: [blue]{self.config_options["template_name"]}[/blue]
 📋 Last parameter: [magenta]{last_param_name}[/magenta]
-⏯️  Simulation range: [orange]{minsim}[/orange] to [orange]{maxsim or 'end'}[/orange]
+⏯️  Simulation range: [orange]{minsim}[/orange] to [orange]{maxsim or "end"}[/orange]
 🎯 Will execute: [bold red]{actual_simulations}[/bold red] simulations
 """
-        console.print(Panel(config_info.strip(), title="🔧 Configuration", border_style="green"))
+        console.print(
+            Panel(config_info.strip(), title="🔧 Configuration", border_style="green")
+        )
 
         # Sprawdź czy faktycznie uruchomić
         if actual_simulations <= 0:
-            console.print("⚠️  [yellow]No simulations to run with current settings[/yellow]")
+            console.print(
+                "⚠️  [yellow]No simulations to run with current settings[/yellow]"
+            )
             return
 
         # Stwórz SimulationManager
@@ -738,9 +754,8 @@ class SimulationSwapper:
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
-            console=console
+            console=console,
         ) as progress:
-
             task = progress.add_task("Running simulations...", total=actual_simulations)
 
             manager.submit_all_simulations_with_progress(
@@ -754,7 +769,9 @@ class SimulationSwapper:
                 check=self.config_options["check"],
                 force=self.config_options["force"],
                 pairs=self.config_options["pairs"],
-                progress_callback=lambda i, path: progress.update(task, advance=1, description=f"Created: {path}")
+                progress_callback=lambda i, path: progress.update(
+                    task, advance=1, description=f"Created: {path}"
+                ),
             )
 
         console.print("✅ [bold green]Simulation execution completed![/bold green]")
@@ -918,15 +935,21 @@ class TemplateParser:
             elif param == "rotation":
                 swap_section += f"  {param}: [0, 45, 90]  # Rotation in degrees\n"
             elif param in ["B0", "Bx", "By", "Bz"]:
-                swap_section += f"  {param}: [0.001, 0.01, 0.1]  # Magnetic field in T\n"
+                swap_section += (
+                    f"  {param}: [0.001, 0.01, 0.1]  # Magnetic field in T\n"
+                )
             elif param == "sq_parm":
                 swap_section += f"  {param}: [0.5, 1.0, 1.5]  # Squircle parameter\n"
             elif param in ["alpha", "alpha0"]:
                 swap_section += f"  {param}: [0.001, 0.01, 0.1]  # Damping parameter\n"
             elif param in ["msat", "Ms_1"]:
-                swap_section += f"  {param}: [800e3, 1000e3, 1200e3]  # Saturation magnetization\n"
+                swap_section += (
+                    f"  {param}: [800e3, 1000e3, 1200e3]  # Saturation magnetization\n"
+                )
             elif param in ["aex", "Aex_1"]:
-                swap_section += f"  {param}: [10e-12, 15e-12, 20e-12]  # Exchange constant\n"
+                swap_section += (
+                    f"  {param}: [10e-12, 15e-12, 20e-12]  # Exchange constant\n"
+                )
             elif param == "anetnna":
                 swap_section += f"  {param}: [0, 1]  # Antenna parameter\n"
             else:
@@ -958,7 +981,7 @@ config:
         # Nagłówek z instrukcjami
         header = f"""# MMPP Simulation Parameters Template
 # Auto-generated from: {self.template_path}
-# Found parameters: {', '.join(sorted(self.parameters))}
+# Found parameters: {", ".join(sorted(self.parameters))}
 #
 # Syntax:
 # - Use lists for discrete values: [value1, value2, value3]
