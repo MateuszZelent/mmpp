@@ -92,7 +92,7 @@ except ImportError:
 
 
 try:
-    from .simulation import SimulationManager
+    from .simulation import SimulationManager, SimulationSwapper
 
     _SIMULATION_AVAILABLE = True
 except ImportError:
@@ -100,6 +100,12 @@ except ImportError:
 
     # Create dummy class for graceful degradation
     class SimulationManager:
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "Simulation dependencies not available. Install with: pip install mmpp[dev]"
+            )
+
+    class SimulationSwapper:
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Simulation dependencies not available. Install with: pip install mmpp[dev]"
@@ -170,6 +176,7 @@ __all__ = [
     "PlotConfig",
     "PlotterProxy",
     "SimulationManager",
+    "SimulationSwapper",
     "open",
     "fonts",  # Font management
 ]

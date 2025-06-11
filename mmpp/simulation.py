@@ -6,6 +6,7 @@ import re
 import subprocess
 import time
 from typing import Any, Optional, Union
+import yaml
 
 import zarr
 
@@ -409,6 +410,237 @@ fi
                 force=force,
                 **kwargs,
             )
+
+
+class SimulationSwapper:
+    """
+    Klasa do obsługi swapowania symulacji na podstawie plików konfiguracyjnych.
+    Parsuje pliki YAML z parametrami i zarządza wykonaniem symulacji.
+    """
+
+    def __init__(self, config_file: str):
+        """
+        Inicjalizacja SwappeParsera z plikiem konfiguracyjnym.
+
+        Args:
+            config_file: Ścieżka do pliku konfiguracyjnego (YAML)
+        """
+        self.config_file = config_file
+        self.config_data = self._load_config()
+        self.parameters = self._extract_parameters()
+        self.config_options = self._extract_config_options()
+
+    def _load_config(self) -> dict[str, Any]:
+        """Wczytaj plik konfiguracyjny YAML."""
+        try:
+            with open(self.config_file) as f:
+                content = f.read()
+
+            # Obsługa numpy w YAML - zastąp numpy calls przed parsowaniem
+            content = self._preprocess_numpy_content(content)
+
+            # Parsuj YAML
+            data = yaml.safe_load(content)
+            return data
+        except FileNotFoundError:
+            log.error(f"Configuration file not found: {self.config_file}")
+            raise
+        except yaml.YAMLError as e:
+            log.error(f"Error parsing YAML configuration: {e}")
+            raise
+        except Exception as e:
+            log.error(f"Unexpected error loading configuration: {e}")
+            raise
+
+    def _preprocess_numpy_content(self, content: str) -> str:
+        """
+        Preprocess content to handle numpy expressions.
+        Konwertuje wyrażenia numpy na rzeczywiste wartości.
+        """
+        import numpy as np
+
+        # Znajdź wszystkie linie z numpy
+        lines = content.split("\n")
+        processed_lines = []
+
+        for line in lines:
+            # Jeśli linia zawiera numpy.linspace lub np.linspace
+            if "np.linspace" in line or "numpy.linspace" in line:
+                try:
+                    # Wyciągnij część z numpy
+                    if ":" in line:
+                        key_part, value_part = line.split(":", 1)
+                        # Wykonaj numpy expression
+                        if "np.linspace" in value_part:
+                            # Bezpieczne wykonanie numpy expression
+                            numpy_expr = value_part.strip()
+                            # Usuń komentarze
+                            if "#" in numpy_expr:
+                                numpy_expr = numpy_expr.split("#")[0].strip()
+
+                            # Wykonaj wyrażenie
+                            result = eval(numpy_expr, {"np": np, "numpy": np})
+                            if isinstance(result, np.ndarray):
+                                result = result.tolist()
+
+                            processed_lines.append(f"{key_part}: {result}")
+                        else:
+                            processed_lines.append(line)
+                    else:
+                        processed_lines.append(line)
+                except Exception as e:
+                    log.warning(
+                        f"Error processing numpy expression in line: {line}, error: {e}"
+                    )
+                    processed_lines.append(line)
+            else:
+                processed_lines.append(line)
+
+        return "\n".join(processed_lines)
+
+    def _extract_parameters(self) -> dict[str, list[Any]]:
+        """Wyciągnij parametry symulacji z konfiguracji."""
+        parameters = {}
+
+        for key, value in self.config_data.items():
+            if key != "config" and isinstance(value, list):
+                parameters[key] = value
+
+        return parameters
+
+    def _extract_config_options(self) -> dict[str, Any]:
+        """Wyciągnij opcje konfiguracyjne."""
+        default_config = {
+            "last_param_name": None,
+            "prefix": "v1",
+            "sbatch": True,
+            "full_name": False,
+            "template": "template.mx3",
+            "main_path": "./simulations/",
+            "destination_path": "./results/",
+            "minsim": 0,
+            "maxsim": None,
+            "pairs": False,
+            "cleanup": False,
+            "check": False,
+            "force": False,
+        }
+
+        # Merge with user config
+        if "config" in self.config_data:
+            user_config = self.config_data["config"]
+            default_config.update(user_config)
+
+        return default_config
+
+    def get_simulation_manager(self) -> "SimulationManager":
+        """Stwórz instancję SimulationManager na podstawie konfiguracji."""
+        return SimulationManager(
+            main_path=self.config_options["main_path"],
+            destination_path=self.config_options["destination_path"],
+            prefix=self.config_options["prefix"],
+        )
+
+    def run_simulations(self) -> None:
+        """Uruchom wszystkie symulacje na podstawie konfiguracji."""
+        if not self.parameters:
+            log.warning("No parameters found in configuration file")
+            return
+
+        # Sprawdź czy last_param_name jest ustawione
+        last_param_name = self.config_options.get("last_param_name")
+        if not last_param_name:
+            log.error("last_param_name not specified in configuration")
+            raise ValueError("last_param_name must be specified in config section")
+
+        if last_param_name not in self.parameters:
+            log.error(f"last_param_name '{last_param_name}' not found in parameters")
+            raise ValueError(f"Parameter '{last_param_name}' not found in parameter list")
+
+        # Stwórz SimulationManager
+        manager = self.get_simulation_manager()
+
+        # Uruchom symulacje
+        log.info(f"Starting simulations with {len(self.parameters)} parameter groups")
+        log.info(f"Using last parameter: {last_param_name}")
+
+        manager.submit_all_simulations(
+            params=self.parameters,
+            last_param_name=last_param_name,
+            minsim=self.config_options["minsim"],
+            maxsim=self.config_options["maxsim"],
+            sbatch=self.config_options["sbatch"],
+            cleanup=self.config_options["cleanup"],
+            template=self.config_options["template"],
+            check=self.config_options["check"],
+            force=self.config_options["force"],
+            pairs=self.config_options["pairs"],
+        )
+
+    def validate_config(self) -> list[str]:
+        """
+        Waliduj konfigurację i zwróć listę błędów/ostrzeżeń.
+
+        Returns:
+            Lista komunikatów o błędach/ostrzeżeniach
+        """
+        issues = []
+
+        # Sprawdź czy są jakieś parametry
+        if not self.parameters:
+            issues.append("ERROR: No simulation parameters found")
+
+        # Sprawdź last_param_name
+        last_param_name = self.config_options.get("last_param_name")
+        if not last_param_name:
+            issues.append("ERROR: last_param_name not specified in config section")
+        elif last_param_name not in self.parameters:
+            issues.append(
+                f"ERROR: last_param_name '{last_param_name}' not found in parameters"
+            )
+
+        # Sprawdź ścieżki
+        main_path = self.config_options.get("main_path")
+        if main_path and not os.path.exists(os.path.dirname(main_path)):
+            issues.append(f"WARNING: main_path directory may not exist: {main_path}")
+
+        # Sprawdź template
+        template = self.config_options.get("template")
+        if template and not os.path.exists(template):
+            issues.append(f"WARNING: template file not found: {template}")
+
+        # Sprawdź czy pairs jest sensowne
+        if self.config_options.get("pairs", False):
+            param_lengths = [len(values) for values in self.parameters.values()]
+            if len(set(param_lengths)) > 1:
+                issues.append(
+                    "ERROR: When using pairs=True, all parameter arrays must have the same length"
+                )
+
+        return issues
+
+    def get_info(self) -> dict[str, Any]:
+        """Zwróć informacje o konfiguracji."""
+        # Oblicz liczbę kombinacji
+        if self.config_options.get("pairs", False):
+            # Dla pairs - liczba wartości pierwszego parametru
+            total_combinations = (
+                len(list(self.parameters.values())[0]) if self.parameters else 0
+            )
+        else:
+            # Dla product - iloczyn kartezjański
+            total_combinations = 1
+            for values in self.parameters.values():
+                total_combinations *= len(values)
+
+        return {
+            "config_file": self.config_file,
+            "parameters": list(self.parameters.keys()),
+            "parameter_counts": {key: len(values) for key, values in self.parameters.items()},
+            "total_combinations": total_combinations,
+            "config_options": self.config_options,
+            "validation_issues": self.validate_config(),
+        }
 
 
 # -----------------------
