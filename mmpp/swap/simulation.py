@@ -11,7 +11,7 @@ import yaml
 import zarr
 
 # Import shared logging configuration optimized for dark themes
-from .logging_config import get_mmpp_logger
+from ..logging_config import get_mmpp_logger
 
 # Get logger for simulation module with dark theme optimization
 log = get_mmpp_logger("mmpp.simulation")
@@ -425,7 +425,7 @@ fi
         pairs: bool = False,
         progress_callback: Optional[callable] = None,
     ) -> None:
-        """Submit all simulations with progress tracking and organized folder structure."""
+        """Submit all simulations with progress tracking and folder structure like original swapper."""
         import os
         import itertools
 
@@ -445,10 +445,6 @@ fi
             # Original behavior - compute Cartesian product
             value_sets = itertools.product(*params.values())
 
-        # Create base simulation directory
-        base_dir = os.path.join(self.main_path, f"{self.prefix}_simulations")
-        os.makedirs(base_dir, exist_ok=True)
-
         for i, values in enumerate(value_sets):
             if i < minsim:
                 continue
@@ -456,46 +452,49 @@ fi
                 break
 
             kwargs = {"prefix": self.prefix, "i": i, "template": template}
-            param_folder_parts = []
-
             for name, value in zip(param_names, values):
                 kwargs[name] = value
-                # Create folder-friendly parameter representation
-                param_str = f"{name}_{str(value).replace('.', 'p').replace('-', 'neg')}"
-                param_folder_parts.append(param_str)
 
-            # Create organized folder structure: prefix_simulations/param1_val1/param2_val2/.../sim_xxx
-            sim_folder = os.path.join(base_dir, *param_folder_parts, f"sim_{i:04d}")
-            os.makedirs(sim_folder, exist_ok=True)
-
-            # Copy template to simulation folder
-            template_src = os.path.join(self.main_path, template)
-            template_dst = os.path.join(sim_folder, template)
-
-            if os.path.exists(template_src):
-                import shutil
-
-                shutil.copy2(template_src, template_dst)
-
-                # Replace variables in the copied template
-                self.replace_variables_in_template(template_dst, kwargs)
-
-            # Create parameter info file
-            param_info_file = os.path.join(sim_folder, "parameters.txt")
-            with open(param_info_file, "w") as f:
-                f.write(f"Simulation {i:04d}\n")
-                f.write("=" * 20 + "\n")
-                for name, value in zip(param_names, values):
-                    f.write(f"{name}: {value}\n")
-                f.write(f"\nGenerated from template: {template}\n")
-                f.write(f"Prefix: {self.prefix}\n")
-
+            # Create folder structure like original swapper: prefix/param1_val1/param2_val2/.../
+            val_sep = "_"
+            path = os.path.join(self.main_path, kwargs['prefix']) + "/" + '/'.join([
+                f"{key}{val_sep}{format(val, '.5g') if isinstance(val, (int, float)) else val}"
+                for key, val in kwargs.items()
+                if key not in [last_param_name, "i", "prefix", "template"]
+            ]) + "/"
+            
+            # Extract last parameter for file name
+            last_key = last_param_name
+            last_val = kwargs[last_param_name]
+            sim_name = f"{last_key}{val_sep}{format(last_val, '.5g') if isinstance(last_val, (int, float)) else last_val}"
+            
+            # Create directory
+            self.create_path_if_not_exists(path)
+            
+            # Generate MX3 file path
+            mx3_file_path = f"{path}{sim_name}.mx3"
+            
+            # Generate MX3 content by replacing variables in template
+            mx3_content = self.replace_variables_in_template(template, kwargs)
+            
+            # Write MX3 file
+            with open(mx3_file_path, "w") as f:
+                f.write(mx3_content)
+            
             # Call progress callback if provided
             if progress_callback:
-                relative_path = os.path.relpath(sim_folder, self.main_path)
-                progress_callback(i, relative_path)
+                relative_path = os.path.relpath(path, self.main_path)
+                progress_callback(i, f"{relative_path}{sim_name}.mx3")
 
-            time.sleep(0.1)  # Small delay to see progress
+            # Handle sbatch submission (simplified for now)
+            if sbatch:
+                sim_sbatch_path = os.path.join(self.main_path, kwargs['prefix'], 'sbatch', f"{sim_name}.sb")
+                self.create_path_if_not_exists(sim_sbatch_path)
+                with open(sim_sbatch_path, "w") as f:
+                    f.write(self.gen_sbatch_script(sim_name, path + sim_name))
+                # Note: actual sbatch submission would be here in real scenario
+
+            time.sleep(0.01)  # Small delay to see progress
 
 
 class SimulationSwapper:
@@ -540,48 +539,61 @@ class SimulationSwapper:
 
     def _preprocess_numpy_content(self, content: str) -> str:
         """
-        Preprocess content to handle numpy expressions.
-        Konwertuje wyrażenia numpy na rzeczywiste wartości.
+        Preprocess content to handle parameter ranges.
+        Konwertuje wyrażenia (min,max,count) na listę wartości.
         """
         import numpy as np
 
-        # Znajdź wszystkie linie z numpy
+        # Znajdź wszystkie linie z parametrami
         lines = content.split("\n")
         processed_lines = []
 
         for line in lines:
-            # Pomiń linie będące komentarzami (zaczynające się od #)
-            stripped_line = line.strip()
-            if stripped_line.startswith("#"):
+            # Pomiń komentarze
+            if line.strip().startswith("#"):
                 processed_lines.append(line)
                 continue
-
-            # Jeśli linia zawiera numpy.linspace lub np.linspace i nie jest komentarzem
-            if ("np.linspace" in line or "numpy.linspace" in line) and ":" in line:
+                
+            # Jeśli linia zawiera nawiasy okrągłe (min,max,count)
+            if "(" in line and ")" in line and ":" in line:
                 try:
-                    # Wyciągnij część z numpy
-                    key_part, value_part = line.split(":", 1)
-
-                    # Sprawdź czy wartość zawiera rzeczywiste wyrażenie numpy (nie komentarz)
-                    value_part_clean = value_part.strip()
-                    if "#" in value_part_clean:
-                        value_part_clean = value_part_clean.split("#")[0].strip()
-
-                    # Tylko przetwarzaj jeśli wartość zaczyna się od np. lub numpy.
-                    if value_part_clean.startswith(("np.", "numpy.")):
-                        # Bezpieczne wykonanie numpy expression
-                        result = eval(value_part_clean, {"np": np, "numpy": np})
-                        if isinstance(result, np.ndarray):
-                            result = result.tolist()
-
-                        processed_lines.append(f"{key_part}: {result}")
+                    # Wyciągnij część z parametrami
+                    if ":" in line:
+                        key_part, value_part = line.split(":", 1)
+                        value_part = value_part.strip()
+                        
+                        # Sprawdź czy to format (min,max,count)
+                        if value_part.startswith("(") and value_part.endswith(")"):
+                            # Usuń nawiasy i podziel na komponenty
+                            params_str = value_part[1:-1]  # usuń nawiasy
+                            # Usuń komentarz jeśli istnieje
+                            if "#" in params_str:
+                                params_str = params_str.split("#")[0].strip()
+                            
+                            # Sparsuj parametry (min,max,count)
+                            try:
+                                parts = [p.strip() for p in params_str.split(",")]
+                                if len(parts) == 3:
+                                    min_val = float(parts[0])
+                                    max_val = float(parts[1])
+                                    count = int(parts[2])
+                                    
+                                    # Wygeneruj linspace
+                                    result = np.linspace(min_val, max_val, count)
+                                    result_list = result.tolist()
+                                    
+                                    processed_lines.append(f"{key_part}: {result_list}")
+                                else:
+                                    processed_lines.append(line)
+                            except ValueError:
+                                processed_lines.append(line)
+                        else:
+                            processed_lines.append(line)
                     else:
-                        # Nie jest to wyrażenie numpy, zostaw bez zmian
                         processed_lines.append(line)
-
                 except Exception as e:
                     log.warning(
-                        f"Error processing numpy expression in line: {line}, error: {e}"
+                        f"Error processing parameter range in line: {line}, error: {e}"
                     )
                     processed_lines.append(line)
             else:
@@ -933,9 +945,14 @@ class TemplateParser:
                 # Domyślne wartości dla nieznanych parametrów
                 swap_section += f"  {param}: [1.0]  # Custom parameter\n"
 
-            # Dodaj komentarz z numpy example dla niektórych parametrów
+            # Dodaj komentarz z range example dla niektórych parametrów
             if param in ["B0", "rotation", "xsize", "ysize"]:
-                swap_section += f"  # {param}: np.linspace(0.005, 0.05, 10)  # Use numpy for ranges\n"
+                if param == "B0":
+                    swap_section += f"  # {param}: (0.005, 0.05, 10)  # Range: 10 values from 0.005 to 0.05\n"
+                elif param == "rotation":
+                    swap_section += f"  # {param}: (0, 90, 5)  # Range: 5 values from 0 to 90 degrees\n"
+                elif param in ["xsize", "ysize"]:
+                    swap_section += f"  # {param}: (100, 600, 5)  # Range: 5 sizes from 100 to 600 nm\n"
 
         # Sekcja config
         config_section = f"""
@@ -962,12 +979,14 @@ config:
 #
 # Syntax:
 # - Use lists for discrete values: [value1, value2, value3]
-# - Use numpy arrays for ranges: np.linspace(start, stop, num)
+# - Use ranges with round brackets: (min, max, count) - generates linspace
 # - Comment out parameters to disable them (prefix with #)
 # - The last_param_name should match one of your swap parameters
 #
-# Example numpy usage (uncomment and modify as needed):
-# import numpy as np
+# Examples:
+#   B0: [0.001, 0.01, 0.1]     # Discrete values
+#   B0: (0.005, 0.05, 10)      # Range: generates 10 values from 0.005 to 0.05
+#   rotation: (0, 90, 5)       # 5 values from 0 to 90 degrees
 
 """
 

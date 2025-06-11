@@ -32,7 +32,11 @@ def main() -> None:
 
     # Swap init command
     swap_init_parser = swap_subparsers.add_parser(
-        "init", help="Initialize a parms.yml template"
+        "init", aliases=["i"], help="Initialize a parms.yml template"
+    )
+    swap_init_parser.add_argument(
+        "template_file", nargs="?", default="template.mx3",
+        help="Template file to analyze (default: template.mx3)"
     )
     swap_init_parser.add_argument(
         "--output",
@@ -43,12 +47,18 @@ def main() -> None:
     swap_init_parser.add_argument(
         "--force", "-f", action="store_true", help="Overwrite existing file"
     )
+    swap_init_parser.add_argument(
+        "--prefix", "-p", default="v1", help="Simulation prefix (default: v1)"
+    )
 
     # Swap run command
     swap_run_parser = swap_subparsers.add_parser(
-        "run", help="Run simulations from config file"
+        "run", aliases=["r"], help="Run simulations from config file"
     )
-    swap_run_parser.add_argument("config_file", help="Path to the configuration file")
+    swap_run_parser.add_argument(
+        "config_file", nargs="?", default="parms.yml",
+        help="Path to the configuration file (default: parms.yml)"
+    )
     swap_run_parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -59,14 +69,18 @@ def main() -> None:
     swap_info_parser = swap_subparsers.add_parser(
         "info", help="Show information about config file"
     )
-    swap_info_parser.add_argument("config_file", help="Path to the configuration file")
+    swap_info_parser.add_argument(
+        "config_file", nargs="?", default="parms.yml",
+        help="Path to the configuration file (default: parms.yml)"
+    )
 
     # Swap validate command
     swap_validate_parser = swap_subparsers.add_parser(
-        "validate", help="Validate config file"
+        "validate", aliases=["v"], help="Validate config file"
     )
     swap_validate_parser.add_argument(
-        "config_file", help="Path to the configuration file"
+        "config_file", nargs="?", default="parms.yml",
+        help="Path to the configuration file (default: parms.yml)"
     )
 
     # Parse arguments
@@ -85,80 +99,108 @@ def main() -> None:
 
 def handle_swap_command(args: argparse.Namespace) -> None:
     """Handle swap-related commands."""
-    if args.swap_command == "init":
-        create_parms_template(args.output, args.force)
-    elif args.swap_command == "run":
+    if args.swap_command in ["init", "i"]:
+        create_parms_template(args.template_file, args.output, args.force, args.prefix)
+    elif args.swap_command in ["run", "r"]:
         run_simulations_from_config(args.config_file, args.dry_run)
     elif args.swap_command == "info":
         show_config_info(args.config_file)
-    elif args.swap_command == "validate":
+    elif args.swap_command in ["validate", "v"]:
         validate_config_file(args.config_file)
     elif args.swap_command is None:
         print("Usage: mmpp swap <command>")
         print("Available commands:")
-        print("  init      Initialize a parms.yml template")
-        print("  run       Run simulations from config file")
-        print("  info      Show information about config file")
-        print("  validate  Validate config file")
+        print("  init (i)     Initialize a parms.yml template")
+        print("  run (r)      Run simulations from config file")
+        print("  info         Show information about config file")
+        print("  validate (v) Validate config file")
     else:
         print(f"Unknown swap command: {args.swap_command}")
         sys.exit(1)
 
 
-def create_parms_template(output_file: str, force: bool = False) -> None:
-    """Create a template parms.yml file for simulation swapping."""
+def create_parms_template(template_file: str, output_file: str, force: bool = False, prefix: str = "v1") -> None:
+    """Create a template parms.yml file for simulation swapping by analyzing template.mx3."""
     import os
     from pathlib import Path
 
-    if os.path.exists(output_file) and not force:
-        print(f"Error: File '{output_file}' already exists. Use --force to overwrite.")
+    # Check if template file exists in current directory
+    if not os.path.exists(template_file):
+        print(f"❌ Template file not found: {template_file}")
+        print("Make sure you're in the directory containing your template file.")
         sys.exit(1)
 
-    template_content = """# MMPP Simulation Parameters Template
-# This file contains parameter definitions for simulation swapping
+    if os.path.exists(output_file) and not force:
+        print(f"❌ File '{output_file}' already exists. Use --force to overwrite.")
+        sys.exit(1)
+
+    try:
+        # Use our template parser to analyze the .mx3 file
+        from .swap.simulation import TemplateParser
+        
+        parser = TemplateParser(template_file)
+        parameters = parser.get_parameters()
+        
+        if not parameters:
+            print(f"⚠️  No parameters found in {template_file}")
+            print("Make sure the template contains parameters in {parameter_name} format.")
+            print("Example: {B0}, {xsize}, {Material}")
+            sys.exit(1)
+        
+        print(f"🔍 Analyzing template: {template_file}")
+        print(f"📊 Found {len(parameters)} parameters: {', '.join(parameters)}")
+        
+        # Generate YAML template with current working directory information
+        current_dir = os.getcwd()
+        yaml_content = parser.generate_yaml_template(
+            last_param=parameters[-1] if parameters else "param1",
+            prefix=prefix,
+            template_name=template_file
+        )
+        
+        # Add working directory info to header
+        yaml_header = f"""# MMPP Simulation Parameters Template
+# Auto-generated from: {template_file}
+# Working directory: {current_dir}
+# Found parameters: {', '.join(parameters)}
 #
 # Syntax:
 # - Use lists for discrete values: [value1, value2, value3]
 # - Use numpy arrays for ranges: np.linspace(start, stop, num)
 # - Comment out parameters to disable them (prefix with #)
-# - The last_param_name should match one of your parameter keys
-#Example parameters to swap:
+# - The last_param_name should match one of your swap parameters
+#
+# Example numpy usage (uncomment and modify as needed):
+# import numpy as np
 
-# Thickness parameters (in meters)
-Tx: [6000e-9]
-# Tx: np.linspace(1000e-9, 6000e-9, 6)
-
-
-# Configuration options
-config:
-  last_param_name: "Tx"        # Parameter name for the last iteration
-  prefix: "v1"                # Simulation prefix/version
-  sbatch: 1                    # Use SLURM batch system (1=true, 0=false)
-  full_name: false             # Use full parameter names in paths
-
-  # Advanced options
-  template: "template.mx3"     # Template file for simulation
-
-  # Execution control
-  minsim: 0                    # Minimum simulation index
-  maxsim: null                 # Maximum simulation index (null = no limit)
-  pairs: false                 # Use paired parameters instead of cartesian product
-  cleanup: false               # Cleanup temporary files
-  check: false                 # Check simulation status
-  force: false                 # Force re-run completed simulations
 """
-
-    try:
-        Path(output_file).write_text(template_content)
-        print(f"✓ Created template file: {output_file}")
+        
+        # Replace the original header
+        lines = yaml_content.split('\n')
+        content_start = 0
+        for i, line in enumerate(lines):
+            if line.startswith('swap:'):
+                content_start = i
+                break
+        
+        final_content = yaml_header + '\n'.join(lines[content_start:])
+        
+        Path(output_file).write_text(final_content, encoding='utf-8')
+        
+        print(f"✅ Created template file: {output_file}")
+        print(f"📁 Working directory: {current_dir}")
         print("\nNext steps:")
-        print(f"1. Edit {output_file} to configure your simulation parameters")
-        print("2. Run: mmpp swap run <your_params_file>")
-        print("3. Validate config: mmpp swap validate <your_params_file>")
-        print("4. Show info: mmpp swap info <your_params_file>")
-        print("\nSee the template file for detailed configuration options.")
+        print(f"1. Edit {output_file} to customize your simulation parameters")
+        print(f"2. Validate config: mmpp swap validate {output_file}")
+        print(f"3. Show info: mmpp swap info {output_file}")
+        print(f"4. Run simulations: mmpp swap run {output_file}")
+        print("\nSee the generated file for detailed configuration options.")
+        
+    except ImportError:
+        print("❌ Error: Template parser not available")
+        sys.exit(1)
     except OSError as e:
-        print(f"Error creating template file: {e}")
+        print(f"❌ Error creating template file: {e}")
         sys.exit(1)
 
 
@@ -173,8 +215,17 @@ def show_info() -> None:
 
 def run_simulations_from_config(config_file: str, dry_run: bool = False) -> None:
     """Run simulations from a configuration file."""
+    import os
+    
+    # Check if config file exists
+    if not os.path.exists(config_file):
+        print(f"❌ Configuration file not found: {config_file}")
+        if config_file == "parms.yml":
+            print("💡 Hint: Run 'mmpp swap init' first to generate a parms.yml file")
+        sys.exit(1)
+    
     try:
-        from .simulation import SimulationSwapper
+        from .swap.simulation import SimulationSwapper
 
         swapper = SimulationSwapper(config_file)
 
@@ -220,8 +271,17 @@ def run_simulations_from_config(config_file: str, dry_run: bool = False) -> None
 
 def show_config_info(config_file: str) -> None:
     """Show detailed information about a configuration file."""
+    import os
+    
+    # Check if config file exists
+    if not os.path.exists(config_file):
+        print(f"❌ Configuration file not found: {config_file}")
+        if config_file == "parms.yml":
+            print("💡 Hint: Run 'mmpp swap init' first to generate a parms.yml file")
+        sys.exit(1)
+        
     try:
-        from .simulation import SimulationSwapper
+        from .swap.simulation import SimulationSwapper
 
         swapper = SimulationSwapper(config_file)
         info = swapper.get_info()
@@ -265,29 +325,54 @@ def show_config_info(config_file: str) -> None:
 
 def validate_config_file(config_file: str) -> None:
     """Validate a configuration file and show results."""
+    import os
+    
+    # Check if config file exists
+    if not os.path.exists(config_file):
+        print(f"❌ Configuration file not found: {config_file}")
+        if config_file == "parms.yml":
+            print("💡 Hint: Run 'mmpp swap init' first to generate a parms.yml file")
+        sys.exit(1)
+        
     try:
-        from .simulation import SimulationSwapper
+        from .swap.simulation import SimulationSwapper
 
         swapper = SimulationSwapper(config_file)
         issues = swapper.validate_config()
+        info = swapper.get_info()
 
         print(f"🔍 Validating: {config_file}")
         print("=" * 50)
 
+        # Show detailed validation results with counts
+        parameters = info['parameters']
+        total_combinations = info['total_combinations']
+        config_opts = info['config_options']
+        
+        print(f"📊 Found {len(parameters)} parameters: {', '.join(parameters)}")
+        print(f"🚀 Will create {total_combinations} simulations")
+        print(f"📁 Target directory: {config_opts.get('main_path', 'current directory')}")
+        
+        # Show parameter details
+        if parameters:
+            print("\n📈 Parameter Details:")
+            for param, count in info["parameter_counts"].items():
+                print(f"  • {param}: {count} values")
+
         if not issues:
-            print("✅ Configuration is valid!")
+            print("\n✅ Configuration is valid!")
             return
 
         errors = [issue for issue in issues if issue.startswith("ERROR")]
         warnings = [issue for issue in issues if issue.startswith("WARNING")]
 
         if errors:
-            print("❌ Errors found:")
+            print("\n❌ Errors found:")
             for error in errors:
                 print(f"  {error}")
 
         if warnings:
-            print("⚠️  Warnings:")
+            print("\n⚠️  Warnings:")
             for warning in warnings:
                 print(f"  {warning}")
 

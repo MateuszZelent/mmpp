@@ -92,7 +92,7 @@ except ImportError:
 
 
 try:
-    from .simulation import SimulationManager, SimulationSwapper
+    from .swap.simulation import SimulationManager, SimulationSwapper
 
     _SIMULATION_AVAILABLE = True
 except ImportError:

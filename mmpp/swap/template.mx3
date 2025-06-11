@@ -1,0 +1,177 @@
+Tx = 6e-7
+Ty = 6e-7
+Nz = 8
+
+dx = 5e-9
+dy = 5e-9
+dz = 10e-9
+
+PBCx = 1 // Optionnal
+PBcy = 1 // Optionnal
+PBCz = 0 // Optionnal
+edgesmooth = 0
+
+smoothmesh(true,true,false)
+
+//resonator 
+rezonator_thickness := 20e-9
+sq_parm:={sq_parm}
+rotacja:={rotation}
+xsize:={xsize}*1e-9
+ysize:={ysize}*1e-9
+
+rezonator := squircle(xsize,ysize,rezonator_thickness,sq_parm).intersect(Layers(7,Nz)).rotz(rotacja*pi/180)
+layer_thickness := 50e-9
+yig_layer := Layers(0, 6)
+setgeom(rezonator.add(yig_layer))
+
+yig_region := 2
+defregion(2, yig_layer)
+defregion(1, rezonator)
+
+// //Layer matherial parameters
+Ms_1    := 139e3
+Aex_1   := 3.5e-12
+alpha0 := 6e-4
+
+defregion(yig_region, yig)
+Msat.setregion(yig_region, Ms_1)
+anisU.setregion(yig_region, vector(1, 0, 0))
+Aex.setregion(yig_region, Aex_1)
+alpha.setregion(yig_region, alpha0)
+
+
+if {Material}==1{
+	print("Py")
+	//Rezonator material parameters
+	Msat.setregion(1, 800e3) // Ms = 810 (kA/m)	
+	Aex.setregion(1, 13e-12) //Aex = 20 (pJ/m)	
+	alpha.setregion(1, 0.01) //boris database 
+}else{
+	print("CoFeB")
+	//Rezonator material parameters
+	Msat.setregion(1, 1150e3) // Ms = 810 (kA/m)	
+	Aex.setregion(1, 16e-12) //Aex = 20 (pJ/m)	
+	alpha.setregion(1, 0.01) //boris database 
+}
+
+save(regions)
+
+setsolver(4)
+maxdt=2.0e-13
+MinimizerStop=0.1e-8
+
+
+
+B0 :=  {B0}
+
+phi := 0.00001 * pi / 180
+theta := 89.99999 * pi / 180
+
+m.setInShape(yig_layer, uniform(sin(theta)*cos(phi), sin(theta)*sin(phi), cos(theta)))
+m.setInShape(rezonator, uniform(sin(theta)*cos(phi), sin(theta)*sin(phi), cos(theta)))
+saveas(m, "initial_state")
+B_ext = vector(B0*sin(theta)*cos(phi), B0*sin(theta)*sin(phi), B0*cos(theta))
+
+minimize()
+maxdt=1e-13
+
+
+snapshot(geom)
+
+relax()
+temp=273
+alpha=0.25
+setsolver(6)
+run(1e-9)
+temp=0
+alpha=0.001
+minimize()
+relax()
+setsolver(4)
+	
+alpha.setregion(2, 0.001) //approximately  
+alpha.setregion(1, 0.01) //boris database 
+
+run(2e-9)
+relax()
+saveas(m, "after_relax")
+snapshot(m)
+
+f_cut := 10e09
+n_of_samples := 500
+t00 := (0.5 / (f_cut * 1.25))*n_of_samples
+t0 := 30/f_cut
+t_sampl := 0.5 / (f_cut * 1.25)
+
+tableadd(e_Total)
+tableadd(B_ext)
+tableautosave(t_sampl)
+
+maxerr=0.000001
+
+print(t0)
+print(n_of_samples*t_sampl)
+amprf := {B0}/100
+t=0
+
+
+
+// Relax
+setsolver(4)
+MaxErr = 1e-7
+
+saveas(m, "stable")
+save(B_ext)
+save(B_exch)
+save(B_eff)
+save(B_anis)
+save(B_demag)
+
+
+// grainSize := 20e-9
+// minRegion := 20
+// maxRegion := 28
+// ext_makegrains(grainSize, minRegion, maxRegion, 0)
+tableautosave(t_sampl)
+
+mask := newVectorMask(Nx, Ny, 1)
+for r := minRegion; r < maxRegion; r++ {
+		mask = newVectorMask(Nx, Ny, 1)
+		rand_angle := rand() * 2 * pi
+		for i := 0; i < Nx; i++ {
+				for j := 0; j < Ny; j++ {
+						if regions.getcell(i, j, 0) == r {
+							mask.setVector(i, j, 0, vector(0,sin(rand_angle), cos(rand_angle)))
+						}
+				}
+		}
+		B_ext.add(mask, (0.54-0.46*Cos(2*pi*t/(2*t0)))*amprf*sinc(2*pi*f_cut*(t-t0+(rand()-0.5)*0.2/f_cut)))
+}
+
+t=0
+maxerr = 0.5e-6
+f_resolution := f_cut/n_of_samples/2
+print(sprintf("frequency resolution %.9f GHz", f_resolution*1e-09))
+
+AutoSaveAsChunk(CropZ(m,0,6),"m_layer", t_sampl, Chunk(1, 1, 1, 3))
+
+AutoSaveAsChunk(CropZ(m,7,Nz),"m_resonator", t_sampl, Chunk(1, 1, 1, 3))
+
+mmmodes:={anetnna}
+if mmmodes==1{
+	print("creazy")
+	run(2*t0)
+}else{
+	B_ext.RemoveExtraTerms()
+	print("Uniform")
+	B_ext = vector(B0*sin(theta)*cos(phi), B0*sin(theta)*sin(phi), B0*cos(theta)+ (0.54 -0.46*Cos(2*pi*t/(2*t0)))*amprf*sinc(2*pi*f_cut*(t-t0)))
+	run(2*t0)
+}
+B_ext.RemoveExtraTerms()
+B_ext = vector(B0*sin(theta)*cos(phi), B0*sin(theta)*sin(phi), B0*cos(theta))
+print(B_ext)
+
+run(600 * t_sampl) 
+saveas(m, "end")
+
