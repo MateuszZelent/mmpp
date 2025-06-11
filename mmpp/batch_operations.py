@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from .logging_config import get_mmpp_logger
+from .cli.logging_config import get_mmpp_logger
 
 # Get logger for batch operations
 log = get_mmpp_logger("mmpp.batch")

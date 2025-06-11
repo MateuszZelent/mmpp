@@ -1,8 +1,7 @@
 """
 mmpp - Micro Magnetic Post Processing Library
 
-A Python library for simulation and analysis of micromagnetic simulations
-with advanced post-processing capabilities.
+A Python library for simulation and analysis with advanced post-processing capabilities.
 """
 
 __version__ = "0.5.3"
@@ -92,7 +91,7 @@ except ImportError:
 
 
 try:
-    from .swap.simulation import SimulationManager, SimulationSwapper
+    from .cli.swap.simulation import SimulationManager, SimulationSwapper
 
     _SIMULATION_AVAILABLE = True
 except ImportError:

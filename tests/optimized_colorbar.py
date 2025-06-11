@@ -13,7 +13,7 @@ import numpy as np
 
 # Import MMPP logging if available
 try:
-    from mmpp.logging_config import get_mmpp_logger
+    from mmpp.cli.logging_config import get_mmpp_logger
 
     log = get_mmpp_logger("mmpp.colorbar")
 except ImportError:

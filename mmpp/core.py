@@ -16,7 +16,7 @@ from pyzfn import Pyzfn
 from rich.console import Console
 from rich.syntax import Syntax
 
-from .logging_config import get_mmpp_logger, setup_mmpp_logging
+from .cli.logging_config import get_mmpp_logger, setup_mmpp_logging
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

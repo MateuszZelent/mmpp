@@ -18,7 +18,7 @@ import numpy as np
 import scipy.constants as const
 
 # Import shared logging configuration
-from ..logging_config import get_mmpp_logger
+from ..cli.logging_config import get_mmpp_logger
 
 # Get logger for electromagnetic analysis
 log = get_mmpp_logger("mmpp.fft.electromagnetic")

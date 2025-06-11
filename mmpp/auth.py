@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 import requests
 import yaml
 
-from .logging_config import get_mmpp_logger
+from .cli.logging_config import get_mmpp_logger
 
 log = get_mmpp_logger("mmpp.auth")
 
@@ -82,51 +82,49 @@ class AuthManager:
             # Normalize server URL
             if not server_url.startswith(("http://", "https://")):
                 server_url = f"https://{server_url}"
-            
+
             print(f"🔧 DEBUG: Server URL: {server_url}")
-            
+
             # Remove /login suffix if present (user might copy full login URL)
             if server_url.endswith("/login"):
                 server_url = server_url[:-6]
                 print(f"🔧 DEBUG: Removed /login suffix: {server_url}")
-            
+
             # Use containers_admin2 cli-login endpoint
             login_url = urljoin(server_url, "/api/v1/auth/cli-login")
             print(f"🔧 DEBUG: Login URL: {login_url}")
-            
+
             headers = {
                 "accept": "application/json",
                 "Content-Type": "application/json",
             }
-            
+
             # Send cli_token in JSON body, not as Bearer token
-            data = {
-                "cli_token": cli_token
-            }
-            
+            data = {"cli_token": cli_token}
+
             print(f"🔧 DEBUG: Headers: {headers}")
             print(f"🔧 DEBUG: Data: {data}")
-            
+
             print(f"🔧 DEBUG: Making POST request to {login_url}")
             response = requests.post(login_url, headers=headers, json=data, timeout=10)
             print(f"🔧 DEBUG: Response status: {response.status_code}")
             print(f"🔧 DEBUG: Response headers: {dict(response.headers)}")
             print(f"🔧 DEBUG: Response text: {response.text[:300]}...")
-            
+
             if response.status_code == 200:
                 try:
                     result = response.json()
                     print(f"🔧 DEBUG: Successfully parsed JSON: {result}")
-                    
+
                     if "access_token" in result:
                         return True, {
                             "access_token": result["access_token"],
                             "token_type": result.get("token_type", "bearer"),
-                            "login_method": "cli_token"
+                            "login_method": "cli_token",
                         }
                     else:
                         return False, {"error": "No access token in response"}
-                        
+
                 except Exception as json_err:
                     print(f"🔧 DEBUG: JSON parse error: {json_err}")
                     return False, {"error": f"Invalid response format: {json_err}"}
@@ -138,8 +136,10 @@ class AuthManager:
                 return False, {"error": "Server API not found - check server URL"}
             else:
                 print(f"🔧 DEBUG: Unexpected status code: {response.status_code}")
-                return False, {"error": f"Server returned status {response.status_code}"}
-                
+                return False, {
+                    "error": f"Server returned status {response.status_code}"
+                }
+
         except requests.exceptions.ConnectionError as conn_err:
             print(f"🔧 DEBUG: Connection error: {conn_err}")
             return False, {"error": "Cannot connect to server"}
@@ -293,22 +293,24 @@ class AuthManager:
     def test_server_connectivity(self, server_url: str) -> dict:
         """Test basic connectivity to server on different ports/protocols."""
         results = {}
-        
+
         # Test different variations of the URL
         test_urls = []
-        
-        if server_url.startswith('http'):
+
+        if server_url.startswith("http"):
             test_urls.append(server_url)
         else:
-            test_urls.extend([
-                f"https://{server_url}",
-                f"http://{server_url}",
-                f"https://{server_url}:443",
-                f"http://{server_url}:80",
-                f"http://{server_url}:8000",
-                f"https://{server_url}:8000"
-            ])
-        
+            test_urls.extend(
+                [
+                    f"https://{server_url}",
+                    f"http://{server_url}",
+                    f"https://{server_url}:443",
+                    f"http://{server_url}:80",
+                    f"http://{server_url}:8000",
+                    f"https://{server_url}:8000",
+                ]
+            )
+
         for test_url in test_urls:
             try:
                 response = requests.get(f"{test_url}/", timeout=5)
@@ -319,7 +321,7 @@ class AuthManager:
                 results[test_url] = "TIMEOUT"
             except Exception as e:
                 results[test_url] = f"ERROR - {str(e)[:100]}..."
-        
+
         return results
 
 
@@ -342,7 +344,7 @@ def login_to_server(server_url: str, token: Optional[str] = None) -> bool:
 
     if success:
         print("✅ Login successful!")
-        
+
         # Extract access token from response
         access_token = info.get("access_token")
         if not access_token:

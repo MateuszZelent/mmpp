@@ -11,7 +11,7 @@ import yaml
 import zarr
 
 # Import shared logging configuration optimized for dark themes
-from .logging_config import get_mmpp_logger
+from .cli.logging_config import get_mmpp_logger
 
 # Get logger for simulation module with dark theme optimization
 log = get_mmpp_logger("mmpp.simulation")

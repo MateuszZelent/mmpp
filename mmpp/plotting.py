@@ -7,7 +7,7 @@ import numpy as np
 from pyzfn import Pyzfn
 
 # Import shared logging configuration
-from .logging_config import get_mmpp_logger, setup_mmpp_logging
+from .cli.logging_config import get_mmpp_logger, setup_mmpp_logging
 
 # Get logger for plotting
 log = get_mmpp_logger("mmpp.plot")

@@ -9,7 +9,7 @@ from typing import Any, Optional, Union
 import numpy as np
 
 # Import shared logging configuration
-from ..logging_config import get_mmpp_logger, setup_mmpp_logging
+from ..cli.logging_config import get_mmpp_logger, setup_mmpp_logging
 
 # Get logger for FFT plotting
 log = get_mmpp_logger("mmpp.fft.plot")
