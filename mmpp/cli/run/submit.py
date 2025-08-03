@@ -284,6 +284,14 @@ def _upload_and_start_simulation(
     time_limit = _parse_time_limit(time_limit)
     
     try:
+        # Calculate MD5 checksum of the file
+        import hashlib
+        with open(file_path, 'rb') as file_to_hash:
+            md5_hash = hashlib.md5()
+            while chunk := file_to_hash.read(8192):
+                md5_hash.update(chunk)
+            original_md5 = md5_hash.hexdigest()
+
         with open(file_path, 'rb') as f:
             files = {'file': f}
             data = {
@@ -294,7 +302,9 @@ def _upload_and_start_simulation(
                 'memory_gb': getattr(args, 'memory', 24),
                 'num_gpus': getattr(args, 'gpus', 1),
                 'time_limit': time_limit,
-                'priority': getattr(args, 'priority', 0)
+                'priority': getattr(args, 'priority', 0),
+                'original_path': file_path,
+                'original_md5': original_md5
             }
             
             response = requests.post(url, headers=headers, files=files, data=data, timeout=60)
