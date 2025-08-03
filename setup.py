@@ -31,7 +31,7 @@ setup(
     python_requires=">=3.9",
     install_requires=[
         "numpy>=1.20.0",
-        "pandas>=1.3.0",
+        "pandas>=1.3.0", 
         "matplotlib>=3.5.0",
         "pyzfn",
         "zarr",
@@ -55,17 +55,30 @@ setup(
         "plotting": [
             "cmocean",
         ],
+        "tui": [
+            "textual>=0.40.0",
+        ],
+        "full": [
+            "textual>=0.40.0",
+            "cmocean",
+            "itables",
+            "IPython",
+            "jupyter",
+        ],
     },
     include_package_data=True,
     package_data={
         "mmpp": [
             "paper.mplstyle",
             "fonts/**/*",
+            "dracula.tcss",
         ],
     },
     entry_points={
         "console_scripts": [
             "mmpp=mmpp.cli:main",
+            "mmpp-tui=mmpp.cli_new:main",
+            "mmpp-classic=mmpp.cli.main:main",
         ],
     },
 )

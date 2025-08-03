@@ -15,8 +15,10 @@ downloads/
 eggs/
 .eggs/
 lib/
+.mmpp/backup/*
 lib64/
 parts/
+*.md
 sdist/
 var/
 wheels/

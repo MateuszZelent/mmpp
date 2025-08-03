@@ -41,6 +41,18 @@ class AuthManager:
         self, server_url: str, token: str, user_info: Optional[dict] = None
     ) -> None:
         """Save authentication credentials to file."""
+        # Normalize server URL to base URL only
+        if not server_url.startswith(("http://", "https://")):
+            server_url = f"https://{server_url}"
+        
+        # Remove /login suffix if present
+        if server_url.endswith("/login"):
+            server_url = server_url[:-6]
+            
+        # Remove any API endpoint paths to get base URL
+        if "/api/v1/" in server_url:
+            server_url = server_url.split("/api/v1/")[0]
+        
         credentials = {
             "server_url": server_url.rstrip("/"),
             "token": token,
@@ -89,6 +101,12 @@ class AuthManager:
             if server_url.endswith("/login"):
                 server_url = server_url[:-6]
                 print(f"🔧 DEBUG: Removed /login suffix: {server_url}")
+
+            # Remove any API endpoint paths to get base URL
+            if "/api/v1/" in server_url:
+                base_url = server_url.split("/api/v1/")[0]
+                print(f"🔧 DEBUG: Extracted base URL: {base_url}")
+                server_url = base_url
 
             # Use containers_admin2 cli-login endpoint
             login_url = urljoin(server_url, "/api/v1/auth/cli-login")
@@ -166,6 +184,12 @@ class AuthManager:
                 server_url = server_url[:-6]
                 print(f"🔧 DEBUG: Removed /login suffix: {server_url}")
 
+            # Remove any API endpoint paths to get base URL
+            if "/api/v1/" in server_url:
+                base_url = server_url.split("/api/v1/")[0]
+                print(f"🔧 DEBUG: Extracted base URL: {base_url}")
+                server_url = base_url
+
             # Use containers_admin2 /me endpoint for verification
             verify_url = urljoin(server_url, "/api/v1/auth/me")
             print(f"🔧 DEBUG: Verify URL: {verify_url}")
@@ -238,9 +262,19 @@ class AuthManager:
             return {
                 "authenticated": False,
                 "server_url": server_url,
-                "error": info.get("error", "Unknown error"),
+                "error": info.get("error", "Unknown error") if info else "Unknown error",
                 "message": "Authentication failed",
             }
+
+    def get_token(self) -> Optional[str]:
+        """Get stored authentication token."""
+        credentials = self.load_credentials()
+        return credentials.get("token") if credentials else None
+
+    def get_base_url(self) -> Optional[str]:
+        """Get stored server base URL."""
+        credentials = self.load_credentials()
+        return credentials.get("server_url") if credentials else None
 
     def login_via_api(
         self, server_url: str, username: str, password: str
@@ -346,7 +380,7 @@ def login_to_server(server_url: str, token: Optional[str] = None) -> bool:
         print("✅ Login successful!")
 
         # Extract access token from response
-        access_token = info.get("access_token")
+        access_token = info.get("access_token") if info else None
         if not access_token:
             print("❌ No access token received")
             return False
@@ -361,7 +395,7 @@ def login_to_server(server_url: str, token: Optional[str] = None) -> bool:
             print(f"❌ Error saving credentials: {e}")
             return False
     else:
-        error_msg = info.get("error", "Unknown error")
+        error_msg = info.get("error", "Unknown error") if info else "Unknown error"
         print(f"❌ Authentication failed: {error_msg}")
         return False
 

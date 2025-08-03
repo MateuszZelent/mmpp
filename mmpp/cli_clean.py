@@ -22,15 +22,11 @@ def main() -> None:
     elif force_tui:
         sys.argv = [sys.argv[0]] + [arg for arg in args if arg != "--tui"]
     
-    # Use TUI only if:
-    # 1. No arguments (interactive mode) OR
-    # 2. Explicitly requested with --tui
-    should_use_tui = (not args and not force_classic) or force_tui
-    
-    if should_use_tui:
+    # Try TUI first if not explicitly disabled
+    if not force_classic:
         try:
             import textual
-            from mmpp.tui import main as tui_main
+            from .tui import main as tui_main
             print("🚀 Starting MMPP TUI...")
             return tui_main()
         except ImportError:
@@ -40,8 +36,8 @@ def main() -> None:
             print(f"❌ TUI error: {e}")
             print("💡 Falling back to traditional CLI...")
     
-    # Use traditional CLI for specific commands
-    from mmpp.cli.main import main as cli_main
+    # Use traditional CLI
+    from .cli.main import main as cli_main
     return cli_main()
 
 

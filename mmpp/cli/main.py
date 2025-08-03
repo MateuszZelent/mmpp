@@ -76,6 +76,60 @@ def main() -> None:
         dest="swap_command", help="Swap commands"
     )
 
+    # Run command group
+    run_parser = subparsers.add_parser("run", help="Run simulations and manage jobs")
+    
+    # Add direct file argument FIRST (this will catch files before subparsers)
+    run_parser.add_argument(
+        "files_or_command",
+        nargs="*",
+        help="MX3 file(s)/pattern to run (e.g., 'test.mx3', 'test*.mx3') OR command (status/check)"
+    )
+    
+    # Options for simulation execution
+    run_parser.add_argument(
+        "-d", "--detach",
+        action="store_true",
+        help="Don't wait for completion (detached mode)"
+    )
+    run_parser.add_argument(
+        "-t", "--time",
+        help="Time limit (e.g., '10h', '2d', '30m', '24:00:00')"
+    )
+    run_parser.add_argument(
+        "--name",
+        help="Custom task name (defaults to filename)"
+    )
+    run_parser.add_argument(
+        "--cpus",
+        type=int,
+        default=5,
+        help="Number of CPU cores (default: 5)"
+    )
+    run_parser.add_argument(
+        "--memory",
+        type=int,
+        default=24,
+        help="Memory in GB (default: 24)"
+    )
+    run_parser.add_argument(
+        "--gpus",
+        type=int,
+        default=1,
+        help="Number of GPUs (default: 1)"
+    )
+    run_parser.add_argument(
+        "--partition",
+        default="proxima",
+        help="SLURM partition (default: proxima)"
+    )
+    run_parser.add_argument(
+        "--priority",
+        type=int,
+        default=0,
+        help="Task priority (default: 0)"
+    )
+
     # Swap init command
     swap_init_parser = swap_subparsers.add_parser(
         "init", aliases=["i"], help="Initialize a parms.yml template"
@@ -148,6 +202,9 @@ def main() -> None:
     elif args.command == "jobs":
         from .jobs import handle_jobs_command
         handle_jobs_command(args)
+    elif args.command == "run":
+        from .run import handle_run_command
+        handle_run_command(args)
     elif args.command == "swap":
         from .swap import handle_swap_command
         handle_swap_command(args)
