@@ -363,6 +363,7 @@ fi
         minsim: int = 0,
         maxsim: Optional[int] = None,
         sbatch: bool = True,
+        remote_run: bool = False,
         cleanup: bool = False,
         template: str = "template.mx3",
         check: bool = False,
@@ -421,6 +422,7 @@ fi
         minsim: int = 0,
         maxsim: Optional[int] = None,
         sbatch: bool = True,
+        remote_run: bool = False,
         submission_method: str = "auto",
         cleanup: bool = False,
         template: str = "template.mx3",
@@ -497,8 +499,13 @@ fi
                 relative_path = os.path.relpath(path, self.main_path)
                 progress_callback(i, f"{relative_path}{sim_name}.mx3")
 
-            # Handle sbatch submission
-            if sbatch:
+            # Handle submission based on remote_run and sbatch settings
+            if remote_run:
+                # Force remote execution via MMPP Run
+                success = self._submit_via_mmpp_run(sim_name, mx3_file_path, require_auth=True)
+                if not success:
+                    log.error(f"Failed to submit {sim_name} via MMPP Run (remote_run=True)")
+            elif sbatch:
                 submission_method = kwargs.get('submission_method', 'auto')
                 
                 if submission_method == "slurm":
@@ -510,16 +517,18 @@ fi
                     if not success:
                         log.error(f"Failed to submit {sim_name} via MMPP Run")
                 else:
-                    # Auto mode - try MMPP Run first, fallback to SLURM
-                    success = self._submit_via_mmpp_run(sim_name, mx3_file_path)
-                    if not success:
-                        log.info(f"MMPP Run not available for {sim_name}, using SLURM")
-                        self._submit_via_slurm(kwargs, sim_name, path)
+                    # Auto mode - prefer SLURM for local execution when remote_run=False
+                    self._submit_via_slurm(kwargs, sim_name, path)
 
             time.sleep(0.01)  # Small delay to see progress
 
-    def _submit_via_mmpp_run(self, sim_name: str, mx3_file_path: str) -> bool:
+    def _submit_via_mmpp_run(self, sim_name: str, mx3_file_path: str, require_auth: bool = False) -> bool:
         """Submit simulation via MMPP Run system.
+        
+        Args:
+            sim_name: Name of the simulation
+            mx3_file_path: Path to the MX3 file  
+            require_auth: If True, fail if authentication is not available
         
         Returns:
             True if successful, False otherwise
@@ -532,8 +541,25 @@ fi
             
             # Check if authentication is available
             auth_manager = AuthManager()
-            if not (auth_manager.get_token() and auth_manager.get_base_url()):
-                return False
+            token = auth_manager.get_token()
+            base_url = auth_manager.get_base_url()
+            
+            if not (token and base_url):
+                if require_auth:
+                    log.error(f"Authentication required for remote_run but not available. Please run 'mmpp auth login' first.")
+                    # Try to refresh token from saved credentials
+                    try:
+                        auth_manager.load_credentials()
+                        token = auth_manager.get_token()
+                        base_url = auth_manager.get_base_url()
+                        if not (token and base_url):
+                            log.error("Failed to refresh authentication. Please run 'mmpp auth login'.")
+                            return False
+                    except Exception as e:
+                        log.error(f"Failed to load saved credentials: {e}")
+                        return False
+                else:
+                    return False
                 
             # Create args object for submission
             args = argparse.Namespace()
@@ -556,6 +582,8 @@ fi
                 return False
                 
         except ImportError:
+            if require_auth:
+                log.error("MMPP Run module not available but required for remote_run")
             return False
         except Exception as e:
             log.warning(f"Error with MMPP Run submission for {sim_name}: {e}")
@@ -790,7 +818,8 @@ class SimulationSwapper:
         default_config = {
             "last_param_name": None,
             "prefix": "v1",
-            "sbatch": True,
+            "sbatch": True,  # Fixed: should be True by default
+            "remote_run": False,  # Use remote MMPP server for execution
             "submission_method": "auto",  # "auto", "mmpp", "slurm"
             "full_name": False,
             "template_name": "template.mx3",  # Changed from template to template_name
@@ -808,6 +837,24 @@ class SimulationSwapper:
         if "config" in self.config_data:
             user_config = self.config_data["config"]
             default_config.update(user_config)
+            
+            # Fix: Convert list values to proper types for boolean fields
+            boolean_fields = ["pairs", "remote_run", "sbatch", "cleanup", "check", "force", "full_name"]
+            for field in boolean_fields:
+                if field in default_config:
+                    value = default_config[field]
+                    if isinstance(value, list) and len(value) > 0:
+                        # Take first element from list
+                        default_config[field] = value[0]
+                        
+            # Fix: Convert list values for string fields
+            string_fields = ["template_name", "prefix", "last_param_name"]
+            for field in string_fields:
+                if field in default_config:
+                    value = default_config[field]
+                    if isinstance(value, list) and len(value) > 0:
+                        # Take first element from list
+                        default_config[field] = value[0]
 
         # Always override paths to current directory
         default_config["main_path"] = current_dir
@@ -861,6 +908,24 @@ class SimulationSwapper:
                 "⚠️  [yellow]No parameters found in configuration file[/yellow]"
             )
             return
+
+        # Check authorization if remote_run is enabled
+        if self.config_options.get("remote_run", False):
+            try:
+                from mmpp.auth import AuthManager
+                auth_manager = AuthManager()
+                token = auth_manager.get_token()
+                base_url = auth_manager.get_base_url()
+                
+                if not (token and base_url):
+                    console.print("❌ [red]Authentication required for remote_run but not available[/red]")
+                    console.print("💡 [yellow]Please run 'mmpp auth login' first to configure remote server access[/yellow]")
+                    return
+                    
+                console.print(f"✅ [green]Remote server configured: {base_url}[/green]")
+            except ImportError:
+                console.print("❌ [red]MMPP Run module not available for remote execution[/red]")
+                return
 
         # Sprawdź czy last_param_name jest ustawione
         last_param_name = self.config_options.get("last_param_name")
@@ -926,6 +991,7 @@ class SimulationSwapper:
 📋 Last parameter: [magenta]{last_param_name}[/magenta]
 ⏯️  Simulation range: [orange]{minsim}[/orange] to [orange]{maxsim or "end"}[/orange]
 🎯 Will execute: [bold red]{actual_simulations}[/bold red] simulations
+🖥️  Execution mode: [cyan]{"Remote (MMPP Server)" if self.config_options["remote_run"] else "Local SLURM" if self.config_options["sbatch"] else "Files only"}[/cyan]
 """
         console.print(
             Panel(config_info.strip(), title="🔧 Configuration", border_style="green")
@@ -957,6 +1023,7 @@ class SimulationSwapper:
                 minsim=minsim,
                 maxsim=maxsim,
                 sbatch=self.config_options["sbatch"],
+                remote_run=self.config_options["remote_run"],
                 submission_method=self.config_options["submission_method"],
                 cleanup=self.config_options["cleanup"],
                 template=self.config_options["template_name"],
@@ -1171,7 +1238,11 @@ config:
   last_param_name: "{last_param}"     # Parameter for last iteration
   prefix: "{prefix}"                  # Simulation prefix/version
   template_name: "{template_name}"    # Template file name
-  sbatch: true                        # Use SLURM batch system
+  
+  # Execution modes (choose one)
+  sbatch: true                        # Use SLURM batch system locally 
+  remote_run: false                   # Use remote MMPP server for execution
+  
   full_name: false                    # Use full parameter names in paths
 
   # Execution control
@@ -1200,6 +1271,11 @@ config:
 #    - [sin(pi/4), cos(pi/4), tan(pi/6)]
 #    - np.linspace(0, 2*pi, 10)
 #    - [i**2 for i in range(1, 6)]     # List comprehensions
+#
+# Execution Modes:
+#   sbatch: true, remote_run: false    # Local SLURM execution
+#   sbatch: false, remote_run: true    # Remote MMPP server execution
+#   sbatch: false, remote_run: false   # Files only (no execution)
 #
 # Examples:
 #   B0: [0.001, 0.01, 0.1]                    # Discrete values
