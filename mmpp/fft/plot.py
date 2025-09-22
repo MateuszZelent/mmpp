@@ -103,6 +103,7 @@ class FFTPlotter:
         save_dataset_name: Optional[str] = None,
         figsize: Optional[tuple[float, float]] = None,
         save_path: Optional[str] = None,
+        tmax: Optional[int] = None,
         **kwargs,
     ) -> tuple[Any, Any]:
         """
@@ -130,6 +131,8 @@ class FFTPlotter:
             Figure size
         save_path : str, optional
             Path to save figure
+        tmax : int, optional
+            Maximum number of time steps to use for FFT calculation (default: None, use all)
         \\*\\*kwargs : Any
             Additional FFT configuration options. Recognised keys include
             ``peak_width``/``fwhh``/``fwhm``/``hwfh`` (bool or str) to add a
@@ -183,10 +186,26 @@ class FFTPlotter:
                     save=save,
                     force=force,
                     save_dataset_name=save_dataset_name,
+                    tmax=tmax,
                     **kwargs,
                 )
 
                 power = np.abs(fft_result.spectrum) ** 2
+
+                # Debug: Check array shapes
+                log.debug(f"FFT result shapes: spectrum={fft_result.spectrum.shape}, frequencies={fft_result.frequencies.shape}")
+
+                # Handle multi-dimensional spectrum - average over components if needed
+                if power.ndim > 1:
+                    log.debug(f"Spectrum is {power.ndim}D, averaging over non-frequency dimensions")
+                    # Average over all dimensions except the first (frequency)
+                    power = np.mean(power, axis=tuple(range(1, power.ndim)))
+                    log.debug(f"After averaging: power shape={power.shape}")
+
+                # Verify array lengths match
+                if len(fft_result.frequencies) != len(power):
+                    log.error(f"Length mismatch after processing: frequencies={len(fft_result.frequencies)}, power={len(power)}")
+                    continue
 
                 # Normalize if requested
                 if normalize and np.max(power) > 0:
@@ -240,7 +259,12 @@ class FFTPlotter:
                     line = lines[0] if isinstance(lines, list) else lines
 
                 if show_peak_width:
-                    width_info = compute_half_width_at_half_max(freqs_ghz, power)
+                    # Ensure arrays have same length before computing FWHM
+                    if len(freqs_ghz) != len(power):
+                        log.warning(f"Array length mismatch: frequencies={len(freqs_ghz)}, power={len(power)}. Skipping FWHM calculation.")
+                        width_info = None
+                    else:
+                        width_info = compute_half_width_at_half_max(freqs_ghz, power)
                     if width_info is None:
                         log.debug(
                             "Skipping peak width annotation for %s: unable to determine half-width",

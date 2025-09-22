@@ -165,12 +165,22 @@ class FFTComputeResult:
         spectrum_chunks = None
         freq_chunks = None
 
-        # Save spectrum data without chunking
+        # Save spectrum data - handle chunking properly based on array dimensions
+        spectrum_chunks = None  # Let zarr decide chunking
+        freq_chunks = None      # Let zarr decide chunking
+        
+        log.debug(f"Saving spectrum shape: {self.spectrum.shape}, frequencies shape: {self.frequencies.shape}")
+
+        # Save spectrum data
         fft_group.create_dataset(
-            "spectrum", data=self.spectrum, chunks=spectrum_chunks, overwrite=force
+            "spectrum", 
+            data=self.spectrum, 
+            overwrite=force
         )
         fft_group.create_dataset(
-            "frequencies", data=self.frequencies, chunks=freq_chunks, overwrite=force
+            "frequencies", 
+            data=self.frequencies, 
+            overwrite=force
         )
 
         # Save metadata as attributes
@@ -608,7 +618,7 @@ class FFTCompute:
         )
 
     def load_data_from_zarr(
-        self, zarr_path: str, dataset: str, z_layer: int = -1
+        self, zarr_path: str, dataset: str, z_layer: int = -1, tmax: Optional[int] = None
     ) -> tuple[np.ndarray, float]:
         """
         Load data from zarr file.
@@ -639,7 +649,7 @@ class FFTCompute:
             )
 
         log.info(f"Loading data from zarr: {zarr_path}")
-        log.debug(f"Dataset: {dataset}, z_layer: {z_layer}")
+        log.debug(f"Dataset: {dataset}, z_layer: {z_layer}, tmax: {tmax}")
 
         try:
             job = Pyzfn(zarr_path)
@@ -691,6 +701,15 @@ class FFTCompute:
         data_load_time = time.time() - data_load_start
 
         log.debug(f"Data loading time: {data_load_time:.3f}s")
+
+        # Apply tmax limit if specified
+        if tmax is not None and tmax > 0:
+            original_time_steps = data.shape[0] if len(data.shape) > 0 else 0
+            if tmax < original_time_steps:
+                data = data[:tmax]
+                log.info(f"Applied tmax={tmax}: reduced from {original_time_steps} to {tmax} time steps")
+            else:
+                log.info(f"tmax={tmax} >= data length ({original_time_steps}), no truncation applied")
 
         # Calculate data size and loading speed
         data_size_mb = data.nbytes / 1024 / 1024
@@ -895,6 +914,7 @@ class FFTCompute:
         save: bool = False,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
+        tmax: Optional[int] = None,
         **kwargs,
     ) -> FFTComputeResult:
         """
@@ -916,6 +936,8 @@ class FFTCompute:
             Force recalculation and overwrite existing (default: False)
         save_dataset_name : str, optional
             Custom name for saved dataset (default: auto-generated)
+        tmax : int, optional
+            Maximum number of time steps to use for FFT calculation (default: None, use all)
         **kwargs : Any
             Additional FFT configuration options
 
@@ -1014,7 +1036,7 @@ class FFTCompute:
 
         # Time the data loading
         load_start_time = time.time()
-        data, dt = self.load_data_from_zarr(zarr_path, dataset, z_layer)
+        data, dt = self.load_data_from_zarr(zarr_path, dataset, z_layer, tmax=tmax)
         load_end_time = time.time()
 
         # Memory after loading (if psutil available)
