@@ -741,7 +741,7 @@ class FFTCompute:
         log.debug(f"Layer selection time: {layer_select_time:.3f}s")
 
         # Get time step
-        dt = getattr(job, "t_sampl", 1e-12)
+        dt = job.attrs.get("t_sampl", 1e-12)
 
         # Final timing and memory measurement
         total_time = time.time() - start_time

@@ -322,15 +322,15 @@ class ModeVisualizationConfig:
     scalebar_height_fraction: float = 0.01
     scale_units: str = "nm"
 
-    colorbar_fraction: float = 0.025
-    colorbar_pad: float = 0.012
-    colorbar_ticklabel_size: int = 8
-    colorbar_label_size: int = 9
+    colorbar_fraction: float = 0.04   # Proper colorbar width
+    colorbar_pad: float = 0.01       # Small padding for close positioning
+    colorbar_ticklabel_size: int = 9  # Larger tick labels
+    colorbar_label_size: int = 10     # Larger labels
     colorbar_labels: dict[str, str] = field(
         default_factory=lambda: {
-            "magnitude": "|m| (arb. units)",
-            "phase": "Phase (rad)",
-            "combined": "Re(m) (arb. units)",
+            "magnitude": "Magnetization |m|",
+            "phase": "Phase (rad)", 
+            "combined": "Re(m) × cos(φ)",
         }
     )
 
@@ -709,7 +709,13 @@ class FMRModeAnalyzer:
                 )
             log.info(f"Loaded spectrum data: shape {self.spectrum.shape}")
         else:
-            self.spectrum = None
+            # Try to load power_sum from computed modes as fallback spectrum
+            modes_power_path = f"modes/{self.dataset_name}/power_sum"
+            if modes_power_path in self.zarr_file:
+                self.spectrum = np.array(self.zarr_file[modes_power_path])
+                log.info(f"Using computed modes power_sum as spectrum: shape {self.spectrum.shape}")
+            else:
+                self.spectrum = None
 
         # Get spatial information
         self._get_spatial_info()
@@ -1614,7 +1620,7 @@ class FMRModeAnalyzer:
                         origin="lower",
                     )
                     self._mode_axes[row_idx, i].set_title(
-                        f"m_{comp} combined (mag×cos(φ))"
+                        f"m_{comp} (mag×cos(φ))"
                     )
                     if images_for_colorbar[row_idx] is None:
                         images_for_colorbar[row_idx] = img
@@ -1633,25 +1639,37 @@ class FMRModeAnalyzer:
         )
 
         # Create shared colorbars per visualization type
-        if AXES_GRID_AVAILABLE:
-            for row_idx, (vis_type, img) in enumerate(zip(vis_types, images_for_colorbar)):
-                if img is None:
-                    continue
-                try:
+        for row_idx, (vis_type, img) in enumerate(zip(vis_types, images_for_colorbar)):
+            if img is None:
+                continue
+            try:
+                # Get the rightmost axis in this row for colorbar placement
+                rightmost_ax = self._mode_axes[row_idx, -1]
+                
+                if AXES_GRID_AVAILABLE:
+                    from mpl_toolkits.axes_grid1 import make_axes_locatable
+                    # Use make_axes_locatable for proper positioning
+                    divider = make_axes_locatable(rightmost_ax)
+                    cax = divider.append_axes("right", 
+                                             size=f"{self.config.colorbar_fraction*100}%",
+                                             pad=self.config.colorbar_pad)
+                    cbar = self._interactive_fig.colorbar(img, cax=cax)
+                else:
+                    # Fallback to basic colorbar positioned at rightmost axis
                     cbar = self._interactive_fig.colorbar(
                         img,
-                        ax=list(self._mode_axes[row_idx, :]),
+                        ax=rightmost_ax,
                         fraction=self.config.colorbar_fraction,
                         pad=self.config.colorbar_pad,
                     )
-                except Exception as exc:
-                    log.debug(f"Skipping colorbar for {vis_type}: {exc}")
-                    continue
+            except Exception as exc:
+                log.debug(f"Skipping colorbar for {vis_type}: {exc}")
+                continue
 
-                label = self.config.colorbar_labels.get(vis_type, vis_type.title())
-                cbar.set_label(label, fontsize=self.config.colorbar_label_size)
-                cbar.ax.tick_params(labelsize=self.config.colorbar_ticklabel_size)
-                self._row_colorbars.append(cbar)
+            label = self.config.colorbar_labels.get(vis_type, vis_type.title())
+            cbar.set_label(label, fontsize=self.config.colorbar_label_size)
+            cbar.ax.tick_params(labelsize=self.config.colorbar_ticklabel_size)
+            self._row_colorbars.append(cbar)
 
     def _add_scale_bar(
         self, ax: Any, extent: tuple[float, float, float, float]
@@ -1834,7 +1852,7 @@ class FMRModeAnalyzer:
         if dt is None and PYZFN_AVAILABLE:
             try:
                 pyz_job = Pyzfn(self.zarr_path)
-                dt_candidate = _extract_dt(getattr(pyz_job, "t_sampl", None))
+                dt_candidate = _extract_dt(pyz_job.attrs.get("t_sampl", None))
                 if dt_candidate is not None:
                     dt = dt_candidate
             except Exception as exc:
@@ -1904,8 +1922,9 @@ class FMRModeAnalyzer:
             modes_group.array(
                 "freqs",
                 data=freqs,
+                shape=freqs.shape,
                 dtype=freqs.dtype,
-                chunks=False,
+                chunks=freqs.shape,  # Use the data shape as chunk size
                 overwrite=True,
             )
 
@@ -1914,6 +1933,7 @@ class FMRModeAnalyzer:
             modes_group.array(
                 "arr",
                 data=fft_result.astype(np.complex64, copy=False),
+                shape=fft_result.shape,
                 dtype=np.complex64,
                 chunks=chunks,
                 overwrite=True,
@@ -1935,15 +1955,17 @@ class FMRModeAnalyzer:
             modes_group.array(
                 "power_max",
                 data=power_max.astype(np.float32, copy=False),
+                shape=power_max.shape,
                 dtype=np.float32,
-                chunks=False,
+                chunks=power_max.shape,  # Use data shape as chunk size
                 overwrite=True,
             )
             modes_group.array(
                 "power_sum",
                 data=power_sum.astype(np.float32, copy=False),
+                shape=power_sum.shape,
                 dtype=np.float32,
-                chunks=False,
+                chunks=power_sum.shape,  # Use data shape as chunk size
                 overwrite=True,
             )
 
