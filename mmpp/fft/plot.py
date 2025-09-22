@@ -221,21 +221,23 @@ class FFTPlotter:
 
                 # Plot
                 if log_scale:
-                    (line,) = ax.semilogy(
+                    lines = ax.semilogy(
                         freqs_ghz,
                         power_scaled,
                         alpha=self.config["line_alpha"],
                         linewidth=self.config["line_width"],
                         label=label,
                     )
+                    line = lines[0] if isinstance(lines, list) else lines
                 else:
-                    (line,) = ax.plot(
+                    lines = ax.plot(
                         freqs_ghz,
                         power_scaled,
                         alpha=self.config["line_alpha"],
                         linewidth=self.config["line_width"],
                         label=label,
                     )
+                    line = lines[0] if isinstance(lines, list) else lines
 
                 if show_peak_width:
                     width_info = compute_half_width_at_half_max(freqs_ghz, power)
