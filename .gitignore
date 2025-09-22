@@ -11,6 +11,8 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+*.mx3
+*.sb
 downloads/
 eggs/
 .eggs/

@@ -1,0 +1,28 @@
+# MMPP Simulation Parameters Template
+# Extended with MMPP Run integration
+#
+# Syntax:
+# - Use lists for discrete values: [value1, value2, value3]
+# - Use numpy arrays for ranges: np.linspace(start, stop, num)
+# - Comment out parameters to disable them (prefix with #)
+# - The last_param_name should match one of your swap parameters
+
+swap:
+  aex: [10e-12, 15e-12]  # Exchange constant - same length
+  msat: [800e3, 1000e3]  # Saturation magnetization - same length
+
+config:
+  last_param_name: "msat"     # Parameter for last iteration
+  prefix: "test_batch"        # Simulation prefix/version
+  template_name: "template.mx3"    # Template file name
+  sbatch: true                        # Use batch system
+  submission_method: "mmpp"           # Submission method: "auto", "mmpp", "slurm"
+  full_name: true                    # Use full parameter names in paths
+
+  # Execution control
+  minsim: 0                          # Minimum simulation index
+  maxsim: 4                          # Maximum simulation index (limit for testing)
+  pairs: false                       # Use paired parameters instead of cartesian product
+  cleanup: false                     # Cleanup temporary files
+  check: false                       # Check simulation status
+  force: false                       # Force re-run completed simulations

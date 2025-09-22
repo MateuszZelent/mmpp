@@ -64,6 +64,9 @@ class FFT:
         self, dataset_name: str, z_layer: int, method: int, **kwargs
     ) -> str:
         """Generate cache key for FFT results."""
+        # Normalize z_layer for consistent cache keys
+        # For cache purposes, we use the raw z_layer value since the actual normalization
+        # happens in calculate_fft_data and we want consistent caching behavior
         key_parts = [dataset_name, str(z_layer), str(method)]
         for k, v in sorted(kwargs.items()):
             key_parts.append(f"{k}={v}")
@@ -479,7 +482,7 @@ class FFT:
                     "Auto-selected or explicit: 'm_z11', 'm_x11', 'm_y11'",
                 ),
                 ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
-                ("method", "FFT method", "1 (default), 2, 3"),
+                ("method", "FFT method", "1 (default), 2"),
                 ("save", "Save to zarr", "True/False"),
                 ("force", "Force recalculation", "True/False"),
             ]
@@ -489,24 +492,24 @@ class FFT:
 
             # Usage examples
             example_code = """# Basic FFT operations (auto-selects optimal dataset)
-power = op[0].fft.power()
-freqs = op[0].fft.frequencies()
-spectrum = op[0].fft.spectrum(save=True, force=True)
+power = job[0].fft.power()
+freqs = job[0].fft.frequencies()
+spectrum = job[0].fft.spectrum(save=True, force=True)
 
 # Or specify dataset explicitly
-power = op[0].fft.power('m_z11')
+power = job[0].fft.power('m_z11')
 
 # Plotting
-fig, ax = op[0].fft.plot_spectrum(log_scale=True)
+fig, ax = job[0].fft.plot_spectrum(log_scale=True)
 
 # Mode analysis (if available)
-op[0].fft.modes.interactive_spectrum()
-op[0].fft[0][200].plot_modes()  # Elegant syntax
-op[0].fft.plot_modes(frequency=1.5)
+job[0].fft.modes.interactive_spectrum()
+job[0].fft[0][200].plot_modes()  # Elegant syntax
+job[0].fft.plot_modes(frequency=1.5)
 
 # Advanced usage
-op[0].fft.plotter.power_spectrum(normalize=True)
-help(op[0].fft.spectrum)  # Detailed documentation"""
+job[0].fft.plotter.power_spectrum(normalize=True)
+help(job[0].fft.spectrum)  # Detailed documentation"""
 
             syntax = Syntax(
                 example_code, "python", theme="monokai", background_color="default"
@@ -596,18 +599,18 @@ help(op[0].fft.spectrum)  # Detailed documentation"""
             (
                 "spectrum()",
                 "Get complex FFT spectrum",
-                "op[0].fft.spectrum('m_z11', z_layer=-1)",
+                "job[0].fft.spectrum('m_z11', z_layer=-1)",
             ),
-            ("frequencies()", "Get frequency array", "op[0].fft.frequencies()"),
-            ("power()", "Get power spectrum |FFT|²", "op[0].fft.power()"),
-            ("magnitude()", "Get magnitude |FFT|", "op[0].fft.magnitude()"),
-            ("phase()", "Get phase spectrum", "op[0].fft.phase()"),
+            ("frequencies()", "Get frequency array", "job[0].fft.frequencies()"),
+            ("power()", "Get power spectrum |FFT|²", "job[0].fft.power()"),
+            ("magnitude()", "Get magnitude |FFT|", "job[0].fft.magnitude()"),
+            ("phase()", "Get phase spectrum", "job[0].fft.phase()"),
             (
                 "plot_spectrum()",
                 "Plot power spectrum",
-                "fig, ax = op[0].fft.plot_spectrum()",
+                "fig, ax = job[0].fft.plot_spectrum()",
             ),
-            ("clear_cache()", "Clear computation cache", "op[0].fft.clear_cache()"),
+            ("clear_cache()", "Clear computation cache", "job[0].fft.clear_cache()"),
         ]
 
         for method, desc, example in methods:
@@ -624,22 +627,22 @@ help(op[0].fft.spectrum)  # Detailed documentation"""
                 (
                     "modes",
                     "Access mode interface",
-                    "op[0].fft.modes.interactive_spectrum()",
+                    "job[0].fft.modes.interactive_spectrum()",
                 ),
                 (
                     "[index]",
                     "Index-based mode access",
-                    "op[0].fft[0][200].plot_modes()",
+                    "job[0].fft[0][200].plot_modes()",
                 ),
                 (
                     "plot_modes()",
                     "Plot modes at frequency",
-                    "op[0].fft.plot_modes(frequency=1.5)",
+                    "job[0].fft.plot_modes(frequency=1.5)",
                 ),
                 (
                     "interactive_spectrum()",
                     "Interactive spectrum+modes",
-                    "op[0].fft.interactive_spectrum()",
+                    "job[0].fft.interactive_spectrum()",
                 ),
             ]
 
@@ -658,7 +661,7 @@ help(op[0].fft.spectrum)  # Detailed documentation"""
         params = [
             ("dset", "Dataset name", "'m_z11', 'm_x11', 'm_y11'"),
             ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
-            ("method", "FFT method", "1 (default), 2, 3"),
+            ("method", "FFT method", "1 (default), 2"),
             ("save", "Save to zarr", "True/False"),
             ("force", "Force recalculation", "True/False"),
         ]
@@ -673,21 +676,21 @@ help(op[0].fft.spectrum)  # Detailed documentation"""
         output.append("─" * 50)
         examples = [
             "# Basic FFT operations",
-            "power = op[0].fft.power('m_z11')",
-            "freqs = op[0].fft.frequencies()",
-            "spectrum = op[0].fft.spectrum(save=True, force=True)",
+            "power = job[0].fft.power('m_z11')",
+            "freqs = job[0].fft.frequencies()",
+            "spectrum = job[0].fft.spectrum(save=True, force=True)",
             "",
             "# Plotting",
-            "fig, ax = op[0].fft.plot_spectrum(log_scale=True)",
+            "fig, ax = job[0].fft.plot_spectrum(log_scale=True)",
             "",
             "# Mode analysis (if available)",
-            "op[0].fft.modes.interactive_spectrum()",
-            "op[0].fft[0][200].plot_modes()  # Elegant syntax",
-            "op[0].fft.plot_modes(frequency=1.5)",
+            "job[0].fft.modes.interactive_spectrum()",
+            "job[0].fft[0][200].plot_modes()  # Elegant syntax",
+            "job[0].fft.plot_modes(frequency=1.5)",
             "",
             "# Advanced usage",
-            "op[0].fft.plotter.power_spectrum(normalize=True)",
-            "help(op[0].fft.spectrum)  # Detailed documentation",
+            "job[0].fft.plotter.power_spectrum(normalize=True)",
+            "help(job[0].fft.spectrum)  # Detailed documentation",
         ]
 
         for example in examples:
@@ -695,8 +698,8 @@ help(op[0].fft.spectrum)  # Detailed documentation"""
 
         output.append("")
         output.append("=" * 70)
-        output.append("📖 For detailed docs: help(op[0].fft.spectrum)")
-        output.append("🔧 Clear cache: op[0].fft.clear_cache()")
+        output.append("📖 For detailed docs: help(job[0].fft.spectrum)")
+        output.append("🔧 Clear cache: job[0].fft.clear_cache()")
         output.append("=" * 70)
 
         return "\n".join(output)
@@ -713,9 +716,9 @@ help(op[0].fft.spectrum)  # Detailed documentation"""
 
         Examples:
         ---------
-        >>> op[0].fft.modes.interactive_spectrum()
-        >>> op[0].fft.modes.plot_modes(frequency=1.5)
-        >>> op[0].fft[0][200].plot_modes()  # Elegant syntax
+        >>> job[0].fft.modes.interactive_spectrum()
+        >>> job[0].fft.modes.plot_modes(frequency=1.5)
+        >>> job[0].fft[0][200].plot_modes()  # Elegant syntax
         """
         if not MODES_AVAILABLE:
             raise ImportError(
@@ -742,8 +745,8 @@ help(op[0].fft.spectrum)  # Detailed documentation"""
 
         Examples:
         ---------
-        >>> op[0].fft[0].interactive_spectrum()
-        >>> op[0].fft[0][200].plot_modes()
+        >>> job[0].fft[0].interactive_spectrum()
+        >>> job[0].fft[0][200].plot_modes()
         """
         if not MODES_AVAILABLE:
             raise ImportError(

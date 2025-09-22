@@ -1,0 +1,34 @@
+# MMPP Simulation Parameters Template
+# Auto-generated from: template.mx3
+# Working directory: /home/kkingstoun/git/mmpp/tests/swap
+# Found parameters: aex, msat
+#
+# Syntax:
+# - Use lists for discrete values: [value1, value2, value3]
+# - Use numpy arrays for ranges: np.linspace(start, stop, num)
+# - Comment out parameters to disable them (prefix with #)
+# - The last_param_name should match one of your swap parameters
+#
+# Example numpy usage (uncomment and modify as needed):
+# import numpy as np
+
+swap:
+  aex: [10e-12, 15e-12, 20e-12]  # Exchange constant
+  # aex: np.linspace(10e-12, 20e-12, 5)  # Linear spacing
+  msat: [800e3, 1000e3, 1200e3]  # Saturation magnetization
+  # msat: (800e3, 1200e3, 5)  # Range in A/m
+
+config:
+  last_param_name: "msat"     # Parameter for last iteration
+  prefix: "v1"                  # Simulation prefix/version
+  template_name: "template.mx3"    # Template file name
+  sbatch: true                        # Use SLURM batch system
+  full_name: false                    # Use full parameter names in paths
+
+  # Execution control
+  minsim: 0                          # Minimum simulation index
+  maxsim: null                       # Maximum simulation index (null = no limit)
+  pairs: false                       # Use paired parameters instead of cartesian product
+  cleanup: false                     # Cleanup temporary files
+  check: false                       # Check simulation status
+  force: false                       # Force re-run completed simulations

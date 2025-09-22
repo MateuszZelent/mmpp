@@ -750,11 +750,18 @@ class FMRModeAnalyzer:
                 f"using closest: {actual_freq:.3f} GHz"
             )
 
-        # Validate z_layer bounds
+        # Validate and normalize z_layer bounds
         mode_shape = self.zarr_file[self.modes_path].shape
-        if z_layer >= mode_shape[1]:
+        n_layers = mode_shape[1]
+        
+        # Handle negative indexing (like Python lists)
+        if z_layer < 0:
+            z_layer = n_layers + z_layer
+            log.debug(f"Converted negative z_layer to {z_layer}")
+            
+        if z_layer < 0 or z_layer >= n_layers:
             raise ValueError(
-                f"z_layer {z_layer} out of range. Available layers: 0-{mode_shape[1] - 1}"
+                f"z_layer {z_layer} out of range. Available layers: 0-{n_layers - 1} (or negative: -{n_layers} to -1)"
             )
 
         # Load mode data for this frequency with bounds checking
@@ -1453,13 +1460,20 @@ class FMRModeAnalyzer:
             # Open in write mode
             zarr_write = zarr.open(self.zarr_path, mode="a")
 
+            # Remove existing data if force=True to avoid conflicts
+            if force:
+                if f"modes/{self.dataset_name}" in zarr_write:
+                    del zarr_write[f"modes/{self.dataset_name}"]
+                if f"fft/{self.dataset_name}" in zarr_write:
+                    del zarr_write[f"fft/{self.dataset_name}"]
+
             # Create groups
             modes_group = zarr_write.require_group(f"modes/{self.dataset_name}")
-            fft_group = zarr_write.require_group(f"fft/{self.dataset_name}")
+            # Don't create fft_group here - let plot_spectrum/calculate_fft_data handle it
+            # This avoids conflicts with standard FFT data format
 
-            # Save frequencies
+            # Save frequencies in modes group only
             modes_group.array("freqs", freqs, chunks=False, overwrite=True)
-            fft_group.array("freqs", freqs, chunks=False, overwrite=True)
 
             # Save complex modes (chunked only on first dimension)
             chunks = (1,) + fft_result.shape[1:]
@@ -1467,13 +1481,13 @@ class FMRModeAnalyzer:
                 "arr", fft_result, dtype=np.complex64, chunks=chunks, overwrite=True
             )
 
-            # Save power spectrum
+            # Save power spectrum summary in modes group 
             power_spec = np.abs(fft_result)
-            fft_group.array(
-                "spec", np.max(power_spec, axis=(1, 2, 3)), chunks=False, overwrite=True
+            modes_group.array(
+                "power_max", np.max(power_spec, axis=(1, 2, 3)), chunks=False, overwrite=True
             )
-            fft_group.array(
-                "sum", np.sum(power_spec, axis=(1, 2, 3)), chunks=False, overwrite=True
+            modes_group.array(
+                "power_sum", np.sum(power_spec, axis=(1, 2, 3)), chunks=False, overwrite=True
             )
 
             # Save metadata
@@ -1887,7 +1901,7 @@ class FFTModeInterface:
     """
     Enhanced FFT interface with mode visualization capabilities.
 
-    Provides elegant syntax like: op[0].fft[0][200].plot_modes()
+    Provides elegant syntax like: job[0].fft[0][200].plot_modes()
     """
 
     def __init__(self, fft_result_index: int, parent_fft):
