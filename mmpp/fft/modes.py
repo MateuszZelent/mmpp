@@ -83,6 +83,13 @@ except ImportError:
     SCIPY_AVAILABLE = False
     log.warning("SciPy not available - peak detection features limited")
 
+from .metrics import (
+    PeakWidth,
+    compute_half_width_at_half_max,
+    format_width_value,
+    normalize_peak_width_option,
+)
+
 # Check for animation support
 try:
     from matplotlib.animation import FuncAnimation, PillowWriter
@@ -548,6 +555,8 @@ class FMRModeAnalyzer:
         self._frequency_line = None
         self._mode_axes = None
         self._row_colorbars: list[Any] = []
+        self._fwhm_artists: list[Any] = []
+        self._last_fwhm = None
 
         # Mode data cache (LRU cache with max 10 entries)
         self._mode_cache = {}
@@ -562,6 +571,12 @@ class FMRModeAnalyzer:
             and self.freqs_path is not None
             and self.spectrum_path is not None
         )
+
+    @property
+    def last_fwhm(self) -> Optional[PeakWidth]:
+        """Return the most recently computed half-width at half-maximum."""
+
+        return getattr(self, "_last_fwhm", None)
 
     def _get_zarr_paths(self) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """
@@ -1129,6 +1144,9 @@ class FMRModeAnalyzer:
             - pcmap : str, optional
                 Colormap specifically for phase plots (overrides cmap for phase)
                 Examples: 'hsv', 'twilight', 'twilight_shifted', 'phase'
+            - peak_width / fwhh / fwhm / hwfh : bool or str, optional
+                Annotate the dominant peak's half-width at half-maximum on the
+                spectrum panel. Strings control the label text.
 
         Returns:
         --------
@@ -1142,6 +1160,25 @@ class FMRModeAnalyzer:
         if force:
             log.info(f"Force reloading data for interactive spectrum (dataset: {self.dataset_name})")
             self._load_data()
+
+        peak_width_option = kwargs.pop("peak_width", None)
+        for alias in ("fwhh", "fwhm", "hwfh"):
+            alias_value = kwargs.pop(alias, None)
+            if alias_value is not None:
+                peak_width_option = alias_value
+
+        show_peak_width, peak_width_label = normalize_peak_width_option(
+            peak_width_option
+        )
+
+        # Clear previous FWHM artists if figure is being re-used
+        for artist in getattr(self, "_fwhm_artists", []):
+            try:
+                artist.remove()
+            except ValueError:
+                pass
+        self._fwhm_artists: list[Any] = []
+        self._last_fwhm = None
 
         # Use FFT spectrum for consistency with plot_spectrum
         spectrum_to_use = self.spectrum
@@ -1275,10 +1312,13 @@ class FMRModeAnalyzer:
             frequencies_to_use <= self.config.f_max
         )
         freqs_plot = frequencies_to_use[freq_mask]
-        spectrum_plot = spectrum_to_use[freq_mask]
+        spectrum_segment = spectrum_to_use[freq_mask]
+        spectrum_plot = spectrum_segment.copy()
 
-        if self.config.spectrum_normalize:
-            spectrum_plot = spectrum_plot / np.max(spectrum_plot)
+        if self.config.spectrum_normalize and spectrum_plot.size:
+            max_val = np.max(spectrum_plot)
+            if max_val > 0:
+                spectrum_plot = spectrum_plot / max_val
 
         if self.config.spectrum_log_scale:
             spectrum_plot = np.log10(spectrum_plot + 1e-10)
@@ -1306,6 +1346,80 @@ class FMRModeAnalyzer:
                     va="bottom",
                     fontsize=8,
                 )
+
+        if show_peak_width and freqs_plot.size and spectrum_segment.size:
+            width_info = compute_half_width_at_half_max(freqs_plot, spectrum_segment)
+            if width_info is None:
+                log.debug("FWHM annotation skipped: could not determine half-width")
+            else:
+                scale_factor = width_info.peak_value if self.config.spectrum_normalize else 1.0
+                if scale_factor <= 0:
+                    log.debug("FWHM annotation skipped: invalid scale factor")
+                else:
+                    half_level_plot = width_info.half_level / scale_factor
+                    if self.config.spectrum_log_scale:
+                        if half_level_plot > 0:
+                            half_level_plot = np.log10(half_level_plot + 1e-10)
+                            delta = 0.05
+                            ymin = half_level_plot - delta
+                            ymax = half_level_plot + delta
+                        else:
+                            half_level_plot = None
+                    else:
+                        delta = max(abs(half_level_plot) * 0.05, 0.02)
+                        ymin = half_level_plot - delta
+                        ymax = half_level_plot + delta
+
+                    if half_level_plot is not None:
+                        color = "tab:orange"
+                        h_line = ax_spectrum.hlines(
+                            half_level_plot,
+                            width_info.left_frequency,
+                            width_info.right_frequency,
+                            colors=color,
+                            linewidth=1.5,
+                            linestyles="-",
+                            alpha=0.9,
+                            zorder=5,
+                        )
+                        self._fwhm_artists.append(h_line)
+
+                        v_lines = ax_spectrum.vlines(
+                            [width_info.left_frequency, width_info.right_frequency],
+                            ymin=ymin,
+                            ymax=ymax,
+                            colors=color,
+                            linewidth=1.2,
+                            alpha=0.9,
+                            zorder=5,
+                        )
+                        self._fwhm_artists.append(v_lines)
+
+                        text = ax_spectrum.annotate(
+                            f"{peak_width_label}: {format_width_value(width_info.width)}",
+                            xy=(
+                                (width_info.left_frequency + width_info.right_frequency) / 2.0,
+                                half_level_plot,
+                            ),
+                            xytext=(0, 10),
+                            textcoords="offset points",
+                            ha="center",
+                            va="bottom",
+                            fontsize=9,
+                            color=color,
+                            bbox={
+                                "boxstyle": "round,pad=0.2",
+                                "facecolor": "white",
+                                "edgecolor": color,
+                                "linewidth": 0.8,
+                                "alpha": 0.85,
+                            },
+                            zorder=6,
+                        )
+                        self._fwhm_artists.append(text)
+                        self._last_fwhm = width_info
+                    else:
+                        log.debug("FWHM annotation skipped: non-positive half level for log axis")
 
         # Initial frequency line
         init_freq = peaks[0].freq if peaks else freqs_plot[len(freqs_plot) // 2]

@@ -25,6 +25,11 @@ except ImportError:
 
 # Import from our own modules
 from .compute_fft import FFTCompute
+from .metrics import (
+    compute_half_width_at_half_max,
+    format_width_value,
+    normalize_peak_width_option,
+)
 
 
 class FFTPlotter:
@@ -126,7 +131,9 @@ class FFTPlotter:
         save_path : str, optional
             Path to save figure
         \\*\\*kwargs : Any
-            Additional FFT configuration options
+            Additional FFT configuration options. Recognised keys include
+            ``peak_width``/``fwhh``/``fwhm``/``hwfh`` (bool or str) to add a
+            half-width at half-maximum annotation for the dominant peak.
 
         Returns:
         --------
@@ -143,6 +150,17 @@ class FFTPlotter:
         # Setup figure
         figsize = figsize or self.config["figsize"]
         fig, ax = plt.subplots(figsize=figsize, dpi=self.config["dpi"])
+
+        # Extract FWHM/FWHH request before forwarding kwargs downstream
+        peak_width_option = kwargs.pop("peak_width", None)
+        for alias in ("fwhh", "fwhm", "hwfh"):
+            alias_value = kwargs.pop(alias, None)
+            if alias_value is not None:
+                peak_width_option = alias_value
+
+        show_peak_width, peak_width_label = normalize_peak_width_option(
+            peak_width_option
+        )
 
         # Initialize scale tracking
         global_scale_text = ""
@@ -171,46 +189,112 @@ class FFTPlotter:
                 power = np.abs(fft_result.spectrum) ** 2
 
                 # Normalize if requested
-                if normalize:
+                if normalize and np.max(power) > 0:
                     power = power / np.max(power)
 
                 # Create label
                 label = self._format_result_label(result)
 
                 # Determine scale factor for amplitude normalization
-                power_max = np.max(power)
+                power_max = np.max(power) if power.size else 0.0
+                scale_factor = 1.0
+                power_scaled = power
+                global_scale_text = ""
                 if power_max > 0 and not log_scale and not normalize:
-                    scale_factor = 10 ** np.floor(np.log10(power_max))
-                    power_scaled = power / scale_factor
+                    scale_factor_candidate = 10 ** np.floor(np.log10(power_max))
+                    if scale_factor_candidate > 0:
+                        scale_factor = scale_factor_candidate
+                        power_scaled = power / scale_factor
 
-                    # Format the scale factor for the label
-                    exponent = int(np.log10(scale_factor))
-                    if exponent != 0:
-                        global_scale_text = f"$10^{{{exponent}}}$"
+                        # Format the scale factor for the label
+                        exponent = int(np.log10(scale_factor))
+                        if exponent != 0:
+                            global_scale_text = f"$10^{{{exponent}}}$"
+                        else:
+                            scale_factor = 1.0
+                            power_scaled = power
                     else:
-                        global_scale_text = ""
-                        power_scaled = power  # No scaling needed
-                else:
-                    power_scaled = power
-                    global_scale_text = ""
+                        scale_factor = 1.0
+                        power_scaled = power
+
+                freqs_ghz = fft_result.frequencies / 1e9
 
                 # Plot
                 if log_scale:
-                    ax.semilogy(
-                        fft_result.frequencies / 1e9,
+                    (line,) = ax.semilogy(
+                        freqs_ghz,
                         power_scaled,
                         alpha=self.config["line_alpha"],
                         linewidth=self.config["line_width"],
                         label=label,
                     )
                 else:
-                    ax.plot(
-                        fft_result.frequencies / 1e9,
+                    (line,) = ax.plot(
+                        freqs_ghz,
                         power_scaled,
                         alpha=self.config["line_alpha"],
                         linewidth=self.config["line_width"],
                         label=label,
                     )
+
+                if show_peak_width:
+                    width_info = compute_half_width_at_half_max(freqs_ghz, power)
+                    if width_info is None:
+                        log.debug(
+                            "Skipping peak width annotation for %s: unable to determine half-width",
+                            label,
+                        )
+                    else:
+                        half_level_plot = width_info.half_level / scale_factor
+                        if half_level_plot <= 0:
+                            log.debug(
+                                "Skipping peak width annotation for %s: non-positive half level",
+                                label,
+                            )
+                        else:
+                            color = line.get_color()
+                            ax.hlines(
+                                half_level_plot,
+                                width_info.left_frequency,
+                                width_info.right_frequency,
+                                colors=color,
+                                linewidth=1.5,
+                                linestyles="-",
+                                alpha=0.8,
+                            )
+                            delta = 0.05
+                            ymin = half_level_plot * (1.0 - delta)
+                            ymax = half_level_plot * (1.0 + delta)
+                            ax.vlines(
+                                [width_info.left_frequency, width_info.right_frequency],
+                                ymin=ymin,
+                                ymax=ymax,
+                                colors=color,
+                                linewidth=1.2,
+                                alpha=0.8,
+                            )
+
+                            text = f"{peak_width_label}: {format_width_value(width_info.width)}"
+                            ax.annotate(
+                                text,
+                                xy=(
+                                    (width_info.left_frequency + width_info.right_frequency) / 2.0,
+                                    half_level_plot,
+                                ),
+                                xytext=(0, 8),
+                                textcoords="offset points",
+                                ha="center",
+                                va="bottom",
+                                fontsize=9,
+                                color=color,
+                                bbox={
+                                    "boxstyle": "round,pad=0.2",
+                                    "facecolor": "white",
+                                    "edgecolor": color,
+                                    "linewidth": 0.8,
+                                    "alpha": 0.8,
+                                },
+                            )
 
             except Exception as e:
                 log.error(f"Error analyzing result {i}: {e}")
