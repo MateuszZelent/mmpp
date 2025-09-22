@@ -443,6 +443,25 @@ class FFT:
                 core_methods_text.append(method, style="code")
                 core_methods_text.append(f" - {desc}\n", style="dim")
 
+            # Plotting methods panel content
+            plotting_methods_text = Text()
+            plotting_methods_text.append("📈 Plotting Toolkit:\n", style="bold magenta")
+            plotting_methods = [
+                ("plot_spectrum(log_scale=True)", "Quick-look power spectrum"),
+                ("plotter.power_spectrum(normalize=True)", "Overlay multiple results"),
+                (
+                    "plotter.power_spectrum(save_path='fft.png')",
+                    "Export publication figure",
+                ),
+                ("plot_modes(frequency=..., z_layer=-1)", "Static mode grid"),
+                ("modes.save_modes_animation()", "Animated mode evolution"),
+            ]
+
+            for method, desc in plotting_methods:
+                plotting_methods_text.append("  • ", style="dim")
+                plotting_methods_text.append(method, style="code")
+                plotting_methods_text.append(f" - {desc}\n", style="dim")
+
             # Mode methods panel content (if available)
             if has_modes:
                 mode_methods_text = Text()
@@ -485,6 +504,8 @@ class FFT:
                 ("method", "FFT method", "1 (default), 2"),
                 ("save", "Save to zarr", "True/False"),
                 ("force", "Force recalculation", "True/False"),
+                ("zero_padding", "Pad to power-of-two length", "True/False"),
+                ("nfft", "Manual FFT length", "int or None"),
             ]
 
             for param, desc, values in params:
@@ -501,6 +522,7 @@ power = job[0].fft.power('m_z11')
 
 # Plotting
 fig, ax = job[0].fft.plot_spectrum(log_scale=True)
+job[0].fft.plotter.power_spectrum(save_path='fft_publication.png')
 
 # Mode analysis (if available)
 job[0].fft.modes.interactive_spectrum()
@@ -509,6 +531,7 @@ job[0].fft.plot_modes(frequency=1.5)
 
 # Advanced usage
 job[0].fft.plotter.power_spectrum(normalize=True)
+job[0].fft.modes.save_modes_animation(frequency=10.4, save_path='mode.gif')
 help(job[0].fft.spectrum)  # Detailed documentation"""
 
             syntax = Syntax(
@@ -535,6 +558,11 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
                                 core_methods_text,
                                 title="[bold yellow]Core Methods[/bold yellow]",
                                 border_style="yellow",
+                            ),
+                            Panel.fit(
+                                plotting_methods_text,
+                                title="[bold magenta]Plotting[/bold magenta]",
+                                border_style="magenta",
                             ),
                             Panel.fit(
                                 mode_methods_text,
@@ -619,6 +647,43 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
 
         output.append("")
 
+        # Plotting toolkit
+        output.append("📈 PLOTTING TOOLKIT:")
+        output.append("─" * 50)
+        plot_methods = [
+            (
+                "plot_spectrum(log_scale=True)",
+                "Quick-look spectrum",
+                "job[0].fft.plot_spectrum(log_scale=True)",
+            ),
+            (
+                "plotter.power_spectrum(normalize=True)",
+                "Overlay multiple jobs",
+                "job[0].fft.plotter.power_spectrum(normalize=True)",
+            ),
+            (
+                "plotter.power_spectrum(save_path='fft.png')",
+                "Export PNG/ publication",
+                "job[0].fft.plotter.power_spectrum(save_path='fft.png')",
+            ),
+            (
+                "plot_modes(frequency, z_layer)",
+                "Static mode panels",
+                "job[0].fft.plot_modes(frequency=10.4, z_layer=-1)",
+            ),
+            (
+                "modes.save_modes_animation()",
+                "Animated mode evolution",
+                "job[0].fft.modes.save_modes_animation(frequency=10.4)",
+            ),
+        ]
+
+        for method, desc, example in plot_methods:
+            output.append(f"  • {method:<40} {desc}")
+            output.append(f"    └─ {example}")
+
+        output.append("")
+
         # Mode Analysis (if available)
         if has_modes:
             output.append("🌊 MODE ANALYSIS METHODS:")
@@ -664,6 +729,8 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
             ("method", "FFT method", "1 (default), 2"),
             ("save", "Save to zarr", "True/False"),
             ("force", "Force recalculation", "True/False"),
+            ("zero_padding", "Pad to power-of-two length", "True/False"),
+            ("nfft", "Manual FFT length", "int or None"),
         ]
 
         for param, desc, values in params:
@@ -682,6 +749,7 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
             "",
             "# Plotting",
             "fig, ax = job[0].fft.plot_spectrum(log_scale=True)",
+            "job[0].fft.plotter.power_spectrum(save_path='fft_publication.png')",
             "",
             "# Mode analysis (if available)",
             "job[0].fft.modes.interactive_spectrum()",
@@ -690,6 +758,7 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
             "",
             "# Advanced usage",
             "job[0].fft.plotter.power_spectrum(normalize=True)",
+            "job[0].fft.modes.save_modes_animation(frequency=10.4, save_path='mode.gif')",
             "help(job[0].fft.spectrum)  # Detailed documentation",
         ]
 

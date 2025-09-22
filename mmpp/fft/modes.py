@@ -5,13 +5,16 @@ Professional implementation for visualizing FMR modes with interactive spectrum.
 Provides both programmatic and interactive interfaces for mode analysis.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, Union
+
+import math
 
 import matplotlib.colors as mcolors
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import numpy as np
 
 # Import shared logging configuration
@@ -119,6 +122,16 @@ try:
 except ImportError:
     CMOCEAN_AVAILABLE = False
     log.debug("cmocean not available - using standard matplotlib colormaps")
+
+try:
+    from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+
+    AXES_GRID_AVAILABLE = True
+except ImportError:
+    AXES_GRID_AVAILABLE = False
+    log.warning(
+        "mpl_toolkits.axes_grid1 not available - colorbar and scalebar enhancements disabled"
+    )
 
 
 class MidpointNormalize(mcolors.Normalize):
@@ -284,6 +297,29 @@ class ModeVisualizationConfig:
     use_midpoint_norm: bool = False  # Use MidpointNormalize for diverging data
     animation_time_steps: int = 60  # Number of time steps for one full phase cycle
 
+    # Publication-style annotations
+    show_scalebar: bool = True
+    scalebar_length_nm: Optional[float] = None  # Auto-computed when None
+    scalebar_location: str = "lower right"
+    scalebar_pad: float = 0.3
+    scalebar_color: str = "white"
+    scalebar_fontsize: int = 9
+    scalebar_frame: bool = False
+    scalebar_height_fraction: float = 0.01
+    scale_units: str = "nm"
+
+    colorbar_fraction: float = 0.025
+    colorbar_pad: float = 0.012
+    colorbar_ticklabel_size: int = 8
+    colorbar_label_size: int = 9
+    colorbar_labels: dict[str, str] = field(
+        default_factory=lambda: {
+            "magnitude": "|m| (arb. units)",
+            "phase": "Phase (rad)",
+            "combined": "Re(m) (arb. units)",
+        }
+    )
+
     # Frequency range for analysis
     f_min: float = 0.0
     f_max: float = 40.0
@@ -321,6 +357,17 @@ class ModeVisualizationConfig:
             self._resolve_colormap(self.colormap_phase)
         except Exception as e:
             log.warning(f"Colormap validation failed: {e}")
+
+        if self.scalebar_length_nm is not None and self.scalebar_length_nm <= 0:
+            raise ValueError("scalebar_length_nm must be positive when provided")
+
+        if self.scalebar_height_fraction <= 0 or self.scalebar_height_fraction > 0.1:
+            raise ValueError(
+                "scalebar_height_fraction should be within (0, 0.1] for sensible display"
+            )
+
+        if self.colorbar_fraction <= 0 or self.colorbar_pad < 0:
+            raise ValueError("colorbar_fraction must be > 0 and colorbar_pad >= 0")
 
     def _resolve_colormap(self, cmap_name: str):
         """
@@ -500,6 +547,7 @@ class FMRModeAnalyzer:
         self._interactive_fig = None
         self._frequency_line = None
         self._mode_axes = None
+        self._row_colorbars: list[Any] = []
 
         # Mode data cache (LRU cache with max 10 entries)
         self._mode_cache = {}
@@ -553,15 +601,24 @@ class FMRModeAnalyzer:
                     freqs_path = f"{base_path}/freqs"
                     break
 
-        # Find spectrum
+        # Find spectrum - try multiple locations for consistency with plot_spectrum
         spectrum_path = None
         spectrum_candidates = [
+            # Standard FFT locations (consistent with plot_spectrum)
+            f"fft/{self.dataset_name}_z-1_m1/spectrum",  # Most common case
+            f"fft/{self.dataset_name}_z0_m1/spectrum",
+            f"fft/{self.dataset_name}/spectrum",
+            # Legacy locations (from compute_modes)
             f"fft/{self.dataset_name}/spec",
             f"fft/{self.dataset_name}/sum",
+            # Try other z_layers and methods
+            *[f"fft/{self.dataset_name}_z{z}_m1/spectrum" for z in range(-5, 10)],
         ]
+        
         for path in spectrum_candidates:
             if path in self.zarr_file:
                 spectrum_path = path
+                log.debug(f"Found spectrum at: {spectrum_path}")
                 break
 
         return modes_path, freqs_path, spectrum_path
@@ -815,6 +872,8 @@ class FMRModeAnalyzer:
         threshold: Optional[float] = None,
         min_distance: Optional[int] = None,
         component: int = 0,
+        spectrum: Optional[np.ndarray] = None,
+        frequencies: Optional[np.ndarray] = None,
     ) -> list[Peak]:
         """
         Find peaks in the spectrum.
@@ -827,13 +886,21 @@ class FMRModeAnalyzer:
             Minimum distance between peaks (default: from config)
         component : int, optional
             Spectrum component to analyze (default: 0)
+        spectrum : np.ndarray, optional
+            Spectrum data to use (default: self.spectrum)
+        frequencies : np.ndarray, optional
+            Frequency data to use (default: self.frequencies)
 
         Returns:
         --------
         List[Peak]
             List of detected peaks
         """
-        if self.spectrum is None:
+        # Use provided spectrum/frequencies or fallback to instance data
+        spectrum_data = spectrum if spectrum is not None else self.spectrum
+        freq_data = frequencies if frequencies is not None else self.frequencies
+        
+        if spectrum_data is None:
             log.warning("No spectrum data available for peak detection")
             return []
 
@@ -841,16 +908,16 @@ class FMRModeAnalyzer:
         min_distance = min_distance or self.config.peak_min_distance
 
         # Normalize spectrum for peak detection
-        spectrum = self.spectrum.copy()
+        spectrum_work = spectrum_data.copy()
         if self.config.spectrum_normalize:
-            spectrum = spectrum / np.max(spectrum)
+            spectrum_work = spectrum_work / np.max(spectrum_work)
 
         # Filter frequency range
-        freq_mask = (self.frequencies >= self.config.f_min) & (
-            self.frequencies <= self.config.f_max
+        freq_mask = (freq_data >= self.config.f_min) & (
+            freq_data <= self.config.f_max
         )
-        freqs_filtered = self.frequencies[freq_mask]
-        spectrum_filtered = spectrum[freq_mask]
+        freqs_filtered = freq_data[freq_mask]
+        spectrum_filtered = spectrum_work[freq_mask]
 
         # Detect peaks
         peaks = self._detect_peaks(spectrum_filtered, freqs_filtered)
@@ -1016,6 +1083,8 @@ class FMRModeAnalyzer:
         z_layer: int = 0,
         method: int = 1,
         show: bool = True,
+        force: bool = False,
+        use_fft_spectrum: bool = True,
         **kwargs,
     ) -> Figure:
         """
@@ -1023,6 +1092,10 @@ class FMRModeAnalyzer:
 
         Click on spectrum to select frequency and visualize corresponding mode.
         Right-click to snap to nearest peak.
+
+        Each mode panel now includes a publication-ready scale bar (auto-sized in nm)
+        and shared colorbars for magnitude/phase/combined maps when the required
+        matplotlib toolkit extensions are available.
 
         Parameters:
         -----------
@@ -1036,6 +1109,11 @@ class FMRModeAnalyzer:
             2 = Alternative layout (if implemented)
         show : bool, optional
             Whether to automatically display the figure (default: True)
+        force : bool, optional
+            Force reload of data from zarr file (default: False)
+        use_fft_spectrum : bool, optional
+            Use spectrum from standard FFT analysis instead of modes data (default: True)
+            This ensures consistency with plot_spectrum results
         \\*\\*kwargs : dict
             Additional keyword arguments:
             - figsize : tuple, optional
@@ -1060,7 +1138,31 @@ class FMRModeAnalyzer:
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib is required for interactive plotting")
 
-        if self.spectrum is None:
+        # Force reload data if requested
+        if force:
+            log.info(f"Force reloading data for interactive spectrum (dataset: {self.dataset_name})")
+            self._load_data()
+
+        # Use FFT spectrum for consistency with plot_spectrum
+        spectrum_to_use = self.spectrum
+        frequencies_to_use = self.frequencies
+        
+        if use_fft_spectrum:
+            try:
+                # Try to load spectrum from standard FFT analysis
+                fft_spectrum_path = f"fft/{self.dataset_name}_z{z_layer}_m{method}/spectrum"
+                fft_freqs_path = f"fft/{self.dataset_name}_z{z_layer}_m{method}/frequencies"
+                
+                if fft_spectrum_path in self.zarr_file and fft_freqs_path in self.zarr_file:
+                    spectrum_to_use = np.abs(np.array(self.zarr_file[fft_spectrum_path])) ** 2
+                    frequencies_to_use = np.array(self.zarr_file[fft_freqs_path]) / 1e9  # Convert to GHz
+                    log.info(f"Using FFT spectrum from {fft_spectrum_path} for consistency with plot_spectrum")
+                else:
+                    log.warning(f"FFT spectrum not found at {fft_spectrum_path}, using modes spectrum")
+            except Exception as e:
+                log.warning(f"Failed to load FFT spectrum: {e}, using modes spectrum")
+
+        if spectrum_to_use is None:
             raise ValueError("No spectrum data available for interactive mode")
 
         # Apply paper style for consistent visualization
@@ -1169,11 +1271,11 @@ class FMRModeAnalyzer:
         )
 
         # Plot spectrum
-        freq_mask = (self.frequencies >= self.config.f_min) & (
-            self.frequencies <= self.config.f_max
+        freq_mask = (frequencies_to_use >= self.config.f_min) & (
+            frequencies_to_use <= self.config.f_max
         )
-        freqs_plot = self.frequencies[freq_mask]
-        spectrum_plot = self.spectrum[freq_mask]
+        freqs_plot = frequencies_to_use[freq_mask]
+        spectrum_plot = spectrum_to_use[freq_mask]
 
         if self.config.spectrum_normalize:
             spectrum_plot = spectrum_plot / np.max(spectrum_plot)
@@ -1189,8 +1291,8 @@ class FMRModeAnalyzer:
         ax_spectrum.set_title("FMR Spectrum (Click to select frequency)")
         ax_spectrum.grid(True, alpha=0.3)
 
-        # Find and mark peaks
-        peaks = self.find_peaks()
+        # Find and mark peaks using the same spectrum data
+        peaks = self.find_peaks(spectrum=spectrum_to_use, frequencies=frequencies_to_use)
         for peak in peaks:
             if self.config.f_min <= peak.freq <= self.config.f_max:
                 y_val = spectrum_plot[np.argmin(np.abs(freqs_plot - peak.freq))]
@@ -1270,6 +1372,24 @@ class FMRModeAnalyzer:
         if self._mode_axes is None or self._current_frequency is None:
             return
 
+        # Clear previous shared colorbars
+        for cbar in getattr(self, "_row_colorbars", []):
+            try:
+                cbar.remove()
+            except ValueError:
+                pass
+        self._row_colorbars = []
+
+        vis_types = []
+        if self.config.show_magnitude:
+            vis_types.append("magnitude")
+        if self.config.show_phase:
+            vis_types.append("phase")
+        if self.config.show_combined:
+            vis_types.append("combined")
+
+        images_for_colorbar: list[Optional[Any]] = [None] * len(vis_types)
+
         # Clear all axes
         for ax_row in self._mode_axes:
             for ax in ax_row:
@@ -1309,7 +1429,7 @@ class FMRModeAnalyzer:
 
                 # Magnitude plot (if enabled)
                 if self.config.show_magnitude:
-                    self._mode_axes[row_idx, i].imshow(
+                    img = self._mode_axes[row_idx, i].imshow(
                         magnitude,
                         cmap=self.config._resolve_colormap(
                             self.config.colormap_magnitude
@@ -1320,11 +1440,15 @@ class FMRModeAnalyzer:
                         origin="lower",
                     )
                     self._mode_axes[row_idx, i].set_title(f"|m_{comp}|")
+                    if images_for_colorbar[row_idx] is None:
+                        images_for_colorbar[row_idx] = img
+                    if i == 0:
+                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
                     row_idx += 1
 
                 # Phase plot (if enabled)
                 if self.config.show_phase:
-                    self._mode_axes[row_idx, i].imshow(
+                    img = self._mode_axes[row_idx, i].imshow(
                         phase,
                         cmap=self.config._resolve_colormap(self.config.colormap_phase),
                         extent=mode_data.extent,
@@ -1335,6 +1459,10 @@ class FMRModeAnalyzer:
                         origin="lower",
                     )
                     self._mode_axes[row_idx, i].set_title(f"arg(m_{comp})")
+                    if images_for_colorbar[row_idx] is None:
+                        images_for_colorbar[row_idx] = img
+                    if i == 0:
+                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
                     row_idx += 1
 
                 # Combined plot (if enabled)
@@ -1345,7 +1473,7 @@ class FMRModeAnalyzer:
                     combined_data = magnitude * np.cos(phase)  # Real part
                     # Alternative: combined_data = magnitude * np.sin(phase)  # Imaginary part
 
-                    self._mode_axes[row_idx, i].imshow(
+                    img = self._mode_axes[row_idx, i].imshow(
                         combined_data,
                         cmap=self.config._resolve_colormap(self.config.colormap_phase),
                         extent=mode_data.extent,
@@ -1356,6 +1484,10 @@ class FMRModeAnalyzer:
                     self._mode_axes[row_idx, i].set_title(
                         f"m_{comp} combined (mag×cos(φ))"
                     )
+                    if images_for_colorbar[row_idx] is None:
+                        images_for_colorbar[row_idx] = img
+                    if i == 0:
+                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
 
             except Exception as e:
                 log.error(f"Failed to plot component {comp}: {e}")
@@ -1367,6 +1499,98 @@ class FMRModeAnalyzer:
             fontsize=14,
             fontweight="bold",
         )
+
+        # Create shared colorbars per visualization type
+        if AXES_GRID_AVAILABLE:
+            for row_idx, (vis_type, img) in enumerate(zip(vis_types, images_for_colorbar)):
+                if img is None:
+                    continue
+                try:
+                    cbar = self._interactive_fig.colorbar(
+                        img,
+                        ax=list(self._mode_axes[row_idx, :]),
+                        fraction=self.config.colorbar_fraction,
+                        pad=self.config.colorbar_pad,
+                    )
+                except Exception as exc:
+                    log.debug(f"Skipping colorbar for {vis_type}: {exc}")
+                    continue
+
+                label = self.config.colorbar_labels.get(vis_type, vis_type.title())
+                cbar.set_label(label, fontsize=self.config.colorbar_label_size)
+                cbar.ax.tick_params(labelsize=self.config.colorbar_ticklabel_size)
+                self._row_colorbars.append(cbar)
+
+    def _add_scale_bar(
+        self, ax: Any, extent: tuple[float, float, float, float]
+    ) -> None:
+        """Add a publication-style scale bar to the supplied axis."""
+        if not (self.config.show_scalebar and AXES_GRID_AVAILABLE):
+            return
+
+        x_min, x_max, y_min, y_max = extent
+        width_nm = float(x_max - x_min)
+        height_nm = float(y_max - y_min)
+        if width_nm <= 0 or height_nm <= 0:
+            return
+
+        bar_length = (
+            self.config.scalebar_length_nm
+            if self.config.scalebar_length_nm is not None
+            else self._auto_scalebar_length(width_nm)
+        )
+        if bar_length is None or bar_length <= 0:
+            return
+
+        size_vertical = height_nm * self.config.scalebar_height_fraction
+        label = self._format_scalebar_label(bar_length)
+
+        try:
+            scalebar = AnchoredSizeBar(
+                ax.transData,
+                bar_length,
+                label,
+                self.config.scalebar_location,
+                pad=self.config.scalebar_pad,
+                color=self.config.scalebar_color,
+                frameon=self.config.scalebar_frame,
+                size_vertical=size_vertical,
+                fontproperties=fm.FontProperties(size=self.config.scalebar_fontsize),
+            )
+        except Exception as exc:
+            log.debug(f"Could not create scale bar: {exc}")
+            return
+
+        ax.add_artist(scalebar)
+
+    def _auto_scalebar_length(self, width_nm: float) -> Optional[float]:
+        """Pick a nice scale bar length based on sample width."""
+        if width_nm <= 0:
+            return None
+
+        target = width_nm / 4
+        if target <= 0:
+            return None
+
+        exponent = math.floor(math.log10(target)) if target > 0 else 0
+        best = None
+        for multiplier in (1, 2, 5):
+            candidate = multiplier * (10**exponent)
+            if candidate <= width_nm * 0.9:
+                best = candidate
+
+        if best is None:
+            best = width_nm / 2
+
+        return round(best, 3)
+
+    def _format_scalebar_label(self, length_nm: float) -> str:
+        """Format scale bar label with sensible units."""
+        units = self.config.scale_units.lower()
+        if units == "nm" and length_nm >= 1000:
+            value_um = length_nm / 1000.0
+            return f"{value_um:g} um"
+        return f"{length_nm:g} {self.config.scale_units}"
 
     def compute_modes(
         self,
@@ -2069,7 +2293,7 @@ MMPP FFT Mode Analyzer:
 
         return self._mode_analyzer
 
-    def interactive_spectrum(self, dset: str = None, **kwargs) -> Figure:
+    def interactive_spectrum(self, dset: str = None, force: bool = False, **kwargs) -> Figure:
         """Create interactive spectrum plot."""
         # If dset is specified, create a new analyzer for that dataset
         if dset is not None and dset != self.mode_analyzer.dataset_name:
@@ -2083,19 +2307,19 @@ MMPP FFT Mode Analyzer:
                 zarr_path, dataset_name=dset, debug=debug_mode
             )
 
-            # Check if modes exist, if not compute them
-            if not temp_analyzer.modes_available:
-                log.info(f"Computing modes for dataset '{dset}'...")
-                temp_analyzer.compute_modes(save=True)
+            # Check if modes exist or force recomputation
+            if not temp_analyzer.modes_available or force:
+                log.info(f"Computing modes for dataset '{dset}' (force={force})...")
+                temp_analyzer.compute_modes(save=True, force=force)
 
             return temp_analyzer.interactive_spectrum(**kwargs)
         else:
             # Use default analyzer
-            if not self.mode_analyzer.modes_available:
+            if not self.mode_analyzer.modes_available or force:
                 log.info(
-                    f"Computing modes for dataset '{self.mode_analyzer.dataset_name}'..."
+                    f"Computing modes for dataset '{self.mode_analyzer.dataset_name}' (force={force})..."
                 )
-                self.mode_analyzer.compute_modes(save=True)
+                self.mode_analyzer.compute_modes(save=True, force=force)
 
             return self.mode_analyzer.interactive_spectrum(**kwargs)
 
