@@ -1132,6 +1132,12 @@ class FMRModeAnalyzer:
         Click on spectrum to select frequency and visualize corresponding mode.
         Right-click to snap to nearest peak.
 
+        **Interactive Requirements:**
+        - Jupyter/IPython: Function automatically tries to enable `%matplotlib widget`
+        - Standalone Python: Requires interactive backend (Qt5Agg, TkAgg, etc.)
+        - If interactivity doesn't work, manually run: `%matplotlib widget` (Jupyter) 
+          or install ipympl: `pip install ipympl`
+
         Each mode panel now includes a publication-ready scale bar (auto-sized in nm)
         and shared colorbars for magnitude/phase/combined maps when the required
         matplotlib toolkit extensions are available.
@@ -1280,20 +1286,63 @@ class FMRModeAnalyzer:
             )
 
         # Create figure with custom layout
-        # Try to use interactive backend if available, but don't force it
+        # Automatically configure interactive backend for Jupyter
         try:
             import matplotlib
-
+            
             current_backend = matplotlib.get_backend()
-            if (
-                "ipympl" not in current_backend.lower()
-                and "widget" not in current_backend.lower()
-            ):
-                log.info(
-                    f"Current backend: {current_backend}. Interactive features may be limited."
-                )
+            
+            # Check if we're in Jupyter/IPython environment
+            try:
+                from IPython import get_ipython
+                ipython = get_ipython()
+                in_jupyter = ipython is not None and hasattr(ipython, 'kernel')
+            except ImportError:
+                in_jupyter = False
+            
+            # Auto-configure interactive backend for Jupyter
+            if in_jupyter:
+                if (
+                    "ipympl" not in current_backend.lower() 
+                    and "widget" not in current_backend.lower()
+                    and "nbagg" not in current_backend.lower()
+                ):
+                    log.warning(
+                        f"Current backend '{current_backend}' may not support full interactivity in Jupyter. "
+                        "For best experience, run '%matplotlib widget' or install ipympl: pip install ipympl"
+                    )
+                    
+                    # Try to automatically switch to widget backend
+                    try:
+                        ipython.run_line_magic('matplotlib', 'widget')
+                        log.info("Automatically switched to matplotlib widget backend for interactivity")
+                    except Exception as e:
+                        log.debug(f"Could not auto-switch to widget backend: {e}")
+                        # Try nbagg as fallback
+                        try:
+                            ipython.run_line_magic('matplotlib', 'nbagg')  
+                            log.info("Switched to nbagg backend as fallback")
+                        except Exception:
+                            log.warning(
+                                "Please run '%matplotlib widget' manually for full interactivity. "
+                                "Install ipympl if needed: pip install ipympl"
+                            )
+                else:
+                    log.info(f"Using Jupyter-compatible backend: {current_backend}")
+            else:
+                # Not in Jupyter - check for standalone interactive backends
+                interactive_backends = ['qt5agg', 'tkagg', 'gtk3agg', 'wxagg', 'macosx']
+                current_lower = current_backend.lower()
+                if current_lower not in interactive_backends:
+                    log.info(
+                        f"Current backend: {current_backend}. Interactive features may be limited. "
+                        f"Consider switching to: Qt5Agg, TkAgg, GTK3Agg, wxAgg"
+                    )
+                else:
+                    log.info(f"Using interactive backend: {current_backend}")
+                    
         except Exception as e:
-            log.warning(f"Could not check matplotlib backend: {e}")
+            log.warning(f"Could not configure interactive backend: {e}")
 
         self._interactive_fig = plt.figure(figsize=figsize, dpi=dpi)
 
@@ -1480,6 +1529,7 @@ class FMRModeAnalyzer:
         self._click_connection = self._interactive_fig.canvas.mpl_connect(
             "button_press_event", on_click
         )
+        log.debug(f"Click handler connected with ID: {self._click_connection}")
 
         # Add cleanup method to figure
         def cleanup():
