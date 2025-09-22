@@ -578,6 +578,17 @@ class FMRModeAnalyzer:
 
         return getattr(self, "_last_fwhm", None)
 
+    def _list_available_datasets(self) -> list[str]:
+        """Enumerate top-level datasets available in the zarr archive."""
+
+        try:
+            root = zarr.open(self.zarr_path, mode="r")
+            keys = set(root.group_keys()) | set(root.array_keys())
+            return sorted({key.split("/")[0] for key in keys})
+        except Exception as exc:
+            log.debug("Unable to list datasets in %s: %s", self.zarr_path, exc)
+            return []
+
     def _get_zarr_paths(self) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Unified path resolution for zarr datasets.
@@ -1754,7 +1765,15 @@ class FMRModeAnalyzer:
 
         # Load magnetization data
         if self.dataset_name not in self.zarr_file:
-            raise ValueError(f"Dataset {self.dataset_name} not found in zarr")
+            available = self._list_available_datasets()
+            suggestion = (
+                f" Available datasets: {', '.join(available)}"
+                if available
+                else ""
+            )
+            raise ValueError(
+                f"Dataset '{self.dataset_name}' not found in zarr file '{self.zarr_path}'.{suggestion}"
+            )
 
         dset = self.zarr_file[self.dataset_name]
 
@@ -1811,21 +1830,50 @@ class FMRModeAnalyzer:
             # This avoids conflicts with standard FFT data format
 
             # Save frequencies in modes group only
-            modes_group.array("freqs", freqs, chunks=False, overwrite=True)
+            modes_group.array(
+                "freqs",
+                data=freqs,
+                dtype=freqs.dtype,
+                chunks=False,
+                overwrite=True,
+            )
 
             # Save complex modes (chunked only on first dimension)
             chunks = (1,) + fft_result.shape[1:]
             modes_group.array(
-                "arr", fft_result, dtype=np.complex64, chunks=chunks, overwrite=True
+                "arr",
+                data=fft_result.astype(np.complex64, copy=False),
+                dtype=np.complex64,
+                chunks=chunks,
+                overwrite=True,
             )
 
             # Save power spectrum summary in modes group 
             power_spec = np.abs(fft_result)
-            modes_group.array(
-                "power_max", np.max(power_spec, axis=(1, 2, 3)), chunks=False, overwrite=True
+            reduction_axes = tuple(range(1, power_spec.ndim)) if power_spec.ndim > 1 else None
+            power_max = (
+                np.max(power_spec, axis=reduction_axes)
+                if reduction_axes
+                else np.max(power_spec, keepdims=False)
+            )
+            power_sum = (
+                np.sum(power_spec, axis=reduction_axes)
+                if reduction_axes
+                else np.sum(power_spec, keepdims=False)
             )
             modes_group.array(
-                "power_sum", np.sum(power_spec, axis=(1, 2, 3)), chunks=False, overwrite=True
+                "power_max",
+                data=power_max.astype(np.float32, copy=False),
+                dtype=np.float32,
+                chunks=False,
+                overwrite=True,
+            )
+            modes_group.array(
+                "power_sum",
+                data=power_sum.astype(np.float32, copy=False),
+                dtype=np.float32,
+                chunks=False,
+                overwrite=True,
             )
 
             # Save metadata

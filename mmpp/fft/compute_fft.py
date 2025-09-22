@@ -651,12 +651,39 @@ class FFTCompute:
         if hasattr(job, dataset):
             data_set = getattr(job, dataset)
         else:
-            z_group = getattr(job, "z", None)
-            if z_group is not None and dataset in z_group:
-                data_set = z_group[dataset]
+            # Try direct zarr access instead of job.z which doesn't exist
+            try:
+                import zarr
+                z_root = zarr.open(zarr_path, mode="r")
+                if dataset in z_root:
+                    data_set = z_root[dataset]
+                else:
+                    log.debug(f"Dataset {dataset} not found in zarr root, checking if it's an attribute of Pyzfn job")
+            except Exception as e:
+                log.debug(f"Could not access zarr directly: {e}")
 
         if data_set is None:
-            raise ValueError(f"Dataset '{dataset}' not found in zarr file")
+            available = []
+            try:
+                import zarr
+
+                z_root = zarr.open(zarr_path, mode="r")
+                available.extend(list(z_root.group_keys()))
+                available.extend(list(z_root.array_keys()))
+                available = sorted({key.split("/")[0] for key in available})
+            except Exception as exc:
+                log.debug(
+                    "Unable to enumerate datasets in %s: %s", zarr_path, exc
+                )
+
+            suggestion = (
+                f" Available datasets: {', '.join(available)}"
+                if available
+                else ""
+            )
+            raise ValueError(
+                f"Dataset '{dataset}' not found in zarr file '{zarr_path}'.{suggestion}"
+            )
 
         # Load data with timing
         data_load_start = time.time()

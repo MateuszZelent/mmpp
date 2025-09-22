@@ -34,7 +34,18 @@ def _find_largest_m_dataset(zarr_path: str) -> str:
 
         # Get all available datasets that start with "m"
         m_datasets = []
-        for key in job.z.keys():
+        
+        # Access zarr file directly to get dataset keys
+        import zarr
+        try:
+            zarr_file = zarr.open(zarr_path, mode='r')
+            available_keys = list(zarr_file.keys())
+            log.debug(f"Available keys in zarr file: {available_keys}")
+        except Exception as e:
+            log.debug(f"Could not access zarr file directly: {e}")
+            available_keys = []
+        
+        for key in available_keys:
             if key.startswith("m") and not key.startswith("m_"):
                 # Include base "m" dataset
                 m_datasets.append(key)
@@ -52,7 +63,8 @@ def _find_largest_m_dataset(zarr_path: str) -> str:
 
         for dataset_name in m_datasets:
             try:
-                dataset = job.z[dataset_name]
+                # Use zarr file direct access instead of job.z
+                dataset = zarr_file[dataset_name]
                 if hasattr(dataset, "shape") and len(dataset.shape) >= 1:
                     time_size = dataset.shape[0]  # First dimension is usually time
                     log.debug(f"Dataset {dataset_name}: time size = {time_size}")
