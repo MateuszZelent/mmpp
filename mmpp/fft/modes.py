@@ -1506,6 +1506,7 @@ class FMRModeAnalyzer:
 
         # Set up click handler with proper cleanup
         def on_click(event):
+            # Handle spectrum clicks (single click only)
             if event.inaxes == ax_spectrum and event.xdata is not None:
                 if event.button == 3:  # Right click - snap to peak
                     if peaks:
@@ -1524,6 +1525,16 @@ class FMRModeAnalyzer:
                 self._current_frequency = selected_freq
                 self._update_mode_plots(components, z_layer)
                 self._interactive_fig.canvas.draw()
+            
+            # Handle double-clicks on mode plots for animation
+            elif event.dblclick and event.inaxes is not None:
+                # Find which mode axis was double-clicked
+                for row_idx, ax_row in enumerate(self._mode_axes):
+                    for col_idx, ax in enumerate(ax_row):
+                        if event.inaxes == ax:
+                            component = components[col_idx]
+                            self._toggle_mode_animation(ax, row_idx, col_idx, component, z_layer)
+                            return
 
         # Store event connection for cleanup
         self._click_connection = self._interactive_fig.canvas.mpl_connect(
@@ -1533,6 +1544,19 @@ class FMRModeAnalyzer:
 
         # Add cleanup method to figure
         def cleanup():
+            # Stop all running animations first
+            if hasattr(self, '_mode_animations') and self._mode_animations:
+                log.debug(f"Stopping {len(self._mode_animations)} running animations...")
+                for animation in self._mode_animations.values():
+                    try:
+                        animation.event_source.stop()
+                    except AttributeError:
+                        pass  # Animation might not have been started yet
+                self._mode_animations.clear()
+                if hasattr(self, '_animated_axes'):
+                    self._animated_axes.clear()
+            
+            # Disconnect click handler
             if hasattr(self, "_click_connection") and self._click_connection:
                 self._interactive_fig.canvas.mpl_disconnect(self._click_connection)
                 self._click_connection = None
@@ -1720,6 +1744,264 @@ class FMRModeAnalyzer:
             cbar.set_label(label, fontsize=self.config.colorbar_label_size)
             cbar.ax.tick_params(labelsize=self.config.colorbar_ticklabel_size)
             self._row_colorbars.append(cbar)
+
+    def _toggle_mode_animation(
+        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+    ) -> None:
+        """Toggle between static mode plot and in-place animation."""
+        if not ANIMATION_AVAILABLE:
+            log.warning("Animation not available - matplotlib.animation required")
+            return
+            
+        # Initialize animation tracking if needed
+        if not hasattr(self, '_mode_animations'):
+            self._mode_animations: dict[tuple[int, int], Any] = {}
+            self._animated_axes: set[tuple[int, int]] = set()
+        
+        axis_key = (row_idx, col_idx)
+        
+        # Check if this axis is currently animated
+        if axis_key in self._animated_axes:
+            # Stop animation and revert to static
+            self._stop_mode_animation(axis_key)
+            # Redraw static mode
+            self._update_single_mode_plot(ax, row_idx, col_idx, component, z_layer)
+            self._interactive_fig.canvas.draw()
+            log.info(f"Stopped animation for m_{component} (row {row_idx}, col {col_idx})")
+        else:
+            # Start animation
+            self._start_mode_animation(ax, row_idx, col_idx, component, z_layer)
+            log.info(f"Started animation for m_{component} (row {row_idx}, col {col_idx})")
+
+    def _stop_mode_animation(self, axis_key: tuple[int, int]) -> None:
+        """Stop animation for specific axis."""
+        if axis_key in self._mode_animations:
+            anim = self._mode_animations[axis_key]
+            try:
+                anim.event_source.stop()
+                del self._mode_animations[axis_key]
+            except Exception as e:
+                log.debug(f"Error stopping animation: {e}")
+        
+        self._animated_axes.discard(axis_key)
+
+    def _start_mode_animation(
+        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+    ) -> None:
+        """Start in-place animation for specific mode axis."""
+        from matplotlib.animation import FuncAnimation
+        
+        try:
+            # Get mode data
+            mode_data = self.get_mode(self._current_frequency, z_layer)
+            comp_data = mode_data.get_component(component)
+            
+            # Determine visualization type based on row
+            vis_types = []
+            if self.config.show_magnitude:
+                vis_types.append("magnitude")
+            if self.config.show_phase:
+                vis_types.append("phase") 
+            if self.config.show_combined:
+                vis_types.append("combined")
+            
+            if row_idx >= len(vis_types):
+                log.error(f"Invalid row index {row_idx} for visualization types")
+                return
+                
+            vis_type = vis_types[row_idx]
+            
+            # Clear the axis
+            ax.clear()
+            ax.set_xticks([])
+            ax.set_yticks([])
+            
+            # Setup animation data based on visualization type
+            if vis_type == "magnitude":
+                # Animate magnitude (static - just pulsing intensity)
+                amplitude = np.abs(comp_data)
+                time_steps = np.linspace(0, 2*np.pi, 30)  # 30 frames for smooth animation
+                
+                # Create initial plot
+                im = ax.imshow(
+                    amplitude,
+                    cmap=self.config._resolve_colormap(self.config.colormap_magnitude),
+                    extent=mode_data.extent,
+                    aspect="equal",
+                    interpolation=self.config.interpolation,
+                    origin="lower",
+                )
+                ax.set_title(f"|m_{component}| (animated)")
+                
+                def animate_magnitude(frame):
+                    # Gentle pulsing effect for magnitude
+                    pulse = 0.8 + 0.2 * np.sin(time_steps[frame])
+                    im.set_array(amplitude * pulse)
+                    return [im]
+                    
+                # Create animation
+                anim = FuncAnimation(
+                    self._interactive_fig,
+                    animate_magnitude,
+                    frames=len(time_steps),
+                    interval=100,  # 10 FPS
+                    blit=True,
+                    repeat=True
+                )
+                
+            elif vis_type == "phase":
+                # Animate phase rotation
+                amplitude = np.abs(comp_data)
+                phase = np.angle(comp_data)
+                time_steps = np.linspace(0, 2*np.pi, 30)
+                
+                # Create initial plot
+                current_phase = (phase + time_steps[0]) % (2 * np.pi)
+                im = ax.imshow(
+                    current_phase,
+                    cmap=self.config._resolve_colormap(self.config.colormap_phase),
+                    extent=mode_data.extent,
+                    aspect="equal",
+                    interpolation=self.config.interpolation,
+                    vmin=-np.pi,
+                    vmax=np.pi,
+                    origin="lower",
+                )
+                ax.set_title(f"arg(m_{component}) (animated)")
+                
+                def animate_phase(frame):
+                    # Rotating phase
+                    current_phase = (phase + time_steps[frame]) % (2 * np.pi)
+                    # Convert to -π to π range for better visualization
+                    current_phase = np.where(current_phase > np.pi, current_phase - 2*np.pi, current_phase)
+                    im.set_array(current_phase)
+                    return [im]
+                    
+                # Create animation
+                anim = FuncAnimation(
+                    self._interactive_fig,
+                    animate_phase,
+                    frames=len(time_steps),
+                    interval=100,  # 10 FPS
+                    blit=True,
+                    repeat=True
+                )
+                
+            elif vis_type == "combined":
+                # Animate real part oscillation (true temporal dynamics)
+                amplitude = np.abs(comp_data)
+                phase = np.angle(comp_data)
+                time_steps = np.linspace(0, 2*np.pi, 30)
+                
+                # Setup symmetric normalization for oscillating data
+                vmax = np.max(amplitude)
+                
+                # Create initial plot
+                real_part = amplitude * np.cos(phase + time_steps[0])
+                im = ax.imshow(
+                    real_part,
+                    cmap=self.config._resolve_colormap(self.config.colormap_phase),
+                    extent=mode_data.extent,
+                    aspect="equal", 
+                    interpolation=self.config.interpolation,
+                    vmin=-vmax,
+                    vmax=vmax,
+                    origin="lower",
+                )
+                ax.set_title(f"Re[m_{component}] (temporal)")
+                
+                def animate_combined(frame):
+                    # True temporal oscillation: Re[A * e^(i*φ) * e^(i*ω*t)]
+                    t = time_steps[frame]
+                    real_part = amplitude * np.cos(phase + t)
+                    im.set_array(real_part)
+                    return [im]
+                    
+                # Create animation
+                anim = FuncAnimation(
+                    self._interactive_fig,
+                    animate_combined,
+                    frames=len(time_steps),
+                    interval=100,  # 10 FPS
+                    blit=True,
+                    repeat=True
+                )
+            
+            # Store animation and mark axis as animated
+            axis_key = (row_idx, col_idx)
+            self._mode_animations[axis_key] = anim
+            self._animated_axes.add(axis_key)
+            
+        except Exception as e:
+            log.error(f"Failed to start mode animation: {e}")
+
+    def _update_single_mode_plot(
+        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+    ) -> None:
+        """Update single mode plot (used when stopping animation)."""
+        try:
+            # Get mode data
+            mode_data = self.get_mode(self._current_frequency, z_layer)
+            comp_data = mode_data.get_component(component)
+            
+            # Determine visualization type
+            vis_types = []
+            if self.config.show_magnitude:
+                vis_types.append("magnitude")
+            if self.config.show_phase:
+                vis_types.append("phase")
+            if self.config.show_combined:
+                vis_types.append("combined")
+                
+            vis_type = vis_types[row_idx]
+            
+            # Clear and redraw
+            ax.clear()
+            ax.set_xticks([])
+            ax.set_yticks([])
+            
+            if vis_type == "magnitude":
+                magnitude = np.abs(comp_data)
+                ax.imshow(
+                    magnitude,
+                    cmap=self.config._resolve_colormap(self.config.colormap_magnitude),
+                    extent=mode_data.extent,
+                    aspect="equal",
+                    interpolation=self.config.interpolation,
+                    origin="lower",
+                )
+                ax.set_title(f"|m_{component}|")
+                
+            elif vis_type == "phase":
+                phase = np.angle(comp_data)
+                ax.imshow(
+                    phase,
+                    cmap=self.config._resolve_colormap(self.config.colormap_phase),
+                    extent=mode_data.extent,
+                    aspect="equal",
+                    interpolation=self.config.interpolation,
+                    vmin=-np.pi,
+                    vmax=np.pi,
+                    origin="lower",
+                )
+                ax.set_title(f"arg(m_{component})")
+                
+            elif vis_type == "combined":
+                magnitude = np.abs(comp_data)
+                phase = np.angle(comp_data)
+                combined_data = magnitude * np.cos(phase)
+                ax.imshow(
+                    combined_data,
+                    cmap=self.config._resolve_colormap(self.config.colormap_phase),
+                    extent=mode_data.extent,
+                    aspect="equal",
+                    interpolation=self.config.interpolation,
+                    origin="lower",
+                )
+                ax.set_title(f"m_{component} (mag×cos(φ))")
+                
+        except Exception as e:
+            log.error(f"Failed to update single mode plot: {e}")
 
     def _add_scale_bar(
         self, ax: Any, extent: tuple[float, float, float, float]
