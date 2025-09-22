@@ -11,6 +11,11 @@ from .core import FFT
 # Import mode visualization with error handling
 try:
     from .modes import FFTModeInterface, FMRModeAnalyzer, ModeVisualizationConfig
+    from .mode_characterization import (
+        ModeCharacterAnalyzer,
+        ModeCharacteristicConfig,
+        ModeCharacterizationResult,
+    )
 
     __all__ = [
         "FFT",
@@ -19,6 +24,9 @@ try:
         "FMRModeAnalyzer",
         "FFTModeInterface",
         "ModeVisualizationConfig",
+        "ModeCharacterAnalyzer",
+        "ModeCharacteristicConfig",
+        "ModeCharacterizationResult",
     ]
 except ImportError:
     __all__ = ["FFT", "FFTCompute", "FFTComputeResult"]

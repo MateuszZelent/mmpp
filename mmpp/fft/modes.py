@@ -97,6 +97,12 @@ from .metrics import (
     normalize_peak_width_option,
 )
 
+from .mode_characterization import (
+    ModeCharacterAnalyzer,
+    ModeCharacteristicConfig,
+    ModeCharacterizationResult,
+)
+
 # Check for animation support
 try:
     from matplotlib.animation import FuncAnimation, PillowWriter
@@ -519,6 +525,7 @@ class FMRModeAnalyzer:
         zarr_path: str,
         dataset_name: Optional[str] = None,
         config: Optional[ModeVisualizationConfig] = None,
+        mode_character_config: Optional[ModeCharacteristicConfig] = None,
         debug: bool = False,
     ):
         """
@@ -547,6 +554,7 @@ class FMRModeAnalyzer:
         self.zarr_path = zarr_path
         self.dataset_name = dataset_name
         self.config = config or ModeVisualizationConfig()
+        self._character_analyzer = ModeCharacterAnalyzer(mode_character_config)
 
         # Set up logging
         setup_mmpp_logging(debug=debug, logger_name="mmpp.fft.modes")
@@ -893,6 +901,25 @@ class FMRModeAnalyzer:
 
         return FMRModeData(actual_freq, mode_data, extent, metadata)
 
+    def characterize_mode(
+        self,
+        frequency: float,
+        z_layer: int = 0,
+        *,
+        core_position: Optional[tuple[float, float]] = None,
+        analysis_radius: Optional[float] = None,
+        config: Optional[ModeCharacteristicConfig] = None,
+    ) -> ModeCharacterizationResult:
+        """Classify the mode at ``frequency`` into gyration/breathing/azimuthal families."""
+
+        analyzer = self._character_analyzer if config is None else ModeCharacterAnalyzer(config)
+        mode_data = self.get_mode(frequency, z_layer)
+        return analyzer.analyze(
+            mode_data,
+            core_position=core_position,
+            analysis_radius=analysis_radius,
+        )
+
     def _update_cache(
         self, frequency: float, z_layer: int, mode_data: FMRModeData
     ) -> None:
@@ -1135,6 +1162,9 @@ class FMRModeAnalyzer:
 
         Click on spectrum to select frequency and visualize corresponding mode.
         Right-click to snap to nearest peak.
+        Double-click on mode plots to toggle animations.
+        Press 'c' key to characterize the current mode.
+        Press 'h' key for help.
 
         **Interactive Requirements:**
         - Jupyter/IPython: Function automatically tries to enable `%matplotlib widget`
@@ -1546,6 +1576,64 @@ class FMRModeAnalyzer:
         )
         log.debug(f"Click handler connected with ID: {self._click_connection}")
 
+        # Add keyboard handler for mode characterization
+        def on_key_press(event):
+            """Handle keyboard events for mode characterization"""
+            if event.key == 'c' and self._current_frequency is not None:
+                try:
+                    log.info(f"Characterizing mode at {self._current_frequency:.3f} GHz...")
+                    characterization = self.characterize_mode(self._current_frequency, z_layer)
+                    
+                    # Display characterization results
+                    char_info = (
+                        f"Mode Classification at {self._current_frequency:.3f} GHz:\n"
+                        f"• Primary Class: {characterization.primary_class}\n"
+                        f"• m-index: {characterization.m_index}\n"
+                        f"• Rotation: {characterization.rotation_sense or 'N/A'}\n"
+                        f"• Radial nodes: {characterization.radial_nodes}\n"
+                        f"• Confidence: {characterization.confidence:.2f}\n"
+                        f"• Labels: {', '.join(characterization.labels)}"
+                    )
+                    
+                    print("\n" + "="*60)
+                    print(char_info)
+                    print("="*60)
+                    
+                    # Update figure title with classification
+                    main_title = f"Interactive Mode Spectrum - {characterization.primary_class.upper()} mode"
+                    if characterization.m_index is not None:
+                        main_title += f" (m={characterization.m_index})"
+                    if characterization.rotation_sense:
+                        main_title += f" [{characterization.rotation_sense}]"
+                    
+                    self._interactive_fig.suptitle(main_title, fontsize=12, fontweight='bold')
+                    self._interactive_fig.canvas.draw()
+                    
+                    log.info(f"Mode classified as: {characterization.primary_class} (confidence: {characterization.confidence:.2f})")
+                    
+                except Exception as e:
+                    log.error(f"Failed to characterize mode: {e}")
+                    print(f"Error characterizing mode: {e}")
+            
+            elif event.key == 'h':
+                # Show help
+                help_text = """
+Interactive Spectrum Controls:
+============================
+• Click spectrum: Select frequency
+• Right-click spectrum: Snap to nearest peak  
+• Double-click mode: Toggle animation
+• 'c' key: Characterize current mode
+• 'h' key: Show this help
+                """
+                print(help_text)
+
+        # Connect keyboard handler
+        self._key_connection = self._interactive_fig.canvas.mpl_connect(
+            "key_press_event", on_key_press
+        )
+        log.debug(f"Keyboard handler connected with ID: {self._key_connection}")
+
         # Add cleanup method to figure
         def cleanup():
             # Stop all running animations first
@@ -1560,18 +1648,26 @@ class FMRModeAnalyzer:
                 if hasattr(self, '_animated_axes'):
                     self._animated_axes.clear()
             
-            # Disconnect click handler
+            # Disconnect event handlers
             if hasattr(self, "_click_connection") and self._click_connection:
                 self._interactive_fig.canvas.mpl_disconnect(self._click_connection)
                 self._click_connection = None
-                log.debug("Interactive plot event handlers cleaned up")
+                log.debug("Click handler disconnected")
+                
+            if hasattr(self, "_key_connection") and self._key_connection:
+                self._interactive_fig.canvas.mpl_disconnect(self._key_connection)
+                self._key_connection = None
+                log.debug("Keyboard handler disconnected")
+                
+            log.debug("Interactive plot event handlers cleaned up")
 
         # Store cleanup function for later use
         self._interactive_fig._mmpp_cleanup = cleanup
 
         plt.tight_layout()
         log.info(
-            "Interactive spectrum plot created. Click to select frequency, right-click to snap to peaks."
+            "Interactive spectrum plot created. Click to select frequency, right-click to snap to peaks. "
+            "Double-click mode plots for animations. Press 'c' to characterize current mode, 'h' for help."
         )
 
         # Control figure display to avoid double showing
@@ -2729,6 +2825,15 @@ class FFTModeInterface:
         """Get mode interface for specific frequency index."""
         return FrequencyModeInterface(frequency_index, self)
 
+    def characterize_mode(
+        self,
+        frequency: float,
+        **kwargs,
+    ) -> ModeCharacterizationResult:
+        """Characterize the mode at a given frequency (GHz)."""
+
+        return self.mode_analyzer.characterize_mode(frequency, **kwargs)
+
     def __repr__(self) -> str:
         """Rich representation of the FFT mode interface."""
         try:
@@ -2784,9 +2889,14 @@ class FFTModeInterface:
                     "plot_modes(frequency, dset=None, **kwargs)",
                     "Plot mode at specific frequency",
                 ),
+                (
+                    "characterize_mode(frequency, **kwargs)",
+                    "Return structured mode classification",
+                ),
                 ("save_modes_animation(**kwargs)", "Create mode animations"),
                 ("compute_modes(dset=None, **kwargs)", "Compute/recompute modes"),
                 ("[freq_index].plot_modes(**kwargs)", "Plot modes at frequency index"),
+                ("[freq_index].characterize(**kwargs)", "Get mode labels at frequency index"),
             ]
 
             for method, description in methods:
@@ -2857,9 +2967,11 @@ MMPP FFT Mode Analyzer:
 🔧 Main methods:
   • interactive_spectrum(dset=None, **kwargs) - Interactive spectrum with modes
   • plot_modes(frequency, dset=None, **kwargs) - Plot mode at specific frequency
+  • characterize_mode(frequency, **kwargs) - Structured mode classification
   • save_modes_animation(**kwargs) - Create mode animations
   • compute_modes(dset=None, **kwargs) - Compute/recompute modes
   • [freq_index].plot_modes(**kwargs) - Plot modes at frequency index
+  • [freq_index].characterize(**kwargs) - Analyze mode at frequency index
 
 💡 Animation examples:
   • modes.save_modes_animation(frequency=1.5, animation_type='temporal')
@@ -3066,6 +3178,11 @@ class FrequencyModeInterface:
         """Get mode data at this frequency."""
         return self.parent.mode_analyzer.get_mode(self.frequency, **kwargs)
 
+    def characterize(self, **kwargs) -> ModeCharacterizationResult:
+        """Return automatic mode classification for this frequency."""
+
+        return self.parent.mode_analyzer.characterize_mode(self.frequency, **kwargs)
+
     def __repr__(self) -> str:
         """Rich string representation of FrequencyModeInterface."""
         try:
@@ -3107,6 +3224,7 @@ class FrequencyModeInterface:
         methods_list = [
             "• plot_modes(**kwargs) → Tuple[Figure, np.ndarray]",
             "• get_mode(**kwargs) → FMRModeData",
+            "• characterize(**kwargs) → ModeCharacterizationResult",
             "• frequency → float (property)",
         ]
         methods_content = "\n".join(methods_list)
@@ -3120,6 +3238,10 @@ fig, axes = freq_interface.plot_modes()
 
 # Get mode data
 mode_data = freq_interface.get_mode()
+
+# Automatic classification
+characterization = freq_interface.characterize()
+print(characterization.primary_class)
 
 # Check frequency value
 print(f"Frequency: {{freq_interface.frequency:.2e}} Hz")"""
@@ -3154,6 +3276,6 @@ print(f"Frequency: {{freq_interface.frequency:.2e}} Hz")"""
         return (
             f"FrequencyModeInterface(frequency_index={self.frequency_index}, "
             f"frequency={self.frequency:.2e} Hz)\n"
-            f"Methods: plot_modes(), get_mode(), frequency (property)\n"
+            f"Methods: plot_modes(), get_mode(), characterize(), frequency (property)\n"
             f"Parent analyzer has {len(self.parent.mode_analyzer.frequencies)} frequencies"
         )
