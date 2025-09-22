@@ -2,7 +2,7 @@ import mmpp
 
 # Enable debug logging to see detailed information
 import logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.ERROR)
 
 job = mmpp.MMPP("/mnt/storage_2/scratch/pl0095-01/zelent/gleb/simulations/field_dependent/spectrum_withoutanisu.zarr")
 

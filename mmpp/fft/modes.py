@@ -66,6 +66,13 @@ except ImportError:
     log.error("Zarr not available - mode analysis disabled")
 
 try:
+    from pyzfn import Pyzfn
+
+    PYZFN_AVAILABLE = True
+except ImportError:
+    PYZFN_AVAILABLE = False
+
+try:
     from matplotlib.axes import Axes
     from matplotlib.backend_bases import MouseEvent
     from matplotlib.figure import Figure
@@ -1777,17 +1784,81 @@ class FMRModeAnalyzer:
 
         dset = self.zarr_file[self.dataset_name]
 
-        # Get time array
+        # Determine sampling interval dt
+        dt: Optional[float] = None
+        t_array: Optional[np.ndarray] = None
         try:
-            t_array = dset.attrs["t"][:]
-            dt = (t_array[-1] - t_array[0]) / len(t_array)
-        except Exception:
-            # Fallback to dt from zarr attrs
-            dt = float(self.zarr_file.attrs.get("dt", 1e-12))
-            t_array = np.arange(dset.shape[0]) * dt
+            raw_t = dset.attrs["t"][:]
+            t_array = np.asarray(raw_t, dtype=float)
+            if t_array.size > 1:
+                diffs = np.diff(t_array)
+                positive_diffs = diffs[diffs > 0]
+                if positive_diffs.size:
+                    dt = float(np.mean(positive_diffs))
+                else:
+                    dt = float(np.median(np.abs(diffs)))
+                if not np.isfinite(dt) or dt <= 0:
+                    raise ValueError("Invalid timestep derived from t attribute")
+            else:
+                raise ValueError("Insufficient time samples in attribute")
+        except Exception as exc:
+            log.debug(
+                "Falling back to alternative dt sources for dataset %s: %s",
+                self.dataset_name,
+                exc,
+            )
+            t_array = None
+            dt = None
 
-        # Calculate frequencies
-        freqs = np.fft.rfftfreq(len(t_array), dt) * 1e-9  # Convert to GHz
+        def _extract_dt(candidate: Any) -> Optional[float]:
+            if candidate is None:
+                return None
+            try:
+                value = float(np.asarray(candidate).item())
+                if np.isfinite(value) and value > 0:
+                    return value
+            except Exception:
+                return None
+            return None
+
+        if dt is None:
+            for attrs in (getattr(dset, "attrs", {}), getattr(self.zarr_file, "attrs", {})):
+                for key in ("t_sampl", "dt"):
+                    dt_candidate = _extract_dt(attrs.get(key))
+                    if dt_candidate is not None:
+                        dt = dt_candidate
+                        break
+                if dt is not None:
+                    break
+
+        if dt is None and PYZFN_AVAILABLE:
+            try:
+                pyz_job = Pyzfn(self.zarr_path)
+                dt_candidate = _extract_dt(getattr(pyz_job, "t_sampl", None))
+                if dt_candidate is not None:
+                    dt = dt_candidate
+            except Exception as exc:
+                log.debug("Could not retrieve t_sampl via Pyzfn: %s", exc)
+
+        if dt is None:
+            dt = 1e-12
+            log.warning(
+                "Falling back to default timestep 1e-12 s for dataset %s."
+                " Check zarr metadata for t or t_sampl attributes.",
+                self.dataset_name,
+            )
+
+        if t_array is None:
+            num_samples = dset.shape[0]
+            t_array = np.arange(num_samples, dtype=float) * dt
+        else:
+            num_samples = t_array.size
+
+        # Calculate frequencies using number of time samples
+        if num_samples < 2:
+            raise ValueError("Mode computation requires at least two time samples")
+
+        freqs = np.fft.rfftfreq(num_samples, dt) * 1e-9  # Convert to GHz
 
         # Load and process data
         log.info(f"Loading magnetization data: {dset.shape}")
