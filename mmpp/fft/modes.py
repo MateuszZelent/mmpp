@@ -565,6 +565,10 @@ class FMRModeAnalyzer:
         self._fwhm_artists: list[Any] = []
         self._last_fwhm = None
 
+        # Animation state tracking
+        self._mode_animations = {}  # Dict to track active animations per axis
+        self._animated_axes = set()  # Set of axes currently being animated
+
         # Mode data cache (LRU cache with max 10 entries)
         self._mode_cache = {}
         self._cache_order = []
