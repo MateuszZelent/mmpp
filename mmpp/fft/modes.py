@@ -1709,6 +1709,7 @@ class FMRModeAnalyzer:
         force: bool = False,
         use_fft_spectrum: bool = True,
         saveanim: Union[bool, str, None] = None,
+        auto_animate: bool = False,
         **kwargs,
     ) -> Figure:
         """
@@ -1755,6 +1756,10 @@ class FMRModeAnalyzer:
             - str: Custom path/filename for animation (e.g., 'my_animation.mp4')
             Supported formats: .mp4, .gif, .avi (depends on matplotlib writers)
             Press 's' key in interactive mode to save current animated view
+        auto_animate : bool, optional
+            Automatically start animations for all mode plots (default: False)
+            When True, all mode visualizations are animated immediately after display
+            This is useful when you primarily want to save animations without manual interaction
         \\*\\*kwargs : dict
             Additional keyword arguments:
             - figsize : tuple, optional
@@ -2201,7 +2206,7 @@ class FMRModeAnalyzer:
                     log.info(f"Saving animation to: {self._saveanim_path}")
                     print(f"💾 Saving animation with {len(self._mode_animations)} animated modes...")
                     
-                    self._save_animated_view(self._saveanim_path)
+                    self._save_animated_view(self._saveanim_path, z_layer)
                     print(f"✅ Animation saved to: {self._saveanim_path}")
                     
                 except Exception as e:
@@ -2267,6 +2272,26 @@ Interactive Spectrum Controls:
 
         plt.tight_layout()
         
+        # Auto-animate all mode plots if requested
+        if auto_animate:
+            log.info("Auto-animating all mode plots...")
+            vis_types = []
+            if self.config.show_magnitude:
+                vis_types.append("magnitude")
+            if self.config.show_phase:
+                vis_types.append("phase") 
+            if self.config.show_combined:
+                vis_types.append("combined")
+                
+            for row_idx in range(len(vis_types)):
+                for col_idx in range(len(components)):
+                    try:
+                        ax = self._mode_axes[row_idx][col_idx]
+                        component = components[col_idx]
+                        self._toggle_mode_animation(ax, row_idx, col_idx, component, z_layer)
+                    except Exception as e:
+                        log.warning(f"Failed to auto-animate mode plot at ({row_idx}, {col_idx}): {e}")
+        
         # Update log message based on animation saving capability
         log_message = (
             "Interactive spectrum plot created. Click to select frequency, right-click to snap to peaks. "
@@ -2274,6 +2299,8 @@ Interactive Spectrum Controls:
         )
         if self._saveanim_enabled:
             log_message += ", 's' to save animated view"
+        if auto_animate:
+            log_message += " (all animations auto-started)"
         log_message += ", 'h' for help."
         
         log.info(log_message)
@@ -2493,7 +2520,7 @@ Interactive Spectrum Controls:
         
         self._animated_axes.discard(axis_key)
 
-    def _save_animated_view(self, save_path: str) -> None:
+    def _save_animated_view(self, save_path: str, z_layer: int = 0) -> None:
         """Save current animated view to video file."""
         if not self._mode_animations:
             raise ValueError("No active animations to save")
@@ -2556,12 +2583,71 @@ Interactive Spectrum Controls:
             save_path = save_path.replace(f'.{file_ext}', '.gif')
             
         # Create master animation that coordinates all mode animations
+        # We need to manually recreate the animation logic since we can't easily extract it from FuncAnimation
         def animate_all_modes(frame):
-            for anim in self._mode_animations.values():
-                anim(frame)
-            return []  # Return empty list for blitting
+            """Update all animated mode plots simultaneously"""
+            try:
+                # Get frame index (cycle through 30 frames)
+                time_step = (frame % 30) / 30.0 * 2 * np.pi
+                
+                # Update each animated axis
+                for (row_idx, col_idx) in self._animated_axes:
+                    try:
+                        ax = self._mode_axes[row_idx][col_idx]
+                        
+                        # Get mode data
+                        mode_data = self.get_mode(self._current_frequency, z_layer)
+                        
+                        # Determine component and visualization type
+                        components = self._get_components(None)  # Use default components
+                        component = components[col_idx]
+                        comp_data = mode_data.get_component(component)
+                        
+                        # Determine visualization type
+                        vis_types = []
+                        if self.config.show_magnitude:
+                            vis_types.append("magnitude")
+                        if self.config.show_phase:
+                            vis_types.append("phase") 
+                        if self.config.show_combined:
+                            vis_types.append("combined")
+                        
+                        vis_type = vis_types[row_idx]
+                        
+                        # Find the image object in the axis and update it
+                        images = [child for child in ax.get_children() if hasattr(child, 'set_array')]
+                        if images:
+                            im = images[0]  # Get the first image object
+                            
+                            if vis_type == "magnitude":
+                                # Pulsing magnitude
+                                amplitude = np.abs(comp_data)
+                                pulse = 0.8 + 0.2 * np.sin(time_step)
+                                im.set_array(amplitude * pulse)
+                            elif vis_type == "phase":
+                                # Rotating phase
+                                phase = np.angle(comp_data)
+                                current_phase = (phase + time_step) % (2 * np.pi)
+                                current_phase = np.where(current_phase > np.pi, current_phase - 2*np.pi, current_phase)
+                                im.set_array(current_phase)
+                            elif vis_type == "combined":
+                                # Temporal oscillation
+                                amplitude = np.abs(comp_data)
+                                phase = np.angle(comp_data)
+                                real_part = amplitude * np.cos(phase + time_step)
+                                im.set_array(real_part)
+                                
+                    except Exception as e:
+                        log.debug(f"Error updating animation for ({row_idx}, {col_idx}): {e}")
+                
+                return []
+                
+            except Exception as e:
+                log.debug(f"Error in animate_all_modes: {e}")
+                return []
             
-        total_frames = max(len(anim_data['frames']) for anim_data in self._mode_animations.values())
+        # Use fixed frame count for export (30 frames = 1.5 seconds at 20fps)
+        total_frames = 30
         
         # Create animation object
         anim = FuncAnimation(
