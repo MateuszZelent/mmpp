@@ -777,6 +777,87 @@ class FMRModeAnalyzer:
             self._print_characterization_details(result, frequency, z_layer)
             
         return result
+
+    def characterize_vortex_mode(
+        self,
+        frequency: float,
+        z_layer: int = 0,
+        *,
+        core_position: Optional[tuple[float, float]] = None,
+        R_dot: Optional[float] = None,
+        config: Optional[ModeCharacteristicConfig] = None,
+        verbose: bool = False,
+    ) -> "VortexModeResult":
+        """
+        Advanced vortex/skyrmion mode classification using theoretical equations.
+        
+        Implements rigorous classification based on:
+        - Thiele equation dynamics for gyration modes
+        - Azimuthal index m from phase winding  
+        - Radial index n from amplitude nodes
+        - Energy partitioning and phase coherence
+        
+        Parameters:
+        -----------
+        frequency : float
+            Frequency to analyze [GHz]
+        z_layer : int, optional
+            Layer index (default: 0)  
+        core_position : tuple[float, float], optional
+            Core position in pixels (default: auto-detected)
+        R_dot : float, optional
+            Dot radius in same units as spatial resolution (default: auto-estimated)
+        config : ModeCharacteristicConfig, optional
+            Configuration for analysis (default: instance config)  
+        verbose : bool, optional
+            Show detailed vortex analysis (default: False)
+            
+        Returns:
+        --------
+        VortexModeResult
+            Advanced classification with m,n indices, energies, and physics
+        """
+        
+        analyzer = self._character_analyzer if config is None else ModeCharacterAnalyzer(config)
+        mode_data = self.get_mode(frequency, z_layer)
+        
+        try:
+            result = analyzer.analyze_vortex(
+                mode_data,
+                core_position=core_position,
+                R_dot=R_dot,
+                verbose=verbose,
+            )
+            return result
+            
+        except ImportError as e:
+            log.error(f"Advanced vortex classifier not available: {e}")
+            print(f"❌ Advanced vortex classifier not available.")
+            print(f"   Falling back to standard characterization...")
+            
+            # Fallback to standard analysis  
+            std_result = analyzer.analyze(
+                mode_data,
+                core_position=core_position,
+            )
+            
+            if verbose:
+                self._print_characterization_details(std_result, frequency, z_layer)
+                
+            # Convert to VortexModeResult format (basic mapping)
+            from .vortex_classifier import VortexModeResult
+            
+            basic_result = VortexModeResult(
+                frequency=frequency,
+                m_index=0,  # would need proper analysis
+                n_index=0,  
+                mode_type=std_result.primary_class,
+                confidence=std_result.confidence,
+                core_position=core_position or (0, 0),
+                notes=["Fallback to standard analysis - advanced vortex classifier unavailable"]
+            )
+            
+            return basic_result
     
     def _print_characterization_details(
         self, result: ModeCharacterizationResult, frequency: float, z_layer: int
@@ -1575,6 +1656,11 @@ class FMRModeAnalyzer:
         # Add keyboard handler for mode characterization
         def on_key_press(event):
             """Handle keyboard events for mode characterization"""
+            if event is None or event.key is None:
+                return
+                
+            log.debug(f"Key pressed: '{event.key}' at frequency {self._current_frequency}")
+            
             if event.key == 'c' and self._current_frequency is not None:
                 try:
                     log.info(f"Characterizing mode at {self._current_frequency:.3f} GHz...")
@@ -1614,6 +1700,8 @@ class FMRModeAnalyzer:
             elif event.key == 'v' and self._current_frequency is not None:
                 # Verbose mode characterization - show detailed calculations
                 try:
+                    print(f"\n🔍 VERBOSE MODE CHARACTERIZATION at {self._current_frequency:.3f} GHz")
+                    print("=" * 70)
                     log.info(f"Verbose characterizing mode at {self._current_frequency:.3f} GHz...")
                     characterization = self.characterize_mode(self._current_frequency, z_layer, verbose=True)
                     
@@ -1626,10 +1714,13 @@ class FMRModeAnalyzer:
                     
                     self._interactive_fig.suptitle(main_title, fontsize=12, fontweight='bold')
                     self._interactive_fig.canvas.draw()
+                    print("=" * 70)
                     
                 except Exception as e:
                     log.error(f"Failed to verbose characterize mode: {e}")
-                    print(f"Error in verbose mode characterization: {e}")
+                    print(f"❌ Error in verbose mode characterization: {e}")
+                    import traceback
+                    traceback.print_exc()
                     
             elif event.key == 's' and self._saveanim_enabled:
                 # Save animation of current animated modes
@@ -1669,6 +1760,12 @@ Interactive Spectrum Controls:
 {chr(10).join(help_controls)}
                 """
                 print(help_text)
+            else:
+                # Debug: show unhandled keys
+                if event.key in ['v', 'c', 's', 'h'] and self._current_frequency is None:
+                    print(f"⚠️  Key '{event.key}' pressed but no frequency selected. Click spectrum first.")
+                elif event.key not in ['v', 'c', 's', 'h', None]:
+                    log.debug(f"Unhandled key: '{event.key}'")
 
         # Connect keyboard handler
         self._key_connection = self._interactive_fig.canvas.mpl_connect(
@@ -1791,11 +1888,14 @@ Interactive Spectrum Controls:
             for axis_key in list(self._mode_animations.keys()):
                 self._stop_mode_animation(axis_key)
 
-        # Clear previous shared colorbars
+        # Clear previous shared colorbars safely
         for cbar in getattr(self, "_row_colorbars", []):
             try:
-                cbar.remove()
-            except ValueError:
+                if cbar is not None and hasattr(cbar, 'ax') and cbar.ax is not None:
+                    cbar.remove()
+            except (ValueError, AttributeError) as e:
+                # Silently ignore already removed or invalid colorbars
+                log.debug(f"Colorbar removal failed: {e}")
                 pass
         self._row_colorbars = []
 

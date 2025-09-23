@@ -9,6 +9,14 @@ import numpy as np
 
 from ..cli.logging_config import get_mmpp_logger
 
+# Import advanced vortex classifier
+try:
+    from .vortex_classifier import AdvancedVortexClassifier, VortexClassificationConfig, VortexModeResult
+    VORTEX_CLASSIFIER_AVAILABLE = True
+except ImportError:
+    VORTEX_CLASSIFIER_AVAILABLE = False
+    log.debug("Advanced vortex classifier not available")
+
 if TYPE_CHECKING:  # pragma: no cover - only used for typing
     from .modes import FMRModeData
 
@@ -78,6 +86,10 @@ class ModeCharacteristicConfig:
     gyration_parallel_ratio: float = 0.55
     breathing_perp_ratio: float = 0.5
     anisotropy_ratio: float = 0.25
+    
+    # Advanced vortex classifier settings
+    use_vortex_classifier: bool = False  # Enable advanced vortex analysis
+    vortex_dot_radius: Optional[float] = None  # Auto-estimate if None
     min_points_for_winding: int = 64
     default_radius_fraction: float = 0.35
     min_radius_fraction: float = 0.12
@@ -294,6 +306,65 @@ class ModeCharacterAnalyzer:
         )
 
         self._assign_classification(result)
+        return result
+
+    def analyze_vortex(
+        self,
+        mode: "FMRModeData",
+        *,
+        core_position: Optional[tuple[float, float]] = None,
+        R_dot: Optional[float] = None,
+        verbose: bool = False,
+    ) -> "VortexModeResult":
+        """
+        Analyze mode using advanced vortex/skyrmion classifier.
+        
+        Parameters:
+        -----------
+        mode : FMRModeData
+            Mode data to analyze
+        core_position : tuple, optional
+            Core position in pixels. If None, estimated automatically
+        R_dot : float, optional  
+            Dot radius. If None, taken from config or estimated
+        verbose : bool
+            Print detailed analysis
+            
+        Returns:
+        --------
+        VortexModeResult
+            Advanced classification result with indices and physics
+        """
+        
+        if not VORTEX_CLASSIFIER_AVAILABLE:
+            raise ImportError("Advanced vortex classifier not available. Check vortex_classifier.py")
+        
+        # Create vortex classifier with compatible config
+        vortex_config = VortexClassificationConfig(
+            tol_phi_quadrature=self.config.quadrature_tolerance,
+            eta_parallel_for_gyr=self.config.gyration_parallel_ratio,
+            eta_perp_for_breath=self.config.breathing_perp_ratio,
+            std_phi_mz_for_breath=self.config.breathing_phase_uniformity,
+            nbins_radial=max(48, self.config.radial_bins),
+        )
+        
+        classifier = AdvancedVortexClassifier(vortex_config)
+        
+        # Use provided R_dot or get from config
+        dot_radius = R_dot or self.config.vortex_dot_radius
+        
+        # Get spatial resolution
+        dx, dy = mode.metadata.get("spatial_resolution", (1.0, 1.0))
+        
+        # Run advanced vortex analysis
+        result = classifier.classify_mode(
+            mode, 
+            R_dot=dot_radius,
+            dx=dx, 
+            dy=dy,
+            verbose=verbose
+        )
+        
         return result
 
     @staticmethod
