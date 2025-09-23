@@ -2350,8 +2350,9 @@ Interactive Spectrum Controls:
         # Clear previous shared colorbars
         for cbar in getattr(self, "_row_colorbars", []):
             try:
-                cbar.remove()
-            except ValueError:
+                if cbar is not None and hasattr(cbar, 'ax') and cbar.ax is not None:
+                    cbar.remove()
+            except (ValueError, AttributeError):
                 pass
         self._row_colorbars = []
 
@@ -2611,7 +2612,12 @@ Interactive Spectrum Controls:
             save_path = save_path.replace(f'.{file_ext}', '.gif')
             
         # Create master animation that coordinates all mode animations
-        # We need to manually recreate the animation logic since we can't easily extract it from FuncAnimation
+        # Store the current z_layer and components for animation context
+        current_z_layer = z_layer
+        
+        # Get components from the interactive plot setup
+        components_list = ["x", "y", "z"]  # Default components
+        
         def animate_all_modes(frame):
             """Update all animated mode plots simultaneously"""
             try:
@@ -2624,11 +2630,10 @@ Interactive Spectrum Controls:
                         ax = self._mode_axes[row_idx][col_idx]
                         
                         # Get mode data
-                        mode_data = self.get_mode(self._current_frequency, z_layer)
+                        mode_data = self.get_mode(self._current_frequency, current_z_layer)
                         
                         # Determine component and visualization type
-                        components = self._get_components(None)  # Use default components
-                        component = components[col_idx]
+                        component = components_list[col_idx]
                         comp_data = mode_data.get_component(component)
                         
                         # Determine visualization type
