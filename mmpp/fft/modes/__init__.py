@@ -739,16 +739,134 @@ class FMRModeAnalyzer:
         core_position: Optional[tuple[float, float]] = None,
         analysis_radius: Optional[float] = None,
         config: Optional[ModeCharacteristicConfig] = None,
+        verbose: bool = False,
     ) -> ModeCharacterizationResult:
-        """Classify the mode at ``frequency`` into gyration/breathing/azimuthal families."""
+        """
+        Classify the mode at ``frequency`` into gyration/breathing/azimuthal families.
+        
+        Parameters:
+        -----------
+        frequency : float
+            Frequency to analyze [GHz]
+        z_layer : int, optional
+            Layer index (default: 0)
+        core_position : tuple[float, float], optional
+            Core position in pixels (default: auto-detected)
+        analysis_radius : float, optional
+            Analysis radius (default: auto-determined)
+        config : ModeCharacteristicConfig, optional
+            Configuration for analysis (default: instance config)
+        verbose : bool, optional
+            Show detailed calculation results and classification criteria (default: False)
+            
+        Returns:
+        --------
+        ModeCharacterizationResult
+            Classification result with detailed metrics
+        """
 
         analyzer = self._character_analyzer if config is None else ModeCharacterAnalyzer(config)
         mode_data = self.get_mode(frequency, z_layer)
-        return analyzer.analyze(
+        result = analyzer.analyze(
             mode_data,
             core_position=core_position,
             analysis_radius=analysis_radius,
         )
+        
+        if verbose:
+            self._print_characterization_details(result, frequency, z_layer)
+            
+        return result
+    
+    def _print_characterization_details(
+        self, result: ModeCharacterizationResult, frequency: float, z_layer: int
+    ) -> None:
+        """Print detailed characterization analysis results."""
+        print("\n" + "="*80)
+        print(f"🔍 DETAILED MODE CHARACTERIZATION ANALYSIS")
+        print("="*80)
+        print(f"Frequency: {frequency:.3f} GHz, Layer: {z_layer}")
+        print(f"Final Classification: {result.primary_class.upper()}")
+        print(f"Confidence: {result.confidence:.3f}")
+        print(f"Labels: {', '.join(result.labels)}")
+        
+        print("\n📊 ENERGY DISTRIBUTION:")
+        print(f"   • In-plane energy (Ex + Ey):  {result.energy_parallel:.6e}")
+        print(f"   • Out-of-plane energy (Ez):   {result.energy_perp:.6e}")
+        total_energy = result.energy_parallel + result.energy_perp
+        parallel_ratio = result.energy_parallel / total_energy if total_energy > 0 else 0
+        perp_ratio = result.energy_perp / total_energy if total_energy > 0 else 0
+        print(f"   • In-plane ratio:             {parallel_ratio:.3f}")
+        print(f"   • Out-of-plane ratio:         {perp_ratio:.3f}")
+        print(f"   • Dominant component:         {result.dominant_component}")
+        
+        print("\n🌀 GYRATION ANALYSIS:")
+        if result.m_index is not None:
+            print(f"   • Winding number (m):         {result.m_index}")
+            print(f"   • Winding quality:            {result.m_quality:.3f}")
+            print(f"   • Rotation sense:             {result.rotation_sense or 'N/A'}")
+        else:
+            print(f"   • Winding number (m):         Not determined")
+            
+        if result.phase_xy_mean is not None:
+            phase_deg = np.degrees(result.phase_xy_mean)
+            print(f"   • Phase difference mx-my:     {phase_deg:.1f}° ({result.phase_xy_mean:.3f} rad)")
+            # Klasyfikacja kwadratura
+            is_quadrature = abs(abs(result.phase_xy_mean) - np.pi/2) < np.pi/4
+            print(f"   • Quadrature relation:        {'✅ YES' if is_quadrature else '❌ NO'} (±90° ± 45°)")
+        print(f"   • Phase coherence (mx,my):    {result.phase_xy_coherence:.3f}")
+        
+        print("\n💨 BREATHING ANALYSIS:")
+        print(f"   • mz phase uniformity:        {result.phase_z_uniformity:.3f}")
+        print(f"   • Radial nodes:               {result.radial_nodes}")
+        breathing_indicator = result.phase_z_uniformity > 0.65  # z config
+        print(f"   • Strong breathing mode:      {'✅ YES' if breathing_indicator else '❌ NO'} (uniformity > 0.65)")
+        
+        print("\n📐 SPATIAL CHARACTERISTICS:")
+        if 'analysis_radius' in result.diagnostics:
+            print(f"   • Analysis radius:            {result.diagnostics['analysis_radius']:.1f} pixels")
+        if 'core_position' in result.diagnostics:
+            cx, cy = result.diagnostics['core_position']
+            print(f"   • Core position:              ({cx:.1f}, {cy:.1f}) pixels")
+        if 'ring_coverage' in result.diagnostics:
+            print(f"   • Ring coverage:              {result.diagnostics['ring_coverage']:.3f}")
+            
+        print("\n🎯 CLASSIFICATION CRITERIA:")
+        # Gyration criteria
+        print("   GYRATION requires:")
+        print(f"      - Winding |m| = 1:          {abs(result.m_index or 0) == 1}")
+        print(f"      - In-plane dominance:       {parallel_ratio > 0.5}")
+        print(f"      - Good phase coherence:     {result.phase_xy_coherence > 0.5}")
+        is_quadrature = result.phase_xy_mean is not None and abs(abs(result.phase_xy_mean) - np.pi/2) < 0.55  # z config
+        print(f"      - Quadrature phase:         {is_quadrature}")
+        
+        # Breathing criteria  
+        print("\n   BREATHING requires:")
+        print(f"      - Out-of-plane dominance:   {perp_ratio > 0.5}")
+        print(f"      - mz phase uniformity:      {result.phase_z_uniformity > 0.65}")
+        print(f"      - Low winding quality:      {result.m_quality < 0.5}")
+        
+        # Configuration thresholds
+        config = self._character_analyzer.config
+        print(f"\n⚙️  CONFIGURATION THRESHOLDS:")
+        print(f"   • Amplitude threshold:        {config.relative_amplitude_threshold}")
+        print(f"   • Quadrature tolerance:       {config.quadrature_tolerance:.3f} rad")
+        print(f"   • Breathing uniformity:       {config.breathing_phase_uniformity}")
+        print(f"   • Gyration parallel ratio:   {config.gyration_parallel_ratio}")
+        print(f"   • Min ring coverage:          {config.min_ring_coverage}")
+        
+        if result.diagnostics:
+            print(f"\n🔧 RAW DIAGNOSTICS:")
+            for key, value in result.diagnostics.items():
+                if key not in ['analysis_radius', 'core_position', 'ring_coverage']:
+                    print(f"   • {key}: {value}")
+                    
+        if result.notes:
+            print(f"\n📝 ANALYSIS NOTES:")
+            for note in result.notes:
+                print(f"   • {note}")
+                
+        print("="*80)
 
     def _update_cache(
         self, frequency: float, z_layer: int, mode_data: FMRModeData
@@ -1460,7 +1578,7 @@ class FMRModeAnalyzer:
             if event.key == 'c' and self._current_frequency is not None:
                 try:
                     log.info(f"Characterizing mode at {self._current_frequency:.3f} GHz...")
-                    characterization = self.characterize_mode(self._current_frequency, z_layer)
+                    characterization = self.characterize_mode(self._current_frequency, z_layer, verbose=False)
                     
                     # Display characterization results
                     char_info = (
@@ -1493,6 +1611,26 @@ class FMRModeAnalyzer:
                     log.error(f"Failed to characterize mode: {e}")
                     print(f"Error characterizing mode: {e}")
                     
+            elif event.key == 'v' and self._current_frequency is not None:
+                # Verbose mode characterization - show detailed calculations
+                try:
+                    log.info(f"Verbose characterizing mode at {self._current_frequency:.3f} GHz...")
+                    characterization = self.characterize_mode(self._current_frequency, z_layer, verbose=True)
+                    
+                    # Update figure title with classification
+                    main_title = f"Interactive Mode Spectrum - {characterization.primary_class.upper()} mode (VERBOSE)"
+                    if characterization.m_index is not None:
+                        main_title += f" (m={characterization.m_index})"
+                    if characterization.rotation_sense:
+                        main_title += f" [{characterization.rotation_sense}]"
+                    
+                    self._interactive_fig.suptitle(main_title, fontsize=12, fontweight='bold')
+                    self._interactive_fig.canvas.draw()
+                    
+                except Exception as e:
+                    log.error(f"Failed to verbose characterize mode: {e}")
+                    print(f"Error in verbose mode characterization: {e}")
+                    
             elif event.key == 's' and self._saveanim_enabled:
                 # Save animation of current animated modes
                 try:
@@ -1516,7 +1654,8 @@ class FMRModeAnalyzer:
                     "• Click spectrum: Select frequency",
                     "• Right-click spectrum: Snap to nearest peak", 
                     "• Double-click mode: Toggle animation",
-                    "• 'c' key: Characterize current mode"
+                    "• 'c' key: Characterize current mode",
+                    "• 'v' key: Verbose characterization (detailed calculations)"
                 ]
                 
                 if self._saveanim_enabled:
@@ -1639,6 +1778,19 @@ Interactive Spectrum Controls:
         if self._mode_axes is None or self._current_frequency is None:
             return
 
+        # Check for active animations and restart them with new frequency data
+        has_active_animations = hasattr(self, '_mode_animations') and self._mode_animations
+        active_animation_keys = set()
+        
+        if has_active_animations:
+            # Store which axes were animated
+            active_animation_keys = set(self._animated_axes)
+            log.debug(f"Found {len(active_animation_keys)} active animations, will restart them")
+            
+            # Stop all current animations
+            for axis_key in list(self._mode_animations.keys()):
+                self._stop_mode_animation(axis_key)
+
         # Clear previous shared colorbars
         for cbar in getattr(self, "_row_colorbars", []):
             try:
@@ -1657,7 +1809,7 @@ Interactive Spectrum Controls:
 
         images_for_colorbar: list[Optional[Any]] = [None] * len(vis_types)
 
-        # Clear all axes
+        # Clear all axes (only non-animated ones, or all if we stopped animations)
         for ax_row in self._mode_axes:
             for ax in ax_row:
                 ax.clear()
@@ -1799,6 +1951,19 @@ Interactive Spectrum Controls:
             cbar.set_label(label, fontsize=self.config.colorbar_label_size)
             cbar.ax.tick_params(labelsize=self.config.colorbar_ticklabel_size)
             self._row_colorbars.append(cbar)
+            
+        # Restart animations that were active before the update
+        if has_active_animations and active_animation_keys:
+            log.debug(f"Restarting {len(active_animation_keys)} animations with new frequency data")
+            for row_idx, col_idx in active_animation_keys:
+                try:
+                    if row_idx < len(self._mode_axes) and col_idx < len(components):
+                        ax = self._mode_axes[row_idx, col_idx]
+                        component = components[col_idx]
+                        self._start_mode_animation(ax, row_idx, col_idx, component, z_layer)
+                        log.debug(f"Restarted animation for m_{component} at {self._current_frequency:.3f} GHz")
+                except Exception as e:
+                    log.warning(f"Failed to restart animation for axis ({row_idx}, {col_idx}): {e}")
 
     def _toggle_mode_animation(
         self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
@@ -2973,11 +3138,28 @@ class FFTModeInterface:
     def characterize_mode(
         self,
         frequency: float,
+        verbose: bool = False,
         **kwargs,
     ) -> ModeCharacterizationResult:
-        """Characterize the mode at a given frequency (GHz)."""
+        """
+        Characterize the mode at a given frequency (GHz).
+        
+        Parameters:
+        -----------
+        frequency : float
+            Frequency to analyze [GHz]
+        verbose : bool, optional
+            Show detailed calculation results and classification criteria (default: False)
+        **kwargs
+            Additional arguments passed to mode analyzer
+            
+        Returns:
+        --------
+        ModeCharacterizationResult
+            Classification result with detailed metrics
+        """
 
-        return self.mode_analyzer.characterize_mode(frequency, **kwargs)
+        return self.mode_analyzer.characterize_mode(frequency, verbose=verbose, **kwargs)
 
     def __repr__(self) -> str:
         """Rich representation of the FFT mode interface."""
