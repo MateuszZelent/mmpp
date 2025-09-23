@@ -1155,6 +1155,7 @@ class FMRModeAnalyzer:
         show: bool = True,
         force: bool = False,
         use_fft_spectrum: bool = True,
+        saveanim: Union[bool, str, None] = None,
         **kwargs,
     ) -> Figure:
         """
@@ -1164,6 +1165,7 @@ class FMRModeAnalyzer:
         Right-click to snap to nearest peak.
         Double-click on mode plots to toggle animations.
         Press 'c' key to characterize the current mode.
+        Press 's' key to save animated view (if saveanim enabled).
         Press 'h' key for help.
 
         **Interactive Requirements:**
@@ -1193,6 +1195,13 @@ class FMRModeAnalyzer:
         use_fft_spectrum : bool, optional
             Use spectrum from standard FFT analysis instead of modes data (default: True)
             This ensures consistency with plot_spectrum results
+        saveanim : bool, str, or None, optional
+            Enable animation saving functionality (default: None)
+            - None or False: No animation saving
+            - True: Enable saving with default naming ('mode_animation_%Y%m%d_%H%M%S.mp4')
+            - str: Custom path/filename for animation (e.g., 'my_animation.mp4')
+            Supported formats: .mp4, .gif, .avi (depends on matplotlib writers)
+            Press 's' key in interactive mode to save current animated view
         \\*\\*kwargs : dict
             Additional keyword arguments:
             - figsize : tuple, optional
@@ -1234,6 +1243,20 @@ class FMRModeAnalyzer:
         show_peak_width, peak_width_label = normalize_peak_width_option(
             peak_width_option
         )
+
+        # Setup animation saving
+        self._saveanim_enabled = saveanim is not None and saveanim is not False
+        if self._saveanim_enabled:
+            if isinstance(saveanim, str):
+                self._saveanim_path = saveanim
+            else:
+                # Default filename with timestamp
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                self._saveanim_path = f"mode_animation_{timestamp}.mp4"
+            log.info(f"Animation saving enabled. Press 's' to save to: {self._saveanim_path}")
+        else:
+            self._saveanim_path = None
 
         # Clear previous FWHM artists if figure is being re-used
         for artist in getattr(self, "_fwhm_artists", []):
@@ -1614,17 +1637,42 @@ class FMRModeAnalyzer:
                 except Exception as e:
                     log.error(f"Failed to characterize mode: {e}")
                     print(f"Error characterizing mode: {e}")
+                    
+            elif event.key == 's' and self._saveanim_enabled:
+                # Save animation of current animated modes
+                try:
+                    if not self._mode_animations:
+                        print("❌ No active animations to save! Double-click mode plots first.")
+                        return
+                        
+                    log.info(f"Saving animation to: {self._saveanim_path}")
+                    print(f"💾 Saving animation with {len(self._mode_animations)} animated modes...")
+                    
+                    self._save_animated_view(self._saveanim_path)
+                    print(f"✅ Animation saved to: {self._saveanim_path}")
+                    
+                except Exception as e:
+                    log.error(f"Failed to save animation: {e}")
+                    print(f"❌ Error saving animation: {e}")
             
             elif event.key == 'h':
                 # Show help
-                help_text = """
+                help_controls = [
+                    "• Click spectrum: Select frequency",
+                    "• Right-click spectrum: Snap to nearest peak", 
+                    "• Double-click mode: Toggle animation",
+                    "• 'c' key: Characterize current mode"
+                ]
+                
+                if self._saveanim_enabled:
+                    help_controls.append("• 's' key: Save animated view")
+                    
+                help_controls.append("• 'h' key: Show this help")
+                
+                help_text = f"""
 Interactive Spectrum Controls:
 ============================
-• Click spectrum: Select frequency
-• Right-click spectrum: Snap to nearest peak  
-• Double-click mode: Toggle animation
-• 'c' key: Characterize current mode
-• 'h' key: Show this help
+{chr(10).join(help_controls)}
                 """
                 print(help_text)
 
@@ -1665,10 +1713,17 @@ Interactive Spectrum Controls:
         self._interactive_fig._mmpp_cleanup = cleanup
 
         plt.tight_layout()
-        log.info(
+        
+        # Update log message based on animation saving capability
+        log_message = (
             "Interactive spectrum plot created. Click to select frequency, right-click to snap to peaks. "
-            "Double-click mode plots for animations. Press 'c' to characterize current mode, 'h' for help."
+            "Double-click mode plots for animations. Press 'c' to characterize current mode"
         )
+        if self._saveanim_enabled:
+            log_message += ", 's' to save animated view"
+        log_message += ", 'h' for help."
+        
+        log.info(log_message)
 
         # Control figure display to avoid double showing
         if show:
@@ -1884,6 +1939,103 @@ Interactive Spectrum Controls:
                 log.debug(f"Error stopping animation: {e}")
         
         self._animated_axes.discard(axis_key)
+
+    def _save_animated_view(self, save_path: str) -> None:
+        """Save current animated view to video file."""
+        if not self._mode_animations:
+            raise ValueError("No active animations to save")
+            
+        # Import required modules
+        try:
+            from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter
+        except ImportError:
+            raise ImportError("Animation saving requires matplotlib.animation")
+            
+        log.info(f"Creating animation with {len(self._mode_animations)} animated modes")
+        
+        # Determine writer based on file extension
+        file_ext = save_path.lower().split('.')[-1]
+        
+        if file_ext == 'mp4':
+            try:
+                writer = FFMpegWriter(fps=20, bitrate=1800)
+                writer_name = 'ffmpeg'
+            except Exception:
+                log.warning("FFMpeg not available, falling back to Pillow")
+                writer = PillowWriter(fps=10)
+                writer_name = 'pillow'
+                # Change extension to gif for Pillow
+                save_path = save_path.replace('.mp4', '.gif')
+                
+        elif file_ext == 'gif':
+            writer = PillowWriter(fps=10)
+            writer_name = 'pillow'
+        elif file_ext == 'avi':
+            writer = FFMpegWriter(fps=20, bitrate=1800)
+            writer_name = 'ffmpeg'
+        else:
+            # Default to gif with Pillow
+            writer = PillowWriter(fps=10)
+            writer_name = 'pillow'
+            save_path = save_path.replace(f'.{file_ext}', '.gif')
+            
+        # Create master animation that coordinates all mode animations
+        def animate_all_modes(frame):
+            """Update all animated modes synchronously"""
+            artists = []
+            
+            for axis_key, anim in self._mode_animations.items():
+                try:
+                    # Call the animation function for this axis
+                    if hasattr(anim, '_func'):
+                        result = anim._func(frame)
+                        if isinstance(result, (list, tuple)):
+                            artists.extend(result)
+                        else:
+                            artists.append(result)
+                except Exception as e:
+                    log.debug(f"Error animating axis {axis_key}: {e}")
+                    
+            return artists
+        
+        # Determine frame count - use longest animation
+        max_frames = 100  # Default
+        for anim in self._mode_animations.values():
+            if hasattr(anim, 'save_count'):
+                max_frames = max(max_frames, anim.save_count or 100)
+        
+        # Create master animation
+        master_anim = FuncAnimation(
+            self._interactive_fig, 
+            animate_all_modes,
+            frames=max_frames,
+            interval=50,  # 50ms = 20fps
+            blit=False,   # Disable blitting for saving
+            repeat=True
+        )
+        
+        # Save animation
+        try:
+            log.info(f"Saving {max_frames} frames using {writer_name} writer...")
+            master_anim.save(save_path, writer=writer, dpi=100)
+            log.info(f"Animation saved successfully to {save_path}")
+        except Exception as e:
+            # Fallback: try to save as static images
+            log.warning(f"Animation saving failed: {e}")
+            log.info("Attempting to save as static image sequence...")
+            
+            import os
+            base_name = os.path.splitext(save_path)[0]
+            
+            # Save a few key frames as static images
+            for i in range(0, max_frames, max_frames//10):  # 10 frames
+                animate_all_modes(i)
+                self._interactive_fig.canvas.draw()
+                static_path = f"{base_name}_frame_{i:03d}.png"
+                self._interactive_fig.savefig(static_path, dpi=150, bbox_inches='tight')
+                
+            log.info(f"Saved static frames to {base_name}_frame_*.png")
+            raise RuntimeError(f"Could not save as {file_ext}, saved static frames instead")
 
     def _start_mode_animation(
         self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
