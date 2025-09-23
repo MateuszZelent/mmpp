@@ -600,6 +600,88 @@ class MidpointNormalize(mcolors.Normalize):
         return np.ma.masked_array(np.interp(value, x, y))
 
 
+def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
+    """
+    Create FFMpegWriter with compatibility across matplotlib versions.
+    
+    Parameters:
+    -----------
+    ffmpeg_path : str
+        Path to ffmpeg executable
+    fps : int, default 20
+        Frames per second for animation
+    bitrate : int, default 1800
+        Bitrate for video encoding
+        
+    Returns:
+    --------
+    FFMpegWriter
+        Configured writer instance
+    """
+    from matplotlib.animation import FFMpegWriter
+    import inspect
+    
+    try:
+        # Get the signature of FFMpegWriter.__init__ to check supported parameters
+        init_signature = inspect.signature(FFMpegWriter.__init__)
+        supported_params = set(init_signature.parameters.keys())
+        
+        # Build kwargs dict with only supported parameters
+        kwargs = {}
+        
+        # Common parameters
+        if 'fps' in supported_params:
+            kwargs['fps'] = fps
+        if 'bitrate' in supported_params:
+            kwargs['bitrate'] = bitrate
+            
+        # Additional parameters that might be supported
+        if 'codec' in supported_params:
+            kwargs['codec'] = 'libx264'
+        if 'extra_args' in supported_params:
+            kwargs['extra_args'] = ['-pix_fmt', 'yuv420p']
+            
+        # Create writer with supported parameters
+        writer = FFMpegWriter(**kwargs)
+        
+        # Set ffmpeg path - handle different matplotlib versions
+        if hasattr(writer, '_args'):
+            # In newer versions, modify the command args directly
+            if hasattr(writer, '_args') and isinstance(writer._args, dict):
+                writer._args['executable'] = ffmpeg_path
+        
+        # Also try setting via other methods for compatibility
+        try:
+            # Some versions use this approach
+            writer.bin_path = lambda: ffmpeg_path
+        except:
+            pass
+            
+        return writer
+        
+    except Exception as e:
+        log.warning(f"Failed to create FFMpegWriter with advanced options: {e}")
+        
+        # Fallback to minimal initialization
+        try:
+            writer = FFMpegWriter(fps=fps)
+            
+            # Try to set the path via different methods
+            try:
+                writer.bin_path = lambda: ffmpeg_path
+            except:
+                pass
+                
+            if hasattr(writer, '_args'):
+                if hasattr(writer, '_args') and isinstance(writer._args, dict):
+                    writer._args['executable'] = ffmpeg_path
+                    
+            return writer
+        except Exception as e2:
+            log.error(f"Failed to create basic FFMpegWriter: {e2}")
+            raise
+
+
 def setup_animation_styling(
     use_paper_style: bool = True, use_custom_fonts: bool = True
 ) -> bool:
@@ -2357,88 +2439,6 @@ Interactive Spectrum Controls:
                 log.debug(f"Error stopping animation: {e}")
         
         self._animated_axes.discard(axis_key)
-
-def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
-    """
-    Create FFMpegWriter with compatibility across matplotlib versions.
-    
-    Parameters:
-    -----------
-    ffmpeg_path : str
-        Path to ffmpeg executable
-    fps : int, default 20
-        Frames per second for animation
-    bitrate : int, default 1800
-        Bitrate for video encoding
-        
-    Returns:
-    --------
-    FFMpegWriter
-        Configured writer instance
-    """
-    from matplotlib.animation import FFMpegWriter
-    import inspect
-    
-    try:
-        # Get the signature of FFMpegWriter.__init__ to check supported parameters
-        init_signature = inspect.signature(FFMpegWriter.__init__)
-        supported_params = set(init_signature.parameters.keys())
-        
-        # Build kwargs dict with only supported parameters
-        kwargs = {}
-        
-        # Common parameters
-        if 'fps' in supported_params:
-            kwargs['fps'] = fps
-        if 'bitrate' in supported_params:
-            kwargs['bitrate'] = bitrate
-            
-        # Additional parameters that might be supported
-        if 'codec' in supported_params:
-            kwargs['codec'] = 'libx264'
-        if 'extra_args' in supported_params:
-            kwargs['extra_args'] = ['-pix_fmt', 'yuv420p']
-            
-        # Create writer with supported parameters
-        writer = FFMpegWriter(**kwargs)
-        
-        # Set ffmpeg path - handle different matplotlib versions
-        if hasattr(writer, '_args'):
-            # In newer versions, modify the command args directly
-            if hasattr(writer, '_args') and isinstance(writer._args, dict):
-                writer._args['executable'] = ffmpeg_path
-        
-        # Also try setting via other methods for compatibility
-        try:
-            # Some versions use this approach
-            writer.bin_path = lambda: ffmpeg_path
-        except:
-            pass
-            
-        return writer
-        
-    except Exception as e:
-        log.warning(f"Failed to create FFMpegWriter with advanced options: {e}")
-        
-        # Fallback to minimal initialization
-        try:
-            writer = FFMpegWriter(fps=fps)
-            
-            # Try to set the path via different methods
-            try:
-                writer.bin_path = lambda: ffmpeg_path
-            except:
-                pass
-                
-            if hasattr(writer, '_args'):
-                if hasattr(writer, '_args') and isinstance(writer._args, dict):
-                    writer._args['executable'] = ffmpeg_path
-                    
-            return writer
-        except Exception as e2:
-            log.error(f"Failed to create basic FFMpegWriter: {e2}")
-            raise
-
 
     def _save_animated_view(self, save_path: str) -> None:
         """Save current animated view to video file."""
