@@ -394,6 +394,27 @@ def check_ffmpeg_available() -> bool:
         return False
 
 
+def install_ffmpeg() -> str:
+    """
+    Install FFmpeg if not available on the system.
+    
+    This is a convenience function that wraps _ensure_ffmpeg_available
+    and provides more explicit naming for manual installation.
+    
+    Returns:
+    --------
+    str or None
+        Path to ffmpeg executable if successful, None if failed
+    """
+    log.info("🔧 Installing FFmpeg...")
+    ffmpeg_path = _ensure_ffmpeg_available()
+    if ffmpeg_path:
+        log.info(f"✅ FFmpeg is ready at: {ffmpeg_path}")
+    else:
+        log.error("❌ Failed to install FFmpeg")
+    return ffmpeg_path
+
+
 @dataclass
 class ModeVisualizationConfig:
     """Configuration for mode visualization."""
@@ -3016,8 +3037,9 @@ Interactive Spectrum Controls:
 
             # Choose writer based on file extension with fallback support
             if save_path.endswith(".mp4"):
-                # Check if ffmpeg is actually available on the system
-                if FFMPEG_AVAILABLE and check_ffmpeg_available():
+                # Ensure FFmpeg is available with auto-installation
+                ffmpeg_path = _ensure_ffmpeg_available()
+                if ffmpeg_path:
                     writer = "ffmpeg"
                     log.info("Using FFmpeg writer for MP4 format")
                 else:
@@ -3081,6 +3103,28 @@ Interactive Spectrum Controls:
         except Exception as e:
             log.error(f"Failed to create animation: {e}")
             raise
+
+    def install_ffmpeg(self) -> str:
+        """
+        Install FFmpeg for MP4 animation support.
+        
+        This method ensures FFmpeg is available for high-quality video
+        animation export. If FFmpeg is not found on the system, it will
+        be automatically downloaded and installed.
+        
+        Returns:
+        --------
+        str or None
+            Path to ffmpeg executable if successful, None if failed
+            
+        Example:
+        --------
+        >>> analyzer = FMRModeAnalyzer("data.zarr")
+        >>> ffmpeg_path = analyzer.install_ffmpeg()
+        >>> if ffmpeg_path:
+        ...     analyzer.save_modes_animation("animation.mp4")
+        """
+        return install_ffmpeg()
 
 
 class FFTModeInterface:
@@ -3169,6 +3213,7 @@ class FFTModeInterface:
                     "Return structured mode classification",
                 ),
                 ("save_modes_animation(**kwargs)", "Create mode animations"),
+                ("install_ffmpeg()", "Install FFmpeg for MP4 animations"),
                 ("compute_modes(dset=None, **kwargs)", "Compute/recompute modes"),
                 ("[freq_index].plot_modes(**kwargs)", "Plot modes at frequency index"),
                 ("[freq_index].characterize(**kwargs)", "Get mode labels at frequency index"),
@@ -3430,6 +3475,28 @@ MMPP FFT Mode Analyzer:
                 animation_type=animation_type,
                 **kwargs,
             )
+
+    def install_ffmpeg(self) -> str:
+        """
+        Install FFmpeg for MP4 animation support.
+        
+        This method ensures FFmpeg is available for high-quality video
+        animation export. If FFmpeg is not found on the system, it will
+        be automatically downloaded and installed.
+        
+        Returns:
+        --------
+        str or None
+            Path to ffmpeg executable if successful, None if failed
+            
+        Example:
+        --------
+        >>> job = load_zarr("data.zarr")  
+        >>> ffmpeg_path = job[0].fft.modes.install_ffmpeg()
+        >>> if ffmpeg_path:
+        ...     job[0].fft.modes.save_modes_animation("animation.mp4")
+        """
+        return install_ffmpeg()
 
 
 class FrequencyModeInterface:
