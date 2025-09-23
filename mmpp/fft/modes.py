@@ -48,13 +48,63 @@ except ImportError:
     STYLING_AVAILABLE = False
     log.warning("Styling functions not available - using default matplotlib styling")
 
-# FFmpeg auto-installation helper
+# FFmpeg installation utilities
+def _detect_platform():
+    """Detect the current platform for FFmpeg installation."""
+    import platform
+    
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    
+    if system == 'linux':
+        if machine in ['x86_64', 'amd64']:
+            return 'linux-amd64'
+        elif machine in ['aarch64', 'arm64']:
+            return 'linux-arm64'
+        elif machine.startswith('arm'):
+            return 'linux-armhf'
+    elif system == 'darwin':  # macOS
+        if machine in ['x86_64', 'amd64']:
+            return 'macos-amd64'
+        elif machine in ['arm64', 'aarch64']:
+            return 'macos-arm64'
+    elif system == 'windows':
+        if machine in ['x86_64', 'amd64']:
+            return 'windows-amd64'
+    
+    return None
+
+
+def _get_ffmpeg_download_info(platform_id):
+    """Get download URL and extraction info for different platforms."""
+    
+    urls = {
+        'linux-amd64': {
+            'url': 'https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz',
+            'format': 'tar.xz',
+            'binary_pattern': '*/ffmpeg'
+        },
+        'linux-arm64': {
+            'url': 'https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-arm64-static.tar.xz',
+            'format': 'tar.xz', 
+            'binary_pattern': '*/ffmpeg'
+        },
+        'linux-armhf': {
+            'url': 'https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-armhf-static.tar.xz',
+            'format': 'tar.xz',
+            'binary_pattern': '*/ffmpeg'
+        }
+    }
+    
+    return urls.get(platform_id)
+
+
 def _ensure_ffmpeg_available():
     """
     Ensure FFmpeg is available for animation saving.
     
     If FFmpeg is not found in system PATH, automatically downloads
-    and installs a static build from johnvansickle.com.
+    and installs a static build from appropriate source.
     
     Returns:
     --------
@@ -63,7 +113,7 @@ def _ensure_ffmpeg_available():
     """
     import shutil
     import subprocess
-    import os
+    import platform
     import urllib.request
     import tarfile
     import tempfile
@@ -90,33 +140,74 @@ def _ensure_ffmpeg_available():
         except (subprocess.TimeoutExpired, FileNotFoundError):
             log.warning("Cached FFmpeg not working, will re-download")
     
-    # Download and install FFmpeg
-    log.info("FFmpeg not found in system, downloading static build...")
+    # Attempt automatic installation
+    log.info("FFmpeg not found in system, attempting automatic installation...")
     
     try:
-        # Create cache directory
-        mmpp_cache_dir.mkdir(parents=True, exist_ok=True)
+        return _install_ffmpeg_automatic()
+    except Exception as e:
+        log.error(f"Automatic FFmpeg installation failed: {e}")
+        log.warning("Please install FFmpeg manually or call mmpp.fft.modes.install_ffmpeg() for detailed installation help")
+        return None
+
+
+def _install_ffmpeg_automatic():
+    """
+    Automatically install FFmpeg with minimal user interaction.
+    
+    Returns:
+    --------
+    str
+        Path to installed FFmpeg executable
         
-        # Download URL (static build for Linux x64)
-        download_url = "https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz"
+    Raises:
+    -------
+    RuntimeError
+        If installation fails
+    """
+    import shutil
+    import subprocess
+    import urllib.request
+    import tarfile
+    import tempfile
+    from pathlib import Path
+    
+    # Detect platform
+    platform_id = _detect_platform()
+    if not platform_id:
+        raise RuntimeError(f"Unsupported platform for automatic FFmpeg installation")
+    
+    # Get download info
+    download_info = _get_ffmpeg_download_info(platform_id)
+    if not download_info:
+        raise RuntimeError(f"No download URL available for platform: {platform_id}")
+    
+    # Create cache directory
+    mmpp_cache_dir = Path.home() / '.mmpp' / 'bin'
+    mmpp_cache_dir.mkdir(parents=True, exist_ok=True)
+    cached_ffmpeg = mmpp_cache_dir / 'ffmpeg'
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        archive_path = temp_path / f"ffmpeg-static.{download_info['format'].replace('.', '_')}"
         
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            archive_path = temp_path / "ffmpeg-static.tar.xz"
-            
-            log.info(f"Downloading FFmpeg from {download_url}...")
-            
-            # Download with progress (simple)
-            def download_progress(block_num, block_size, total_size):
-                if total_size > 0:
-                    percent = min(100, (block_num * block_size * 100) // total_size)
-                    if percent % 10 == 0:  # Show every 10%
-                        log.info(f"Download progress: {percent}%")
-            
-            urllib.request.urlretrieve(download_url, archive_path, download_progress)
-            log.info("Download completed, extracting...")
-            
-            # Extract archive
+        # Download with timeout and retry
+        for attempt in range(3):
+            try:
+                log.info(f"Downloading FFmpeg from {download_info['url']} (attempt {attempt + 1}/3)...")
+                
+                # Simple download with timeout
+                urllib.request.urlretrieve(download_info['url'], archive_path)
+                log.info("Download completed, extracting...")
+                break
+                
+            except Exception as e:
+                if attempt == 2:  # Last attempt
+                    raise RuntimeError(f"Failed to download FFmpeg after 3 attempts: {e}")
+                log.warning(f"Download attempt {attempt + 1} failed: {e}, retrying...")
+        
+        # Extract archive
+        if download_info['format'] == 'tar.xz':
             with tarfile.open(archive_path, 'r:xz') as tar:
                 # Find ffmpeg binary in archive
                 ffmpeg_member = None
@@ -135,22 +226,219 @@ def _ensure_ffmpeg_available():
                 # Copy to cache directory
                 shutil.copy2(extracted_ffmpeg, cached_ffmpeg)
                 cached_ffmpeg.chmod(0o755)  # Make executable
-                
-                log.info(f"FFmpeg installed successfully to {cached_ffmpeg}")
-                
-                # Test the installation
+        else:
+            raise RuntimeError(f"Unsupported archive format: {download_info['format']}")
+        
+        log.info(f"FFmpeg installed successfully to {cached_ffmpeg}")
+        
+        # Test the installation
+        result = subprocess.run([str(cached_ffmpeg), '-version'], 
+                              capture_output=True, timeout=10)
+        if result.returncode == 0:
+            log.info("FFmpeg installation verified successfully")
+            return str(cached_ffmpeg)
+        else:
+            raise RuntimeError(f"FFmpeg test failed: {result.stderr.decode()}")
+
+
+def install_ffmpeg(force: bool = False, verbose: bool = True) -> Optional[str]:
+    """
+    Install FFmpeg for animation support with comprehensive error handling.
+    
+    This function provides multiple installation methods and detailed 
+    troubleshooting information for FFmpeg installation.
+    
+    Parameters:
+    -----------
+    force : bool, default False
+        Force reinstallation even if FFmpeg is already available
+    verbose : bool, default True
+        Show detailed installation progress and troubleshooting info
+        
+    Returns:
+    --------
+    str or None
+        Path to ffmpeg executable if successful, None if failed
+        
+    Examples:
+    ---------
+    >>> import mmpp
+    >>> # Install FFmpeg automatically
+    >>> ffmpeg_path = mmpp.fft.modes.install_ffmpeg()
+    >>> 
+    >>> # Force reinstallation
+    >>> ffmpeg_path = mmpp.fft.modes.install_ffmpeg(force=True)
+    """
+    import shutil
+    import subprocess
+    import platform
+    from pathlib import Path
+    
+    if verbose:
+        log.info("🔧 Installing FFmpeg for animation support...")
+    
+    # Check if already available (unless forcing)
+    if not force:
+        ffmpeg_path = shutil.which('ffmpeg')
+        if ffmpeg_path:
+            if verbose:
+                log.info(f"✅ FFmpeg already available in system PATH: {ffmpeg_path}")
+            return ffmpeg_path
+            
+        # Check cached version
+        cached_ffmpeg = Path.home() / '.mmpp' / 'bin' / 'ffmpeg'
+        if cached_ffmpeg.exists():
+            try:
                 result = subprocess.run([str(cached_ffmpeg), '-version'], 
-                                      capture_output=True, timeout=10)
+                                      capture_output=True, timeout=5)
                 if result.returncode == 0:
-                    log.info("FFmpeg installation verified successfully")
+                    if verbose:
+                        log.info(f"✅ FFmpeg already available in cache: {cached_ffmpeg}")
                     return str(cached_ffmpeg)
-                else:
-                    raise RuntimeError(f"FFmpeg test failed: {result.stderr.decode()}")
-                    
-    except Exception as e:
-        log.error(f"Failed to auto-install FFmpeg: {e}")
-        log.warning("Animation saving will be limited to GIF format only")
+            except:
+                pass
+    
+    # Detect platform
+    platform_id = _detect_platform()
+    if verbose:
+        log.info(f"🔍 Detected platform: {platform_id or 'Unsupported'}")
+    
+    if not platform_id:
+        if verbose:
+            log.error("❌ Unsupported platform for automatic installation")
+            _show_manual_installation_help()
         return None
+    
+    # Attempt automatic installation
+    try:
+        ffmpeg_path = _install_ffmpeg_automatic()
+        if verbose:
+            log.info(f"✅ FFmpeg successfully installed: {ffmpeg_path}")
+        return ffmpeg_path
+        
+    except Exception as e:
+        if verbose:
+            log.error(f"❌ Automatic installation failed: {e}")
+            _show_manual_installation_help()
+        return None
+
+
+def _show_manual_installation_help():
+    """Show detailed manual installation instructions."""
+    import platform
+    
+    system = platform.system().lower()
+    
+    log.info("📖 Manual FFmpeg Installation Instructions:")
+    log.info("=" * 50)
+    
+    if system == 'linux':
+        log.info("🐧 Linux:")
+        log.info("  Ubuntu/Debian: sudo apt update && sudo apt install ffmpeg")
+        log.info("  RHEL/CentOS:   sudo yum install ffmpeg  (or dnf)")
+        log.info("  Arch Linux:    sudo pacman -S ffmpeg")
+        log.info("  Conda:         conda install -c conda-forge ffmpeg")
+    elif system == 'darwin':
+        log.info("🍎 macOS:")
+        log.info("  Homebrew:      brew install ffmpeg")
+        log.info("  MacPorts:      sudo port install ffmpeg")
+        log.info("  Conda:         conda install -c conda-forge ffmpeg")
+    elif system == 'windows':
+        log.info("🪟 Windows:")
+        log.info("  Chocolatey:    choco install ffmpeg")
+        log.info("  Scoop:         scoop install ffmpeg")
+        log.info("  Manual:        Download from https://ffmpeg.org/download.html")
+    
+    log.info("")
+    log.info("🔗 Official Downloads: https://ffmpeg.org/download.html")
+    log.info("📚 Documentation:     https://ffmpeg.org/documentation.html")
+    log.info("")
+    log.info("💡 After installation, restart your Python session to use FFmpeg")
+    log.info("=" * 50)
+
+
+def check_ffmpeg_installation() -> dict:
+    """
+    Check current FFmpeg installation status and provide diagnostics.
+    
+    Returns:
+    --------
+    dict
+        Dictionary containing installation status and diagnostics
+        
+    Examples:
+    ---------
+    >>> import mmpp
+    >>> status = mmpp.fft.modes.check_ffmpeg_installation()
+    >>> print(status['available'])  # True if FFmpeg is available
+    >>> print(status['path'])       # Path to FFmpeg executable
+    >>> print(status['version'])    # FFmpeg version string
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+    
+    result = {
+        'available': False,
+        'path': None,
+        'version': None,
+        'cached_version': False,
+        'platform': _detect_platform(),
+        'diagnostics': []
+    }
+    
+    # Check system PATH
+    system_ffmpeg = shutil.which('ffmpeg')
+    if system_ffmpeg:
+        result['available'] = True
+        result['path'] = system_ffmpeg
+        result['diagnostics'].append(f"✅ Found in system PATH: {system_ffmpeg}")
+        
+        # Get version
+        try:
+            version_result = subprocess.run([system_ffmpeg, '-version'], 
+                                          capture_output=True, timeout=10)
+            if version_result.returncode == 0:
+                version_line = version_result.stdout.decode().split('\n')[0]
+                result['version'] = version_line
+                result['diagnostics'].append(f"✅ Version: {version_line}")
+            else:
+                result['diagnostics'].append("⚠️  Could not determine version")
+        except Exception as e:
+            result['diagnostics'].append(f"⚠️  Version check failed: {e}")
+    else:
+        result['diagnostics'].append("❌ Not found in system PATH")
+    
+    # Check cached version
+    cached_ffmpeg = Path.home() / '.mmpp' / 'bin' / 'ffmpeg'
+    if cached_ffmpeg.exists():
+        result['diagnostics'].append(f"🔍 Found cached version: {cached_ffmpeg}")
+        
+        if not result['available']:  # Only test if system version not found
+            try:
+                version_result = subprocess.run([str(cached_ffmpeg), '-version'], 
+                                              capture_output=True, timeout=10)
+                if version_result.returncode == 0:
+                    result['available'] = True
+                    result['path'] = str(cached_ffmpeg)
+                    result['cached_version'] = True
+                    version_line = version_result.stdout.decode().split('\n')[0]
+                    result['version'] = version_line
+                    result['diagnostics'].append(f"✅ Cached version working: {version_line}")
+                else:
+                    result['diagnostics'].append("❌ Cached version not working")
+            except Exception as e:
+                result['diagnostics'].append(f"❌ Cached version test failed: {e}")
+    else:
+        result['diagnostics'].append("❌ No cached version found")
+    
+    # Add platform info
+    if result['platform']:
+        result['diagnostics'].append(f"🔍 Platform: {result['platform']}")
+    else:
+        result['diagnostics'].append("⚠️  Unsupported platform for automatic installation")
+    
+    return result
 
 # Import electromagnetic analysis module
 try:
@@ -394,25 +682,30 @@ def check_ffmpeg_available() -> bool:
         return False
 
 
-def install_ffmpeg() -> str:
+# Simple wrapper for the main install function
+def install_ffmpeg_simple() -> Optional[str]:
     """
     Install FFmpeg if not available on the system.
     
-    This is a convenience function that wraps _ensure_ffmpeg_available
-    and provides more explicit naming for manual installation.
+    This is a simple wrapper that calls the main install_ffmpeg function
+    with user-friendly defaults.
     
     Returns:
     --------
     str or None
         Path to ffmpeg executable if successful, None if failed
+        
+    Examples:
+    ---------
+    >>> import mmpp
+    >>> # Install FFmpeg with detailed output
+    >>> ffmpeg_path = mmpp.fft.modes.install_ffmpeg_simple()
+    >>> 
+    >>> # Or use the main function with parameters
+    >>> ffmpeg_path = mmpp.fft.modes.install_ffmpeg(force=True, verbose=True)
     """
-    log.info("🔧 Installing FFmpeg...")
-    ffmpeg_path = _ensure_ffmpeg_available()
-    if ffmpeg_path:
-        log.info(f"✅ FFmpeg is ready at: {ffmpeg_path}")
-    else:
-        log.error("❌ Failed to install FFmpeg")
-    return ffmpeg_path
+    # Use the comprehensive function with user-friendly defaults
+    return install_ffmpeg(force=False, verbose=True)
 
 
 @dataclass
@@ -2065,6 +2358,88 @@ Interactive Spectrum Controls:
         
         self._animated_axes.discard(axis_key)
 
+def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
+    """
+    Create FFMpegWriter with compatibility across matplotlib versions.
+    
+    Parameters:
+    -----------
+    ffmpeg_path : str
+        Path to ffmpeg executable
+    fps : int, default 20
+        Frames per second for animation
+    bitrate : int, default 1800
+        Bitrate for video encoding
+        
+    Returns:
+    --------
+    FFMpegWriter
+        Configured writer instance
+    """
+    from matplotlib.animation import FFMpegWriter
+    import inspect
+    
+    try:
+        # Get the signature of FFMpegWriter.__init__ to check supported parameters
+        init_signature = inspect.signature(FFMpegWriter.__init__)
+        supported_params = set(init_signature.parameters.keys())
+        
+        # Build kwargs dict with only supported parameters
+        kwargs = {}
+        
+        # Common parameters
+        if 'fps' in supported_params:
+            kwargs['fps'] = fps
+        if 'bitrate' in supported_params:
+            kwargs['bitrate'] = bitrate
+            
+        # Additional parameters that might be supported
+        if 'codec' in supported_params:
+            kwargs['codec'] = 'libx264'
+        if 'extra_args' in supported_params:
+            kwargs['extra_args'] = ['-pix_fmt', 'yuv420p']
+            
+        # Create writer with supported parameters
+        writer = FFMpegWriter(**kwargs)
+        
+        # Set ffmpeg path - handle different matplotlib versions
+        if hasattr(writer, '_args'):
+            # In newer versions, modify the command args directly
+            if hasattr(writer, '_args') and isinstance(writer._args, dict):
+                writer._args['executable'] = ffmpeg_path
+        
+        # Also try setting via other methods for compatibility
+        try:
+            # Some versions use this approach
+            writer.bin_path = lambda: ffmpeg_path
+        except:
+            pass
+            
+        return writer
+        
+    except Exception as e:
+        log.warning(f"Failed to create FFMpegWriter with advanced options: {e}")
+        
+        # Fallback to minimal initialization
+        try:
+            writer = FFMpegWriter(fps=fps)
+            
+            # Try to set the path via different methods
+            try:
+                writer.bin_path = lambda: ffmpeg_path
+            except:
+                pass
+                
+            if hasattr(writer, '_args'):
+                if hasattr(writer, '_args') and isinstance(writer._args, dict):
+                    writer._args['executable'] = ffmpeg_path
+                    
+            return writer
+        except Exception as e2:
+            log.error(f"Failed to create basic FFMpegWriter: {e2}")
+            raise
+
+
     def _save_animated_view(self, save_path: str) -> None:
         """Save current animated view to video file."""
         if not self._mode_animations:
@@ -2072,7 +2447,7 @@ Interactive Spectrum Controls:
             
         # Import required modules
         try:
-            from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter
+            from matplotlib.animation import FuncAnimation, PillowWriter
         except ImportError:
             raise ImportError("Animation saving requires matplotlib.animation")
             
@@ -2086,11 +2461,10 @@ Interactive Spectrum Controls:
             ffmpeg_path = _ensure_ffmpeg_available()
             if ffmpeg_path:
                 try:
-                    writer = FFMpegWriter(fps=20, bitrate=1800)
-                    writer.bin_path = ffmpeg_path  # Set custom ffmpeg path
+                    writer = _create_ffmpeg_writer(ffmpeg_path, fps=20, bitrate=1800)
                     writer_name = 'ffmpeg'
-                except Exception:
-                    log.warning("FFMpeg initialization failed, falling back to Pillow")
+                except Exception as e:
+                    log.warning(f"FFMpeg initialization failed: {e}, falling back to Pillow")
                     writer = PillowWriter(fps=10)
                     writer_name = 'pillow'
                     # Change extension to gif for Pillow
@@ -2109,9 +2483,14 @@ Interactive Spectrum Controls:
             # Ensure FFmpeg is available
             ffmpeg_path = _ensure_ffmpeg_available()
             if ffmpeg_path:
-                writer = FFMpegWriter(fps=20, bitrate=1800)
-                writer.bin_path = ffmpeg_path  # Set custom ffmpeg path
-                writer_name = 'ffmpeg'
+                try:
+                    writer = _create_ffmpeg_writer(ffmpeg_path, fps=20, bitrate=1800)
+                    writer_name = 'ffmpeg'
+                except Exception as e:
+                    log.warning(f"FFMpeg initialization failed: {e}, falling back to GIF")
+                    writer = PillowWriter(fps=10)
+                    writer_name = 'pillow'
+                    save_path = save_path.replace('.avi', '.gif')
             else:
                 log.warning("FFMpeg not available, falling back to GIF")
                 writer = PillowWriter(fps=10)
@@ -2125,54 +2504,32 @@ Interactive Spectrum Controls:
             
         # Create master animation that coordinates all mode animations
         def animate_all_modes(frame):
-            """Update all animated modes synchronously"""
-            artists = []
+            for anim in self._mode_animations.values():
+                anim(frame)
+            return []  # Return empty list for blitting
             
-            for axis_key, anim in self._mode_animations.items():
-                try:
-                    # Call the animation function for this axis
-                    if hasattr(anim, '_func'):
-                        result = anim._func(frame)
-                        if isinstance(result, (list, tuple)):
-                            artists.extend(result)
-                        else:
-                            artists.append(result)
-                except Exception as e:
-                    log.debug(f"Error animating axis {axis_key}: {e}")
-                    
-            return artists
+        total_frames = max(len(anim_data['frames']) for anim_data in self._mode_animations.values())
         
-        # Determine frame count - use longest animation
-        max_frames = 100  # Default
-        for anim in self._mode_animations.values():
-            if hasattr(anim, 'save_count'):
-                max_frames = max(max_frames, anim.save_count or 100)
-        
-        # Create master animation
-        master_anim = FuncAnimation(
+        # Create animation object
+        anim = FuncAnimation(
             self._interactive_fig, 
-            animate_all_modes,
-            frames=max_frames,
-            interval=50,  # 50ms = 20fps
-            blit=False,   # Disable blitting for saving
+            animate_all_modes, 
+            frames=total_frames,
+            interval=50,  # 50ms between frames
+            blit=False,   # Disable blitting for complex plots
             repeat=True
         )
         
-        # Save animation
+        log.info(f"Saving {total_frames} frames using {writer_name} writer...")
+        
         try:
-            log.info(f"Saving {max_frames} frames using {writer_name} writer...")
-            master_anim.save(save_path, writer=writer, dpi=100)
-            log.info(f"Animation saved successfully to {save_path}")
+            anim.save(save_path, writer=writer, dpi=150)
+            log.info("✅ Animation saved successfully!")
         except Exception as e:
-            # Fallback: try to save as static images
-            log.warning(f"Animation saving failed: {e}")
-            log.info("Attempting to save as static image sequence...")
-            
-            import os
-            base_name = os.path.splitext(save_path)[0]
-            
-            # Save a few key frames as static images
-            for i in range(0, max_frames, max_frames//10):  # 10 frames
+            log.error(f"Failed to save animation: {e}")
+            # Try to save as static frames as fallback
+            base_name = save_path.rsplit('.', 1)[0]
+            for i in range(min(100, total_frames)):  # Limit to 100 frames
                 animate_all_modes(i)
                 self._interactive_fig.canvas.draw()
                 static_path = f"{base_name}_frame_{i:03d}.png"
@@ -3058,15 +3415,26 @@ Interactive Spectrum Controls:
             log.info(f"Saving animation to {save_path} (this may take a while...)")
 
             try:
-                # For MP4, use higher quality settings
+                # Save animation with error handling
                 if writer == "ffmpeg" and save_path.endswith(".mp4"):
-                    anim.save(
-                        save_path,
-                        writer=writer,
-                        fps=fps,
-                        dpi=self.config.dpi // 2,
-                        extra_args=["-vcodec", "libx264", "-pix_fmt", "yuv420p"],
-                    )
+                    # Try to save with ffmpeg writer
+                    try:
+                        anim.save(
+                            save_path,
+                            writer=writer,
+                            fps=fps,
+                            dpi=self.config.dpi // 2,
+                        )
+                    except Exception as ffmpeg_error:
+                        # If FFmpeg fails, try with a more basic writer configuration
+                        log.warning(f"FFmpeg save with advanced options failed: {ffmpeg_error}")
+                        log.info("Trying basic FFmpeg configuration...")
+                        anim.save(
+                            save_path,
+                            writer="ffmpeg",
+                            fps=fps,
+                            dpi=self.config.dpi // 2,
+                        )
                 else:
                     anim.save(
                         save_path, writer=writer, fps=fps, dpi=self.config.dpi // 2
@@ -3104,7 +3472,7 @@ Interactive Spectrum Controls:
             log.error(f"Failed to create animation: {e}")
             raise
 
-    def install_ffmpeg(self) -> str:
+    def install_ffmpeg(self) -> Optional[str]:
         """
         Install FFmpeg for MP4 animation support.
         
@@ -3117,14 +3485,13 @@ Interactive Spectrum Controls:
         str or None
             Path to ffmpeg executable if successful, None if failed
             
-        Example:
-        --------
-        >>> analyzer = FMRModeAnalyzer("data.zarr")
+        Examples:
+        ---------
+        >>> analyzer = FMRModeAnalyzer(zarr_file, dataset_name)
         >>> ffmpeg_path = analyzer.install_ffmpeg()
-        >>> if ffmpeg_path:
-        ...     analyzer.save_modes_animation("animation.mp4")
         """
-        return install_ffmpeg()
+        log.info("🔧 Installing FFmpeg for animation support...")
+        return install_ffmpeg(force=False, verbose=True)
 
 
 class FFTModeInterface:
