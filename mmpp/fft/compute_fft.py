@@ -174,12 +174,16 @@ class FFTComputeResult:
         # Save spectrum data
         fft_group.create_dataset(
             "spectrum", 
-            data=self.spectrum, 
+            data=self.spectrum,
+            shape=self.spectrum.shape,
+            dtype=self.spectrum.dtype,
             overwrite=force
         )
         fft_group.create_dataset(
             "frequencies", 
-            data=self.frequencies, 
+            data=self.frequencies,
+            shape=self.frequencies.shape,
+            dtype=self.frequencies.dtype,
             overwrite=force
         )
 

@@ -321,6 +321,7 @@ class FMRModeAnalyzer:
         config: Optional[ModeVisualizationConfig] = None,
         mode_character_config: Optional[ModeCharacteristicConfig] = None,
         debug: bool = False,
+        log_level: Optional[Union[str, int]] = None,
     ):
         """
         Initialize FMR mode analyzer.
@@ -333,8 +334,15 @@ class FMRModeAnalyzer:
             Base dataset name (default: auto-select largest m dataset)
         config : ModeVisualizationConfig, optional
             Visualization configuration
+        mode_character_config : ModeCharacteristicConfig, optional
+            Mode characterization configuration
         debug : bool, optional
-            Enable debug logging
+            Enable debug logging (default: False)
+        log_level : str or int, optional
+            Set specific log level. Can be string ("DEBUG", "INFO", "WARNING", "ERROR") 
+            or integer constant (logging.DEBUG, logging.INFO, etc.).
+            If provided, overrides debug parameter.
+            Default: None (uses debug flag - DEBUG if True, INFO if False)
         """
         if not ZARR_AVAILABLE:
             raise ImportError("Zarr is required for mode analysis")
@@ -350,9 +358,26 @@ class FMRModeAnalyzer:
         self.config = config or ModeVisualizationConfig()
         self._character_analyzer = ModeCharacterAnalyzer(mode_character_config)
 
-        # Set up logging
-        setup_mmpp_logging(debug=debug, logger_name="mmpp.fft.modes")
-        if debug:
+        # Set up logging with flexible level control
+        import logging
+        
+        # Convert string log level to integer if needed
+        numeric_level = None
+        if log_level is not None:
+            if isinstance(log_level, str):
+                numeric_level = getattr(logging, log_level.upper(), None)
+                if numeric_level is None:
+                    raise ValueError(f"Invalid log level: {log_level}. Use DEBUG, INFO, WARNING, or ERROR")
+            else:
+                numeric_level = log_level
+                
+        setup_mmpp_logging(
+            debug=debug, 
+            logger_name="mmpp.fft.modes", 
+            level=numeric_level
+        )
+        
+        if debug or (numeric_level is not None and numeric_level <= logging.DEBUG):
             log.debug("FMR mode analyzer debug logging enabled")
 
         # Load data
@@ -503,8 +528,24 @@ class FMRModeAnalyzer:
             self.frequencies = None
             log.debug("No frequency data loaded - will be computed with modes")
 
-        # Load spectrum if available
-        if self.spectrum_path:
+        # Load spectrum - prioritize fresh modes data over potentially stale FFT data
+        self.spectrum = None
+        
+        # First try modes data (most up-to-date)
+        modes_power_sum_path = f"modes/{self.dataset_name}/power_sum"
+        modes_power_max_path = f"modes/{self.dataset_name}/power_max"
+        
+        log.debug(f"Looking for fresh modes spectrum at: {modes_power_sum_path}")
+        if modes_power_sum_path in self.zarr_file:
+            self.spectrum = np.array(self.zarr_file[modes_power_sum_path])
+            log.info(f"Using fresh modes power_sum as spectrum: shape {self.spectrum.shape}")
+        elif modes_power_max_path in self.zarr_file:
+            log.debug(f"power_sum not found, trying power_max at: {modes_power_max_path}")
+            self.spectrum = np.array(self.zarr_file[modes_power_max_path])
+            log.info(f"Using fresh modes power_max as spectrum: shape {self.spectrum.shape}")
+        elif self.spectrum_path:
+            # Fallback to FFT spectrum (may be stale)
+            log.warning(f"No fresh modes spectrum found, falling back to FFT spectrum (may be outdated)")
             self.spectrum = np.array(self.zarr_file[self.spectrum_path])
             if self.spectrum.ndim > 1:
                 # Take first component if multi-component
@@ -513,15 +554,10 @@ class FMRModeAnalyzer:
                     if self.spectrum.shape[1] == 3
                     else np.sum(self.spectrum, axis=tuple(range(1, self.spectrum.ndim)))
                 )
-            log.info(f"Loaded spectrum data: shape {self.spectrum.shape}")
+            log.info(f"Loaded FFT spectrum data: shape {self.spectrum.shape}")
         else:
-            # Try to load power_sum from computed modes as fallback spectrum
-            modes_power_path = f"modes/{self.dataset_name}/power_sum"
-            if modes_power_path in self.zarr_file:
-                self.spectrum = np.array(self.zarr_file[modes_power_path])
-                log.info(f"Using computed modes power_sum as spectrum: shape {self.spectrum.shape}")
-            else:
-                self.spectrum = None
+            log.error(f"No spectrum data found - neither modes nor FFT data available")
+            self.spectrum = None
 
         # Get spatial information
         self._get_spatial_info()
@@ -1075,6 +1111,12 @@ class FMRModeAnalyzer:
         spectrum_to_use = self.spectrum
         frequencies_to_use = self.frequencies
         
+        # Check if we have consistent data sizes
+        if (self.spectrum is not None and self.frequencies is not None and 
+            len(self.spectrum) != len(self.frequencies)):
+            log.warning(f"Inconsistent data sizes: spectrum ({len(self.spectrum)}) vs frequencies ({len(self.frequencies)}). Using modes spectrum only.")
+            use_fft_spectrum = False
+        
         if use_fft_spectrum:
             try:
                 # Try to load spectrum from standard FFT analysis
@@ -1087,8 +1129,17 @@ class FMRModeAnalyzer:
                     log.info(f"Using FFT spectrum from {fft_spectrum_path} for consistency with plot_spectrum")
                 else:
                     log.warning(f"FFT spectrum not found at {fft_spectrum_path}, using modes spectrum")
+                    # Reset to modes data for consistency
+                    spectrum_to_use = self.spectrum
+                    frequencies_to_use = self.frequencies
             except Exception as e:
                 log.warning(f"Failed to load FFT spectrum: {e}, using modes spectrum")
+                # Reset to modes data for consistency
+                spectrum_to_use = self.spectrum
+                frequencies_to_use = self.frequencies
+                
+        # Debug: Log the final array sizes
+        log.debug(f"Final arrays - spectrum: {spectrum_to_use.shape if spectrum_to_use is not None else None}, frequencies: {frequencies_to_use.shape if frequencies_to_use is not None else None}")
 
         if spectrum_to_use is None:
             raise ValueError("No spectrum data available for interactive mode")
@@ -1868,7 +1919,7 @@ Interactive Spectrum Controls:
                         mode_data = self.get_mode(self._current_frequency, z_layer)
                         
                         # Determine component and visualization type
-                        components = self._get_components(None)  # Use default components
+                        components = ["x", "y", "z"]  # Default components
                         component = components[col_idx]
                         comp_data = mode_data.get_component(component)
                         
@@ -3087,7 +3138,13 @@ MMPP FFT Mode Analyzer:
                 if self.parent_fft.mmpp
                 else False
             )
-            self._mode_analyzer = FMRModeAnalyzer(zarr_path, debug=debug_mode)
+            # Check if parent has log_level attribute
+            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
+            self._mode_analyzer = FMRModeAnalyzer(
+                zarr_path, 
+                debug=debug_mode, 
+                log_level=log_level
+            )
 
         return self._mode_analyzer
 
@@ -3101,8 +3158,10 @@ MMPP FFT Mode Analyzer:
                 if self.parent_fft.mmpp
                 else False
             )
+            # Check if parent has log_level attribute
+            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
             temp_analyzer = FMRModeAnalyzer(
-                zarr_path, dataset_name=dset, debug=debug_mode
+                zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
             )
 
             # Check if modes exist or force recomputation
@@ -3130,8 +3189,10 @@ MMPP FFT Mode Analyzer:
                 if self.parent_fft.mmpp
                 else False
             )
+            # Check if parent has log_level attribute
+            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
             temp_analyzer = FMRModeAnalyzer(
-                zarr_path, dataset_name=dset, debug=debug_mode
+                zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
             )
             temp_analyzer.compute_modes(**kwargs)
         else:
@@ -3149,8 +3210,10 @@ MMPP FFT Mode Analyzer:
                 if self.parent_fft.mmpp
                 else False
             )
+            # Check if parent has log_level attribute
+            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
             temp_analyzer = FMRModeAnalyzer(
-                zarr_path, dataset_name=dset, debug=debug_mode
+                zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
             )
 
             # Check if modes exist, if not compute them
@@ -3213,8 +3276,10 @@ MMPP FFT Mode Analyzer:
                 if self.parent_fft.mmpp
                 else False
             )
+            # Check if parent has log_level attribute
+            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
             temp_analyzer = FMRModeAnalyzer(
-                zarr_path, dataset_name=dset, debug=debug_mode
+                zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
             )
 
             # Check if modes exist, if not compute them

@@ -853,8 +853,9 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
 
         # Create temporary mode analyzer
         debug_mode = getattr(self.mmpp, "debug", False) if self.mmpp else False
+        log_level = getattr(self.mmpp, "log_level", None) if self.mmpp else None
         analyzer = FMRModeAnalyzer(
-            self.job_result.path, dataset_name=dset, debug=debug_mode
+            self.job_result.path, dataset_name=dset, debug=debug_mode, log_level=log_level
         )
         return analyzer.plot_modes(frequency=frequency, z_layer=z_layer, **kwargs)
 
@@ -881,7 +882,8 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
 
         # Create temporary mode analyzer
         debug_mode = getattr(self.mmpp, "debug", False) if self.mmpp else False
+        log_level = getattr(self.mmpp, "log_level", None) if self.mmpp else None
         analyzer = FMRModeAnalyzer(
-            self.job_result.path, dataset_name=dset, debug=debug_mode
+            self.job_result.path, dataset_name=dset, debug=debug_mode, log_level=log_level
         )
         return analyzer.interactive_spectrum(**kwargs)

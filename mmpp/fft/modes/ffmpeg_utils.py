@@ -438,8 +438,8 @@ def _create_ffmpeg_writer(filename: str, fps: int = 30, bitrate: int = 1800):
         
         # Create writer with proper bin_path assignment
         Writer = FFMpegWriter(fps=fps, bitrate=bitrate)
-        # Set bin_path properly for FFMpegWriter
-        setattr(Writer, 'bin_path', ffmpeg_path)
+        # Set bin_path properly for FFMpegWriter - must be callable
+        setattr(Writer, 'bin_path', lambda: ffmpeg_path)
         
         return Writer
         

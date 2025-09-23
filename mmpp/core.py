@@ -656,6 +656,7 @@ class MMPP:
         max_workers: int = 8,
         database_name: str = "mmpy_database",
         debug: bool = False,
+        log_level: Optional[Union[str, int]] = None,
     ) -> None:
         """
         Initialize the MMPP.
@@ -670,19 +671,41 @@ class MMPP:
             Name of the database file (without extension, default: "mmpy_database")
         debug : bool, optional
             Enable debug logging (default: False)
+        log_level : str or int, optional
+            Set specific log level. Can be string ("DEBUG", "INFO", "WARNING", "ERROR") 
+            or integer constant (logging.DEBUG, logging.INFO, etc.).
+            If provided, overrides debug parameter.
+            Default: None (uses debug flag - DEBUG if True, INFO if False)
         """
         self.base_path: str = os.path.abspath(base_path)
         self.max_workers: int = max_workers
         self.database_name: str = database_name
         self.debug: bool = debug
+        self.log_level: Optional[Union[str, int]] = log_level  # Store for child components
         self._lock: threading.Lock = threading.Lock()
         self._interactive_mode: bool = True  # Enable interactive mode by default
         self._single_zarr_mode: bool = False
         self._zarr_results: list[ZarrJobResult] = []
 
-        # Configure rich logging for this instance
+        # Configure rich logging for this instance with flexible level control
+        import logging
+        
+        # Convert string log level to integer if needed
+        numeric_level = None
+        if log_level is not None:
+            if isinstance(log_level, str):
+                numeric_level = getattr(logging, log_level.upper(), None)
+                if numeric_level is None:
+                    raise ValueError(f"Invalid log level: {log_level}. Use DEBUG, INFO, WARNING, or ERROR")
+            else:
+                numeric_level = log_level
+
         global log
-        log = setup_mmpp_logging(debug=debug, logger_name="mmpp")
+        log = setup_mmpp_logging(
+            debug=debug, 
+            logger_name="mmpp",
+            level=numeric_level
+        )
 
         # Check if base_path is a direct .zarr file
         if self.base_path.endswith(".zarr") and os.path.isdir(self.base_path):
