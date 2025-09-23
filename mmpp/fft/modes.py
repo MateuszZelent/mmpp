@@ -48,6 +48,110 @@ except ImportError:
     STYLING_AVAILABLE = False
     log.warning("Styling functions not available - using default matplotlib styling")
 
+# FFmpeg auto-installation helper
+def _ensure_ffmpeg_available():
+    """
+    Ensure FFmpeg is available for animation saving.
+    
+    If FFmpeg is not found in system PATH, automatically downloads
+    and installs a static build from johnvansickle.com.
+    
+    Returns:
+    --------
+    str or None
+        Path to FFmpeg executable if available, None if failed
+    """
+    import shutil
+    import subprocess
+    import os
+    import urllib.request
+    import tarfile
+    import tempfile
+    from pathlib import Path
+    
+    # Check if FFmpeg is already in PATH
+    ffmpeg_path = shutil.which('ffmpeg')
+    if ffmpeg_path:
+        log.debug(f"FFmpeg found in system PATH: {ffmpeg_path}")
+        return ffmpeg_path
+    
+    # Check if we already have a downloaded version
+    mmpp_cache_dir = Path.home() / '.mmpp' / 'bin'
+    cached_ffmpeg = mmpp_cache_dir / 'ffmpeg'
+    
+    if cached_ffmpeg.exists() and cached_ffmpeg.is_file():
+        # Test if cached version works
+        try:
+            result = subprocess.run([str(cached_ffmpeg), '-version'], 
+                                  capture_output=True, timeout=5)
+            if result.returncode == 0:
+                log.debug(f"Using cached FFmpeg: {cached_ffmpeg}")
+                return str(cached_ffmpeg)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            log.warning("Cached FFmpeg not working, will re-download")
+    
+    # Download and install FFmpeg
+    log.info("FFmpeg not found in system, downloading static build...")
+    
+    try:
+        # Create cache directory
+        mmpp_cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Download URL (static build for Linux x64)
+        download_url = "https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz"
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            archive_path = temp_path / "ffmpeg-static.tar.xz"
+            
+            log.info(f"Downloading FFmpeg from {download_url}...")
+            
+            # Download with progress (simple)
+            def download_progress(block_num, block_size, total_size):
+                if total_size > 0:
+                    percent = min(100, (block_num * block_size * 100) // total_size)
+                    if percent % 10 == 0:  # Show every 10%
+                        log.info(f"Download progress: {percent}%")
+            
+            urllib.request.urlretrieve(download_url, archive_path, download_progress)
+            log.info("Download completed, extracting...")
+            
+            # Extract archive
+            with tarfile.open(archive_path, 'r:xz') as tar:
+                # Find ffmpeg binary in archive
+                ffmpeg_member = None
+                for member in tar.getmembers():
+                    if member.name.endswith('/ffmpeg') and member.isfile():
+                        ffmpeg_member = member
+                        break
+                
+                if not ffmpeg_member:
+                    raise RuntimeError("FFmpeg binary not found in downloaded archive")
+                
+                # Extract just the ffmpeg binary
+                tar.extract(ffmpeg_member, temp_path)
+                extracted_ffmpeg = temp_path / ffmpeg_member.name
+                
+                # Copy to cache directory
+                shutil.copy2(extracted_ffmpeg, cached_ffmpeg)
+                cached_ffmpeg.chmod(0o755)  # Make executable
+                
+                log.info(f"FFmpeg installed successfully to {cached_ffmpeg}")
+                
+                # Test the installation
+                result = subprocess.run([str(cached_ffmpeg), '-version'], 
+                                      capture_output=True, timeout=10)
+                if result.returncode == 0:
+                    log.info("FFmpeg installation verified successfully")
+                    return str(cached_ffmpeg)
+                else:
+                    raise RuntimeError(f"FFmpeg test failed: {result.stderr.decode()}")
+                    
+    except Exception as e:
+        log.error(f"Failed to auto-install FFmpeg: {e}")
+        log.warning("Animation saving will be limited to GIF format only")
+        return None
+
 # Import electromagnetic analysis module
 try:
     # Electromagnetic analysis capabilities available
@@ -1957,10 +2061,19 @@ Interactive Spectrum Controls:
         file_ext = save_path.lower().split('.')[-1]
         
         if file_ext == 'mp4':
-            try:
-                writer = FFMpegWriter(fps=20, bitrate=1800)
-                writer_name = 'ffmpeg'
-            except Exception:
+            # Ensure FFmpeg is available
+            ffmpeg_path = self._ensure_ffmpeg_available()
+            if ffmpeg_path:
+                try:
+                    writer = FFMpegWriter(fps=20, bitrate=1800, ffmpeg_path=ffmpeg_path)
+                    writer_name = 'ffmpeg'
+                except Exception:
+                    log.warning("FFMpeg initialization failed, falling back to Pillow")
+                    writer = PillowWriter(fps=10)
+                    writer_name = 'pillow'
+                    # Change extension to gif for Pillow
+                    save_path = save_path.replace('.mp4', '.gif')
+            else:
                 log.warning("FFMpeg not available, falling back to Pillow")
                 writer = PillowWriter(fps=10)
                 writer_name = 'pillow'
@@ -1971,8 +2084,16 @@ Interactive Spectrum Controls:
             writer = PillowWriter(fps=10)
             writer_name = 'pillow'
         elif file_ext == 'avi':
-            writer = FFMpegWriter(fps=20, bitrate=1800)
-            writer_name = 'ffmpeg'
+            # Ensure FFmpeg is available
+            ffmpeg_path = self._ensure_ffmpeg_available()
+            if ffmpeg_path:
+                writer = FFMpegWriter(fps=20, bitrate=1800, ffmpeg_path=ffmpeg_path)
+                writer_name = 'ffmpeg'
+            else:
+                log.warning("FFMpeg not available, falling back to GIF")
+                writer = PillowWriter(fps=10)
+                writer_name = 'pillow'
+                save_path = save_path.replace('.avi', '.gif')
         else:
             # Default to gif with Pillow
             writer = PillowWriter(fps=10)
