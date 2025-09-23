@@ -619,7 +619,19 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
         Configured writer instance
     """
     from matplotlib.animation import FFMpegWriter
+    import matplotlib
     import inspect
+    import os
+    
+    # Ensure FFmpeg is available and executable
+    if not os.path.exists(ffmpeg_path) or not os.access(ffmpeg_path, os.X_OK):
+        raise FileNotFoundError(f"FFmpeg not found or not executable: {ffmpeg_path}")
+    
+    # Configure matplotlib to use our FFmpeg
+    matplotlib.rcParams['animation.ffmpeg_path'] = ffmpeg_path
+    
+    # Also set environment variable for some matplotlib versions
+    os.environ['FFMPEG_BINARY'] = ffmpeg_path
     
     try:
         # Get the signature of FFMpegWriter.__init__ to check supported parameters
@@ -640,20 +652,53 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
             kwargs['codec'] = 'libx264'
         if 'extra_args' in supported_params:
             kwargs['extra_args'] = ['-pix_fmt', 'yuv420p']
+        
+        # Handle exec parameter for older matplotlib versions    
+        if 'exec' in supported_params:
+            kwargs['exec'] = [ffmpeg_path]
             
         # Create writer with supported parameters
         writer = FFMpegWriter(**kwargs)
         
-        # Set ffmpeg path - handle different matplotlib versions
-        if hasattr(writer, '_args'):
-            # In newer versions, modify the command args directly
-            if hasattr(writer, '_args') and isinstance(writer._args, dict):
-                writer._args['executable'] = ffmpeg_path
+        # Try multiple methods to set the path for different matplotlib versions
         
-        # Also try setting via other methods for compatibility
+        # Method 1: Direct binary path setting
         try:
-            # Some versions use this approach
-            writer.bin_path = lambda: ffmpeg_path
+            if hasattr(writer, 'bin_path'):
+                if callable(writer.bin_path):
+                    # Some versions expect a callable
+                    original_bin_path = writer.bin_path
+                    writer.bin_path = lambda: ffmpeg_path
+                else:
+                    # Some expect a direct assignment
+                    writer.bin_path = ffmpeg_path
+        except:
+            pass
+            
+        # Method 2: Command args modification
+        try:
+            if hasattr(writer, '_args'):
+                if isinstance(writer._args, dict):
+                    writer._args['executable'] = ffmpeg_path
+                elif isinstance(writer._args, list):
+                    # Replace first argument (executable) if it exists
+                    if len(writer._args) > 0:
+                        writer._args[0] = ffmpeg_path
+                    else:
+                        writer._args.append(ffmpeg_path)
+        except:
+            pass
+            
+        # Method 3: Set via class attribute
+        try:
+            writer.__class__.bin_path = staticmethod(lambda: ffmpeg_path)
+        except:
+            pass
+            
+        # Method 4: Direct attribute assignment
+        try:
+            writer._ffmpeg_path = ffmpeg_path
+            writer.executable = ffmpeg_path
         except:
             pass
             
@@ -664,17 +709,25 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
         
         # Fallback to minimal initialization
         try:
+            # Try with minimal parameters
             writer = FFMpegWriter(fps=fps)
             
-            # Try to set the path via different methods
+            # Apply path setting methods
             try:
                 writer.bin_path = lambda: ffmpeg_path
             except:
                 pass
                 
-            if hasattr(writer, '_args'):
+            try:
                 if hasattr(writer, '_args') and isinstance(writer._args, dict):
                     writer._args['executable'] = ffmpeg_path
+            except:
+                pass
+                
+            try:
+                writer.__class__.bin_path = staticmethod(lambda: ffmpeg_path)
+            except:
+                pass
                     
             return writer
         except Exception as e2:

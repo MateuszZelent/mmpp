@@ -166,10 +166,134 @@ def open(base_path: str, **kwargs):
     return mmpp_instance
 
 
+def install_ffmpeg(force: bool = False, verbose: bool = True) -> str:
+    """
+    Install FFmpeg for MMPP animation functionality and configure system PATH.
+    
+    This function installs FFmpeg binary and ensures it's available for matplotlib
+    animations. It handles system PATH configuration and matplotlib writer setup.
+    
+    Parameters:
+    -----------
+    force : bool, default False
+        Force reinstallation even if FFmpeg is already available
+    verbose : bool, default True
+        Print installation progress and diagnostics
+        
+    Returns:
+    --------
+    str
+        Path to the installed FFmpeg binary
+        
+    Raises:
+    -------
+    ImportError
+        If FFT/animation modules are not available
+    RuntimeError
+        If FFmpeg installation fails
+        
+    Examples:
+    ---------
+    >>> import mmpp
+    >>> ffmpeg_path = mmpp.install_ffmpeg()
+    >>> print(f"FFmpeg installed at: {ffmpeg_path}")
+    
+    >>> # Force reinstall with verbose output
+    >>> mmpp.install_ffmpeg(force=True, verbose=True)
+    """
+    try:
+        from .fft.modes import install_ffmpeg as _install_ffmpeg, check_ffmpeg_installation
+        import os
+        import sys
+        
+        if verbose:
+            print("🎬 Installing FFmpeg for MMPP animation support...")
+        
+        # Check current status
+        status = check_ffmpeg_installation()
+        if status.get('available') and not force:
+            ffmpeg_path = status['path']
+            if verbose:
+                print(f"✅ FFmpeg already available at: {ffmpeg_path}")
+                print(f"Version: {status.get('version', 'unknown')}")
+            
+            # Ensure PATH is configured
+            _configure_system_path(ffmpeg_path, verbose=verbose)
+            return ffmpeg_path
+        
+        # Install FFmpeg
+        if verbose:
+            print("⚡ Installing FFmpeg binary...")
+        
+        ffmpeg_path = _install_ffmpeg(force=force)
+        
+        if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+            raise RuntimeError("FFmpeg installation failed - binary not found")
+        
+        # Configure system PATH
+        _configure_system_path(ffmpeg_path, verbose=verbose)
+        
+        # Verify installation
+        final_status = check_ffmpeg_installation()
+        if not final_status.get('available'):
+            raise RuntimeError("FFmpeg installation verification failed")
+        
+        if verbose:
+            print(f"🎉 FFmpeg successfully installed at: {ffmpeg_path}")
+            print(f"Version: {final_status.get('version', 'unknown')}")
+            print("✅ MMPP animation functionality is now ready!")
+        
+        return ffmpeg_path
+        
+    except ImportError:
+        raise ImportError(
+            "FFT/animation modules not available. Install with: pip install mmpp[animation]"
+        )
+    except Exception as e:
+        raise RuntimeError(f"FFmpeg installation failed: {e}")
+
+
+def _configure_system_path(ffmpeg_path: str, verbose: bool = True) -> None:
+    """Configure system PATH to include FFmpeg directory."""
+    import os
+    import sys
+    
+    # Get directory containing FFmpeg
+    ffmpeg_dir = os.path.dirname(ffmpeg_path)
+    
+    # Add to Python's PATH for current session
+    if ffmpeg_dir not in os.environ.get('PATH', '').split(os.pathsep):
+        current_path = os.environ.get('PATH', '')
+        os.environ['PATH'] = f"{ffmpeg_dir}{os.pathsep}{current_path}"
+        
+        if verbose:
+            print(f"📁 Added to PATH: {ffmpeg_dir}")
+    
+    # Configure matplotlib animation writer
+    try:
+        import matplotlib
+        matplotlib.rcParams['animation.ffmpeg_path'] = ffmpeg_path
+        
+        # Also set the writer directly for immediate use
+        from matplotlib.animation import writers
+        if 'ffmpeg' in writers.list():
+            writers['ffmpeg'].bin_path = lambda: ffmpeg_path
+            
+        if verbose:
+            print(f"🎯 Configured matplotlib animation writer")
+            
+    except ImportError:
+        if verbose:
+            print("⚠️  matplotlib not available for writer configuration")
+    except Exception as e:
+        if verbose:
+            print(f"⚠️  matplotlib configuration warning: {e}")
+
+
 # Make main classes available at package level
 __all__ = [
     "MMPP",
-    "ScanResult",
+    "ScanResult", 
     "ZarrJobResult",
     "MMPPlotter",
     "PlotConfig",
@@ -178,6 +302,7 @@ __all__ = [
     "SimulationSwapper",
     "open",
     "fonts",  # Font management
+    "install_ffmpeg",  # FFmpeg installation
 ]
 
 # Feature availability flags
