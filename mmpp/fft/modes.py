@@ -2062,10 +2062,11 @@ Interactive Spectrum Controls:
         
         if file_ext == 'mp4':
             # Ensure FFmpeg is available
-            ffmpeg_path = self._ensure_ffmpeg_available()
+            ffmpeg_path = _ensure_ffmpeg_available()
             if ffmpeg_path:
                 try:
-                    writer = FFMpegWriter(fps=20, bitrate=1800, ffmpeg_path=ffmpeg_path)
+                    writer = FFMpegWriter(fps=20, bitrate=1800)
+                    writer.bin_path = ffmpeg_path  # Set custom ffmpeg path
                     writer_name = 'ffmpeg'
                 except Exception:
                     log.warning("FFMpeg initialization failed, falling back to Pillow")
@@ -2085,9 +2086,10 @@ Interactive Spectrum Controls:
             writer_name = 'pillow'
         elif file_ext == 'avi':
             # Ensure FFmpeg is available
-            ffmpeg_path = self._ensure_ffmpeg_available()
+            ffmpeg_path = _ensure_ffmpeg_available()
             if ffmpeg_path:
-                writer = FFMpegWriter(fps=20, bitrate=1800, ffmpeg_path=ffmpeg_path)
+                writer = FFMpegWriter(fps=20, bitrate=1800)
+                writer.bin_path = ffmpeg_path  # Set custom ffmpeg path
                 writer_name = 'ffmpeg'
             else:
                 log.warning("FFMpeg not available, falling back to GIF")
