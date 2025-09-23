@@ -277,7 +277,8 @@ def _configure_system_path(ffmpeg_path: str, verbose: bool = True) -> None:
         # Also set the writer directly for immediate use
         from matplotlib.animation import writers
         if 'ffmpeg' in writers.list():
-            writers['ffmpeg'].bin_path = lambda: ffmpeg_path
+            # Fix lambda to accept any arguments matplotlib might pass
+            writers['ffmpeg'].bin_path = lambda *args, **kwargs: ffmpeg_path
             
         if verbose:
             print(f"🎯 Configured matplotlib animation writer")

@@ -668,7 +668,7 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
                 if callable(writer.bin_path):
                     # Some versions expect a callable
                     original_bin_path = writer.bin_path
-                    writer.bin_path = lambda: ffmpeg_path
+                    writer.bin_path = lambda *args, **kwargs: ffmpeg_path
                 else:
                     # Some expect a direct assignment
                     writer.bin_path = ffmpeg_path
@@ -691,7 +691,7 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
             
         # Method 3: Set via class attribute
         try:
-            writer.__class__.bin_path = staticmethod(lambda: ffmpeg_path)
+            writer.__class__.bin_path = staticmethod(lambda *args, **kwargs: ffmpeg_path)
         except:
             pass
             
@@ -714,7 +714,7 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
             
             # Apply path setting methods
             try:
-                writer.bin_path = lambda: ffmpeg_path
+                writer.bin_path = lambda *args, **kwargs: ffmpeg_path
             except:
                 pass
                 
@@ -725,7 +725,7 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
                 pass
                 
             try:
-                writer.__class__.bin_path = staticmethod(lambda: ffmpeg_path)
+                writer.__class__.bin_path = staticmethod(lambda *args, **kwargs: ffmpeg_path)
             except:
                 pass
                     
