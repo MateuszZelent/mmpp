@@ -16,6 +16,7 @@ dist/
 downloads/
 eggs/
 .eggs/
+test*
 lib/
 .mmpp/backup/*
 lib64/
@@ -154,3 +155,5 @@ temp/
 interactive_spectrum_fix.ipynb
 mmpp.log
 tests/debug_*.py
+attr(animation.FFMpegWriter, 'bin_path'))
+animation
