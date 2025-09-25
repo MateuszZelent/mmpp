@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 import pickle
 import re
@@ -130,6 +131,20 @@ class ZarrJobResult:
             self._path_obj = Path(self.path).absolute()
             self._name = self._path_obj.name.replace(self._path_obj.suffix, "")
 
+    def _get_zarr_member(self, key: str) -> Union[zarr.Array, zarr.Group]:
+        """Safely retrieve a dataset or subgroup from the underlying zarr store."""
+        self._ensure_zarr_loaded()
+        try:
+            return self._z[key]
+        except KeyError as exc:
+            raise NameError(f"{self.path}: The dataset `{key}` does not exist.") from exc
+        except json.JSONDecodeError as exc:  # type: ignore[attr-defined]
+            log.error("Failed to decode metadata for '%s' in '%s': %s", key, self.path, exc)
+            raise ValueError(
+                f"{self.path}: Failed to decode zarr metadata for `{key}`. "
+                "The store may contain corrupted or non-Zarr objects."
+            ) from exc
+
     @property
     def z(self) -> zarr.Group:
         """Get the zarr group (lazy loaded)."""
@@ -212,10 +227,7 @@ class ZarrJobResult:
             return self._z[item]
         if item in self._z.attrs:
             return self._z.attrs[item]
-        if item in self._z.keys():
-            return self._z[item]
-        else:
-            raise NameError(f"{self.path}: The dataset `{item}` does not exist.")
+        return self._get_zarr_member(item)
 
     def __setitem__(self, key: str, value: str) -> None:
         """Set zarr dataset or attribute."""
@@ -234,13 +246,10 @@ class ZarrJobResult:
             return getattr(self._z, name)
         if name in self._z.attrs:
             return self._z.attrs[name]
-        if name in self._z.keys():
-            zarr_item = self._z[name]
-            # If it's a zarr.Array, wrap it with dataset-aware wrapper
-            if isinstance(zarr_item, zarr.Array):
-                return DatasetAwareWrapper(self, name, zarr_item)
-            return zarr_item
-        raise NameError(f"{self.path}: The dataset `{name}` does not exist.")
+        zarr_item = self._get_zarr_member(name)
+        if isinstance(zarr_item, zarr.Array):
+            return DatasetAwareWrapper(self, name, zarr_item)
+        return zarr_item
 
     def __repr__(self) -> str:
         return f"ZarrJobResult('{self.name}')"

@@ -41,8 +41,11 @@ from .utils import (
     find_peaks_1d,
     group_velocity_1d,
 )
+from .comsol import read_data_from_comsol, ComsolDispersionData
 
 __all__ = [
+    "ComsolDispersionData",
+    "read_data_from_comsol",
     "SpinWaveAnalyzer",
     "FFTDispersionInterface",
     "DispersionConfig",

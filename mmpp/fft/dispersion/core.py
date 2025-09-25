@@ -187,6 +187,7 @@ class SpinWaveAnalyzer:
                 remaining_dims = sum(1 for item in remaining if item is not None and item is not Ellipsis)
                 fill = max(ndim - dims_consumed - remaining_dims, 0)
                 result.extend(slice(None) for _ in range(fill))
+                dims_consumed += fill
             else:
                 result.append(entry)
                 if entry is not None:

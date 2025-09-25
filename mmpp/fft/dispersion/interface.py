@@ -333,6 +333,11 @@ class FFTDispersionInterface:
             return None
 
         root_group = cast(Any, root)
+        store_obj = getattr(root_group, "store", None)
+        read_only = bool(getattr(store_obj, "read_only", False))
+        if write and read_only:
+            logger.warning("Dispersion cache skipped: store is read-only (%s)", getattr(store_obj, "path", self.parent_fft.job_result.path))
+            return None
 
         fft_node = root_group.get("fft")
         if fft_node is None:
@@ -534,7 +539,14 @@ class FFTDispersionInterface:
                 return
             del dataset_group[entry_name]
 
-        entry = dataset_group.create_group(entry_name)
+        try:
+            entry = dataset_group.create_group(entry_name)
+        except ValueError as exc:
+            message = str(exc).lower()
+            if "read-only" in message or "read only" in message:
+                logger.warning("Dispersion cache skipped: %s", exc)
+                return
+            raise
         self._create_dataset(entry, "S", result.S)
         self._create_dataset(entry, "k_axis", result.k_axis)
         self._create_dataset(entry, "f_axis", result.f_axis)
@@ -1014,100 +1026,64 @@ class FFTDispersionInterface:
         """
         return self.analyzer.find_all_peaks(dispersion_result, **kwargs)
     
+
+
     def _apply_k0_normalization(
-        self, 
-        spectrum: np.ndarray, 
-        k_axis: np.ndarray, 
+        self,
+        spectrum: np.ndarray,
+        k_axis: np.ndarray,
         strength: Union[int, float] = 1.0,
-        compression_mode: str = 'adaptive',
-        k0_normalization_width: int = 1
+        compression_mode: str = "adaptive",
+        k0_normalization_width: int = 1,
     ) -> np.ndarray:
-        """
-        Apply advanced k≈0 mode dynamic compression using statistical reference and audio-style processing.
-        
-        This professional algorithm implements:
-        1. Robust statistical reference from k≠0 bins (median + MAD)
-        2. Frequency-adaptive thresholds based on actual spectral statistics  
-        3. Soft audio-style compression with configurable knee and ratio
-        4. Smooth frequency-domain gain to avoid artifacts
-        5. Configurable strength parameter (0=disabled, 0.1-10=increasing suppression)
-        6. Multiple compression modes for different use cases
-        
-        Based on advanced signal processing principles from audio compression and 
-        statistical robust estimation theory.
-        
-        Parameters
-        ----------
-        spectrum : np.ndarray, shape (n_k, n_f)
-            Original dispersion spectrum S(k, f)
-        k_axis : np.ndarray, shape (n_k,)
-            Wave-vector axis values [rad/m]  
-        strength : int or float, default=1.0
-            Compression strength: 0=disabled, 0.1-10=increasing suppression
-        compression_mode : str, default='adaptive'
-            Compression mode: 'gentle', 'adaptive', 'aggressive', 'preserve_peaks'
-        k0_normalization_width : int, default=1
-            Number of k-bins around k≈0 to apply compression to.
-            1 = only center bin, 3 = center ±1 bins, 5 = center ±2 bins, etc.
-            Should be odd number for symmetric compression around k=0.
-            
-        Returns
-        -------
-        np.ndarray, shape (n_k, n_f)
-            Dynamically compressed spectrum with suppressed k≈0 dominance
-        """
-        # Check for disabled compression (including very small values)
+        """Apply dynamic k≈0 compression to the supplied spectrum."""
         if strength <= 1e-6:
             return spectrum.copy()
-            
-        # Linear strength mapping: 0-10 maps to 0.0-1.0
+
         linear_strength = max(0.0, min(1.0, float(strength) / 10.0))
-        
-        # Mode-specific parameter calculation with linear control
-        if compression_mode == 'gentle':
-            # Gentle mode: very soft compression, preserve most details
-            beta = 4.5 - 1.0 * linear_strength          # 4.5 → 3.5
-            A_max = 10.0 + 90.0 * linear_strength       # 10 → 100 (gentle scaling)
-            knee_db = 8.0 - 2.0 * linear_strength       # 8.0 → 6.0
-            slope_db = 5.0 - 1.0 * linear_strength      # 5.0 → 4.0 (softer)
-            
-        elif compression_mode == 'aggressive':
-            # Aggressive mode: strong compression, remove k≈0 dominance
-            beta = 4.0 - 1.5 * linear_strength          # 4.0 → 2.5
-            A_max = 100.0 + 4900.0 * linear_strength    # 100 → 5000 (very strong)
-            knee_db = 6.0 - 2.0 * linear_strength       # 6.0 → 4.0
-            slope_db = 3.0 - 1.5 * linear_strength      # 3.0 → 1.5 (harder)
-            
-        elif compression_mode == 'preserve_peaks':
-            # Preserve peaks mode: selective compression
-            beta = 4.0 - 0.5 * linear_strength          # 4.0 → 3.5
-            A_max = 20.0 + 180.0 * linear_strength      # 20 → 200 (moderate)
-            knee_db = 7.0 - 1.0 * linear_strength       # 7.0 → 6.0
-            slope_db = 4.0 - 0.5 * linear_strength      # 4.0 → 3.5 (preserve detail)
-            
-        else:  # 'adaptive' mode (default)
-            # Adaptive mode: FIXED - niższy threshold, wyższa kompresja
-            beta = 1.0 - 0.5 * linear_strength          # 1.0 → 0.5 (NIŻSZY threshold!)
-            A_max = 500.0 + 9500.0 * linear_strength    # 500 → 10000 (WYŻSZA kompresja!)
-            knee_db = 6.0                               # Fixed knee position
-            slope_db = 2.5 - 0.5 * linear_strength      # 2.5 → 2.0 (bardziej agresywny)
-        
-        logger.info(f"k≈0 dynamic compression: mode={compression_mode}, strength={strength:.1f} (linear={linear_strength:.2f}) → "
-                   f"β={beta:.1f}, A_max={A_max:.0f}, knee={knee_db:.1f}dB, slope={slope_db:.1f}dB")
-        
-        return self._k0_dynamic_filter(
-            spectrum, k_axis, 
-            strength=linear_strength,  # Pass linear strength (0-1) to algorithm
-            A_max=A_max,               # Use calculated A_max
-            beta=beta,                 # Use calculated beta
-            knee_db=knee_db,           # Use calculated knee_db
-            slope_db=slope_db,         # Use calculated slope_db
-            k0_normalization_width=k0_normalization_width,  # Pass width parameter
-            k_halfwidth=None,          # Auto-detect (will be overridden by width)
-            smooth_win=11,
-            smooth_poly=2
+
+        if compression_mode == "gentle":
+            beta = 4.5 - 1.0 * linear_strength
+            A_max = 10.0 + 90.0 * linear_strength
+            knee_db = 8.0 - 2.0 * linear_strength
+            slope_db = 5.0 - 1.0 * linear_strength
+        elif compression_mode == "aggressive":
+            beta = 4.0 - 1.5 * linear_strength
+            A_max = 100.0 + 4900.0 * linear_strength
+            knee_db = 6.0 - 2.0 * linear_strength
+            slope_db = 3.0 - 1.5 * linear_strength
+        elif compression_mode == "preserve_peaks":
+            beta = 4.0 - 0.5 * linear_strength
+            A_max = 20.0 + 180.0 * linear_strength
+            knee_db = 7.0 - 1.0 * linear_strength
+            slope_db = 4.0 - 0.5 * linear_strength
+        else:
+            beta = 1.0 - 0.5 * linear_strength
+            A_max = 500.0 + 9500.0 * linear_strength
+            knee_db = 6.0
+            slope_db = 2.5 - 0.5 * linear_strength
+
+        logger.info(
+            "k≈0 dynamic compression: mode=%s, strength=%s (linear=%.2f) → β=%.2f, A_max=%.0f, knee=%.1fdB, slope=%.1fdB",
+            compression_mode,
+            strength,
+            linear_strength,
+            beta,
+            A_max,
+            knee_db,
+            slope_db,
         )
-        
+
+        return self._k0_dynamic_filter(
+            spectrum,
+            k_axis,
+            strength=linear_strength,
+            beta=beta,
+            knee_db=knee_db,
+            slope_db=slope_db,
+            A_max=A_max,
+            k0_normalization_width=k0_normalization_width,
+        )
 
 
     def _k0_dynamic_filter(
@@ -1124,7 +1100,7 @@ class FFTDispersionInterface:
         k0_normalization_width: int = 1,
         **kwargs,
     ) -> np.ndarray:
-        """Apply dynamic k≈0 compression using shared configuration pipeline."""
+        """Internal helper that handles parameter normalization and logging."""
         beta_val = float(kwargs.pop("beta", beta if beta is not None else 3.5))
         knee_db_val = float(kwargs.pop("knee_db", 6.0))
         slope_db_val = float(kwargs.pop("slope_db", 3.0))
@@ -1134,9 +1110,8 @@ class FFTDispersionInterface:
             knee_db_val = max(1e-6, knee_db_val * float(knee))
 
         ratio_val = ratio if ratio is not None else kwargs.pop("ratio", None)
-        ratio_val = None if ratio_val is None else max(1.0, float(ratio_val))
-
         if ratio_val is not None:
+            ratio_val = max(1.0, float(ratio_val))
             logger.debug("k≈0 dynamic filter ratio cap set to %.3f", ratio_val)
 
         if kwargs:
@@ -1192,7 +1167,8 @@ class FFTDispersionInterface:
         smooth_poly: int = 2,
         eps: float = 1e-18,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Core implementation of the linearized k≈0 compression."""
+        """Apply the linearized compressor to PSD data."""
+
         def _odd(n: int) -> int:
             return int(n) + 1 - (int(n) % 2 == 0)
 
@@ -1240,7 +1216,6 @@ class FFTDispersionInterface:
         base = np.median(PSD[:, other], axis=1)
         if _SCIPY_AVAILABLE:
             from scipy.stats import median_abs_deviation as mad
-
             scale = mad(PSD[:, other], axis=1, scale="normal") + eps
         else:
             q75 = np.percentile(PSD[:, other], 75, axis=1)
@@ -1251,17 +1226,16 @@ class FFTDispersionInterface:
 
         if _SCIPY_AVAILABLE and smooth_win is not None and 5 <= smooth_win < F:
             from scipy.signal import savgol_filter
-
             T = savgol_filter(T, _odd(smooth_win), smooth_poly, mode="interp")
 
         T = T[:, None]
 
         strength = float(np.clip(strength, 0.0, 1.0))
         ratio_cap = None if ratio is None else max(1.0, ratio)
-        A_cap = max(1.0, A_max)
+        attenuation_cap = max(1.0, A_max)
         if ratio_cap is not None:
-            A_cap = min(A_cap, ratio_cap)
-        A = 1.0 + (A_cap - 1.0) * strength
+            attenuation_cap = min(attenuation_cap, ratio_cap)
+        A = 1.0 + (attenuation_cap - 1.0) * strength
         invA = 1.0 / max(A, 1.0)
 
         V = PSD[:, idx0]
@@ -1279,288 +1253,21 @@ class FFTDispersionInterface:
         if is_1d:
             return PSD[0, :], idx0, full_gain[0, :]
         return PSD, idx0, full_gain
-def _k0_dynamic_filter_linear(
-    self,
-    PSD_fk: np.ndarray,
-    k_vals: np.ndarray,
-    strength: float = 1.0,
-    A_max: float = 1000.0,
-    beta: float = 3.5,
-    ratio: Optional[float] = None,
-    knee_db: float = 6.0,
-    slope_db: float = 3.0,
-    k0_normalization_width: int = 1,
-    k_halfwidth: Optional[float] = None,
-    smooth_win: Optional[int] = 11,
-    smooth_poly: int = 2,
-    eps: float = 1e-18,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Core implementation of the linearized k≈0 compression."""
-    def _odd(n: int) -> int:
-        return int(n) + 1 - (int(n) % 2 == 0)
 
-    PSD = np.asarray(PSD_fk).copy()
-    k = np.asarray(k_vals)
 
-    if PSD.ndim == 1:
-        F, K = 1, PSD.shape[0]
-        PSD = PSD[np.newaxis, :]
-        is_1d = True
-    elif PSD.ndim == 2:
-        F, K = PSD.shape
-        is_1d = False
-    else:
-        raise ValueError(f"PSD must be 1D or 2D array, got {PSD.ndim}D")
-
-    center_idx = np.argmin(np.abs(k))
-    half_width = max(0, (k0_normalization_width - 1) // 2)
-    idx0 = np.array(
-        [
-            center_idx + offset
-            for offset in range(-half_width, half_width + 1)
-            if 0 <= center_idx + offset < K
-        ]
-    )
-
-    logger.info(
-        "k≈0 region: width=%s, center_idx=%s, indices=%s, total_bins=%s",
-        k0_normalization_width,
-        center_idx,
-        idx0.tolist(),
-        len(idx0),
-    )
-
-    other = np.setdiff1d(np.arange(K), idx0)
-    if other.size == 0:
-        return PSD, idx0, np.ones((F, idx0.size))
-
-    base = np.median(PSD[:, other], axis=1)
-    if _SCIPY_AVAILABLE:
-        from scipy.stats import median_abs_deviation as mad
-
-        scale = mad(PSD[:, other], axis=1, scale="normal") + eps
-    else:
-        q75 = np.percentile(PSD[:, other], 75, axis=1)
-        q25 = np.percentile(PSD[:, other], 25, axis=1)
-        scale = 0.7413 * (q75 - q25) + eps
-
-    T = base + beta * scale
-
-    if _SCIPY_AVAILABLE and smooth_win is not None and 5 <= smooth_win < F:
-        from scipy.signal import savgol_filter
-
-        T = savgol_filter(T, _odd(smooth_win), smooth_poly, mode="interp")
-
-    T = T[:, None]
-
-    strength = float(np.clip(strength, 0.0, 1.0))
-    ratio_cap = None if ratio is None else max(1.0, ratio)
-    A_cap = max(1.0, A_max)
-    if ratio_cap is not None:
-        A_cap = min(A_cap, ratio_cap)
-    A = 1.0 + (A_cap - 1.0) * strength
-    invA = 1.0 / max(A, 1.0)
-
-    V = PSD[:, idx0]
-    x_db = 10.0 * np.log10((V + eps) / (T + eps))
-    gain_shape = max(1e-6, slope_db)
-    w = 1.0 / (1.0 + np.exp(-(x_db - knee_db) / gain_shape))
-    local_gain = 1.0 - w * (1.0 - invA)
-    PSD[:, idx0] = V * local_gain
-
-    PSD = np.maximum(PSD, 0.0)
-
-    full_gain = np.ones((F, K))
-    full_gain[:, idx0] = local_gain
-
-    if is_1d:
-        return PSD[0, :], idx0, full_gain[0, :]
-    return PSD, idx0, full_gain
-
-    def _k0_dynamic_filter_linear(
-        self,
-        PSD_fk: np.ndarray,
-        k_vals: np.ndarray,
-        strength: float = 1.0,
-        A_max: float = 1000.0,
-        beta: float = 3.5,
-        knee_db: float = 6.0,
-        slope_db: float = 3.0,
-        k0_normalization_width: int = 1,
-        k_halfwidth: Optional[float] = None,
-        smooth_win: Optional[int] = 11,
-        smooth_poly: int = 2,
-        eps: float = 1e-18,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Linear k≈0 dynamic compression with soft dB-based gain control.
-        
-        Parameters
-        ----------
-        PSD_fk : np.ndarray, shape (n_f, n_k)
-            Input power spectral density
-        k_vals : np.ndarray, shape (n_k,)
-            Wave-vector axis [rad/m]
-        strength : float, default=1.0
-            Linear strength control (0=disabled, 1=maximum)
-        A_max : float, default=1000.0
-            Maximum attenuation factor at strength=1
-        beta : float, default=3.5
-            Statistical threshold multiplier
-        knee_db : float, default=6.0
-            Soft knee position in dB
-        slope_db : float, default=3.0
-            Transition slope (smaller = harder)
-        k_halfwidth : float, optional
-            k≈0 detection width
-        smooth_win : int, optional
-            Savitzky-Golay smoothing window
-        smooth_poly : int, default=2
-            Polynomial order for smoothing
-        eps : float, default=1e-18
-            Small value to prevent division by zero
-            
-        Returns
-        -------
-        tuple[np.ndarray, np.ndarray, np.ndarray]
-            (compressed_PSD, k0_indices, gain_matrix)
-        """
-        def _odd(n): 
-            return int(n) + 1 - (int(n) % 2 == 0)
-        
-        import logging
-        logger = logging.getLogger(__name__) 
-        
-        PSD = np.asarray(PSD_fk).copy()
-        k = np.asarray(k_vals)
-        
-        # Handle both 1D and 2D arrays
-        if PSD.ndim == 1:
-            # 1D spectrum
-            F, K = 1, PSD.shape[0]
-            PSD = PSD[np.newaxis, :]  # Add frequency dimension: (1, K)
-            is_1d = True
-        elif PSD.ndim == 2:
-            # 2D PSD
-            F, K = PSD.shape
-            is_1d = False
-        else:
-            raise ValueError(f"PSD must be 1D or 2D array, got {PSD.ndim}D")
-
-        # --- k≈0 region detection based on k0_normalization_width
-        center_idx = np.argmin(np.abs(k))  # Find center k≈0 bin
-        
-        # Calculate half-width from k0_normalization_width
-        # For width=1: only center, for width=3: center±1, for width=5: center±2, etc.
-        half_width = max(0, (k0_normalization_width - 1) // 2)
-        
-        # Build index array symmetrically around center
-        idx0_list = []
-        for offset in range(-half_width, half_width + 1):
-            test_idx = center_idx + offset
-            if 0 <= test_idx < K:  # Ensure within bounds
-                idx0_list.append(test_idx)
-        
-        idx0 = np.array(idx0_list)
-        
-        logger.info(f"k≈0 region: width={k0_normalization_width}, center_idx={center_idx}, "
-                   f"indices={idx0}, total_bins={len(idx0)}")
-            
-        other = np.setdiff1d(np.arange(K), idx0)
-        if other.size == 0:
-            return PSD, idx0, np.ones((F, idx0.size))
-
-        # --- Statistical threshold T(f): median + beta*MAD
-        base = np.median(PSD[:, other], axis=1)
-        if _SCIPY_AVAILABLE:
-            from scipy.stats import median_abs_deviation as mad
-            scale = mad(PSD[:, other], axis=1, scale='normal') + eps
-        else:
-            # Fallback MAD approximation
-            q75 = np.percentile(PSD[:, other], 75, axis=1)
-            q25 = np.percentile(PSD[:, other], 25, axis=1)
-            scale = 0.7413 * (q75 - q25) + eps
-            
-        T = base + beta * scale
-        
-        # Smooth threshold
-        if (_SCIPY_AVAILABLE and smooth_win is not None and 5 <= smooth_win < F):
-            from scipy.signal import savgol_filter
-            T = savgol_filter(T, _odd(smooth_win), smooth_poly, mode='interp')
-            
-        T = T[:, None]  # [F,1]
-
-        # --- Linear strength mapping
-        strength = float(np.clip(strength, 0.0, 1.0))
-        A = 1.0 + (A_max - 1.0) * strength        # 1 → A_max
-        invA = 1.0 / A
-
-        # --- Soft dB-based compression for k≈0 only
-        V = PSD[:, idx0]
-        x_db = 10.0 * np.log10((V + eps) / (T + eps))     # dB above threshold
-        w = 1.0 / (1.0 + np.exp(-(x_db - knee_db) / max(1e-6, slope_db)))  # sigmoid 0→1
-        local_gain = 1.0 - w * (1.0 - invA)              # gain: 1 → invA
-        PSD[:, idx0] = V * local_gain
-
-        PSD = np.maximum(PSD, 0.0)
-        
-        # Create full gain array for return
-        full_gain = np.ones((F, K))
-        full_gain[:, idx0] = local_gain
-        
-        # Return appropriate format
-        if is_1d:
-            return PSD[0, :], idx0, full_gain[0, :]  # Remove frequency dimension
-        else:
-            return PSD, idx0, full_gain
-    
     def _compress_above_threshold(
-        self, 
-        V: np.ndarray, 
-        T: np.ndarray, 
-        knee: float = 1.0, 
-        ratio: float = 6.0, 
-        eps: float = 1e-18
+        self,
+        V: np.ndarray,
+        T: np.ndarray,
+        knee: float = 1.0,
+        ratio: float = 6.0,
+        eps: float = 1e-18,
     ) -> np.ndarray:
-        """
-        Soft audio-style compressor with configurable knee and ratio.
-        
-        Algorithm:
-        - Below threshold T: unchanged
-        - Above threshold: soft knee using arcsinh + ceiling at ratio*T
-        - Preserves relative structure while limiting dynamic range
-        
-        Parameters
-        ----------
-        V : np.ndarray, shape (n_f, n_k0)
-            Input values to compress
-        T : np.ndarray, shape (n_f, 1)  
-            Threshold per frequency
-        knee : float, default=1.0
-            Knee softness (1.0=soft, 0.3=hard)
-        ratio : float, default=6.0
-            Maximum output level as ratio*T
-        eps : float, default=1e-18
-            Small value to prevent division by zero
-            
-        Returns
-        -------
-        np.ndarray, shape (n_f, n_k0)
-            Compressed values
-        """
-        # Soft knee scaling based on threshold
+        """Soft compressor helper retained for backwards compatibility."""
         s = knee * np.maximum(T, eps)
-        
-        # Amount above threshold
         over = np.maximum(V - T, 0.0)
-        
-        # Soft compression curve: arcsinh provides logarithmic-like growth
         Y = T + s * np.arcsinh(over / s)
-        
-        # Soft ceiling at ratio*T
         Y = np.minimum(Y, ratio * T)
-        
-        # Apply compression only above threshold
         return np.where(V > T, Y, V)
     
     def plot_dispersion(
@@ -1580,6 +1287,11 @@ def _k0_dynamic_filter_linear(
         k0_normalization: Union[int, float] = 0,
         k0_normalization_width: int = 1,
         compression_mode: str = "adaptive",
+        add_comsol_points: str | Path | None = None,
+        comsol_k_col: int = 0,
+        comsol_f_col: int = 1,
+        comsol_extra_cols: tuple[int, ...] | None = None,
+        comsol_style: dict[str, object] | None = None,
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
         **kwargs,
@@ -1635,6 +1347,15 @@ def _k0_dynamic_filter_linear(
         vmax : float, optional
             Maximum value for color scale normalization. When provided, overrides automatic 
             scaling for the colorbar upper bound.
+        add_comsol_points : str | Path | None, optional
+            Path to COMSOL dispersion export file. When provided, the selected column pair is overlayed
+            as scatter points on top of the heatmap.
+        comsol_k_col, comsol_f_col : int, optional
+            Zero-based column indices used for k-vector and frequency values inside the COMSOL file.
+        comsol_extra_cols : tuple[int, ...] | None, optional
+            Additional columns to parse and keep available via the COMSOL data container (not plotted).
+        comsol_style : dict, optional
+            Keyword arguments forwarded to ``ax.scatter`` for the COMSOL overlay (e.g. color, size).
         **kwargs
             Additional parameters for compute_1d and plotting
             
@@ -1685,6 +1406,19 @@ def _k0_dynamic_filter_linear(
         if save is True and "save_result" not in compute_kwargs and "save" not in compute_kwargs:
             compute_kwargs["save_result"] = True
         result = self.compute_1d(axis=axis, component=component, **compute_kwargs)
+
+
+        comsol_style = comsol_style or {}
+        comsol_data = None
+        if add_comsol_points is not None:
+            from .comsol import read_data_from_comsol
+
+            comsol_data = read_data_from_comsol(
+                add_comsol_points,
+                k_col=comsol_k_col,
+                f_col=comsol_f_col,
+                extra_cols=comsol_extra_cols,
+            )
 
         # Create plot
         if dpi is not None:
@@ -1738,13 +1472,21 @@ def _k0_dynamic_filter_linear(
         else:
             f_label = "Frequency [Hz]"
 
-        # Apply k≈0 normalization if requested
         if k0_normalization and k0_normalization > 0:
-            logger.info(f"Applying k≈0 dynamic compression: strength={k0_normalization}, mode={compression_mode}, width={k0_normalization_width}")
-            # Use original k_axis (before unit conversion) for physical calculations
+            logger.info(
+                "Applying k≈0 dynamic compression: strength=%s, mode=%s, width=%s",
+                k0_normalization,
+                compression_mode,
+                k0_normalization_width,
+            )
             original_k_axis = result.k_axis
-            spectrum = self._apply_k0_normalization(spectrum, original_k_axis, strength=k0_normalization, 
-                                                  compression_mode=compression_mode, k0_normalization_width=k0_normalization_width)
+            spectrum = self._apply_k0_normalization(
+                spectrum,
+                original_k_axis,
+                strength=k0_normalization,
+                compression_mode=compression_mode,
+                k0_normalization_width=k0_normalization_width,
+            )
 
         # Plot dispersion
         norm = None
@@ -1818,6 +1560,91 @@ def _k0_dynamic_filter_linear(
         # Colorbar
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label(r"Power Spectral Density [arb. units]")
+        
+        
+        
+        if comsol_data is not None:
+            k_points = np.asarray(comsol_data.k_values, dtype=float).copy()
+            f_points = np.asarray(comsol_data.f_values, dtype=float).copy()
+
+            if kscale == "rad_um":
+                k_points = k_points / 1e6
+            elif kscale == "meter":
+                k_points = k_points / (2 * np.pi)
+
+            if f_units.lower() == "ghz":
+                f_points = f_points / 1e9
+            elif f_units.lower() != "hz":
+                raise ValueError(f"Unsupported frequency units: {f_units}")
+
+            mask = np.isfinite(k_points) & np.isfinite(f_points)
+            if not np.any(mask):
+                logger.warning(
+                    "COMSOL overlay skipped: no finite data points (%s)",
+                    add_comsol_points,
+                )
+            else:
+                if not np.all(mask):
+                    logger.warning(
+                        "COMSOL overlay dropping %d invalid points",
+                        int((~mask).sum()),
+                    )
+                k_points = k_points[mask]
+                f_points = f_points[mask]
+
+                scatter_kwargs = {
+                    "s": 40,
+                    "facecolors": "none",
+                    "edgecolors": "white",
+                    "linewidths": 1.5,
+                    "alpha": 0.9,
+                }
+                scatter_kwargs.update(comsol_style)
+
+                if k_points.size:
+                    original_count = int(k_points.size)
+                    mirrored_k = -k_points
+                    mirrored_f = f_points
+                    k_plot =  mirrored_k
+                    f_plot =  mirrored_f
+
+                    coords = np.column_stack((k_plot, f_plot))
+                    if coords.size:
+                        rounded = np.round(coords, decimals=12)
+                        _, unique_idx = np.unique(rounded, axis=0, return_index=True)
+                        if unique_idx.size != coords.shape[0]:
+                            unique_idx.sort()
+                            k_plot = k_plot[unique_idx]
+                            f_plot = f_plot[unique_idx]
+                            logger.debug(
+                                "COMSOL overlay removed %d duplicate points after mirroring",
+                                coords.shape[0] - unique_idx.size,
+                            )
+                else:
+                    original_count = 0
+                    k_plot = k_points
+                    f_plot = f_points
+
+                logger.info(
+                    "Overlaying %d COMSOL points on dispersion plot (mirrored from %d original)",
+                    k_plot.size,
+                    original_count,
+                )
+                sample_size = min(k_plot.size, 5)
+                if sample_size:
+                    sample_k = " ".join(f"{val:.3f}" for val in k_plot[:sample_size])
+                    sample_f = " ".join(f"{val:.3f}" for val in f_plot[:sample_size])
+                    logger.debug(
+                        "COMSOL overlay sample k (plot units): %s",
+                        sample_k,
+                    )
+                    logger.debug(
+                        "COMSOL overlay sample f (plot units): %s",
+                        sample_f,
+                    )
+
+                ax.scatter(k_plot, f_plot, label="COMSOL", **scatter_kwargs)
+                
 
         plt.tight_layout()
 
