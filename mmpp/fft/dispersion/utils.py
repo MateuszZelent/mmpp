@@ -6,8 +6,12 @@ and mathematical operations used in dispersion calculations.
 """
 
 from __future__ import annotations
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Sequence
+import logging
 import numpy as np
+
+
+logger = logging.getLogger(__name__)
 
 
 def fftfreq_axis(n: int, d: float, shift: bool = True) -> np.ndarray:
@@ -141,18 +145,21 @@ def fold_spectrum_1d(
 def hann_window(n: int) -> np.ndarray:
     """
     Hann window (periodic) of length n.
-    
+
     Parameters
     ----------
     n : int
         Window length
-        
+
     Returns
     -------
     np.ndarray
         Hann window values
     """
-    return 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(n) / n)
+    if n <= 1:
+        return np.ones(n, dtype=float)
+    idx = np.arange(n, dtype=float)
+    return 0.5 - 0.5 * np.cos(2.0 * np.pi * idx / (n - 1))
 
 
 def apply_window_1d(
@@ -190,6 +197,61 @@ def apply_window_1d(
     shape = [1] * x.ndim
     shape[axis] = n
     return x * w.reshape(shape)
+
+
+
+def apply_filter_pipeline(
+    x: np.ndarray,
+    filters: Optional[dict[str, bool]],
+    *,
+    time_axis: int = 0,
+    spatial_axes: Sequence[int] = (2, 3),
+) -> np.ndarray:
+    """Apply canonical dispersion filters to magnetization data."""
+    if not filters:
+        return x
+
+    result = x
+    copied = False
+
+    def ensure_copy() -> None:
+        nonlocal result, copied
+        if not copied:
+            result = np.array(result, copy=True)
+            copied = True
+
+    applied: list[str] = []
+
+    if filters.get("remove_static"):
+        ensure_copy()
+        first = np.take(result, indices=0, axis=time_axis)
+        expanded = np.expand_dims(first, axis=time_axis)
+        result -= expanded
+        applied.append("remove_static")
+
+    if filters.get("remove_average"):
+        ensure_copy()
+        mean = np.mean(result, axis=time_axis, keepdims=True)
+        result -= mean
+        applied.append("remove_average")
+
+    if filters.get("hann_time"):
+        ensure_copy()
+        result = apply_window_1d(result, axis=time_axis, window="hann")
+        applied.append("hann_time")
+
+    if filters.get("hann_space") and spatial_axes:
+        ensure_copy()
+        ndims = result.ndim
+        for axis in spatial_axes:
+            if 0 <= axis < ndims and result.shape[axis] > 1:
+                result = apply_window_1d(result, axis=axis, window="hann")
+        applied.append("hann_space")
+
+    if applied:
+        logger.info("Dispersion filters applied: %s", ", ".join(applied))
+
+    return result
 
 
 def detrend_time_series(

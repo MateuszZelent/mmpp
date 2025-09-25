@@ -222,7 +222,7 @@ class ZarrJobResult:
         self._ensure_zarr_loaded()
         self._z[key] = value
 
-    def __getattr__(self, name: str) -> Union[zarr.Array, zarr.Group, int, float, str]:
+    def __getattr__(self, name: str) -> Union[zarr.Array, zarr.Group, int, float, str, "DatasetAwareWrapper"]:
         """Get zarr attribute or dataset by name."""
         if name.startswith("_") or name in ["path", "attributes"]:
             raise AttributeError(
@@ -234,6 +234,12 @@ class ZarrJobResult:
             return getattr(self._z, name)
         if name in self._z.attrs:
             return self._z.attrs[name]
+        if name in self._z.keys():
+            zarr_item = self._z[name]
+            # If it's a zarr.Array, wrap it with dataset-aware wrapper
+            if isinstance(zarr_item, zarr.Array):
+                return DatasetAwareWrapper(self, name, zarr_item)
+            return zarr_item
         raise NameError(f"{self.path}: The dataset `{name}` does not exist.")
 
     def __repr__(self) -> str:
@@ -640,6 +646,265 @@ def find_largest_m_dataset(zarr_path: str) -> str:
             f"Unexpected error finding largest m dataset in {zarr_path}: {e}, using fallback 'm'"
         )
         return "m"
+
+
+# FFT availability check - moved here for DatasetSpecificFFT
+try:
+    from mmpp.fft.core import FFT
+    FFT_AVAILABLE = True
+except ImportError:
+    FFT_AVAILABLE = False
+
+
+class DatasetSpecificFFT:
+    """FFT wrapper with pre-set dataset"""
+    
+    def __init__(self, job_result, dataset_name, mmpp_instance=None, slice_info=None):
+        self.dataset_name = dataset_name
+        self.slice_info = slice_info
+        # Create regular FFT instance
+        self._fft = FFT(job_result, mmpp_instance)
+        
+    def __getattr__(self, name):
+        """Delegate to FFT, injecting dataset context when appropriate."""
+        attr = getattr(self._fft, name)
+
+        if name == "dispersion" and attr is not None:
+            return attr.clone_for_dataset(self.dataset_name, slice_info=self.slice_info)
+
+        if callable(attr) and hasattr(attr, "__code__"):
+            import inspect
+
+            sig = inspect.signature(attr)
+            if "dataset_name" in sig.parameters:
+                def wrapper(*args, **kwargs):
+                    if "dataset_name" not in kwargs:
+                        kwargs["dataset_name"] = self.dataset_name
+                    if self.slice_info is not None and "slice_info" in sig.parameters and "slice_info" not in kwargs:
+                        kwargs["slice_info"] = self.slice_info
+                    return attr(*args, **kwargs)
+
+                return wrapper
+
+        return attr
+    
+    def __repr__(self):
+        """Rich documentation display for dataset-specific FFT interface."""
+        try:
+            return self._rich_dataset_fft_display()
+        except Exception:
+            return self._basic_dataset_fft_display()
+    
+    def _rich_dataset_fft_display(self) -> str:
+        """Create rich documentation display for dataset-specific FFT."""
+        try:
+            import io
+            from rich.columns import Columns
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.syntax import Syntax
+            from rich.table import Table
+            from rich.text import Text
+
+            console = Console(file=io.StringIO(), width=120, force_terminal=True)
+
+            # Get dataset info
+            try:
+                dataset_shape = getattr(self._fft.job_result._z[self.dataset_name], 'shape', 'Unknown')
+            except:
+                dataset_shape = 'Unknown'
+                
+            slice_str = f"[{self.slice_info}]" if self.slice_info else ""
+            cache_size = len(self._fft._cache)
+
+            # Summary panel content
+            summary_text = Text()
+            summary_text.append("🎯 Dataset-Specific FFT Interface\n", style="bold cyan")
+            summary_text.append(f"📊 Dataset: {self.dataset_name}\n", style="bold green")
+            summary_text.append(f"📐 Shape: {dataset_shape}{slice_str}\n", style="dim")
+            if self.slice_info:
+                summary_text.append(f"✂️  Slicing: Active\n", style="yellow")
+            summary_text.append(f"💾 Cache: {cache_size} entries\n", style="dim")
+
+            # Core methods panel content
+            core_methods_text = Text()
+            core_methods_text.append("🔧 FFT Methods (dataset pre-set):\n", style="bold yellow")
+            methods = [
+                ("spectrum()", f"FFT spectrum for {self.dataset_name}"),
+                ("frequencies()", "Frequency array"),
+                ("power()", f"|FFT|² power spectrum"),
+                ("magnitude()", f"|FFT| magnitude"),
+                ("phase()", "Phase spectrum"),
+                ("plot_spectrum()", "Plot power spectrum"),
+                ("dispersion", "Access dispersion analysis"),
+            ]
+
+            for method, desc in methods:
+                core_methods_text.append("  • ", style="dim")
+                core_methods_text.append(method, style="code")
+                core_methods_text.append(f" - {desc}\n", style="dim")
+
+            # Dataset-specific info panel
+            dataset_info_text = Text()
+            dataset_info_text.append("📋 Dataset Context:\n", style="bold magenta")
+            dataset_info_text.append(f"  • Pre-selected: {self.dataset_name}\n", style="green")
+            dataset_info_text.append("  • No need to specify dataset_name\n", style="dim")
+            if self.slice_info:
+                dataset_info_text.append(f"  • Sliced data: {self.slice_info}\n", style="yellow")
+                dataset_info_text.append("  • FFT operates on sliced data\n", style="dim")
+
+            # Usage examples
+            example_code = f"""# Dataset-specific FFT usage (no dataset_name needed)
+spectrum = m_layer.fft.spectrum()  # Uses '{self.dataset_name}' automatically
+power = m_layer.fft.power()
+frequencies = m_layer.fft.frequencies()
+
+# Dispersion analysis
+disp = m_layer.fft.dispersion
+modes = disp.compute_1d()
+
+# Plotting
+fig, ax = m_layer.fft.plot_spectrum(log_scale=True)
+
+# Compare with regular FFT (requires dataset_name)
+regular_fft = job[0].fft.spectrum(dataset_name='{self.dataset_name}')
+dataset_fft = job[0].{self.dataset_name}.fft.spectrum()  # Same result!"""
+
+            if self.slice_info:
+                example_code += f"""
+
+# Sliced dataset FFT
+sliced_data = job[0].{self.dataset_name}{slice_str}
+sliced_fft = sliced_data.fft.spectrum()  # FFT of sliced data
+sliced_dispersion = sliced_data.fft.dispersion.compute_1d()"""
+
+            syntax = Syntax(
+                example_code, "python", theme="monokai", background_color="default"
+            )
+
+            # Build panels
+            with console.capture() as capture:
+                # Main summary panel
+                console.print(
+                    Panel.fit(
+                        summary_text,
+                        title=f"[bold cyan]Dataset FFT: {self.dataset_name}[/bold cyan]",
+                        border_style="cyan",
+                    )
+                )
+                console.print("")
+
+                # Method panels side by side
+                console.print(
+                    Columns(
+                        [
+                            Panel.fit(
+                                core_methods_text,
+                                title="[bold yellow]Available Methods[/bold yellow]",
+                                border_style="yellow",
+                            ),
+                            Panel.fit(
+                                dataset_info_text,
+                                title="[bold magenta]Dataset Context[/bold magenta]",
+                                border_style="magenta",
+                            ),
+                        ]
+                    )
+                )
+                console.print("")
+
+                # Examples panel
+                console.print(
+                    Panel(
+                        syntax,
+                        title="[bold green]Usage Examples[/bold green]",
+                        border_style="green",
+                    )
+                )
+
+            output = capture.get()
+            return output
+
+        except ImportError:
+            return self._basic_dataset_fft_display()
+    
+    def _basic_dataset_fft_display(self) -> str:
+        """Fallback display without rich formatting."""
+        slice_str = f"[{self.slice_info}]" if self.slice_info else ""
+        
+        return f"""DatasetSpecificFFT(dataset={self.dataset_name})
+
+Dataset-specific FFT Interface:
+• Pre-configured for dataset: {self.dataset_name}{slice_str}
+• Available methods: spectrum(), power(), magnitude(), phase(), dispersion
+• Usage: m_layer.fft.spectrum()  # No dataset_name needed!
+
+Examples:
+spectrum = m_layer.fft.spectrum()  # Auto-uses '{self.dataset_name}'
+power = m_layer.fft.power()
+dispersion = m_layer.fft.dispersion.compute_1d()
+
+📖 For full documentation: help(job[0].fft)"""
+
+
+class DatasetAwareWrapper:
+    """Wrapper that acts like zarr.Array but has .fft property"""
+    
+    def __init__(self, job_result, dataset_name, zarr_array, slice_info=None):
+        self.job_result = job_result
+        self.dataset_name = dataset_name
+        self.zarr_array = zarr_array
+        self.slice_info = slice_info  # Store slicing information
+        self._fft = None
+        
+    def __getattr__(self, name):
+        """Delegate to zarr_array for most attributes"""
+        if self.slice_info is not None:
+            # If sliced, get attribute from sliced data
+            sliced_data = self.zarr_array[self.slice_info]
+            return getattr(sliced_data, name)
+        return getattr(self.zarr_array, name)
+        
+    def __getitem__(self, key):
+        """Return new DatasetAwareWrapper with slicing info preserved"""
+        # Instead of returning raw numpy array, return new wrapper with slice info
+        if self.slice_info is not None:
+            # Combine existing slice with new slice - simplified for now
+            combined_slice = key  
+        else:
+            combined_slice = key
+            
+        return DatasetAwareWrapper(
+            self.job_result,
+            self.dataset_name,
+            self.zarr_array,  # Keep original zarr reference
+            slice_info=combined_slice
+        )
+        
+    @property
+    def fft(self):
+        """Return FFT with this dataset pre-selected"""
+        if self._fft is None and FFT_AVAILABLE:
+            # Create DatasetSpecificFFT with slicing info
+            self._fft = DatasetSpecificFFT(
+                self.job_result, 
+                self.dataset_name,
+                getattr(self.job_result, '_mmpp_ref', None),
+                slice_info=self.slice_info
+            )
+        return self._fft
+        
+    @property
+    def shape(self):
+        """Shape accounting for slicing"""
+        if self.slice_info is not None:
+            sliced_data = self.zarr_array[self.slice_info]
+            return sliced_data.shape
+        return self.zarr_array.shape
+        
+    def __repr__(self):
+        slice_str = f"[{self.slice_info}]" if self.slice_info else ""
+        return f"DatasetAwareWrapper({self.dataset_name}{slice_str}, shape={self.shape})"
 
 
 class MMPP:

@@ -20,6 +20,14 @@ try:
 except ImportError:
     MODES_AVAILABLE = False
 
+# Import dispersion analysis capabilities
+try:
+    from .dispersion import SpinWaveAnalyzer, DispersionConfig, FFTDispersionInterface
+    
+    DISPERSION_AVAILABLE = True
+except ImportError:
+    DISPERSION_AVAILABLE = False
+
 
 class FFT:
     """
@@ -28,6 +36,10 @@ class FFT:
     This class aggregates FFT computation and plotting capabilities
     for MMPP job results.
     """
+    
+    # Feature availability flags
+    MODES_AVAILABLE = MODES_AVAILABLE
+    DISPERSION_AVAILABLE = DISPERSION_AVAILABLE
 
     def __init__(self, job_result, mmpp_instance: Optional[Any] = None):
         """
@@ -797,6 +809,31 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
         if not hasattr(self, "_mode_interface"):
             self._mode_interface = FFTModeInterface(0, self)
         return self._mode_interface
+
+    @property
+    def dispersion(self) -> "FFTDispersionInterface":
+        """
+        Get spin-wave dispersion analysis interface.
+
+        Returns:
+        --------
+        FFTDispersionInterface
+            Interface for dispersion operations
+
+        Examples:
+        ---------
+        >>> job[0].fft.dispersion.plot_dispersion()
+        >>> job[0].fft.dispersion.compute_1d(axis="x")
+        >>> job[0].m_layer.fft.dispersion.plot_branch()
+        """
+        if not DISPERSION_AVAILABLE:
+            raise ImportError(
+                "Dispersion analysis not available. Check dispersion module import."
+            )
+
+        if not hasattr(self, "_dispersion_interface"):
+            self._dispersion_interface = FFTDispersionInterface(self)
+        return self._dispersion_interface
 
     def __getitem__(self, index: int) -> "FFTModeInterface":
         """

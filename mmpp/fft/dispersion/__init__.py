@@ -1,53 +1,58 @@
 """
-MMPP Spin-Wave Dispersion Analysis Module
+Spin-Wave Dispersion Analysis Module
 
-This module provides tools for computing and analyzing spin-wave dispersion relations
-S(k,f) from time-domain micromagnetic simulation data (e.g., MuMax3).
+Provides comprehensive analysis of spin-wave dispersion relations S(k,f) 
+from micromagnetic simulation data, similar to FMR mode analysis but focused
+on wave propagation and k-space dynamics.
 
-Key Features:
-- 1D dispersion S(k,f) along specified propagation directions
-- 2D dispersion S(kx,ky,f) for full spatial analysis  
-- Brillouin zone folding for periodic structures
-- Dispersion branch tracking and peak detection
-- Group velocity calculations
-- Mode classification at specific (k,f) points
+Main Features:
+- 1D and 2D dispersion relation computation
+- Branch tracking and characterization  
+- Brillouin zone folding and analysis
+- Peak detection and group velocity calculation
+- Integration with MMPP job results and visualization
 
-Integration with MMPP:
-- Uses MMPP data structures and zarr format
-- Consistent with FMR mode analysis workflow
-- Provides interactive visualization tools
-- Supports batch processing across frequencies
+Usage Examples:
+--------------
+# Basic dispersion analysis
+>>> job[0].fft.dispersion.plot_dispersion()
+>>> job[0].m_layer.fft.dispersion.compute_1d(axis="x")
 
-Usage:
-    from mmpp.fft.dispersion import SpinWaveAnalyzer
-    
-    analyzer = SpinWaveAnalyzer('simulation.zarr')
-    dispersion_1d = analyzer.compute_dispersion_1d(axis='x')
-    branches = analyzer.track_branches(dispersion_1d)
+# Advanced analysis
+>>> analyzer = job[0].fft.dispersion.analyzer
+>>> result = analyzer.compute_dispersion_1d(axis="x")
+>>> branch = analyzer.track_branch(result, k_path, f_seed=5e9)
 """
 
+
 from .core import SpinWaveAnalyzer
+from .interface import FFTDispersionInterface
 from .models import (
+    DispersionConfig,
     DispersionResult1D,
-    DispersionResult2D, 
+    DispersionResult2D,
     DispersionBranch,
-    DispersionConfig
 )
 from .utils import (
-    fold_k_to_bz,
     fftfreq_axis,
+    fold_k_to_bz,
+    fold_spectrum_1d,
     k_axis_from_grid,
-    group_velocity_1d
+    find_peaks_1d,
+    group_velocity_1d,
 )
 
 __all__ = [
-    'SpinWaveAnalyzer',
-    'DispersionResult1D',
-    'DispersionResult2D',
-    'DispersionBranch', 
-    'DispersionConfig',
-    'fold_k_to_bz',
-    'fftfreq_axis',
-    'k_axis_from_grid',
-    'group_velocity_1d'
+    "SpinWaveAnalyzer",
+    "FFTDispersionInterface",
+    "DispersionConfig",
+    "DispersionResult1D",
+    "DispersionResult2D",
+    "DispersionBranch",
+    "fftfreq_axis",
+    "fold_k_to_bz",
+    "fold_spectrum_1d",
+    "k_axis_from_grid",
+    "find_peaks_1d",
+    "group_velocity_1d",
 ]

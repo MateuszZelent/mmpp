@@ -18,6 +18,7 @@ from .utils import (
     extract_magnetization_component,
     detrend_time_series,
     apply_window_1d,
+    apply_filter_pipeline,
     k_axis_from_grid,
     fold_spectrum_1d,
     find_peaks_1d,
@@ -60,28 +61,35 @@ class SpinWaveAnalyzer:
         Spatial grid spacings {dx, dy, dz} [m]
     """
     
+
     def __init__(
         self,
         zarr_path: str | Path,
         config: Optional[DispersionConfig] = None,
-        tmax: int = 100
+        tmax: int = 100,
+        slice_info: Optional[Any] = None,
     ):
         self.zarr_path = Path(zarr_path)
         self.config = config or DispersionConfig()
-        self.tmax = tmax  # Store tmax for data loading
-        
+        self.tmax = int(tmax)
+        self.slice_info = slice_info
+
         # Data storage
         self.zarr_file: Optional[zarr.Group] = None
         self.M_data: Optional[np.ndarray] = None
-        self._M_ref: Optional[zarr.Array | zarr.Group] = None  # Reference to zarr data
+        self._M_ref: Optional[Any] = None  # Underlying magnetization array reference
         self._M_path: Optional[str] = None
+        self._base_indexer: Optional[tuple] = None
+        self._time_axis_pos: Optional[int] = None
+        self._time_axis_length: Optional[int] = None
+        self._loaded_time: int = 0
         self.time_axis: Optional[np.ndarray] = None
         self.dt: float = 0.0
         self.grid_spacings: Dict[str, float] = {}
-        
+
         # Load data
         self._load_data()
-        
+
     def _load_data(self) -> None:
         """Load magnetization data from zarr file."""
         try:
@@ -90,64 +98,196 @@ class SpinWaveAnalyzer:
                 self.zarr_file = zarr_obj
             else:
                 raise ValueError("Expected zarr Group, got Array")
-            logger.info(f"Opened zarr file: {self.zarr_path}")
-        except Exception as e:
-            logger.error(f"Failed to open zarr file {self.zarr_path}: {e}")
+            logger.info("Opened zarr file: %s", self.zarr_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to open zarr file %s: %s", self.zarr_path, exc)
             raise
-            
+
         # Load time-domain magnetization data
         self._load_magnetization()
         self._extract_grid_parameters()
-        
+
     def _load_magnetization(self) -> None:
         """Load time-domain magnetization data M(t,x,y,z)."""
-        # Look for time-domain magnetization data
-        # Common paths in MuMax3 output
         possible_paths = [
-            "m_layer",  # Common in layered structures
-            "m",  # Standard magnetization
-            "M", 
+            "m_layer",
+            "m",
+            "M",
             "magnetization",
-            "m_full",  # Full time series
-            "m_resonator",  # Resonator data
-            "table/m",  # Sometimes in table format
+            "m_full",
+            "m_resonator",
+            "table/m",
         ]
-        
+
         if self.zarr_file is None:
             raise ValueError("Zarr file not loaded")
-            
+
         for path in possible_paths:
-            if path in self.zarr_file:
-                try:
-                    # Check if it's an array (data) vs group (nested structure)
-                    M_ref = self.zarr_file[path]
-                    if hasattr(M_ref, 'shape') and hasattr(M_ref, 'dtype'):
-                        # It's an array - load limited data immediately
-                        logger.info(f"Found magnetization at '{path}': shape {M_ref.shape}, dtype {M_ref.dtype}")
-                        
-                        # Load only first tmax time steps to speed up analysis
-                        import zarr
-                        if isinstance(M_ref, zarr.Array):
-                            actual_tmax = min(self.tmax, M_ref.shape[0])
-                            logger.info(f"Loading first {actual_tmax} time steps...")
-                            M_raw = np.array(M_ref[:actual_tmax])
-                        else:
-                            logger.warning("Not a zarr Array, loading all data")
-                            M_raw = np.array(M_ref)
-                        
-                        # Normalize shape to (T, Z, Y, X, 3)
-                        self.M_data = normalize_magnetization_components(M_raw)
-                        logger.info(f"Loaded magnetization data: shape {self.M_data.shape}")
-                        
-                        break
-                    else:
-                        logger.info(f"'{path}' is not an array, skipping")
-                except Exception as e:
-                    logger.warning(f"Failed to access magnetization at '{path}': {e}")
+            if path not in self.zarr_file:
+                continue
+            try:
+                M_ref = self.zarr_file[path]
+                if not (hasattr(M_ref, "shape") and hasattr(M_ref, "dtype")):
+                    logger.info("'%s' is not an array, skipping", path)
                     continue
+
+                logger.info("Found magnetization at '%s': shape %s, dtype %s", path, M_ref.shape, M_ref.dtype)
+                self._M_ref = M_ref
+                self._M_path = path
+                self._configure_indexing(M_ref)
+
+                self.M_data = self._load_reference_data(self.tmax)
+                logger.info("Loaded magnetization data: shape %s", self.M_data.shape)
+                break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to access magnetization at '%s': %s", path, exc)
+                self._M_ref = None
+                continue
         else:
             raise ValueError(f"No magnetization data found in {self.zarr_path}")
-    
+
+    def _configure_indexing(self, M_ref: Any) -> None:
+        """Prepare base slice/indexer information for repeated loads."""
+        shape = tuple(getattr(M_ref, "shape", ()))
+        if not shape:
+            self._base_indexer = None
+            self._time_axis_pos = None
+            self._time_axis_length = None
+            logger.debug("Magnetization shape unavailable; skipping indexer configuration")
+            return
+
+        base_indexer = self._normalize_slice(shape)
+        self._base_indexer = base_indexer
+        self._time_axis_pos, self._time_axis_length = self._resolve_time_axis(base_indexer, shape)
+        if self._time_axis_pos is None:
+            logger.debug("Time axis collapsed by slice; full series not available for tmax control")
+        else:
+            logger.debug(
+                "Time axis index=%s, length=%s after applying slice", self._time_axis_pos, self._time_axis_length
+            )
+
+    def _normalize_slice(self, shape: Tuple[int, ...]) -> tuple:
+        """Expand slice_info/ellipsis into a tuple aligned with array dimensions."""
+        ndim = len(shape)
+        if self.slice_info is None:
+            return tuple(slice(None) for _ in range(ndim))
+
+        if isinstance(self.slice_info, tuple):
+            entries = list(self.slice_info)
+        else:
+            entries = [self.slice_info]
+
+        result: list[Any] = []
+        dims_consumed = 0
+        i = 0
+        while i < len(entries):
+            entry = entries[i]
+            if entry is Ellipsis:
+                remaining = entries[i + 1 :]
+                remaining_dims = sum(1 for item in remaining if item is not None and item is not Ellipsis)
+                fill = max(ndim - dims_consumed - remaining_dims, 0)
+                result.extend(slice(None) for _ in range(fill))
+            else:
+                result.append(entry)
+                if entry is not None:
+                    dims_consumed += 1
+            i += 1
+
+        while dims_consumed < ndim:
+            result.append(slice(None))
+            dims_consumed += 1
+
+        return tuple(result)
+
+    def _resolve_time_axis(
+        self,
+        indexer: tuple,
+        shape: Tuple[int, ...],
+    ) -> Tuple[Optional[int], Optional[int]]:
+        """Locate time-axis entry and corresponding length after slicing."""
+        dim_idx = 0
+        for idx, entry in enumerate(indexer):
+            if entry is None:
+                continue
+            if dim_idx == 0:
+                if isinstance(entry, slice):
+                    return idx, shape[0]
+                return None, shape[0]
+            dim_idx += 1
+        return None, None
+
+    def _limit_time_slice(
+        self,
+        base_slice: slice,
+        tmax: int,
+        axis_length: int,
+    ) -> Tuple[slice, bool]:
+        if tmax is None or tmax <= 0 or axis_length <= 0:
+            return base_slice, False
+
+        start, stop, step = base_slice.indices(axis_length)
+        if step <= 0:
+            return base_slice, False
+
+        available = max(0, (stop - start + step - 1) // step)
+        if available <= tmax:
+            return base_slice, False
+
+        new_stop = start + tmax * step
+        return slice(start, min(new_stop, stop), step), True
+
+    def _indexer_for_tmax(self, tmax: Optional[int]) -> Optional[tuple]:
+        if self._base_indexer is None or self._time_axis_pos is None or self._time_axis_length is None:
+            return self._base_indexer
+
+        if tmax is None:
+            return self._base_indexer
+
+        base_slice = self._base_indexer[self._time_axis_pos]
+        if not isinstance(base_slice, slice):
+            return self._base_indexer
+
+        limited_slice, changed = self._limit_time_slice(base_slice, int(tmax), self._time_axis_length)
+        if not changed:
+            return self._base_indexer
+
+        indexer = list(self._base_indexer)
+        indexer[self._time_axis_pos] = limited_slice
+        return tuple(indexer)
+
+    def _load_reference_data(self, tmax: Optional[int]) -> np.ndarray:
+        if self._M_ref is None:
+            raise ValueError("No magnetization reference available")
+
+        indexer = self._indexer_for_tmax(tmax)
+        try:
+            data = self._M_ref if indexer is None else self._M_ref[indexer]
+        except TypeError:
+            data = np.asarray(self._M_ref)
+            if indexer is not None:
+                data = data[indexer]
+
+        data_array = np.array(data)
+        normalized = normalize_magnetization_components(data_array)
+        self._loaded_time = normalized.shape[0] if normalized.ndim > 0 else 0
+        logger.debug(
+            "Loaded %s time steps for dispersion analysis (requested tmax=%s)",
+            self._loaded_time,
+            tmax,
+        )
+        return normalized
+
+    def _ensure_data_loaded(self, tmax: int = 100) -> None:
+        """Ensure magnetization data is loaded up to requested tmax."""
+        if self.M_data is not None and tmax <= self._loaded_time:
+            return
+
+        if self._M_ref is None:
+            raise ValueError("No magnetization reference available for deferred loading")
+
+        logger.info("Reloading magnetization data up to %s time steps", tmax)
+        self.M_data = self._load_reference_data(tmax)
+
     def _extract_grid_parameters(self) -> None:
         """Extract time step and spatial grid parameters from zarr attributes."""
         if self.zarr_file is None:
@@ -252,35 +392,6 @@ class SpinWaveAnalyzer:
         else:
             return (0, 0, 0)
     
-    def _ensure_data_loaded(self, tmax: int = 100) -> None:
-        """Load magnetization data if not already loaded.
-        
-        Parameters
-        ----------
-        tmax : int
-            Maximum number of time steps to load (default 100 for faster loading)
-        """
-        if self.M_data is None and self._M_ref is not None:
-            logger.info(f"Loading magnetization data from {self._M_path} (first {tmax} time steps)...")
-            
-            # Check if it's an Array with slicing support
-            try:
-                import zarr
-                if isinstance(self._M_ref, zarr.Array):
-                    actual_tmax = min(tmax, self._M_ref.shape[0])
-                    M_raw = self._M_ref[:actual_tmax]  # zarr Array supports slicing
-                    M_raw = np.array(M_raw)
-                    logger.info(f"Loaded {actual_tmax} time steps from zarr Array")
-                else:
-                    # Fallback: load everything
-                    M_raw = np.array(self._M_ref)
-                    logger.info("Loaded all data (not a zarr Array)")
-            except Exception as e:
-                logger.warning(f"Error during selective loading: {e}, loading all data")
-                M_raw = np.array(self._M_ref)
-                
-            self.M_data = normalize_magnetization_components(M_raw)
-            logger.info(f"Final magnetization data shape: {self.M_data.shape}")
     
     def compute_dispersion_1d(
         self,
@@ -291,7 +402,8 @@ class SpinWaveAnalyzer:
         space_window: Optional[str] = None,
         detrend: Optional[str] = None,
         fold_period: Optional[float] = None,
-        fold_agg: Optional[str] = None
+        fold_agg: Optional[str] = None,
+        filters: Optional[dict[str, bool]] = None,
     ) -> DispersionResult1D:
         """
         Compute 1D spin-wave dispersion S(k,f) along specified axis.
@@ -321,6 +433,9 @@ class SpinWaveAnalyzer:
         fold_agg : Optional[str]
             Folding aggregation method ('sum', 'max')
             If None, uses config.fold_agg
+        filters : Optional[dict]
+            Optional preprocessing filters (remove_static, remove_average,
+            hann_time, hann_space)
             
         Returns
         -------
@@ -356,65 +471,122 @@ class SpinWaveAnalyzer:
             raise ValueError("axis must be 'x' or 'y'")
             
         logger.info(f"Computing 1D dispersion along {axis}-axis, component='{component}'")
-        
         # Extract magnetization component
         signal = extract_magnetization_component(self.M_data, component)
-        
-        # Ensure real dtype for FFT
-        if np.iscomplexobj(signal):  # complex
-            logger.warning("Complex data detected, taking real part")
-            signal = np.real(signal)
-        signal = signal.astype(np.float64)  # Ensure float64 for FFT
-        logger.info(f"Signal dtype: {signal.dtype}, shape: {signal.shape}")
-        
+
+        filters_for_pipeline = None
+        if filters:
+            filters_for_pipeline = {key: bool(value) for key, value in filters.items() if bool(value)}
+            if filters_for_pipeline.get("remove_average") and detrend == "mean":
+                logger.debug(
+                    "remove_average filter skipped because detrend='mean' already subtracts the temporal mean",
+                )
+                filters_for_pipeline.pop("remove_average", None)
+            if not filters_for_pipeline:
+                filters_for_pipeline = None
+
+        active_filters = [name for name in (filters_for_pipeline or {}).keys()]
+        if active_filters:
+            preview_frame = signal[:1].copy()
+            logger.info(
+                "Applying raw-data filters before dispersion: %s",
+                ", ".join(active_filters),
+            )
+            signal = apply_filter_pipeline(signal, filters_for_pipeline)
+            delta = float(np.linalg.norm(signal[:1] - preview_frame))
+            logger.debug("Filter impact on first frame (L2 delta): %.3e", delta)
+        elif filters_for_pipeline is not None:
+            logger.debug("Filter configuration provided but no active flags: %s", filters_for_pipeline)
+
+        # Preserve complex information for perpendicular analysis
+        if np.iscomplexobj(signal):
+            signal = signal.astype(np.complex128, copy=False)
+            logger.info("Complex signal detected, preserving full complex values")
+        else:
+            signal = signal.astype(np.float64, copy=False)
+            logger.info("Real-valued signal detected; continuing with float64 precision")
+
+        logger.debug(f"Signal dtype after casting: {signal.dtype}, shape: {signal.shape}")
+
         # Detrend over time (axis 0)
         signal = detrend_time_series(signal, axis=0, method=detrend)
-        
+
         # Apply time window
         signal = apply_window_1d(signal, axis=0, window=time_window)
-        
-        # Apply spatial window 
+
+        # Apply spatial window
         signal = apply_window_1d(signal, axis=space_axis, window=space_window)
-        
+
         # Average over orthogonal axes if requested
+        S_local = None
+        orth_axis_values = None
+        orth_axis_label = None
+
         if avg_over_orthogonal:
             if axis == "x":
-                # Average over Z(1), Y(2) -> shape (T, X) 
-                signal = np.mean(signal, axis=(1, 2))
+                # Average over Z(1), Y(2) -> shape (T, X)
+                spatial_signal = np.mean(signal, axis=(1, 2))
             else:  # axis == "y"
                 # Average over Z(1), X(3) -> shape (T, Y)
-                signal = np.mean(signal, axis=(1, 3))
+                spatial_signal = np.mean(signal, axis=(1, 3))
         else:
-            # Just average over Z, keep other spatial dimension
-            signal = np.mean(signal, axis=1)  # -> (T, Y, X)
+            # Average only over Z, keep full orthogonal slice for local analysis
+            spatial_signal = np.mean(signal, axis=1)  # -> (T, Y, X)
             if axis == "x":
-                signal = np.mean(signal, axis=1)  # -> (T, X)
+                orth_axis_label = "y"
+                if "dy" in self.grid_spacings:
+                    orth_axis_values = np.arange(spatial_signal.shape[1]) * self.grid_spacings["dy"]
+                else:
+                    orth_axis_values = np.arange(spatial_signal.shape[1])
             else:
-                signal = np.mean(signal, axis=2)  # -> (T, Y)
-                
+                orth_axis_label = "x"
+                if "dx" in self.grid_spacings:
+                    orth_axis_values = np.arange(spatial_signal.shape[2]) * self.grid_spacings["dx"]
+                else:
+                    orth_axis_values = np.arange(spatial_signal.shape[2])
+
         # Spatial FFT -> k-domain signal(t, k)
-        sig_k = np.fft.fftshift(np.fft.fft(signal, axis=1), axes=1)
+        if spatial_signal.ndim == 2:
+            spatial_axis = 1
+        else:
+            spatial_axis = 2 if axis == "x" else 1
+
+        sig_k = np.fft.fftshift(np.fft.fft(spatial_signal, axis=spatial_axis), axes=spatial_axis)
         k_axis = k_axis_from_grid(N_space, dx, shift=True)
-        
-        # Temporal rFFT at each k
+
+        # Temporal full FFT at each k
         T_len = sig_k.shape[0]
-        Nf = T_len // 2 + 1
-        f_axis = np.fft.rfftfreq(T_len, self.dt)
-        
-        S = np.zeros((N_space, Nf), dtype=np.float64)
-        for i in range(N_space):
-            sk_t = sig_k[:, i]  # This is complex from spatial FFT
-            # Ensure we handle complex data properly for temporal FFT
-            if np.iscomplexobj(sk_t):
-                # For complex signal, use full FFT then take positive frequencies
-                Sk_full = np.fft.fft(sk_t, axis=0)
-                Sk = Sk_full[:Nf]  # Take first half (positive frequencies)
+        f_axis = np.fft.fftshift(np.fft.fftfreq(T_len, self.dt))
+        Sk_full = np.fft.fft(sig_k, axis=0)
+        Sk_shift = np.fft.fftshift(Sk_full, axes=0)
+        power = np.abs(Sk_shift) ** 2
+        power = np.moveaxis(power, 0, -1)  # -> (..., Nf)
+
+        if avg_over_orthogonal:
+            S = power.astype(np.float64, copy=False)
+        else:
+            if axis == "x":
+                # power shape: (Ny, Nx, Nf)
+                S_local = power.astype(np.float64, copy=False)
+                S = np.mean(S_local, axis=0)
             else:
-                Sk = np.fft.rfft(sk_t, axis=0)
-            S[i, :] = np.abs(Sk) ** 2
-            
-        logger.info(f"Computed dispersion: S.shape={S.shape}, k_range=[{k_axis.min():.2e}, {k_axis.max():.2e}], f_range=[{f_axis.min():.1f}, {f_axis.max():.1f}] Hz")
-        
+                # power shape: (Ny, Nx, Nf) -> move orth axis to front for storage
+                S_local = np.moveaxis(power, 1, 0).astype(np.float64, copy=False)
+                S = np.mean(power, axis=1)
+
+        logger.info(
+            "Computed dispersion: S.shape=%s, k_range=[%.2e, %.2e], f_range=[%.1f, %.1f] Hz",
+            S.shape,
+            k_axis.min(),
+            k_axis.max(),
+            f_axis.min(),
+            f_axis.max(),
+        )
+
+        notes = [f"1D dispersion along {axis}-axis"]
+        if not avg_over_orthogonal:
+            notes.append("Orthogonal averaging disabled; local spectra stored in S_local")
+
         # Create result object
         result = DispersionResult1D(
             S=S,
@@ -425,7 +597,10 @@ class SpinWaveAnalyzer:
             config=self.config,
             dt=self.dt,
             dx=dx,
-            notes=[f"1D dispersion along {axis}-axis"]
+            notes=notes,
+            S_local=S_local,
+            orth_axis=orth_axis_values,
+            orth_axis_label=orth_axis_label,
         )
         
         # Apply Brillouin zone folding if requested
@@ -493,26 +668,20 @@ class SpinWaveAnalyzer:
         sig_k = np.fft.fftshift(np.fft.fft2(signal, axes=(1, 2)), axes=(1, 2))
         ky_axis = k_axis_from_grid(sig_k.shape[1], dy, shift=True)
         kx_axis = k_axis_from_grid(sig_k.shape[2], dx, shift=True)
-        
-        # Temporal rFFT for each (kx, ky)
+
         T_len = sig_k.shape[0]
-        Nf = T_len // 2 + 1
-        f_axis = np.fft.rfftfreq(T_len, self.dt)
-        
-        S = np.zeros((sig_k.shape[2], sig_k.shape[1], Nf), dtype=np.float64)  # (Nkx, Nky, Nf)
-        
-        for iy in range(sig_k.shape[1]):
-            for ix in range(sig_k.shape[2]):
-                sk_t = sig_k[:, iy, ix]  # This is complex from spatial FFT
-                # Handle complex data properly for temporal FFT
-                if np.iscomplexobj(sk_t):
-                    # For complex signal, use full FFT then take positive frequencies
-                    Sk_full = np.fft.fft(sk_t, axis=0)
-                    Sk = Sk_full[:Nf]  # Take first half (positive frequencies)
-                else:
-                    Sk = np.fft.rfft(sk_t, axis=0)
-                S[ix, iy, :] = np.abs(Sk) ** 2
-                
+        use_complex = np.iscomplexobj(sig_k)
+        if use_complex:
+            Sk_full = np.fft.fft(sig_k, axis=0)
+            Sk_pos = Sk_full[: T_len // 2 + 1]
+            f_axis = np.abs(np.fft.fftfreq(T_len, self.dt)[: Sk_pos.shape[0]])
+        else:
+            Sk_pos = np.fft.rfft(sig_k, axis=0)
+            f_axis = np.fft.rfftfreq(T_len, self.dt)
+
+        power = np.abs(Sk_pos) ** 2
+        S = power.transpose(2, 1, 0).astype(np.float64, copy=False)
+
         logger.info(f"Computed 2D dispersion: S.shape={S.shape}")
         
         return DispersionResult2D(

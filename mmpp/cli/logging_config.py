@@ -66,7 +66,8 @@ def setup_mmpp_logging(
         elif debug:
             root_mmpp.setLevel(logging.DEBUG)
         else:
-            root_mmpp.setLevel(logging.INFO)
+            # Default to WARNING so non-debug runs stay silent unless requested
+            root_mmpp.setLevel(logging.WARNING)
 
         # Choose console based on theme preference
         selected_console = console if use_dark_theme else Console()
@@ -137,7 +138,7 @@ def setup_mmpp_logging(
         elif debug:
             logger.setLevel(logging.DEBUG)
         else:
-            logger.setLevel(logging.INFO)
+            logger.setLevel(logging.WARNING)
 
         # Ensure propagation is enabled for submodules
         logger.propagate = True

@@ -57,6 +57,11 @@ class DispersionResult1D:
     S_folded: Optional[np.ndarray] = None  # Folded spectrum
     k_folded: Optional[np.ndarray] = None  # Folded k-axis
     fold_period: Optional[float] = None  # Folding period
+
+    # Optional local spectra when orthogonal averaging is disabled
+    S_local: Optional[np.ndarray] = None  # (N_orthogonal, Nk, Nf)
+    orth_axis: Optional[np.ndarray] = None  # Coordinate values along orthogonal axis
+    orth_axis_label: Optional[str] = None  # Name of orthogonal axis ('x' or 'y')
     
     # Metadata
     dt: float = 0.0
@@ -110,6 +115,30 @@ class DispersionResult1D:
         k_eff = float(np.average(k_axis[mask], weights=S[mask, idx] + 1e-12))
         
         return k_eff, float(f_peak)
+
+    def select_orthogonal_slice(self, index: int) -> "DispersionResult1D":
+        """Create a new result containing a single orthogonal slice."""
+        if self.S_local is None:
+            raise ValueError("No orthogonal slices stored; recompute with avg_over_orthogonal=False")
+        if index < 0 or index >= self.S_local.shape[0]:
+            raise IndexError(f"Orthogonal index {index} out of bounds (0..{self.S_local.shape[0]-1})")
+
+        slice_notes = list(self.notes or []) + [f"Orthogonal slice #{index}"]
+        slice_result = DispersionResult1D(
+            S=self.S_local[index],
+            k_axis=self.k_axis,
+            f_axis=self.f_axis,
+            axis=self.axis,
+            component=self.component,
+            config=self.config,
+            S_folded=self.S_folded,
+            k_folded=self.k_folded,
+            fold_period=self.fold_period,
+            dt=self.dt,
+            dx=self.dx,
+            notes=slice_notes,
+        )
+        return slice_result
 
 
 @dataclass
