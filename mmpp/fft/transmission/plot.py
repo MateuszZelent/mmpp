@@ -152,7 +152,7 @@ class TransmissionPlotter:
         )
 
         ylabel = f"Frequency ({freq_unit})"
-        xlabel = "Window index" if config.x_unit == "index" else "x"
+        xlabel = "$x-axis$" if config.x_unit == "index" else "x"
         ax.set_ylabel(ylabel)
         ax.set_xlabel(xlabel)
 

@@ -151,9 +151,5 @@ data/
 results/
 temp/
 
-# Development and debugging files
-interactive_spectrum_fix.ipynb
-mmpp.log
-tests/debug_*.py
-attr(animation.FFMpegWriter, 'bin_path'))
-animation
+# Archive folder - old tests, debug files, and development artifacts
+.archive/

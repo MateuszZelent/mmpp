@@ -74,12 +74,22 @@ class TransmissionResult:
     transverse_power: Optional[np.ndarray] = None
     longitudinal_power: Optional[np.ndarray] = None
 
-    def plot_transmission(self, **kwargs):
-        """Render a frequency-position transmission map."""
-        from .plot import TransmissionPlotter
+    def plot_transmission(self, plot_config=None, **kwargs):
+        """Render a frequency-position transmission map.
+
+        Accepts a `plot_config` which may be a mapping (dict) or a
+        :class:`TransmissionPlotConfig`. Any additional plotting kwargs
+        (e.g., dpi, ax) are forwarded to the plotter.
+        """
+        # Import here to avoid circular imports at module import time
+        from .plot import TransmissionPlotter, TransmissionPlotConfig
+
+        # Convert dict -> TransmissionPlotConfig when needed (same behaviour as FFT interface)
+        if plot_config is not None and isinstance(plot_config, dict):
+            plot_config = TransmissionPlotConfig(**plot_config)
 
         plotter = TransmissionPlotter(self)
-        return plotter.plot(**kwargs)
+        return plotter.plot(config=plot_config, **kwargs)
 
 
 def _compute_hann_weights(length: int, power: float) -> np.ndarray:

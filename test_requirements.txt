@@ -1,2 +1,0 @@
-# E2E Test Requirements
-requests>=2.25.0

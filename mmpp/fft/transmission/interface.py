@@ -68,6 +68,11 @@ class FFTTransmissionInterface:
 
         result = self.__call__(config, **kwargs)
         plotter = TransmissionPlotter(result)
+        
+        # Convert dict to TransmissionPlotConfig if needed
+        if plot_config is not None and isinstance(plot_config, dict):
+            plot_config = TransmissionPlotConfig(**plot_config)
+        
         return plotter.plot(config=plot_config)
 
     # ------------------------------------------------------------------
