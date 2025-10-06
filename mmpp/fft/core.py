@@ -11,6 +11,7 @@ import numpy as np
 # Import from our own modules
 from .compute_fft import FFTCompute, FFTComputeResult
 from .plot import FFTPlotter
+from .transmission.interface import FFTTransmissionInterface
 
 # Import mode visualization capabilities
 try:
@@ -62,6 +63,9 @@ class FFT:
         # Initialize plotter (lazy loaded)
         self._plotter = None
 
+        # Transmission interface (lazy)
+        self._transmission_interface = None
+
         # Cache for FFT results
         self._cache = {}
 
@@ -71,6 +75,18 @@ class FFT:
         if self._plotter is None:
             self._plotter = FFTPlotter([self.job_result], self.mmpp)
         return self._plotter
+
+    @property
+    def transmission(self) -> FFTTransmissionInterface:
+        """Transmission analysis helper."""
+
+        if self._transmission_interface is None:
+            self._transmission_interface = FFTTransmissionInterface(
+                self,
+                self._compute,
+                self.job_result,
+            )
+        return self._transmission_interface
 
     def _get_cache_key(
         self, dataset_name: str, z_layer: int, method: int, **kwargs
@@ -125,6 +141,9 @@ class FFT:
         # Auto-select largest m dataset if none specified
         if dataset_name is None:
             dataset_name = self.job_result.get_largest_m_dataset()
+
+        if not isinstance(dataset_name, str):
+            dataset_name = str(dataset_name)
 
         cache_key = self._get_cache_key(dataset_name, z_layer, method, **kwargs)
 

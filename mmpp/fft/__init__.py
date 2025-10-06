@@ -7,6 +7,13 @@ Main entry point through the FFT class.
 
 from .compute_fft import FFTCompute, FFTComputeResult
 from .core import FFT
+from .transmission import (
+    TransmissionConfig,
+    TransmissionResult,
+    TransmissionPlotConfig,
+    TransmissionPlotter,
+)
+from .transmission.interface import FFTTransmissionInterface
 
 # Import mode visualization with error handling
 try:
@@ -29,6 +36,7 @@ try:
         "FFT",
         "FFTCompute",
         "FFTComputeResult",
+        "FFTTransmissionInterface",
         "FMRModeAnalyzer",
         "FFTModeInterface",
         "ModeVisualizationConfig",
@@ -40,6 +48,19 @@ try:
         "DispersionResult2D", 
         "DispersionBranch",
         "DispersionConfig",
+        "TransmissionConfig",
+        "TransmissionResult",
+        "TransmissionPlotConfig",
+        "TransmissionPlotter",
     ]
 except ImportError:
-    __all__ = ["FFT", "FFTCompute", "FFTComputeResult"]
+    __all__ = [
+        "FFT",
+        "FFTCompute",
+        "FFTComputeResult",
+        "FFTTransmissionInterface",
+        "TransmissionConfig",
+        "TransmissionResult",
+        "TransmissionPlotConfig",
+        "TransmissionPlotter",
+    ]
