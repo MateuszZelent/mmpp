@@ -665,6 +665,48 @@ except ImportError:
     FFT_AVAILABLE = False
 
 
+class DatasetSpecificTransmissionInterface:
+    """Wrapper for transmission interface that injects dataset_name."""
+    
+    def __init__(self, transmission_interface, dataset_name):
+        self._transmission = transmission_interface
+        self._dataset_name = dataset_name
+    
+    def __call__(self, config=None, /, **kwargs):
+        """Inject dataset_name into config if not provided."""
+        if config is None:
+            # Add dataset_name to kwargs if not already present
+            if 'dataset_name' not in kwargs:
+                kwargs['dataset_name'] = self._dataset_name
+            return self._transmission(config, **kwargs)
+        else:
+            # Config object provided - check if dataset_name needs to be set
+            if config.dataset_name is None:
+                # Create a new config with dataset_name set
+                from mmpp.fft.transmission import TransmissionConfig
+                from dataclasses import asdict, replace
+                config = replace(config, dataset_name=self._dataset_name)
+            return self._transmission(config, **kwargs)
+    
+    def compute(self, config=None, /, **kwargs):
+        """Alias for __call__."""
+        return self.__call__(config, **kwargs)
+    
+    def plot_transmission(self, config=None, plot_config=None, **kwargs):
+        """Inject dataset_name and call plot_transmission."""
+        if config is None and 'dataset_name' not in kwargs:
+            kwargs['dataset_name'] = self._dataset_name
+        return self._transmission.plot_transmission(config, plot_config, **kwargs)
+    
+    def __repr__(self):
+        """Delegate to original transmission interface."""
+        return repr(self._transmission)
+    
+    def __getattr__(self, name):
+        """Delegate all other attributes to original transmission."""
+        return getattr(self._transmission, name)
+
+
 class DatasetSpecificFFT:
     """FFT wrapper with pre-set dataset"""
     
@@ -680,6 +722,10 @@ class DatasetSpecificFFT:
 
         if name == "dispersion" and attr is not None:
             return attr.clone_for_dataset(self.dataset_name, slice_info=self.slice_info)
+
+        if name == "transmission" and attr is not None:
+            # Wrap transmission interface to inject dataset_name
+            return DatasetSpecificTransmissionInterface(attr, self.dataset_name)
 
         if callable(attr) and hasattr(attr, "__code__"):
             import inspect

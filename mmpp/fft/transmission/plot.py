@@ -122,7 +122,7 @@ class TransmissionPlotter:
         mesh_data = np.ma.masked_invalid(data)
 
         if ax is None:
-            fig, ax = plt.subplots(figsize=kwargs.pop("figsize", (10, 6)))
+            fig, ax = plt.subplots(figsize=kwargs.pop("figsize", (10, 6)), dpi=kwargs.pop("dpi", 100))
         else:
             fig = ax.figure
 

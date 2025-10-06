@@ -81,23 +81,69 @@ class FFTTransmissionInterface:
 
     # Internal helpers -------------------------------------------------
     def _basic_display(self) -> str:
+        """Fallback basic display matching FFT core style."""
         default_cfg = TransmissionConfig()
+        dataset_hint = self._job_result.get_largest_m_dataset()
+        
         lines = [
-            "🔊 Transmission Analysis Interface",
+            "=" * 70,
+            "🔊 MMPP Transmission Analysis Interface",
+            "=" * 70,
+            f"📁 Job Dataset: {dataset_hint}",
             "",
-            "Key entry points:",
-            "  • transmission() / compute()  – calculate TransmissionResult",
-            "  • plot_transmission()         – calculate + render heatmap",
+            "🔧 CORE METHODS:",
+            "─" * 50,
+            "  • transmission()       - Compute transmission analysis",
+            "  • compute()           - Alias for transmission()",
+            "  • plot_transmission() - Compute and plot results",
             "",
-            "Example:",
-            "  result = job[0].fft.transmission(spatial_window=5, reference_window=(0, 2))",
-            "  fig, ax, _ = result.plot_transmission()",
+            "📋 USAGE EXAMPLES:",
+            "─" * 50,
+            "  # Basic usage",
+            "  result = job[0].fft.transmission(spatial_window=5)",
+            "  ",
+            "  # With configuration",
+            "  result = job[0].fft.transmission(",
+            "      spatial_window=10,",
+            "      reference_window=(0, 3),",
+            "      normalize='reference'",
+            "  )",
+            "  ",
+            "  # Plot results",
+            "  fig, ax, m = result.plot_transmission(",
+            "      plot_config=dict(freq_unit='GHz', log_scale=True)",
+            "  )",
             "",
-            "Selected defaults:",
+            "⚙️ CONFIGURATION PARAMETERS (with available options):",
+            "─" * 50,
         ]
-        for field in fields(default_cfg):
-            value = getattr(default_cfg, field.name)
-            lines.append(f"  • {field.name}: {value}")
+        
+        # Detailed parameter documentation with options
+        param_docs = [
+            ("spatial_window", "5", "int > 0 - Size of spatial analysis window"),
+            ("spatial_step", "1", "int ≥ 1 - Step for sliding window"),
+            ("reference_window", "None", "(int, int) or None - Reference region [start, end]"),
+            ("normalize", "'reference'", "'reference' | 'max' | 'none'"),
+            ("method", "'power_ratio'", "'power_ratio' | 'circular' | 'cpsd'"),
+            ("window_function", "'hann'", "'hann' | 'hamming' | 'blackman' | 'bartlett' | 'none'"),
+            ("filter_type", "'remove_mean'", "'remove_mean' | 'remove_linear' | 'highpass' | 'none'"),
+            ("reference_statistic", "'mean'", "'mean' | 'median' | 'max'"),
+            ("average_mode", "'mean'", "'mean' | 'median' | 'edge_taper'"),
+            ("component_weights", "(1.0, 1.0, 0.1)", "(mx, my, mz) - Tuple[float, float, float]"),
+            ("enable_circular_components", "False", "bool - Enable m+ and m- components"),
+            ("store_component_maps", "False", "bool - Store individual component maps"),
+            ("dataset_name", "None", "str or None - Dataset name (auto-detect if None)"),
+            ("z_layer", "-1", "int - Z layer index (-1 = last)"),
+            ("tmax", "None", "int or None - Max time steps"),
+        ]
+        
+        for param, default, description in param_docs:
+            lines.append(f"  • {param}")
+            lines.append(f"    Default: {default}")
+            lines.append(f"    Options: {description}")
+            lines.append("")
+        
+        lines.append("=" * 70)
         return "\n".join(lines)
 
     def _rich_display(self) -> str:  # pragma: no cover - formatting logic
@@ -116,12 +162,17 @@ class FFTTransmissionInterface:
 
         # Summary Panel ------------------------------------------------
         summary_table = Table.grid(expand=True)
-        summary_table.add_row("🔊", "Transmission Analysis Interface")
-        summary_table.add_row("📁", f"Job dataset hint: [bold]{dataset_hint}[/bold]")
+        summary_table.add_row("🔊", "[bold cyan]Transmission Analysis Interface[/bold cyan]")
+        summary_table.add_row("📁", f"Job Dataset: [bold]{dataset_hint}[/bold]")
+        summary_table.add_row("", "")
+        summary_table.add_row("🔧", "[bold yellow]Core Methods:[/bold yellow]")
+        summary_table.add_row("", "  • [code]transmission()[/code] - Compute transmission")
+        summary_table.add_row("", "  • [code]compute()[/code] - Alias for transmission()")
+        summary_table.add_row("", "  • [code]plot_transmission()[/code] - Compute + plot")
 
         summary_panel = Panel(
             summary_table,
-            title="MMPP",
+            title="[bold]MMPP Transmission Interface[/bold]",
             title_align="left",
             border_style="cyan",
         )
@@ -147,17 +198,37 @@ fig, ax, m = result.plot_transmission(
 
         # Config Panel -------------------------------------------------
         config_table = Table(
-            title="TransmissionConfig Defaults",
+            title="TransmissionConfig Parameters",
             show_header=True,
             header_style="bold blue",
         )
-        config_table.add_column("Parameter", justify="left")
-        config_table.add_column("Default", justify="left")
-        for field in fields(default_cfg):
-            value = getattr(default_cfg, field.name)
-            config_table.add_row(field.name, repr(value))
+        config_table.add_column("Parameter", justify="left", style="cyan")
+        config_table.add_column("Default", justify="left", style="green")
+        config_table.add_column("Available Options", justify="left", style="yellow")
+        
+        # Detailed parameter documentation
+        param_info = [
+            ("spatial_window", "5", "int > 0"),
+            ("spatial_step", "1", "int ≥ 1"),
+            ("reference_window", "None", "(int, int) or None"),
+            ("normalize", "'reference'", "'reference' | 'max' | 'none'"),
+            ("method", "'power_ratio'", "'power_ratio' | 'circular' | 'cpsd'"),
+            ("window_function", "'hann'", "'hann' | 'hamming' | 'blackman' | 'bartlett' | 'none'"),
+            ("filter_type", "'remove_mean'", "'remove_mean' | 'remove_linear' | 'highpass' | 'none'"),
+            ("reference_statistic", "'mean'", "'mean' | 'median' | 'max'"),
+            ("average_mode", "'mean'", "'mean' | 'median' | 'edge_taper'"),
+            ("component_weights", "(1.0, 1.0, 0.1)", "(mx, my, mz) weights"),
+            ("enable_circular_components", "False", "bool - m±"),
+            ("store_component_maps", "False", "bool"),
+            ("dataset_name", "None", "str or None"),
+            ("z_layer", "-1", "int (negative = from end)"),
+            ("tmax", "None", "int or None"),
+        ]
+        
+        for param, default, options in param_info:
+            config_table.add_row(param, default, options)
 
-        config_panel = Panel(config_table, border_style="green")
+        config_panel = Panel(config_table, border_style="green", title="[bold]Configuration Options[/bold]")
 
         console.print(summary_panel)
         console.print(usage_panel)
