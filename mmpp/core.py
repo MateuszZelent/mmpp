@@ -911,12 +911,18 @@ class DatasetAwareWrapper:
         self.zarr_array = zarr_array
         self.slice_info = slice_info  # Store slicing information
         self._fft = None
-        
+
+    def _resolve_source(self):
+        """Return underlying data respecting the stored slice."""
+        if self.slice_info is not None:
+            return self.zarr_array[self.slice_info]
+        return self.zarr_array
+
     def __getattr__(self, name):
         """Delegate to zarr_array for most attributes"""
         if self.slice_info is not None:
             # If sliced, get attribute from sliced data
-            sliced_data = self.zarr_array[self.slice_info]
+            sliced_data = self._resolve_source()
             return getattr(sliced_data, name)
         return getattr(self.zarr_array, name)
         
@@ -953,9 +959,49 @@ class DatasetAwareWrapper:
     def shape(self):
         """Shape accounting for slicing"""
         if self.slice_info is not None:
-            sliced_data = self.zarr_array[self.slice_info]
+            sliced_data = self._resolve_source()
             return sliced_data.shape
         return self.zarr_array.shape
+
+    @property
+    def data(self):
+        """Return data as numpy array (loads into memory)."""
+        return self.numpy(copy=False)
+
+    def numpy(self, *, copy: bool = True, dtype=None, squeeze: bool = False):
+        """Materialize the wrapped data as numpy array."""
+        data = self._resolve_source()
+        if isinstance(data, zarr.Array):
+            data = data[:]
+        array = np.array(data, copy=copy)
+        if dtype is not None:
+            array = array.astype(dtype, copy=copy)
+        if squeeze:
+            array = np.squeeze(array)
+        return array
+
+    def to_numpy(self, **kwargs):
+        """Alias for numpy() to match common API naming."""
+        return self.numpy(**kwargs)
+
+    def as_zarr(self):
+        """Return the underlying zarr.Array when no slicing is active."""
+        if self.slice_info is not None:
+            raise TypeError("Sliced view has no standalone zarr representation; use numpy() instead")
+        return self.zarr_array
+
+    def __array__(self, dtype=None):
+        """Support implicit numpy conversions (e.g. np.asarray)."""
+        array = self.numpy(copy=False)
+        if dtype is not None:
+            array = array.astype(dtype, copy=False)
+        return array
+
+    def __iter__(self):
+        return iter(self.numpy(copy=False))
+
+    def __len__(self):
+        return len(self.numpy(copy=False))
         
     def __repr__(self):
         slice_str = f"[{self.slice_info}]" if self.slice_info else ""
