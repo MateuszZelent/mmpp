@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, fields
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Optional, Union
 
 from ...cli.logging_config import get_mmpp_logger
 
+from .cache import TransmissionCache
 from .compute import TransmissionCompute, TransmissionConfig, TransmissionResult
 from .plot import TransmissionPlotConfig, TransmissionPlotter
 
@@ -30,6 +32,7 @@ class FFTTransmissionInterface:
         self._compute = TransmissionCompute(fft_compute, job_result)
         self.dataset_name = dataset_name
         self.slice_info = slice_info
+        self._cache = TransmissionCache(job_result, dataset_name)
 
     def clone_for_dataset(
         self,
@@ -49,6 +52,10 @@ class FFTTransmissionInterface:
         self,
         config: Optional[TransmissionConfig] = None,
         /,
+        save: bool = False,
+        cache_path: Optional[Union[str, Path]] = None,
+        force: bool = False,
+        use_cache: bool = True,
         **kwargs,
     ) -> TransmissionResult:
         """Compute transmission map for provided configuration.
@@ -58,8 +65,33 @@ class FFTTransmissionInterface:
         config:
             Optional :class:`TransmissionConfig`. If omitted, keyword arguments are
             used to construct one.
+        save : bool, optional
+            If True, save result to cache (default: False)
+        cache_path : str or Path, optional
+            Custom cache directory. If None, uses source zarr directory.
+            Example: "/tmp/fft_cache"
+        force : bool, optional
+            If True, force recomputation even if cached (default: False)
+        use_cache : bool, optional
+            If True, use cache for loading/saving (default: True)
         **kwargs:
             Parameters used when instantiating a new configuration object.
+
+        Returns
+        -------
+        TransmissionResult
+            Computed or cached transmission result.
+
+        Examples
+        --------
+        >>> # Compute and save to default cache location (zarr directory)
+        >>> result = job[0].fft.transmission(save=True)
+        
+        >>> # Use custom cache directory
+        >>> result = job[0].fft.transmission(save=True, cache_path="/tmp/fft_cache")
+        
+        >>> # Force recomputation and update cache
+        >>> result = job[0].fft.transmission(save=True, force=True)
         """
 
         if config is not None and kwargs:
@@ -76,35 +108,100 @@ class FFTTransmissionInterface:
                 from dataclasses import replace
                 config = replace(config, dataset_name=self.dataset_name)
 
+        # Convert cache_path to Path if string
+        cache_dir = Path(cache_path) if cache_path is not None else None
+
+        # Try loading from cache first (unless force is True)
+        result = None
+        if use_cache and not force:
+            result = self._cache.load_result(config, self.slice_info, cache_path=cache_dir)
+            if result is not None:
+                log.info("Loaded transmission result from cache")
+                return result
+
+        # Compute from scratch
         log.debug("Computing transmission with configuration: %s", asdict(config))
-        return self._compute.compute(config, slice_info=self.slice_info)
+        result = self._compute.compute(config, slice_info=self.slice_info)
+
+        # Save to cache if requested
+        if save and use_cache:
+            self._cache.save_result(result, self.slice_info, cache_path=cache_dir, overwrite=force)
+
+        return result
 
     def compute(
         self,
         config: Optional[TransmissionConfig] = None,
         /,
+        save: bool = False,
+        cache_path: Optional[Union[str, Path]] = None,
+        force: bool = False,
+        use_cache: bool = True,
         **kwargs,
     ) -> TransmissionResult:
-        """Alias for :meth:`__call__` to mirror other interfaces."""
+        """Alias for :meth:`__call__` to mirror other interfaces.
+        
+        Parameters
+        ----------
+        config:
+            Optional :class:`TransmissionConfig`. If omitted, keyword arguments are
+            used to construct one.
+        save : bool, optional
+            If True, save result to cache (default: False)
+        cache_path : str or Path, optional
+            Custom cache directory. If None, uses source zarr directory.
+        force : bool, optional
+            If True, force recomputation even if cached (default: False)
+        use_cache : bool, optional
+            If True, use cache for loading/saving (default: True)
+        **kwargs:
+            Parameters used when instantiating a new configuration object.
 
-        return self.__call__(config, **kwargs)
+        Returns
+        -------
+        TransmissionResult
+            Computed or cached transmission result.
+        """
+
+        return self.__call__(config, save=save, cache_path=cache_path, force=force, use_cache=use_cache, **kwargs)
 
     def plot_transmission(
         self,
         config: Optional[TransmissionConfig] = None,
         plot_config: Optional[TransmissionPlotConfig] = None,
+        save: bool = False,
+        cache_path: Optional[Union[str, Path]] = None,
+        force: bool = False,
+        use_cache: bool = True,
         **kwargs,
     ):
-        """Compute and immediately plot the transmission map."""
+        """Compute and immediately plot the transmission map.
+        
+        Parameters
+        ----------
+        config : TransmissionConfig, optional
+            Transmission computation config
+        plot_config : TransmissionPlotConfig or dict, optional
+            Plotting configuration
+        save : bool, optional
+            If True, save result to cache (default: False)
+        cache_path : str or Path, optional
+            Custom cache directory. If None, uses source zarr directory.
+        force : bool, optional
+            If True, force recomputation even if cached (default: False)
+        use_cache : bool, optional
+            If True, use cache for loading/saving (default: True)
+        **kwargs
+            Forwarded to computation config
+            
+        Returns
+        -------
+        fig, ax
+            Matplotlib figure and axes
+        """
 
-        result = self.__call__(config, **kwargs)
-        plotter = TransmissionPlotter(result)
-        
-        # Convert dict to TransmissionPlotConfig if needed
-        if plot_config is not None and isinstance(plot_config, dict):
-            plot_config = TransmissionPlotConfig(**plot_config)
-        
-        return plotter.plot(config=plot_config)
+        result = self.__call__(config, save=save, cache_path=cache_path, force=force, use_cache=use_cache, **kwargs)
+        return result.plot_transmission(plot_config=plot_config)
 
     # ------------------------------------------------------------------
     # Rich / basic representation helpers

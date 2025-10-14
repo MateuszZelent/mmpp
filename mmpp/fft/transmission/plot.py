@@ -64,6 +64,7 @@ class TransmissionPlotConfig:
     vmin: Optional[float] = None
     vmax: Optional[float] = None
     title: Optional[str] = None
+    trim_0f: Optional[int] = None  # Number of lowest frequency points to remove
 
 
 class TransmissionPlotter:
@@ -114,6 +115,14 @@ class TransmissionPlotter:
             raise ValueError(f"Unsupported frequency unit: {freq_unit}")
         freq_scale = FREQ_SCALE[freq_unit]
         freqs = self.result.frequencies * freq_scale
+
+        # Apply trim_0f if specified (remove lowest frequency points)
+        trim_idx = 0
+        if config.trim_0f is not None and config.trim_0f > 0:
+            trim_idx = min(config.trim_0f, len(freqs) - 1)
+            freqs = freqs[trim_idx:]
+            data = data[trim_idx:, :]
+            log.debug(f"Trimmed {trim_idx} lowest frequency points (trim_0f={config.trim_0f})")
 
         x_positions = self.result.x_positions
         x_edges = _centers_to_edges(x_positions)

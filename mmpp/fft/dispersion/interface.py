@@ -1313,6 +1313,7 @@ class FFTDispersionInterface:
         comsol_style: dict[str, object] | None = None,
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
+        trim_0f: Optional[int] = None,
         **kwargs,
     ) -> tuple:
         """
@@ -1368,6 +1369,8 @@ class FFTDispersionInterface:
         vmax : float, optional
             Maximum value for color scale normalization. When provided, overrides automatic 
             scaling for the colorbar upper bound.
+        trim_0f : int, optional
+            Remove N lowest frequency points from plot (useful when f≈0 has strong artifacts)
         add_comsol_points : str | Path | None, optional
             Path to COMSOL dispersion export file. When provided, the selected column pair is overlayed
             as scatter points on top of the heatmap.
@@ -1476,6 +1479,15 @@ class FFTDispersionInterface:
             if np.any(positive_mask) and positive_mask.sum() < f_axis.size:
                 spectrum = spectrum[:, positive_mask]
                 f_axis = f_axis[positive_mask]
+
+        # Trim lowest frequency points if requested
+        if trim_0f is not None and trim_0f > 0:
+            if f_axis.ndim == 1 and trim_0f < f_axis.shape[0]:
+                logger.info(f"Trimming {trim_0f} lowest frequency points from dispersion plot")
+                spectrum = spectrum[:, trim_0f:]
+                f_axis = f_axis[trim_0f:]
+            else:
+                logger.warning(f"trim_0f={trim_0f} exceeds available frequency points ({f_axis.shape[0]}), ignoring")
 
         # Convert units if requested
         if kscale == "meter":
@@ -1785,6 +1797,7 @@ class FFTDispersionInterface:
         comsol_style: dict[str, object] | None = None,
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
+        trim_0f: Optional[int] = None,
     ) -> tuple:
         """
         Plot a pre-computed dispersion result without recomputation.
@@ -1828,6 +1841,8 @@ class FFTDispersionInterface:
             Compression strategy: "gentle", "adaptive", "aggressive", "preserve_peaks"
         vmin, vmax : float, optional
             Manual color scale limits
+        trim_0f : int, optional
+            Remove N lowest frequency points from plot (useful when f≈0 has strong artifacts)
         add_comsol_points : str | Path | None, optional
             Path to COMSOL data file for overlay
         comsol_k_col, comsol_f_col : int
@@ -1907,6 +1922,15 @@ class FFTDispersionInterface:
             if np.any(positive_mask) and positive_mask.sum() < f_axis.size:
                 spectrum = spectrum[:, positive_mask]
                 f_axis = f_axis[positive_mask]
+
+        # Trim lowest frequency points if requested
+        if trim_0f is not None and trim_0f > 0:
+            if f_axis.ndim == 1 and trim_0f < f_axis.shape[0]:
+                logger.info(f"Trimming {trim_0f} lowest frequency points from dispersion plot")
+                spectrum = spectrum[:, trim_0f:]
+                f_axis = f_axis[trim_0f:]
+            else:
+                logger.warning(f"trim_0f={trim_0f} exceeds available frequency points ({f_axis.shape[0]}), ignoring")
 
         # Convert units if requested
         kscale = kscale.lower()

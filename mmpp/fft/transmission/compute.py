@@ -4,8 +4,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Tuple
+import time
 
 import numpy as np
+
+# Try to use scipy.fft (faster) with fallback to numpy.fft
+try:
+    from scipy import fft as scipy_fft
+    _USE_SCIPY_FFT = True
+except ImportError:
+    scipy_fft = None
+    _USE_SCIPY_FFT = False
+
+# Try to use joblib for parallel processing
+try:
+    from joblib import Parallel, delayed
+    _USE_JOBLIB = True
+except ImportError:
+    _USE_JOBLIB = False
 
 from ..compute_fft import FFTCompute, FILTER_TYPES, WINDOW_TYPES
 
@@ -105,6 +121,103 @@ class TransmissionResult:
 
         plotter = TransmissionPlotter(self)
         return plotter.plot(config=plot_config, **kwargs)
+
+    def plot_transmission_crosssection(
+        self,
+        x: float,
+        freq_unit: str = "GHz",
+        trim_0f: Optional[int] = None,
+        flip: bool = False,
+        ax=None,
+        **kwargs
+    ):
+        """Plot 1D transmission cross-section at specific x position.
+
+        Parameters
+        ----------
+        x : float
+            X-position in meters (e.g., 2000e-9 for 2000 nm)
+        freq_unit : str, optional
+            Frequency unit ("Hz", "kHz", "MHz", "GHz"), default "GHz"
+        trim_0f : int, optional
+            Number of lowest frequency points to remove
+        flip : bool, optional
+            If True, frequency is on Y-axis and transmission on X-axis.
+            If False (default), frequency on X-axis and transmission on Y-axis.
+            Use flip=True to match vertical frequency axis with dispersion plots.
+        ax : matplotlib.axes.Axes, optional
+            Axes to plot on. If None, creates new figure.
+        **kwargs
+            Additional matplotlib plot kwargs (color, linewidth, label, etc.)
+
+        Returns
+        -------
+        fig, ax
+            Matplotlib figure and axes objects
+        """
+        # Import here to avoid circular imports
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib is required for plotting")
+
+        from .plot import FREQ_SCALE
+
+        # Find closest x-position index
+        x_idx = np.argmin(np.abs(self.x_positions - x))
+        actual_x = self.x_positions[x_idx]
+
+        # Get transmission slice at this x
+        transmission_slice = self.transmission[:, x_idx]
+
+        # Convert frequencies to requested unit
+        if freq_unit not in FREQ_SCALE:
+            raise ValueError(f"Unsupported frequency unit: {freq_unit}. Use: {list(FREQ_SCALE.keys())}")
+        freq_scale = FREQ_SCALE[freq_unit]
+        freqs = self.frequencies * freq_scale
+
+        # Apply trim_0f if specified
+        trim_idx = 0
+        if trim_0f is not None and trim_0f > 0:
+            trim_idx = min(trim_0f, len(freqs) - 1)
+            freqs = freqs[trim_idx:]
+            transmission_slice = transmission_slice[trim_idx:]
+
+        # Create figure if needed
+        if ax is None:
+            fig, ax = plt.subplots(figsize=kwargs.pop("figsize", (10, 6)), dpi=kwargs.pop("dpi", 100))
+        else:
+            fig = ax.figure
+
+        # Default plot kwargs
+        plot_kwargs = {
+            "linewidth": 2,
+            "color": "C0",
+        }
+        plot_kwargs.update(kwargs)
+
+        # Plot - choose orientation based on flip parameter
+        if flip:
+            # Frequency on Y-axis (vertical), Transmission on X-axis (horizontal)
+            ax.plot(transmission_slice, freqs, **plot_kwargs)
+            ax.set_xlabel("Transmission T(f)", fontsize=12)
+            ax.set_ylabel(f"Frequency ({freq_unit})", fontsize=12)
+        else:
+            # Frequency on X-axis (horizontal), Transmission on Y-axis (vertical) - default
+            ax.plot(freqs, transmission_slice, **plot_kwargs)
+            ax.set_xlabel(f"Frequency ({freq_unit})", fontsize=12)
+            ax.set_ylabel("Transmission T(f)", fontsize=12)
+
+        # Title
+        ax.set_title(
+            f"Transmission Cross-section at x = {actual_x*1e9:.1f} nm"
+            + (f" (trimmed {trim_idx} pts)" if trim_idx > 0 else ""),
+            fontsize=13,
+            fontweight="bold"
+        )
+        ax.grid(True, alpha=0.3)
+
+        return fig, ax
 
 
 def _compute_hann_weights(length: int, power: float) -> np.ndarray:
@@ -261,7 +374,13 @@ class TransmissionCompute:
         n_windows = len(window_starts)
         n_freq = n_time // 2 + 1
 
-        freqs = np.fft.rfftfreq(n_time, d=dt)
+        # Use scipy.fft if available (faster than numpy.fft)
+        if _USE_SCIPY_FFT:
+            freqs = scipy_fft.rfftfreq(n_time, d=dt)
+            log.debug("Using scipy.fft.rfft (optimized)")
+        else:
+            freqs = np.fft.rfftfreq(n_time, d=dt)
+            log.debug("Using numpy.fft.rfft (fallback)")
 
         power_map = np.zeros((n_freq, n_windows), dtype=float)
         transverse_map = (
@@ -305,68 +424,215 @@ class TransmissionCompute:
         if config.keep_complex_fft:
             # Accumulate mean complex amplitude per frequency & component across windows
             complex_accum = np.zeros((n_freq, n_comp), dtype=np.complex128)
-            log.warning(
+            log.debug(
                 "keep_complex_fft=True: storing lightweight complex-spectrum summary (avg over windows)."
             )
 
-        for win_idx, start in enumerate(window_starts):
-            end = min(start + window_size, n_x)
-            window_slice = slice(start, end)
-            block = windowed[:, :, :, window_slice, :]
+        # 🚀 OPTIMIZATION: Compute FFT ONCE for entire dataset instead of in loop
+        log.debug("Computing FFT for full dataset (t=%d, z=%d, y=%d, x=%d, comp=%d)...", 
+                  n_time, n_z, n_y, n_x, n_comp)
+        t_fft_start = time.time()
+        
+        if _USE_SCIPY_FFT:
+            # scipy.fft.rfft is typically 2-3x faster than numpy.fft.rfft
+            full_spectrum = scipy_fft.rfft(windowed, axis=0)
+        else:
+            full_spectrum = np.fft.rfft(windowed, axis=0)
+        
+        t_fft_end = time.time()
+        log.info("FFT completed in %.3fs (shape: %s → %s)", 
+                 t_fft_end - t_fft_start, windowed.shape, full_spectrum.shape)
 
-            spectrum = np.fft.rfft(block, axis=0)
-
-            mx_fft = spectrum[..., 0]
-            my_fft = spectrum[..., 1]
-            power_components = np.abs(mx_fft) ** 2 * component_weights[0]
-            power_components += np.abs(my_fft) ** 2 * component_weights[1]
-
-            if n_comp > 2:
-                mz_fft = spectrum[..., 2]
-                power_components += np.abs(mz_fft) ** 2 * component_weights[2]
-                if longitudinal_map is not None:
-                    longitudinal_map[:, win_idx] = _aggregate_spatial(
+        # Now extract windows from pre-computed FFT (much faster!)
+        # Now extract windows from pre-computed FFT (much faster!)
+        # 🚀 OPTIMIZATION 2: Vectorize or parallelize window processing
+        
+        # Decide on processing strategy
+        use_parallel = _USE_JOBLIB and n_windows > 100  # Only parallelize for many windows
+        use_vectorized = (config.average_mode == "none" and 
+                          not config.enable_circular_components and 
+                          not config.store_component_maps and
+                          not use_parallel)
+        
+        if use_vectorized:
+            # Fast path: no averaging, no extra components - fully vectorize!
+            log.debug("Using vectorized window processing (average_mode='none')")
+            t_process_start = time.time()
+            
+            # Pre-compute power for all windows at once
+            for win_idx, start in enumerate(window_starts):
+                end = min(start + window_size, n_x)
+                window_slice = slice(start, end)
+                spectrum = full_spectrum[:, :, :, window_slice, :]
+                
+                # Extract components
+                mx_fft = spectrum[..., 0]
+                my_fft = spectrum[..., 1]
+                power_components = np.abs(mx_fft) ** 2 * component_weights[0]
+                power_components += np.abs(my_fft) ** 2 * component_weights[1]
+                
+                if n_comp > 2:
+                    mz_fft = spectrum[..., 2]
+                    power_components += np.abs(mz_fft) ** 2 * component_weights[2]
+                
+                # Fast aggregation: average_mode="none" → just take [0,0,:].mean
+                # power_components shape: (freq, z, y, window_x)
+                power_map[:, win_idx] = power_components[:, 0, 0, :].mean(axis=1)
+            
+            t_process_end = time.time()
+            log.info("Vectorized processing: %.3fs for %d windows", 
+                      t_process_end - t_process_start, n_windows)
+                      
+        elif use_parallel:
+            # Parallel path: use joblib to process windows in parallel
+            log.info("Using parallel processing with joblib (%d windows, %d CPUs)", 
+                     n_windows, -1)  # -1 = use all CPUs
+            t_process_start = time.time()
+            
+            def process_window(win_idx: int, start: int):
+                """Process single window - can run in parallel."""
+                end = min(start + window_size, n_x)
+                window_slice = slice(start, end)
+                spectrum = full_spectrum[:, :, :, window_slice, :]
+                
+                mx_fft = spectrum[..., 0]
+                my_fft = spectrum[..., 1]
+                power_components = np.abs(mx_fft) ** 2 * component_weights[0]
+                power_components += np.abs(my_fft) ** 2 * component_weights[1]
+                
+                if n_comp > 2:
+                    mz_fft = spectrum[..., 2]
+                    power_components += np.abs(mz_fft) ** 2 * component_weights[2]
+                
+                aggregated = _aggregate_spatial(
+                    power_components,
+                    config.average_mode,
+                    config.edge_taper_power,
+                )
+                
+                results = {'power': aggregated}
+                
+                if transverse_map is not None:
+                    results['transverse'] = _aggregate_spatial(
+                        np.abs(mx_fft) ** 2 + np.abs(my_fft) ** 2,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
+                
+                if longitudinal_map is not None and n_comp > 2:
+                    results['longitudinal'] = _aggregate_spatial(
                         np.abs(mz_fft) ** 2,
                         config.average_mode,
                         config.edge_taper_power,
                     )
-
-            # Accumulate lightweight complex-spectrum summary per component (mean across z,y,window)
-            if complex_accum is not None:
-                for comp_idx in range(n_comp):
-                    comp_spec = spectrum[..., comp_idx]
-                    # mean over z, y, and the window dimension (note: block may be smaller than window_size at edges)
-                    comp_mean = comp_spec.mean(axis=(1, 2, 3))
-                    complex_accum[:, comp_idx] += comp_mean
-
-            aggregated = _aggregate_spatial(
-                power_components,
-                config.average_mode,
-                config.edge_taper_power,
+                
+                if config.enable_circular_components:
+                    m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
+                    m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
+                    results['power_plus'] = _aggregate_spatial(
+                        np.abs(m_plus) ** 2,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
+                    results['power_minus'] = _aggregate_spatial(
+                        np.abs(m_minus) ** 2,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
+                
+                return win_idx, results
+            
+            # Process windows in parallel
+            results_list = Parallel(n_jobs=-1, backend='threading')(
+                delayed(process_window)(win_idx, start)
+                for win_idx, start in enumerate(window_starts)
             )
+            
+            # Collect results
+            for win_idx, results in results_list:
+                power_map[:, win_idx] = results['power']
+                if transverse_map is not None and 'transverse' in results:
+                    transverse_map[:, win_idx] = results['transverse']
+                if longitudinal_map is not None and 'longitudinal' in results:
+                    longitudinal_map[:, win_idx] = results['longitudinal']
+                if config.enable_circular_components:
+                    if power_plus is not None:
+                        power_plus[:, win_idx] = results.get('power_plus', 0)
+                    if power_minus is not None:
+                        power_minus[:, win_idx] = results.get('power_minus', 0)
+            
+            t_process_end = time.time()
+            log.info("Parallel processing: %.3fs for %d windows", 
+                      t_process_end - t_process_start, n_windows)
+        
+        else:
+            # Standard path: use _aggregate_spatial for each window (serial)
+            log.debug("Using standard serial processing (average_mode='%s')", config.average_mode)
+            t_process_start = time.time()
+            
+            for win_idx, start in enumerate(window_starts):
+                end = min(start + window_size, n_x)
+                window_slice = slice(start, end)
+                
+                # Extract window from pre-computed FFT spectrum
+                spectrum = full_spectrum[:, :, :, window_slice, :]
 
-            power_map[:, win_idx] = aggregated
+                mx_fft = spectrum[..., 0]
+                my_fft = spectrum[..., 1]
+                power_components = np.abs(mx_fft) ** 2 * component_weights[0]
+                power_components += np.abs(my_fft) ** 2 * component_weights[1]
 
-            if transverse_map is not None:
-                transverse_map[:, win_idx] = _aggregate_spatial(
-                    np.abs(mx_fft) ** 2 + np.abs(my_fft) ** 2,
+                if n_comp > 2:
+                    mz_fft = spectrum[..., 2]
+                    power_components += np.abs(mz_fft) ** 2 * component_weights[2]
+                    if longitudinal_map is not None:
+                        longitudinal_map[:, win_idx] = _aggregate_spatial(
+                            np.abs(mz_fft) ** 2,
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+
+                # Accumulate lightweight complex-spectrum summary per component (mean across z,y,window)
+                if complex_accum is not None:
+                    for comp_idx in range(n_comp):
+                        comp_spec = spectrum[..., comp_idx]
+                        # mean over z, y, and the window dimension (note: block may be smaller than window_size at edges)
+                        comp_mean = comp_spec.mean(axis=(1, 2, 3))
+                        complex_accum[:, comp_idx] += comp_mean
+
+                aggregated = _aggregate_spatial(
+                    power_components,
                     config.average_mode,
                     config.edge_taper_power,
                 )
 
-            if config.enable_circular_components and power_plus is not None and power_minus is not None:
-                m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
-                m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
-                power_plus[:, win_idx] = _aggregate_spatial(
-                    np.abs(m_plus) ** 2,
-                    config.average_mode,
-                    config.edge_taper_power,
-                )
-                power_minus[:, win_idx] = _aggregate_spatial(
-                    np.abs(m_minus) ** 2,
-                    config.average_mode,
-                    config.edge_taper_power,
-                )
+                power_map[:, win_idx] = aggregated
+
+                if transverse_map is not None:
+                    transverse_map[:, win_idx] = _aggregate_spatial(
+                        np.abs(mx_fft) ** 2 + np.abs(my_fft) ** 2,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
+
+                if config.enable_circular_components and power_plus is not None and power_minus is not None:
+                    m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
+                    m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
+                    power_plus[:, win_idx] = _aggregate_spatial(
+                        np.abs(m_plus) ** 2,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
+                    power_minus[:, win_idx] = _aggregate_spatial(
+                        np.abs(m_minus) ** 2,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
+
+            # End of serial window processing loop
+            t_process_end = time.time()
+            log.debug("Serial processing: %.3fs for %d windows", 
+                      t_process_end - t_process_start, n_windows)
 
         reference_mask = self._select_reference_windows(
             x_centers,
