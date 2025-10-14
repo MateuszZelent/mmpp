@@ -622,7 +622,12 @@ class FFTCompute:
         )
 
     def load_data_from_zarr(
-        self, zarr_path: str, dataset: str, z_layer: int = -1, tmax: Optional[int] = None
+        self,
+        zarr_path: str,
+        dataset: str,
+        z_layer: int = -1,
+        tmax: Optional[int] = None,
+        slice_info: Optional[Any] = None,
     ) -> tuple[np.ndarray, float]:
         """
         Load data from zarr file.
@@ -635,6 +640,10 @@ class FFTCompute:
             Dataset name
         z_layer : int
             Z-layer index (-1 for last layer)
+        tmax : int, optional
+            Maximum number of time steps to load
+        slice_info : Any, optional
+            Slicing information (e.g., from job[0].m_layer[:100,...])
 
         Returns:
         --------
@@ -699,9 +708,17 @@ class FFTCompute:
                 f"Dataset '{dataset}' not found in zarr file '{zarr_path}'.{suggestion}"
             )
 
-        # Load data with timing
+        # Load data with timing (apply slicing if provided)
         data_load_start = time.time()
-        data = data_set[...]
+        
+        if slice_info is not None:
+            # Apply user-provided slicing (e.g., from job[0].m_layer[:100,...])
+            log.info(f"Applying slice_info: {slice_info}")
+            data = data_set[slice_info]
+        else:
+            # Load all data
+            data = data_set[...]
+            
         data_load_time = time.time() - data_load_start
 
         log.debug(f"Data loading time: {data_load_time:.3f}s")

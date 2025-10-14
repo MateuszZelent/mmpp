@@ -419,7 +419,25 @@ class FFTDispersionInterface:
 
         notes_json_raw = entry.attrs.get("notes_json", "[]")
         notes_json = self._ensure_text(notes_json_raw) or "[]"
-        notes = json.loads(notes_json)
+        try:
+            notes = json.loads(notes_json)
+        except Exception as exc:  # pragma: no cover - robust parsing fallback
+            logger.warning(
+                "Failed to parse notes_json for %s: %s — falling back to empty list",
+                entry_name,
+                exc,
+            )
+            # If JSONDecodeError has .pos attribute, log a small snippet to help debugging
+            pos = getattr(exc, 'pos', None)
+            try:
+                if isinstance(pos, int):
+                    start = max(0, pos - 80)
+                    end = pos + 80
+                    logger.debug("notes_json snippet around error: %s", notes_json[start:end])
+            except Exception:
+                # Best-effort only
+                pass
+            notes = []
 
         fold_period = entry.attrs.get("fold_period")
         if isinstance(fold_period, float) and math.isnan(fold_period):
@@ -1272,6 +1290,7 @@ class FFTDispersionInterface:
     
     def plot_dispersion(
         self,
+        ax: Optional[plt.Axes] = None,
         axis: str = "x",
         component: Optional[str] = None,
         figsize: tuple = (12, 8),
@@ -1301,14 +1320,16 @@ class FFTDispersionInterface:
         
         Parameters
         ----------
+        ax : matplotlib.axes.Axes, optional
+            Axes to plot on. If None, creates new figure and axes.
         axis : str, default="x"
             Spatial axis for analysis ('x' or 'y')
         component : str, optional
             Override default component setting
         figsize : tuple, default=(12, 8)
-            Figure size (width, height)
+            Figure size (width, height). Only used when ax=None.
         dpi : int, optional
-            Figure resolution (passes through to matplotlib)
+            Figure resolution (passes through to matplotlib). Only used when ax=None.
         cmap : str, default="cmc.davos"
             Colormap for dispersion plot (uses crameri davos colormap by default)
         kscale : str, default="rad_um"
@@ -1420,11 +1441,14 @@ class FFTDispersionInterface:
                 extra_cols=comsol_extra_cols,
             )
 
-        # Create plot
-        if dpi is not None:
-            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        # Create plot or use provided axes
+        if ax is None:
+            if dpi is not None:
+                fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+            else:
+                fig, ax = plt.subplots(figsize=figsize)
         else:
-            fig, ax = plt.subplots(figsize=figsize)
+            fig = ax.get_figure()
 
         # Prepare axes
         k_axis = result.k_axis
@@ -1736,6 +1760,346 @@ class FFTDispersionInterface:
             plt.savefig(save, dpi=300, bbox_inches='tight')
             
         return fig, (ax1, ax2)
+    
+    def plot_result(
+        self,
+        result: DispersionResult1D,
+        ax: Optional[plt.Axes] = None,
+        figsize: tuple = (12, 8),
+        cmap: str = "cmc.davos",
+        kscale: str = "rad_um",
+        f_units: str = "GHz",
+        title: Optional[str] = None,
+        save: Union[str, Path, bool, None] = None,
+        orth_index: Optional[int] = None,
+        dpi: Optional[int] = None,
+        k_xlim: Optional[tuple[float, float]] = None,
+        lognorm: bool = False,
+        k0_normalization: Union[int, float] = 0,
+        k0_normalization_width: int = 1,
+        compression_mode: str = "adaptive",
+        add_comsol_points: str | Path | None = None,
+        comsol_k_col: int = 0,
+        comsol_f_col: int = 1,
+        comsol_extra_cols: tuple[int, ...] | None = None,
+        comsol_style: dict[str, object] | None = None,
+        vmin: Optional[float] = None,
+        vmax: Optional[float] = None,
+    ) -> tuple:
+        """
+        Plot a pre-computed dispersion result without recomputation.
+        
+        This method separates plotting from computation, allowing you to:
+        - Compute once with compute_1d(), then plot multiple times with different settings
+        - Plot the same result on different axes or in different styles
+        - Avoid expensive recomputation when only visual parameters change
+        
+        Parameters
+        ----------
+        result : DispersionResult1D
+            Pre-computed dispersion result from compute_1d()
+        ax : matplotlib.axes.Axes, optional
+            Axes to plot on. If None, creates new figure and axes.
+        figsize : tuple, default=(12, 8)
+            Figure size (width, height). Only used when ax=None.
+        dpi : int, optional
+            Figure resolution. Only used when ax=None.
+        cmap : str, default="cmc.davos"
+            Colormap for dispersion plot
+        kscale : str, default="rad_um"
+            Wave-vector units: "rad_um" for rad/μm, "rad" for rad/m, "meter" for 1/m
+        f_units : str, default="GHz" 
+            Frequency axis units ('Hz', 'GHz')
+        title : str, optional
+            Plot title (auto-generated if None)
+        save : str | pathlib.Path | bool, optional
+            Save path for the plot
+        orth_index : int, optional
+            Select specific orthogonal slice when result contains local spectra
+        k_xlim : tuple, optional
+            Limits for wave-vector axis after unit conversion
+        lognorm : bool, default=False
+            Use logarithmic color scale normalization
+        k0_normalization : int or float, default=0
+            k≈0 mode suppression intensity (0=disabled, 1-10=increasing strength)
+        k0_normalization_width : int, default=1
+            Number of k-bins around k≈0 to compress
+        compression_mode : str, default="adaptive"
+            Compression strategy: "gentle", "adaptive", "aggressive", "preserve_peaks"
+        vmin, vmax : float, optional
+            Manual color scale limits
+        add_comsol_points : str | Path | None, optional
+            Path to COMSOL data file for overlay
+        comsol_k_col, comsol_f_col : int
+            Column indices for k and f in COMSOL file
+        comsol_extra_cols : tuple[int, ...] | None
+            Additional COMSOL columns to parse
+        comsol_style : dict, optional
+            Scatter plot style for COMSOL overlay
+            
+        Returns
+        -------
+        tuple
+            (figure, axis) matplotlib objects
+            
+        Examples
+        --------
+        >>> # Compute once
+        >>> result = job[0].fft.dispersion.compute_1d(axis="x", save_result=True)
+        >>> 
+        >>> # Plot multiple times with different settings
+        >>> fig1, ax1 = job[0].fft.dispersion.plot_result(result, lognorm=False)
+        >>> fig2, ax2 = job[0].fft.dispersion.plot_result(result, lognorm=True, vmax=0.01)
+        >>> 
+        >>> # Or plot on custom axes
+        >>> fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(16, 6))
+        >>> job[0].fft.dispersion.plot_result(result, ax=ax_left, k0_normalization=10)
+        >>> job[0].fft.dispersion.plot_result(result, ax=ax_right, k0_normalization=0)
+        """
+        # This method uses the same plotting logic as plot_dispersion but skips compute_1d
+        # We'll extract and reuse the plotting code from plot_dispersion
+        
+        comsol_style = comsol_style or {}
+        comsol_data = None
+        if add_comsol_points is not None:
+            from .comsol import read_data_from_comsol
+
+            comsol_data = read_data_from_comsol(
+                add_comsol_points,
+                k_col=comsol_k_col,
+                f_col=comsol_f_col,
+                extra_cols=comsol_extra_cols,
+            )
+
+        # Create plot or use provided axes
+        if ax is None:
+            if dpi is not None:
+                fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+            else:
+                fig, ax = plt.subplots(figsize=figsize)
+        else:
+            fig = ax.get_figure()
+
+        # Prepare axes
+        k_axis = result.k_axis
+        f_axis = result.f_axis
+
+        spectrum = result.S
+        axis_name = result.axis
+        orth_label = result.orth_axis_label or ("y" if axis_name == "x" else "x")
+
+        if orth_index is not None:
+            if result.S_local is None:
+                raise ValueError("Result does not contain local spectra; recompute with avg_over_orthogonal=False")
+            if orth_index < 0 or orth_index >= result.S_local.shape[0]:
+                raise ValueError(f"orth_index {orth_index} out of range (0..{result.S_local.shape[0]-1})")
+            spectrum = result.S_local[orth_index]
+            if title is None:
+                if result.orth_axis is not None and orth_index < len(result.orth_axis):
+                    axis_value = result.orth_axis[orth_index]
+                    title = f"Spin-Wave Dispersion {orth_label}={axis_value:g}"
+                else:
+                    title = f"Spin-Wave Dispersion ({orth_label} index {orth_index})"
+
+        # Remove negative frequencies from visualization
+        if f_axis.ndim == 1 and spectrum.shape[1] == f_axis.shape[0]:
+            positive_mask = f_axis >= 0
+            if np.any(positive_mask) and positive_mask.sum() < f_axis.size:
+                spectrum = spectrum[:, positive_mask]
+                f_axis = f_axis[positive_mask]
+
+        # Convert units if requested
+        kscale = kscale.lower()
+        if kscale == "meter":
+            k_axis = k_axis / (2 * np.pi)
+            k_label = r"$k$ [m$^{-1}$]"
+            default_k_xlim = (-20.0, 20.0)
+        elif kscale == "rad_um":
+            k_axis = k_axis / 1e6  # Convert rad/m to rad/μm
+            k_label = r"$k$ [rad/μm]"
+            default_k_xlim = (-10.0, 10.0)
+        else:  # kscale == "rad"
+            k_label = r"$k$ [rad/m]"
+            default_k_xlim = None
+
+        if f_units == "GHz":
+            f_axis = f_axis / 1e9
+            f_label = "Frequency [GHz]"
+        else:
+            f_label = "Frequency [Hz]"
+
+        if k0_normalization and k0_normalization > 0:
+            logger.info(
+                "Applying k≈0 dynamic compression: strength=%s, mode=%s, width=%s",
+                k0_normalization,
+                compression_mode,
+                k0_normalization_width,
+            )
+            original_k_axis = result.k_axis
+            spectrum = self._apply_k0_normalization(
+                spectrum,
+                original_k_axis,
+                strength=k0_normalization,
+                compression_mode=compression_mode,
+                k0_normalization_width=k0_normalization_width,
+            )
+
+        # Plot dispersion
+        norm = None
+        
+        # Handle color normalization with manual vmin/vmax control
+        if lognorm:
+            # Logarithmic normalization
+            positive_values = spectrum[spectrum > 0]
+            if positive_values.size:
+                # Default log scale bounds from data
+                auto_vmin = float(np.nanmin(positive_values))
+                auto_vmax = float(np.nanmax(positive_values))
+                if auto_vmin <= 0:
+                    auto_vmin = max(float(val) for val in positive_values if val > 0)
+                
+                # Apply manual limits if provided
+                norm_vmin = vmin if vmin is not None else auto_vmin
+                norm_vmax = vmax if vmax is not None else auto_vmax
+                
+                # Ensure positive values for log scale
+                if norm_vmin <= 0:
+                    logger.warning(f"vmin={norm_vmin} ≤ 0 for log scale; using auto_vmin={auto_vmin:.2e}")
+                    norm_vmin = auto_vmin
+                if norm_vmax <= norm_vmin:
+                    logger.warning(f"vmax={norm_vmax} ≤ vmin={norm_vmin} for log scale; using auto scaling")
+                    norm_vmin, norm_vmax = auto_vmin, auto_vmax
+                    
+                norm = LogNorm(vmin=norm_vmin, vmax=norm_vmax)
+                logger.info(f"Applied log normalization: vmin={norm_vmin:.2e}, vmax={norm_vmax:.2e}")
+        else:
+            # Linear normalization
+            if vmin is not None or vmax is not None:
+                # Manual linear bounds
+                auto_vmin = float(np.nanmin(spectrum))
+                auto_vmax = float(np.nanmax(spectrum))
+                
+                norm_vmin = vmin if vmin is not None else auto_vmin
+                norm_vmax = vmax if vmax is not None else auto_vmax
+                
+                if norm_vmax <= norm_vmin:
+                    logger.warning(f"vmax={norm_vmax} ≤ vmin={norm_vmin}; using auto scaling")
+                    norm_vmin, norm_vmax = auto_vmin, auto_vmax
+                
+                norm = Normalize(vmin=norm_vmin, vmax=norm_vmax)
+                logger.info(f"Applied linear normalization: vmin={norm_vmin:.2e}, vmax={norm_vmax:.2e}")
+
+        im = ax.pcolormesh(
+            k_axis,
+            f_axis,
+            spectrum.T,
+            cmap=cmap,
+            shading="auto",
+            norm=norm,
+        )
+
+        # Formatting
+        ax.set_xlabel(k_label)
+        ax.set_ylabel(f_label)
+
+        if k_xlim is not None:
+            ax.set_xlim(*k_xlim)
+        elif default_k_xlim is not None:
+            ax.set_xlim(*default_k_xlim)
+
+        if title is None:
+            title = f"Spin-Wave Dispersion S(k{axis_name}, f)"
+            if hasattr(result, "component"):
+                title += f" - {result.component} component"
+        ax.set_title(title)
+
+        # Colorbar
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label(r"Power Spectral Density [arb. units]")
+        
+        if comsol_data is not None:
+            k_points = np.asarray(comsol_data.k_values, dtype=float).copy()
+            f_points = np.asarray(comsol_data.f_values, dtype=float).copy()
+
+            if kscale == "rad_um":
+                k_points = k_points / 1e6
+            elif kscale == "meter":
+                k_points = k_points / (2 * np.pi)
+
+            if f_units.lower() == "ghz":
+                f_points = f_points / 1e9
+            elif f_units.lower() != "hz":
+                raise ValueError(f"Unsupported frequency units: {f_units}")
+
+            mask = np.isfinite(k_points) & np.isfinite(f_points)
+            if not np.any(mask):
+                logger.warning(
+                    "COMSOL overlay skipped: no finite data points (%s)",
+                    add_comsol_points,
+                )
+            else:
+                if not np.all(mask):
+                    logger.warning(
+                        "COMSOL overlay dropping %d invalid points",
+                        int((~mask).sum()),
+                    )
+                k_points = k_points[mask]
+                f_points = f_points[mask]
+
+                scatter_kwargs = {
+                    "s": 40,
+                    "facecolors": "none",
+                    "edgecolors": "white",
+                    "linewidths": 1.5,
+                    "alpha": 0.9,
+                }
+                scatter_kwargs.update(comsol_style)
+
+                if k_points.size:
+                    original_count = int(k_points.size)
+                    mirrored_k = -k_points
+                    mirrored_f = f_points
+                    k_plot = mirrored_k
+                    f_plot = mirrored_f
+
+                    coords = np.column_stack((k_plot, f_plot))
+                    if coords.size:
+                        rounded = np.round(coords, decimals=12)
+                        _, unique_idx = np.unique(rounded, axis=0, return_index=True)
+                        if unique_idx.size != coords.shape[0]:
+                            unique_idx.sort()
+                            k_plot = k_plot[unique_idx]
+                            f_plot = f_plot[unique_idx]
+                            logger.debug(
+                                "COMSOL overlay removed %d duplicate points after mirroring",
+                                coords.shape[0] - unique_idx.size,
+                            )
+                else:
+                    original_count = 0
+                    k_plot = k_points
+                    f_plot = f_points
+
+                logger.info(
+                    "Overlaying %d COMSOL points on dispersion plot (mirrored from %d original)",
+                    k_plot.size,
+                    original_count,
+                )
+
+                ax.scatter(k_plot, f_plot, label="COMSOL", **scatter_kwargs)
+
+        plt.tight_layout()
+
+        # Save if requested
+        save_path = None
+        if save not in (None, False):
+            save_path = self._resolve_plot_save_path(save, axis_name, result)
+
+        if save_path is not None:
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(save_path, dpi=dpi or 300, bbox_inches="tight")
+            logger.info("Dispersion plot saved to %s", save_path)
+
+        return fig, ax
     
     def interactive_analysis(self):
         """

@@ -724,8 +724,7 @@ class DatasetSpecificFFT:
             return attr.clone_for_dataset(self.dataset_name, slice_info=self.slice_info)
 
         if name == "transmission" and attr is not None:
-            # Wrap transmission interface to inject dataset_name
-            return DatasetSpecificTransmissionInterface(attr, self.dataset_name)
+            return attr.clone_for_dataset(self.dataset_name, slice_info=self.slice_info)
 
         if callable(attr) and hasattr(attr, "__code__"):
             import inspect

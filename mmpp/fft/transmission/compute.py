@@ -16,29 +16,42 @@ log = get_mmpp_logger("mmpp.fft.transmission")
 
 
 TransmissionMethod = Literal["power_ratio", "circular", "cpsd"]
-AverageMode = Literal["mean", "median", "edge_taper"]
+AverageMode = Literal["mean", "median", "edge_taper", "none"]
 NormalizeMode = Literal["reference", "max", "none"]
 ReferenceStatistic = Literal["mean", "median", "max"]
 
 
-@dataclass(slots=True)
+@dataclass
 class TransmissionConfig:
-    """Configuration parameters for transmission analysis."""
+    """Configuration parameters for transmission analysis.
+    
+    All processing steps are optional - can be disabled to match raw FFT behavior.
+    """
 
     dataset_name: Optional[str] = None
     z_layer: int = -1
     method: TransmissionMethod = "power_ratio"
-    window_function: WINDOW_TYPES = "hann"
-    filter_type: FILTER_TYPES = "remove_mean"
-    spatial_window: int = 5
+    
+    # Temporal preprocessing (can be disabled with None)
+    window_function: Optional[WINDOW_TYPES] = "hann"  # None = no windowing
+    filter_type: Optional[FILTER_TYPES] = "remove_mean"  # None = no filtering
+    
+    # Spatial averaging controls
+    spatial_window: int = 5  # Set to 1 for no spatial averaging
     spatial_step: int = 1
-    reference_window: Optional[Tuple[int, int]] = None
-    reference_statistic: ReferenceStatistic = "mean"
-    average_mode: AverageMode = "mean"
+    average_mode: AverageMode = "mean"  # "none" = no y/z averaging
     edge_taper_power: float = 1.5
+    
+    # Component selection
     component_weights: Tuple[float, float, float] = (1.0, 1.0, 0.1)
     enable_circular_components: bool = False
-    normalize: NormalizeMode = "reference"
+    
+    # Normalization (can be disabled)
+    normalize: NormalizeMode = "reference"  # "none" = raw power
+    reference_window: Optional[Tuple[int, int]] = None
+    reference_statistic: ReferenceStatistic = "mean"
+    
+    # Other options
     tmax: Optional[int] = None
     keep_complex_fft: bool = False
     store_component_maps: bool = False
@@ -54,11 +67,11 @@ class TransmissionConfig:
             start, stop = self.reference_window
             if stop < start:
                 raise ValueError("reference_window stop must be >= start")
-        if len(self.component_weights) != 3:
+        if self.component_weights is not None and len(self.component_weights) != 3:
             raise ValueError("component_weights must contain three entries for (mx, my, mz)")
 
 
-@dataclass(slots=True)
+@dataclass
 class TransmissionResult:
     """Result of a transmission analysis."""
 
@@ -73,6 +86,8 @@ class TransmissionResult:
     power_minus: Optional[np.ndarray] = None
     transverse_power: Optional[np.ndarray] = None
     longitudinal_power: Optional[np.ndarray] = None
+    # Optional lightweight complex-spectrum summary when keep_complex_fft is True
+    complex_spectra_summary: Optional[np.ndarray] = None
 
     def plot_transmission(self, plot_config=None, **kwargs):
         """Render a frequency-position transmission map.
@@ -111,7 +126,16 @@ def _aggregate_spatial(
     mode: AverageMode,
     edge_taper_power: float,
 ) -> np.ndarray:
-    """Reduce spatial dimensions (z, y, window_x) of the local power map."""
+    """Reduce spatial dimensions (z, y, window_x) of the local power map.
+    
+    Parameters
+    ----------
+    mode : AverageMode
+        "mean" - simple average
+        "median" - median (robust to outliers)
+        "edge_taper" - weighted average with Hann window
+        "none" - no averaging, take only first slice (z=0, y=0)
+    """
 
     if power.ndim != 4:
         raise ValueError("Expected power array with shape (freq, z, y, window)")
@@ -120,6 +144,11 @@ def _aggregate_spatial(
     z_axis = 1
     y_axis = 2
     x_axis = 3
+
+    if mode == "none":
+        # Raw mode: no averaging - take only z=0, y=0, average over window_x
+        # After slicing [:, 0, 0, :], we have (freq, window_x), so axis=1 for window_x
+        return power[:, 0, 0, :].mean(axis=1)
 
     if mode == "mean":
         return power.mean(axis=(z_axis, y_axis, x_axis))
@@ -156,7 +185,11 @@ class TransmissionCompute:
         self._fft_compute = fft_compute
         self._job_result = job_result
 
-    def _prepare_data(self, config: TransmissionConfig) -> tuple[np.ndarray, float]:
+    def _prepare_data(
+        self,
+        config: TransmissionConfig,
+        slice_info: Optional[Any] = None,
+    ) -> tuple[np.ndarray, float]:
         dataset = config.dataset_name or self._job_result.get_largest_m_dataset()
 
         data, dt = self._fft_compute.load_data_from_zarr(
@@ -164,6 +197,7 @@ class TransmissionCompute:
             dataset,
             z_layer=config.z_layer,
             tmax=config.tmax,
+            slice_info=slice_info,
         )
 
         if data.ndim == 4:  # (t, y, x, comp)
@@ -182,16 +216,35 @@ class TransmissionCompute:
 
         return data, dt
 
-    def compute(self, config: TransmissionConfig) -> TransmissionResult:
+    def compute(self, config: TransmissionConfig, slice_info: Optional[Any] = None) -> TransmissionResult:
         config.ensure_valid()
 
         dataset = config.dataset_name or self._job_result.get_largest_m_dataset()
-        data, dt = self._prepare_data(config)
+        data, dt = self._prepare_data(config, slice_info=slice_info)
+
+        # Debug: basic metadata about data being processed
+        log.debug(
+            "Transmission compute: dataset=%s, data.shape=%s, dt=%s",
+            dataset,
+            getattr(data, 'shape', None),
+            dt,
+        )
 
         n_time, n_z, n_y, n_x, n_comp = data.shape
 
-        filtered = self._fft_compute.apply_filter(data, config.filter_type)
-        windowed = self._fft_compute.apply_window(filtered, config.window_function)
+        # Apply filtering (optional - can be None)
+        if config.filter_type is not None:
+            filtered = self._fft_compute.apply_filter(data, config.filter_type)
+        else:
+            filtered = data
+            log.debug("Skipping temporal filtering (filter_type=None)")
+        
+        # Apply windowing (optional - can be None)
+        if config.window_function is not None:
+            windowed = self._fft_compute.apply_window(filtered, config.window_function)
+        else:
+            windowed = filtered
+            log.debug("Skipping temporal windowing (window_function=None)")
 
         window_size = min(config.spatial_window, n_x)
         step = config.spatial_step
@@ -233,8 +286,28 @@ class TransmissionCompute:
             else None
         )
 
+        # Normalize / broadcast component_weights defensively
         component_weights = np.asarray(config.component_weights, dtype=float)
-        component_weights = component_weights[:n_comp]
+        if component_weights.ndim == 0:
+            component_weights = np.full((n_comp,), float(component_weights), dtype=float)
+        elif component_weights.size < n_comp:
+            # If fewer weights provided, repeat last value to match n_comp
+            last = float(component_weights[-1]) if component_weights.size > 0 else 1.0
+            component_weights = np.concatenate(
+                [component_weights, np.full((n_comp - component_weights.size,), last, dtype=float)]
+            )
+        elif component_weights.size > n_comp:
+            component_weights = component_weights[:n_comp]
+        log.debug("Component weights after broadcast/trim: %s", component_weights)
+
+        # Prepare lightweight complex-spectrum accumulator if requested
+        complex_accum = None
+        if config.keep_complex_fft:
+            # Accumulate mean complex amplitude per frequency & component across windows
+            complex_accum = np.zeros((n_freq, n_comp), dtype=np.complex128)
+            log.warning(
+                "keep_complex_fft=True: storing lightweight complex-spectrum summary (avg over windows)."
+            )
 
         for win_idx, start in enumerate(window_starts):
             end = min(start + window_size, n_x)
@@ -257,6 +330,14 @@ class TransmissionCompute:
                         config.average_mode,
                         config.edge_taper_power,
                     )
+
+            # Accumulate lightweight complex-spectrum summary per component (mean across z,y,window)
+            if complex_accum is not None:
+                for comp_idx in range(n_comp):
+                    comp_spec = spectrum[..., comp_idx]
+                    # mean over z, y, and the window dimension (note: block may be smaller than window_size at edges)
+                    comp_mean = comp_spec.mean(axis=(1, 2, 3))
+                    complex_accum[:, comp_idx] += comp_mean
 
             aggregated = _aggregate_spatial(
                 power_components,
@@ -336,6 +417,15 @@ class TransmissionCompute:
             longitudinal_power=longitudinal_map,
         )
 
+        # Finalize and attach complex-spectrum summary if requested
+        if complex_accum is not None:
+            # Average over windows
+            complex_summary = complex_accum / float(n_windows)
+            result.complex_spectra_summary = complex_summary
+            log.debug("Attached complex_spectra_summary shape=%s", getattr(complex_summary, 'shape', None))
+
+        log.debug("Transmission compute complete: transmission.shape=%s", transmission.shape)
+
         return result
 
     @staticmethod
@@ -352,8 +442,16 @@ class TransmissionCompute:
 
         start, stop = reference_window
         mask = (x_centers >= start) & (x_centers <= stop)
-        if not np.any(mask) and x_centers.size:
-            mask[0] = True
+        if not np.any(mask):
+            # If provided reference range does not intersect any center, warn and fall back to first window
+            log.warning(
+                "Reference window %s does not intersect x_centers range [%s, %s]; falling back to first window.",
+                reference_window,
+                x_centers[0] if x_centers.size else None,
+                x_centers[-1] if x_centers.size else None,
+            )
+            if x_centers.size:
+                mask[0] = True
         return mask
 
     @staticmethod

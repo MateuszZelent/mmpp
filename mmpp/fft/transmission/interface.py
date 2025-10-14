@@ -17,10 +17,33 @@ log = get_mmpp_logger("mmpp.fft.transmission.interface")
 class FFTTransmissionInterface:
     """Convenience wrapper accessible via ``job.fft.transmission``."""
 
-    def __init__(self, fft_instance: Any, fft_compute, job_result: Any):
+    def __init__(
+        self,
+        fft_instance: Any,
+        fft_compute,
+        job_result: Any,
+        dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
+    ):
         self._fft = fft_instance
         self._job_result = job_result
         self._compute = TransmissionCompute(fft_compute, job_result)
+        self.dataset_name = dataset_name
+        self.slice_info = slice_info
+
+    def clone_for_dataset(
+        self,
+        dataset_name: Optional[str],
+        slice_info: Optional[Any] = None,
+    ) -> "FFTTransmissionInterface":
+        """Return a dataset-aware clone for transmission analysis."""
+        return FFTTransmissionInterface(
+            self._fft,
+            self._compute._fft_compute,  # Access the underlying fft_compute
+            self._job_result,
+            dataset_name=dataset_name,
+            slice_info=slice_info,
+        )
 
     def __call__(
         self,
@@ -43,10 +66,18 @@ class FFTTransmissionInterface:
             raise ValueError("Provide either a TransmissionConfig or keyword arguments, not both")
 
         if config is None:
+            # Inject dataset_name from interface if not provided in kwargs
+            if self.dataset_name is not None and 'dataset_name' not in kwargs:
+                kwargs['dataset_name'] = self.dataset_name
             config = TransmissionConfig(**kwargs)
+        else:
+            # If config provided but dataset_name is None, inject from interface
+            if config.dataset_name is None and self.dataset_name is not None:
+                from dataclasses import replace
+                config = replace(config, dataset_name=self.dataset_name)
 
         log.debug("Computing transmission with configuration: %s", asdict(config))
-        return self._compute.compute(config)
+        return self._compute.compute(config, slice_info=self.slice_info)
 
     def compute(
         self,
