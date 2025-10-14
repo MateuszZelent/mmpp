@@ -7,6 +7,7 @@ from typing import Any, Dict, Literal, Optional, Tuple
 import time
 
 import numpy as np
+from tqdm.auto import tqdm
 
 # Try to use scipy.fft (faster) with fallback to numpy.fft
 try:
@@ -454,34 +455,93 @@ class TransmissionCompute:
                           not config.store_component_maps and
                           not use_parallel)
         
-        if use_vectorized:
-            # Fast path: no averaging, no extra components - fully vectorize!
-            log.debug("Using vectorized window processing (average_mode='none')")
+        # 🚀 ULTRA-OPTIMIZATION for average_mode='none' with sliding_window_view
+        use_sliding_window = (use_vectorized and 
+                             config.spatial_step == 1 and 
+                             hasattr(np.lib.stride_tricks, 'sliding_window_view'))
+        
+        if use_sliding_window:
+            # 🔥 FASTEST PATH: Zero Python loops - pure NumPy vectorization!
+            log.info("Using sliding_window_view optimization (step=1, average_mode='none')")
+            log.info("Processing %d windows with vectorized operations (no progress bar - too fast!)", n_windows)
             t_process_start = time.time()
             
-            # Pre-compute power for all windows at once
-            for win_idx, start in enumerate(window_starts):
-                end = min(start + window_size, n_x)
-                window_slice = slice(start, end)
-                spectrum = full_spectrum[:, :, :, window_slice, :]
-                
-                # Extract components
-                mx_fft = spectrum[..., 0]
-                my_fft = spectrum[..., 1]
-                power_components = np.abs(mx_fft) ** 2 * component_weights[0]
-                power_components += np.abs(my_fft) ** 2 * component_weights[1]
-                
-                if n_comp > 2:
-                    mz_fft = spectrum[..., 2]
-                    power_components += np.abs(mz_fft) ** 2 * component_weights[2]
-                
-                # Fast aggregation: average_mode="none" → just take [0,0,:].mean
-                # power_components shape: (freq, z, y, window_x)
-                power_map[:, win_idx] = power_components[:, 0, 0, :].mean(axis=1)
+            # Extract only relevant z=0, y=0 slice ONCE (huge memory saving!)
+            # Shape: (n_freq, n_x, n_comp)
+            relevant_spectrum = full_spectrum[:, 0, 0, :, :]
+            
+            # Create sliding window view - NO COPIES, just strides!
+            # sliding_window_view adds new axis at the END!
+            # Input:  (n_freq, n_x, n_comp)
+            # Output: (n_freq, n_windows, n_comp, window_size) ← window_size at END!
+            windowed_view = np.lib.stride_tricks.sliding_window_view(
+                relevant_spectrum, 
+                window_shape=window_size, 
+                axis=1  # Slide along x-axis
+            )
+            # windowed_view shape: (n_freq, n_windows, n_comp, window_size)
+            
+            # Compute power for ALL windows - iterate only over active components
+            # Initialize with zeros - shape (n_freq, n_windows, window_size)
+            power_all_windows = np.zeros((n_freq, n_windows, window_size), dtype=float)
+            
+            # Add contribution from each component with non-zero weight
+            for comp_idx in range(n_comp):
+                if component_weights[comp_idx] != 0:
+                    # Extract component: (n_freq, n_windows, window_size)
+                    comp_fft_all = windowed_view[:, :, comp_idx, :]
+                    power_all_windows += np.abs(comp_fft_all) ** 2 * component_weights[comp_idx]
+            
+            # Mean over window_size dimension - NO LOOP!
+            # power_all_windows shape: (n_freq, n_windows, window_size)
+            power_map = power_all_windows.mean(axis=2)  # Result: (n_freq, n_windows)
             
             t_process_end = time.time()
-            log.info("Vectorized processing: %.3fs for %d windows", 
-                      t_process_end - t_process_start, n_windows)
+            log.info("Sliding window vectorization: %.3fs for %d windows (%.1f µs/window)", 
+                      t_process_end - t_process_start, n_windows,
+                      (t_process_end - t_process_start) * 1e6 / n_windows)
+                      
+        elif use_vectorized:
+            # 🔥 OPTIMIZED PATH: Loop with reduced dimensions (for step != 1)
+            log.debug("Using optimized vectorized processing (average_mode='none', step=%d)", 
+                     config.spatial_step)
+            t_process_start = time.time()
+            
+            # KEY OPTIMIZATION: Extract z=0, y=0 slice ONCE before loop
+            # Reduces indexing overhead from 4D → 2D per iteration
+            # Shape: (n_freq, n_x, n_comp) instead of (n_freq, n_z, n_y, n_x, n_comp)
+            relevant_spectrum = full_spectrum[:, 0, 0, :, :]
+            
+            # Now loop with much smaller slicing operations
+            for win_idx, start in tqdm(enumerate(window_starts), 
+                                       total=n_windows,
+                                       desc="Processing windows",
+                                       unit="win",
+                                       disable=n_windows < 10):  # Disable for very few windows
+                end = min(start + window_size, n_x)
+                
+                # Slice from reduced 3D array (n_freq, n_x, n_comp)
+                # instead of 5D array - much faster!
+                spectrum_slice = relevant_spectrum[:, start:end, :]  # (n_freq, window_len, n_comp)
+                
+                # Compute power - iterate only over active components
+                # Initialize with zeros
+                power_components = np.zeros((n_freq, end - start), dtype=float)
+                
+                # Add contribution from each component with non-zero weight
+                for comp_idx in range(n_comp):
+                    if component_weights[comp_idx] != 0:
+                        comp_fft = spectrum_slice[..., comp_idx]  # (n_freq, window_len)
+                        power_components += np.abs(comp_fft) ** 2 * component_weights[comp_idx]
+                
+                # Fast aggregation: mean over window dimension
+                # power_components shape: (n_freq, window_len)
+                power_map[:, win_idx] = power_components.mean(axis=1)
+            
+            t_process_end = time.time()
+            log.info("Optimized vectorized processing: %.3fs for %d windows (%.1f µs/window)", 
+                      t_process_end - t_process_start, n_windows,
+                      (t_process_end - t_process_start) * 1e6 / n_windows)
                       
         elif use_parallel:
             # Parallel path: use joblib to process windows in parallel
@@ -570,27 +630,40 @@ class TransmissionCompute:
             log.debug("Using standard serial processing (average_mode='%s')", config.average_mode)
             t_process_start = time.time()
             
-            for win_idx, start in enumerate(window_starts):
+            for win_idx, start in tqdm(enumerate(window_starts),
+                                       total=n_windows,
+                                       desc="Processing windows",
+                                       unit="win",
+                                       disable=n_windows < 10):  # Disable for very few windows
                 end = min(start + window_size, n_x)
                 window_slice = slice(start, end)
                 
                 # Extract window from pre-computed FFT spectrum
                 spectrum = full_spectrum[:, :, :, window_slice, :]
 
-                mx_fft = spectrum[..., 0]
-                my_fft = spectrum[..., 1]
-                power_components = np.abs(mx_fft) ** 2 * component_weights[0]
-                power_components += np.abs(my_fft) ** 2 * component_weights[1]
+                # Compute power - iterate only over active components
+                power_components = None
+                for comp_idx in range(n_comp):
+                    if component_weights[comp_idx] != 0:
+                        comp_fft = spectrum[..., comp_idx]
+                        comp_power = np.abs(comp_fft) ** 2 * component_weights[comp_idx]
+                        if power_components is None:
+                            power_components = comp_power
+                        else:
+                            power_components += comp_power
+                
+                # Handle case where no components are active (shouldn't happen but be safe)
+                if power_components is None:
+                    power_components = np.zeros((n_freq, n_z, n_y, end - start), dtype=float)
 
-                if n_comp > 2:
+                # Store longitudinal component map if requested
+                if longitudinal_map is not None and n_comp > 2 and component_weights[2] != 0:
                     mz_fft = spectrum[..., 2]
-                    power_components += np.abs(mz_fft) ** 2 * component_weights[2]
-                    if longitudinal_map is not None:
-                        longitudinal_map[:, win_idx] = _aggregate_spatial(
-                            np.abs(mz_fft) ** 2,
-                            config.average_mode,
-                            config.edge_taper_power,
-                        )
+                    longitudinal_map[:, win_idx] = _aggregate_spatial(
+                        np.abs(mz_fft) ** 2,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
 
                 # Accumulate lightweight complex-spectrum summary per component (mean across z,y,window)
                 if complex_accum is not None:
@@ -608,26 +681,45 @@ class TransmissionCompute:
 
                 power_map[:, win_idx] = aggregated
 
+                # Store transverse component map if requested (mx + my)
                 if transverse_map is not None:
-                    transverse_map[:, win_idx] = _aggregate_spatial(
-                        np.abs(mx_fft) ** 2 + np.abs(my_fft) ** 2,
-                        config.average_mode,
-                        config.edge_taper_power,
-                    )
+                    transverse_power = None
+                    if n_comp > 0 and component_weights[0] != 0:  # mx
+                        mx_fft = spectrum[..., 0]
+                        transverse_power = np.abs(mx_fft) ** 2
+                    if n_comp > 1 and component_weights[1] != 0:  # my
+                        my_fft = spectrum[..., 1]
+                        my_power = np.abs(my_fft) ** 2
+                        if transverse_power is None:
+                            transverse_power = my_power
+                        else:
+                            transverse_power += my_power
+                    
+                    if transverse_power is not None:
+                        transverse_map[:, win_idx] = _aggregate_spatial(
+                            transverse_power,
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
 
+                # Store circular components if requested
                 if config.enable_circular_components and power_plus is not None and power_minus is not None:
-                    m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
-                    m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
-                    power_plus[:, win_idx] = _aggregate_spatial(
-                        np.abs(m_plus) ** 2,
-                        config.average_mode,
-                        config.edge_taper_power,
-                    )
-                    power_minus[:, win_idx] = _aggregate_spatial(
-                        np.abs(m_minus) ** 2,
-                        config.average_mode,
-                        config.edge_taper_power,
-                    )
+                    # Need mx and my for circular components
+                    if n_comp > 1:
+                        mx_fft = spectrum[..., 0]
+                        my_fft = spectrum[..., 1]
+                        m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
+                        m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
+                        power_plus[:, win_idx] = _aggregate_spatial(
+                            np.abs(m_plus) ** 2,
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+                        power_minus[:, win_idx] = _aggregate_spatial(
+                            np.abs(m_minus) ** 2,
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
 
             # End of serial window processing loop
             t_process_end = time.time()

@@ -162,9 +162,11 @@ class TransmissionCache:
             cache_dir = Path(cache_path)
             cache_dir.mkdir(parents=True, exist_ok=True)
             zarr_cache_path = cache_dir / "transmission_cache.zarr"
+            log.debug("Using custom cache path: %s (mode=%s)", zarr_cache_path, mode)
         else:
             # Default: use same directory as source zarr file
             zarr_cache_path = Path(self.job_result.path)
+            log.debug("Using source zarr as cache: %s (mode=%s)", zarr_cache_path, mode)
 
         try:
             root = zarr.open(str(zarr_cache_path), mode=mode)
@@ -268,15 +270,29 @@ class TransmissionCache:
         Optional[TransmissionResult]
             Cached result or None if not found.
         """
+        log.debug("Attempting to load transmission from cache (cache_path=%s)", cache_path)
+        
         cache_group = self._get_cache_group(cache_path=cache_path, write=False)
         if cache_group is None:
+            log.debug("Cache group not available - cannot load from cache")
             return None
 
         cache_key = self.generate_cache_key(config, slice_info)
         entry_name = f"transmission_{cache_key}"
+        log.debug("Looking for cache entry: %s (key=%s)", entry_name, cache_key[:16])
 
         entry_node = cache_group.get(entry_name)
         if entry_node is None or not hasattr(entry_node, "get"):
+            log.debug("Cache entry not found: %s", entry_name)
+            # List available entries for debugging
+            try:
+                available = list(cache_group.keys()) if hasattr(cache_group, 'keys') else []
+                if available:
+                    log.debug("Available cache entries: %s", available[:5])  # Show first 5
+                else:
+                    log.debug("No cache entries found in group")
+            except Exception:
+                pass
             return None
 
         entry = cast(Any, entry_node)
@@ -374,6 +390,9 @@ class TransmissionCache:
         overwrite : bool
             Whether to overwrite existing cache entry.
         """
+        log.debug("Attempting to save transmission to cache (cache_path=%s, overwrite=%s)", 
+                 cache_path, overwrite)
+        
         cache_group = self._get_cache_group(cache_path=cache_path, write=True)
         if cache_group is None:
             log.debug("Skipping transmission cache save; cache group unavailable")
@@ -381,11 +400,13 @@ class TransmissionCache:
 
         cache_key = self.generate_cache_key(result.config, slice_info)
         entry_name = f"transmission_{cache_key}"
+        log.debug("Saving cache entry: %s (key=%s)", entry_name, cache_key[:16])
 
         if entry_name in cache_group:
             if not overwrite:
                 log.info("Transmission cache %s already exists (use overwrite=True to replace)", entry_name)
                 return
+            log.debug("Overwriting existing cache entry: %s", entry_name)
             del cache_group[entry_name]
 
         try:
