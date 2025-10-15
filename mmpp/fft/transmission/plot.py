@@ -65,6 +65,7 @@ class TransmissionPlotConfig:
     vmax: Optional[float] = None
     title: Optional[str] = None
     trim_0f: Optional[int] = None  # Number of lowest frequency points to remove
+    fmax: Optional[float] = None  # Maximum frequency to display (in freq_unit units)
 
 
 class TransmissionPlotter:
@@ -123,6 +124,17 @@ class TransmissionPlotter:
             freqs = freqs[trim_idx:]
             data = data[trim_idx:, :]
             log.debug(f"Trimmed {trim_idx} lowest frequency points (trim_0f={config.trim_0f})")
+
+        # Apply fmax if specified (remove frequencies above maximum)
+        if config.fmax is not None and config.fmax > 0:
+            fmax_mask = freqs <= config.fmax
+            n_above = (~fmax_mask).sum()
+            if np.any(fmax_mask):
+                freqs = freqs[fmax_mask]
+                data = data[fmax_mask, :]
+                log.debug(f"Trimmed {n_above} frequency points above fmax={config.fmax} {freq_unit}")
+            else:
+                log.warning(f"fmax={config.fmax} {freq_unit} is below all frequencies, ignoring")
 
         x_positions = self.result.x_positions
         x_edges = _centers_to_edges(x_positions)

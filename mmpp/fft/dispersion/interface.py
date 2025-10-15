@@ -1314,6 +1314,7 @@ class FFTDispersionInterface:
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
         trim_0f: Optional[int] = None,
+        fmax: Optional[float] = None,
         **kwargs,
     ) -> tuple:
         """
@@ -1371,6 +1372,9 @@ class FFTDispersionInterface:
             scaling for the colorbar upper bound.
         trim_0f : int, optional
             Remove N lowest frequency points from plot (useful when f≈0 has strong artifacts)
+        fmax : float, optional
+            Maximum frequency to display (in f_units). Frequencies above this will be trimmed.
+            Useful for synchronizing Y-axis range when using sharey=True with other plots.
         add_comsol_points : str | Path | None, optional
             Path to COMSOL dispersion export file. When provided, the selected column pair is overlayed
             as scatter points on top of the heatmap.
@@ -1488,6 +1492,24 @@ class FFTDispersionInterface:
                 f_axis = f_axis[trim_0f:]
             else:
                 logger.warning(f"trim_0f={trim_0f} exceeds available frequency points ({f_axis.shape[0]}), ignoring")
+
+        # Trim frequencies above fmax if requested (applied BEFORE unit conversion)
+        if fmax is not None and fmax > 0:
+            if f_axis.ndim == 1:
+                # f_axis is still in Hz at this point, convert fmax to Hz
+                if f_units == "GHz":
+                    fmax_hz = fmax * 1e9
+                else:  # Hz
+                    fmax_hz = fmax
+                
+                fmax_mask = f_axis <= fmax_hz
+                n_above = (~fmax_mask).sum()
+                if np.any(fmax_mask):
+                    spectrum = spectrum[:, fmax_mask]
+                    f_axis = f_axis[fmax_mask]
+                    logger.info(f"Trimmed {n_above} frequency points above fmax={fmax} {f_units}")
+                else:
+                    logger.warning(f"fmax={fmax} {f_units} is below all frequencies, ignoring")
 
         # Convert units if requested
         if kscale == "meter":
@@ -1798,6 +1820,7 @@ class FFTDispersionInterface:
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
         trim_0f: Optional[int] = None,
+        fmax: Optional[float] = None,
     ) -> tuple:
         """
         Plot a pre-computed dispersion result without recomputation.
@@ -1843,6 +1866,9 @@ class FFTDispersionInterface:
             Manual color scale limits
         trim_0f : int, optional
             Remove N lowest frequency points from plot (useful when f≈0 has strong artifacts)
+        fmax : float, optional
+            Maximum frequency to display (in f_units). Frequencies above this will be trimmed.
+            Useful for synchronizing Y-axis range when using sharey=True with other plots.
         add_comsol_points : str | Path | None, optional
             Path to COMSOL data file for overlay
         comsol_k_col, comsol_f_col : int
@@ -1931,6 +1957,24 @@ class FFTDispersionInterface:
                 f_axis = f_axis[trim_0f:]
             else:
                 logger.warning(f"trim_0f={trim_0f} exceeds available frequency points ({f_axis.shape[0]}), ignoring")
+
+        # Trim frequencies above fmax if requested (applied BEFORE unit conversion)
+        if fmax is not None and fmax > 0:
+            if f_axis.ndim == 1:
+                # f_axis is still in Hz at this point, convert fmax to Hz
+                if f_units == "GHz":
+                    fmax_hz = fmax * 1e9
+                else:  # Hz
+                    fmax_hz = fmax
+                
+                fmax_mask = f_axis <= fmax_hz
+                n_above = (~fmax_mask).sum()
+                if np.any(fmax_mask):
+                    spectrum = spectrum[:, fmax_mask]
+                    f_axis = f_axis[fmax_mask]
+                    logger.info(f"Trimmed {n_above} frequency points above fmax={fmax} {f_units}")
+                else:
+                    logger.warning(f"fmax={fmax} {f_units} is below all frequencies, ignoring")
 
         # Convert units if requested
         kscale = kscale.lower()

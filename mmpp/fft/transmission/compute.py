@@ -129,6 +129,7 @@ class TransmissionResult:
         freq_unit: str = "GHz",
         trim_0f: Optional[int] = None,
         flip: bool = False,
+        log_scale: bool = False,
         ax=None,
         **kwargs
     ):
@@ -146,6 +147,11 @@ class TransmissionResult:
             If True, frequency is on Y-axis and transmission on X-axis.
             If False (default), frequency on X-axis and transmission on Y-axis.
             Use flip=True to match vertical frequency axis with dispersion plots.
+        log_scale : bool, optional
+            If True, use logarithmic scale for transmission axis.
+            When flip=False (default): X-axis (frequency) is linear, Y-axis (transmission) is log.
+            When flip=True: X-axis (transmission) is log, Y-axis (frequency) is linear.
+            Default is False (linear scale).
         ax : matplotlib.axes.Axes, optional
             Axes to plot on. If None, creates new figure.
         **kwargs
@@ -190,6 +196,11 @@ class TransmissionResult:
         else:
             fig = ax.figure
 
+        # Remove log_scale from kwargs if passed (it's not a valid plot() kwarg)
+        # User might mistakenly pass it as **kwargs
+        kwargs.pop("norm", None)  # Remove 'norm' if present (not valid for plot())
+        kwargs.pop("log_scale", None)  # Remove 'log_scale' if passed twice
+        
         # Default plot kwargs
         plot_kwargs = {
             "linewidth": 2,
@@ -203,11 +214,17 @@ class TransmissionResult:
             ax.plot(transmission_slice, freqs, **plot_kwargs)
             ax.set_xlabel("Transmission T(f)", fontsize=12)
             ax.set_ylabel(f"Frequency ({freq_unit})", fontsize=12)
+            # Apply log scale to transmission axis (X-axis when flipped)
+            if log_scale:
+                ax.set_xscale('log')
         else:
             # Frequency on X-axis (horizontal), Transmission on Y-axis (vertical) - default
             ax.plot(freqs, transmission_slice, **plot_kwargs)
             ax.set_xlabel(f"Frequency ({freq_unit})", fontsize=12)
             ax.set_ylabel("Transmission T(f)", fontsize=12)
+            # Apply log scale to transmission axis (Y-axis when not flipped)
+            if log_scale:
+                ax.set_yscale('log')
 
         # Title
         ax.set_title(
