@@ -67,6 +67,7 @@ class DispersionResult1D:
     # Metadata
     dt: float = 0.0
     dx: float = 0.0
+    flipx: bool = True  # Whether k-axis was flipped to correct FFT convention
     notes: Optional[List[str]] = None
     
     def __post_init__(self):

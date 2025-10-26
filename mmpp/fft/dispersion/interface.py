@@ -507,6 +507,12 @@ class FFTDispersionInterface:
             logger.debug("Dispersion cache entry %s missing required arrays", entry_name)
             return None
 
+        flipx_attr = entry.attrs.get("flipx")
+        if isinstance(flipx_attr, (bool, np.bool_)):
+            flipx_flag = bool(flipx_attr)
+        else:
+            flipx_flag = False if flipx_attr is None else bool(flipx_attr)
+
         result = DispersionResult1D(
             S=S,
             k_axis=k_axis,
@@ -522,6 +528,7 @@ class FFTDispersionInterface:
             orth_axis_label=orth_axis_label,
             dt=self._ensure_float(entry.attrs.get("dt")) or 0.0,
             dx=self._ensure_float(entry.attrs.get("dx")) or 0.0,
+            flipx=flipx_flag,
             notes=notes,
         )
         return result
@@ -635,6 +642,7 @@ class FFTDispersionInterface:
         entry.attrs["component"] = result.component
         entry.attrs["dt"] = float(result.dt)
         entry.attrs["dx"] = float(result.dx)
+        entry.attrs["flipx"] = bool(result.flipx)
         if result.fold_period is not None:
             entry.attrs["fold_period"] = float(result.fold_period)
         entry.attrs["orth_axis_label"] = result.orth_axis_label or ""
@@ -879,6 +887,10 @@ class FFTDispersionInterface:
         kmax : float, optional (via kwargs)
             Trim returned data to |k| ≤ kmax (rad/m) without affecting cached data.
             Note: Input in rad/m regardless of display units (rad_um, meter, etc.)
+        flipx : bool, optional (via kwargs), default True
+            When True (default), mirror the dispersion result along the k-axis so that
+            positive and negative wave-vectors are swapped. Set to False to preserve the
+            raw FFT ordering for diagnostic purposes.
         **kwargs
             Additional parameters passed to compute_dispersion_1d
             
@@ -922,6 +934,9 @@ class FFTDispersionInterface:
             sanitized_filters = None
 
         filters_config = sanitized_filters
+        
+        # Extract flipx from kwargs (default True)
+        flipx = compute_kwargs.pop("flipx", True)
 
         save_result_flag = compute_kwargs.pop("save_result", None)
         save_alias = compute_kwargs.pop("save", None)
@@ -939,6 +954,7 @@ class FFTDispersionInterface:
         disk_cache_flag = bool(disk_cache_setting)
 
         context_payload = dict(compute_kwargs)
+        context_payload["flipx"] = bool(flipx)
         if filters_config is not None:
             context_payload["filters"] = filters_config
         context = self._build_cache_context(
@@ -979,12 +995,26 @@ class FFTDispersionInterface:
                 if use_cache:
                     self._memory_cache[memory_key] = cached_disk
 
+        if base_result is not None:
+            cached_flipx = bool(getattr(base_result, "flipx", True))
+            if cached_flipx != bool(flipx):
+                logger.info(
+                    "Cached dispersion result flipx=%s but requested %s; recomputing",
+                    cached_flipx,
+                    flipx,
+                )
+                # Invalidate stale cache entry
+                if memory_key in self._memory_cache:
+                    self._memory_cache.pop(memory_key, None)
+                base_result = None
+
         if base_result is None:
             logger.info("Computing dispersion1d from scratch (force=%s)", force)
             base_result = self.analyzer.compute_dispersion_1d(
                 axis=axis,
                 component=component,
                 filters=filters_config,
+                flipx=flipx,
                 **compute_kwargs,
             )
             if use_cache:
@@ -1944,13 +1974,20 @@ class FFTDispersionInterface:
             context="plot_dispersion",
         )
 
-        im = ax.pcolormesh(
-            k_axis,
-            f_axis,
+        extent = (
+            float(k_axis[0]),
+            float(k_axis[-1]),
+            float(f_axis[0]),
+            float(f_axis[-1]),
+        )
+
+        im = ax.imshow(
             spectrum.T,
             cmap=cmap,
-            shading="auto",
             norm=norm,
+            aspect="auto",
+            origin="lower",
+            extent=extent,
         )
 
         # Formatting
@@ -1977,6 +2014,11 @@ class FFTDispersionInterface:
         if comsol_data is not None:
             k_points = np.asarray(comsol_data.k_values, dtype=float).copy()
             f_points = np.asarray(comsol_data.f_values, dtype=float).copy()
+            
+            # Apply flipx if it was used in dispersion computation
+            if getattr(result, 'flipx', True):
+                k_points = -k_points
+                logger.info("COMSOL k-values flipped (flipx=True in dispersion result)")
 
             if kscale == "rad_um":
                 k_points = k_points / 1e6
@@ -2012,39 +2054,14 @@ class FFTDispersionInterface:
                 }
                 scatter_kwargs.update(comsol_style)
 
-                if k_points.size:
-                    original_count = int(k_points.size)
-                    mirrored_k = -k_points
-                    mirrored_f = f_points
-                    k_plot =  mirrored_k
-                    f_plot =  mirrored_f
-
-                    coords = np.column_stack((k_plot, f_plot))
-                    if coords.size:
-                        rounded = np.round(coords, decimals=12)
-                        _, unique_idx = np.unique(rounded, axis=0, return_index=True)
-                        if unique_idx.size != coords.shape[0]:
-                            unique_idx.sort()
-                            k_plot = k_plot[unique_idx]
-                            f_plot = f_plot[unique_idx]
-                            logger.debug(
-                                "COMSOL overlay removed %d duplicate points after mirroring",
-                                coords.shape[0] - unique_idx.size,
-                            )
-                else:
-                    original_count = 0
-                    k_plot = k_points
-                    f_plot = f_points
-
                 logger.info(
-                    "Overlaying %d COMSOL points on dispersion plot (mirrored from %d original)",
-                    k_plot.size,
-                    original_count,
+                    "Overlaying %d COMSOL points on dispersion plot",
+                    k_points.size,
                 )
-                sample_size = min(k_plot.size, 5)
+                sample_size = min(k_points.size, 5)
                 if sample_size:
-                    sample_k = " ".join(f"{val:.3f}" for val in k_plot[:sample_size])
-                    sample_f = " ".join(f"{val:.3f}" for val in f_plot[:sample_size])
+                    sample_k = " ".join(f"{val:.3f}" for val in k_points[:sample_size])
+                    sample_f = " ".join(f"{val:.3f}" for val in f_points[:sample_size])
                     logger.debug(
                         "COMSOL overlay sample k (plot units): %s",
                         sample_k,
@@ -2054,7 +2071,7 @@ class FFTDispersionInterface:
                         sample_f,
                     )
 
-                ax.scatter(k_plot, f_plot, label="COMSOL", **scatter_kwargs)
+                ax.scatter(k_points, f_points, label="COMSOL", **scatter_kwargs)
                 
 
         plt.tight_layout()
@@ -2385,13 +2402,20 @@ class FFTDispersionInterface:
             context="plot_result",
         )
 
-        im = ax.pcolormesh(
-            k_axis,
-            f_axis,
+        extent = (
+            float(k_axis[0]),
+            float(k_axis[-1]),
+            float(f_axis[0]),
+            float(f_axis[-1]),
+        )
+
+        im = ax.imshow(
             spectrum.T,
             cmap=cmap,
-            shading="auto",
             norm=norm,
+            aspect="auto",
+            origin="lower",
+            extent=extent,
         )
 
         # Formatting
@@ -2416,6 +2440,10 @@ class FFTDispersionInterface:
         if comsol_data is not None:
             k_points = np.asarray(comsol_data.k_values, dtype=float).copy()
             f_points = np.asarray(comsol_data.f_values, dtype=float).copy()
+
+            if getattr(result, "flipx", True):
+                k_points = -k_points
+                logger.info("COMSOL k-values flipped (flipx=True in dispersion result)")
 
             if kscale == "rad_um":
                 k_points = k_points / 1e6
@@ -2451,37 +2479,12 @@ class FFTDispersionInterface:
                 }
                 scatter_kwargs.update(comsol_style)
 
-                if k_points.size:
-                    original_count = int(k_points.size)
-                    mirrored_k = -k_points
-                    mirrored_f = f_points
-                    k_plot = mirrored_k
-                    f_plot = mirrored_f
-
-                    coords = np.column_stack((k_plot, f_plot))
-                    if coords.size:
-                        rounded = np.round(coords, decimals=12)
-                        _, unique_idx = np.unique(rounded, axis=0, return_index=True)
-                        if unique_idx.size != coords.shape[0]:
-                            unique_idx.sort()
-                            k_plot = k_plot[unique_idx]
-                            f_plot = f_plot[unique_idx]
-                            logger.debug(
-                                "COMSOL overlay removed %d duplicate points after mirroring",
-                                coords.shape[0] - unique_idx.size,
-                            )
-                else:
-                    original_count = 0
-                    k_plot = k_points
-                    f_plot = f_points
-
                 logger.info(
-                    "Overlaying %d COMSOL points on dispersion plot (mirrored from %d original)",
-                    k_plot.size,
-                    original_count,
+                    "Overlaying %d COMSOL points on dispersion plot",
+                    k_points.size,
                 )
 
-                ax.scatter(k_plot, f_plot, label="COMSOL", **scatter_kwargs)
+                ax.scatter(k_points[::-1], f_points, label="COMSOL", **scatter_kwargs)
 
         plt.tight_layout()
 

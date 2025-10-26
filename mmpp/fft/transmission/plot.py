@@ -83,7 +83,15 @@ class TransmissionPlotter:
     def _select_data(self, which: str) -> tuple[np.ndarray, str]:
         which = which.lower()
         if which == "transmission":
-            return self.result.transmission, "Transmission $T(f,x)"
+            data = self.result.transmission
+            # Handle complex data from raw_fft_output mode
+            if np.iscomplexobj(data):
+                # Convert complex to magnitude (absolute value, NO squaring)
+                data = np.abs(data)
+                label = "$|FFT|$ (raw mode)"
+            else:
+                label = "Transmission $T(f,x)"
+            return data, label
         if which == "power":
             return self.result.power_map, "Averaged Power"
         if which == "power_plus":
@@ -125,6 +133,47 @@ class TransmissionPlotter:
         data, default_label = self._select_data(config.which)
         if data.size == 0:
             raise ValueError("Transmission result contains no data to plot")
+
+        # 🔑 Handle raw_fft_output mode with multi-dimensional data
+        # Raw mode gives (freq, z, x, comp) - need to reduce to (freq, x)
+        if data.ndim > 2:
+            if debug:
+                print(f"\n⚠️  Multi-dimensional data detected: {data.shape}")
+                print(f"   Reducing to 2D for plotting...")
+            
+            # Strategy: sum over components, take z=0 (or sum over z if average_mode != "none")
+            # Expected shapes:
+            # - (freq, z, x, comp) for raw_fft_output with sum_m/sum_fft
+            # - (freq, z, y, x, comp) for raw_fft_output with y_integration_mode="none"
+            
+            if data.ndim == 5:  # (freq, z, y, x, comp)
+                # Sum over y and components, take z=0
+                data = data[:, 0, :, :, :].sum(axis=(1, 3))  # → (freq, x)
+                if debug:
+                    print(f"   5D → 2D: summed over (y, comp), extracted z=0 → {data.shape}")
+            elif data.ndim == 4:  # (freq, z, x, comp)
+                # Sum over components, take z=0
+                data = data[:, 0, :, :].sum(axis=2)  # → (freq, x)
+                if debug:
+                    print(f"   4D → 2D: summed over comp, extracted z=0 → {data.shape}")
+            elif data.ndim == 3:  # (freq, x, comp) or (freq, z, x)
+                # Could be either - try to detect
+                if data.shape[1] == 1:  # Likely (freq, 1, x) - z dimension
+                    data = data[:, 0, :]  # → (freq, x)
+                    if debug:
+                        print(f"   3D → 2D: extracted z=0 → {data.shape}")
+                else:
+                    # Assume (freq, x, comp) - sum over components
+                    data = data.sum(axis=2)  # → (freq, x)
+                    if debug:
+                        print(f"   3D → 2D: summed over comp → {data.shape}")
+            
+            if data.ndim != 2:
+                raise ValueError(f"Could not reduce data to 2D for plotting. Final shape: {data.shape}")
+            
+            if debug:
+                print(f"   Final 2D shape: {data.shape}")
+                print(f"   min={data.min():.3e}, max={data.max():.3e}")
 
         freq_unit = config.freq_unit
         if freq_unit not in FREQ_SCALE:
@@ -205,15 +254,23 @@ class TransmissionPlotter:
                 vmax = 1.0
             norm = LogNorm(vmin=vmin, vmax=vmax)
 
-        quad = ax.pcolormesh(
-            x_edges,
-            freq_edges,
+        extent = (
+            float(x_edges[0]),
+            float(x_edges[-1]),
+            float(freq_edges[0]),
+            float(freq_edges[-1]),
+        )
+
+        image = ax.imshow(
             mesh_data,
             cmap=config.cmap,
-            shading="auto",
+            origin="lower",
+            aspect="auto",
+            extent=extent,
             vmin=None if norm else vmin,
             vmax=None if norm else vmax,
             norm=norm,
+            interpolation="nearest",
         )
 
         ylabel = f"Frequency ({freq_unit})"
@@ -239,12 +296,12 @@ class TransmissionPlotter:
         ax.set_title(title)
 
         if config.show_colorbar:
-            fig.colorbar(quad, ax=ax, label=default_label)
+            fig.colorbar(image, ax=ax, label=default_label)
 
         ax.set_ylim(freq_edges[0], freq_edges[-1])
         ax.set_xlim(x_edges[0], x_edges[-1])
 
-        return fig, ax, quad
+        return fig, ax, image
 
 
 __all__ = [

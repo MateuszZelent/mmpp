@@ -493,6 +493,7 @@ class SpinWaveAnalyzer:
         fold_period: Optional[float] = None,
         fold_agg: Optional[str] = None,
         filters: Optional[dict[str, bool]] = None,
+        flipx: bool = True,
     ) -> DispersionResult1D:
         """
         Compute 1D spin-wave dispersion S(k,f) along specified axis.
@@ -533,6 +534,10 @@ class SpinWaveAnalyzer:
         filters : Optional[dict]
             Optional preprocessing filters (remove_static, remove_average,
             hann_time, hann_space)
+        flipx : bool, default=True
+            Apply mirror flip to k-axis (k → -k) to correct NumPy FFT convention.
+            When True (default), applies S[:,::-1] to swap positive/negative wave vectors.
+            Also applies to COMSOL overlay data when active.
             
         Returns
         -------
@@ -699,6 +704,13 @@ class SpinWaveAnalyzer:
             if store_local_spectra:
                 S_local = orthogonal_spectra
             S = self._collapse_orthogonal_spectra(orthogonal_spectra, orthogonal_avg_mode)
+        
+        # Apply flipx to correct NumPy FFT convention (swap +/- wave vectors)
+        # This must be done AFTER all FFT operations and averaging
+        if flipx:
+            k_axis = k_axis[::-1]
+            if S_local is not None:
+                S_local = S_local[:, ::-1, :]
 
         logger.info(
             "Computed dispersion: S.shape=%s, k_range=[%.2e, %.2e], f_range=[%.1f, %.1f] Hz",
@@ -710,6 +722,8 @@ class SpinWaveAnalyzer:
         )
 
         notes = [f"1D dispersion along {axis}-axis"]
+        if flipx:
+            notes.append("k-axis flipped (flipx=True) to correct FFT convention")
         if not avg_over_orthogonal:
             notes.append("Orthogonal averaging disabled; local spectra stored in S_local")
         elif orthogonal_avg_mode != "magnetization":
@@ -725,6 +739,7 @@ class SpinWaveAnalyzer:
             config=self.config,
             dt=self.dt,
             dx=dx,
+            flipx=flipx,
             notes=notes,
             S_local=S_local,
             orth_axis=orth_axis_values,

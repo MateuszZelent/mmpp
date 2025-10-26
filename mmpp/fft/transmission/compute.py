@@ -7,17 +7,26 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Tuple
 import math
 import time
+import os
 
 import numpy as np
 from tqdm.auto import tqdm
 
 # Try to use scipy.fft (faster) with fallback to numpy.fft
-try:
-    from scipy import fft as scipy_fft
-    _USE_SCIPY_FFT = True
-except ImportError:
+# Can be disabled via environment variable MMPP_USE_NUMPY_FFT=1
+_FORCE_NUMPY = os.environ.get('MMPP_USE_NUMPY_FFT', '').lower() in ('1', 'true', 'yes')
+
+if _FORCE_NUMPY:
     scipy_fft = None
     _USE_SCIPY_FFT = False
+    print("🔧 Forced numpy.fft via MMPP_USE_NUMPY_FFT environment variable")
+else:
+    try:
+        from scipy import fft as scipy_fft
+        _USE_SCIPY_FFT = True
+    except ImportError:
+        scipy_fft = None
+        _USE_SCIPY_FFT = False
 
 # Try to use joblib for parallel processing
 try:
@@ -38,6 +47,9 @@ TransmissionMethod = Literal["power_ratio", "circular", "cpsd"]
 AverageMode = Literal["mean", "median", "edge_taper", "none"]
 NormalizeMode = Literal["reference", "max", "none"]
 ReferenceStatistic = Literal["mean", "median", "max"]
+YIntegrationMode = Literal["sum_m", "sum_fft", "none"]
+FFTEngine = Literal["scipy", "numpy", "auto"]
+SpatialWindowMode = Literal["pre_fft", "post_fft"]
 
 
 @dataclass
@@ -58,8 +70,10 @@ class TransmissionConfig:
     # Spatial averaging controls
     spatial_window: int = 5  # Set to 1 for no spatial averaging
     spatial_step: int = 1
+    spatial_window_mode: SpatialWindowMode = "post_fft"  # "pre_fft" = sum neighbors before FFT (slower, local), "post_fft" = extract from full FFT (faster)
     average_mode: AverageMode = "mean"  # "none" = no y/z averaging
     edge_taper_power: float = 1.5
+    y_integration_mode: YIntegrationMode = "sum_fft"  # "sum_m" = sum before FFT, "sum_fft" = sum |FFT|, "none" = no y-sum
     
     # Component selection
     component_weights: Tuple[float, float, float] = (1.0, 1.0, 0.1)
@@ -74,6 +88,8 @@ class TransmissionConfig:
     tmax: Optional[int] = None
     keep_complex_fft: bool = False
     store_component_maps: bool = False
+    engine: FFTEngine = "auto"  # "scipy" (fastest), "numpy" (fallback), "auto" (use scipy if available)
+    raw_fft_output: bool = False  # If True, skip all post-FFT processing and return raw full_spectrum
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def ensure_valid(self) -> None:
@@ -139,6 +155,7 @@ class TransmissionResult:
         flip: bool = False,
         log_scale: bool = False,
         ax=None,
+        mark_on_ax=None,
         **kwargs
     ):
         """Plot 1D transmission cross-section at specific x position.
@@ -165,6 +182,9 @@ class TransmissionResult:
             Default is False (linear scale).
         ax : matplotlib.axes.Axes, optional
             Axes to plot on. If None, creates new figure.
+        mark_on_ax : matplotlib.axes.Axes, optional
+            If provided, draws a vertical line on this axes object at the crosssection position.
+            Useful for marking the crosssection location on a transmission heatmap.
         **kwargs
             Additional matplotlib plot kwargs (color, linewidth, label, etc.)
 
@@ -259,6 +279,19 @@ class TransmissionResult:
             fontweight="bold"
         )
         ax.grid(True, alpha=0.3)
+        
+        # Mark crosssection position on another axes if requested
+        if mark_on_ax is not None:
+            # Get color from plot kwargs if available, otherwise use default
+            mark_color = plot_kwargs.get('color', 'C0')
+            mark_on_ax.axvline(
+                actual_x, 
+                color=mark_color, 
+                linestyle='--', 
+                linewidth=2, 
+                alpha=0.7,
+                label=f'Crosssection at {position_label}'
+            )
 
         return fig, ax
 
@@ -600,6 +633,11 @@ class TransmissionCompute:
             dx_nm = None
             log.warning("dx not found, x_positions will be in cell indices")
 
+        # 🔍 DEBUG: Print raw data stats
+        print(f"📊 RAW data.shape: {data.shape}, min: {data.min():.8e}, max: {data.max():.8e}")
+        print(f"⚙️  config.filter_type = {config.filter_type}")
+        print(f"⚙️  config.window_function = {config.window_function}")
+
         # Apply filtering (optional - can be None)
         if config.filter_type is not None:
             if isinstance(config.filter_type, list):
@@ -607,16 +645,20 @@ class TransmissionCompute:
             else:
                 log.debug(f"Applying filter: {config.filter_type}")
             filtered = self._fft_compute.apply_filter(data, config.filter_type)
+            print(f"🔧 FILTERED data: min: {filtered.min():.8e}, max: {filtered.max():.8e}")
         else:
             filtered = data
             log.debug("Skipping temporal filtering (filter_type=None)")
+            print(f"⏭️  SKIPPED filtering (filter_type=None)")
         
         # Apply windowing (optional - can be None)
         if config.window_function is not None:
             windowed = self._fft_compute.apply_window(filtered, config.window_function)
+            print(f"🪟 WINDOWED data: min: {windowed.min():.8e}, max: {windowed.max():.8e}")
         else:
             windowed = filtered
             log.debug("Skipping temporal windowing (window_function=None)")
+            print(f"⏭️  SKIPPED windowing (window_function=None)")
 
         window_size = min(config.spatial_window, n_x)
         step = config.spatial_step
@@ -645,13 +687,8 @@ class TransmissionCompute:
         n_windows = len(window_starts)
         n_freq = n_time // 2 + 1
 
-        # Use scipy.fft if available (faster than numpy.fft)
-        if _USE_SCIPY_FFT:
-            freqs = scipy_fft.rfftfreq(n_time, d=dt)
-            log.debug("Using scipy.fft.rfft (optimized)")
-        else:
-            freqs = np.fft.rfftfreq(n_time, d=dt)
-            log.debug("Using numpy.fft.rfft (fallback)")
+        # Generate frequency array (same for both scipy and numpy)
+        freqs = np.fft.rfftfreq(n_time, d=dt)
 
         power_map = np.zeros((n_freq, n_windows), dtype=float)
         transverse_map = (
@@ -714,143 +751,372 @@ class TransmissionCompute:
         log.debug("Computing FFT for full dataset (t=%d, z=%d, y=%d, x=%d, comp=%d)...", 
                   n_time, n_z, n_y, n_x, n_comp)
         t_fft_start = time.time()
-        
-        if _USE_SCIPY_FFT:
-            # scipy.fft.rfft is typically 2-3x faster than numpy.fft.rfft
-            full_spectrum = scipy_fft.rfft(windowed, axis=0)
-        else:
-            full_spectrum = np.fft.rfft(windowed, axis=0)
-        
-        t_fft_end = time.time()
-        log.info("FFT completed in %.3fs (shape: %s → %s)", 
-                 t_fft_end - t_fft_start, windowed.shape, full_spectrum.shape)
 
-        # Now extract windows from pre-computed FFT (much faster!)
-        # Now extract windows from pre-computed FFT (much faster!)
-        # 🚀 OPTIMIZATION 2: Vectorize or parallelize window processing
+        # 🔍 DEBUG: Verify data before FFT
+        print(f"windowed.shape: {windowed.shape}, min: {windowed.min():.8e}, max: {windowed.max():.8e}")
+        print(f"⚙️  y_integration_mode = {config.y_integration_mode}")
+        print(f"⚙️  spatial_window_mode = {config.spatial_window_mode}")
+        print(f"⚙️  engine = {config.engine}")
+
+        # 🔑 Determine which FFT engine to use based on config.engine parameter
+        if config.engine == "scipy":
+            if not _USE_SCIPY_FFT or scipy_fft is None:
+                raise ValueError("engine='scipy' requested but scipy is not available. Install scipy or use engine='numpy'")
+            use_scipy = True
+            engine_name = "scipy.fft"
+        elif config.engine == "numpy":
+            use_scipy = False
+            engine_name = "numpy.fft"
+        else:  # "auto"
+            use_scipy = _USE_SCIPY_FFT
+            engine_name = "scipy.fft" if use_scipy else "numpy.fft"
         
-        # Decide on processing strategy
-        use_parallel = _USE_JOBLIB and n_windows > 100  # Only parallelize for many windows
-        use_vectorized = (config.average_mode == "none" and 
+        log.info(f"Using FFT engine: {engine_name}")
+        print(f"🔧 FFT engine: {engine_name}")
+
+        # 🔑 SPATIAL WINDOW MODE: Choose between pre-FFT (local, slower) or post-FFT (global, faster)
+        if config.spatial_window_mode == "pre_fft":
+            # 🐢 SLOW PATH: Apply spatial windows BEFORE FFT (physically correct for local transmission)
+            # This computes separate FFT for each spatial window position
+            log.info("⚠️  Spatial window mode: PRE_FFT (computing separate FFT for each window - SLOW but local)")
+            print(f"⚠️  PRE_FFT mode: Will compute {n_windows} separate FFTs (slower)")
+            
+            # Pre-allocate result arrays
+            power_map = np.zeros((n_freq, n_windows), dtype=float)
+            full_spectrum = None  # Won't have single full_spectrum in this mode
+            
+            # 🔑 Process each window separately
+            for win_idx, start in tqdm(enumerate(window_starts),
+                                       total=n_windows,
+                                       desc="Computing FFT per window (pre_fft mode)",
+                                       unit="win"):
+                end = min(start + window_size, n_x)
+                window_slice = slice(start, end)
+                
+                # Extract window from time-domain data: (t, z, y, window_x, comp)
+                window_data = windowed[:, :, :, window_slice, :]
+                
+                # Apply y-integration if requested (BEFORE FFT!)
+                if config.y_integration_mode == "sum_m":
+                    # Sum over y: (t, z, y, window_x, comp) → (t, z, window_x, comp)
+                    window_data = window_data.sum(axis=2)
+                elif config.y_integration_mode == "none":
+                    # Keep y dimension
+                    pass
+                # Note: "sum_fft" doesn't make sense in pre_fft mode (would need FFT first)
+                # so we treat it same as "sum_m"
+                elif config.y_integration_mode == "sum_fft":
+                    log.warning("y_integration_mode='sum_fft' with spatial_window_mode='pre_fft' → using 'sum_m' instead")
+                    window_data = window_data.sum(axis=2)
+                
+                # Sum over spatial window if window_size > 1
+                # Shape after y-sum: (t, z, window_x, comp) or (t, z, y, window_x, comp)
+                # We want to sum over the window_x axis
+                if config.y_integration_mode in ("sum_m", "sum_fft"):
+                    # (t, z, window_x, comp) → sum over window_x → (t, z, comp)
+                    window_data_summed = window_data.sum(axis=2)
+                else:
+                    # (t, z, y, window_x, comp) → sum over window_x → (t, z, y, comp)
+                    window_data_summed = window_data.sum(axis=3)
+                
+                # Compute FFT for this window
+                if use_scipy:
+                    window_spectrum = scipy_fft.rfft(window_data_summed, axis=0)
+                else:
+                    window_spectrum = np.fft.rfft(window_data_summed, axis=0)
+                
+                # Compute power from all components
+                # Shape: (freq, z, comp) or (freq, z, y, comp)
+                power_components = None
+                for comp_idx in range(n_comp):
+                    if component_weights[comp_idx] != 0:
+                        if config.y_integration_mode in ("sum_m", "sum_fft"):
+                            comp_fft = window_spectrum[..., comp_idx]  # (freq, z)
+                        else:
+                            comp_fft = window_spectrum[..., comp_idx]  # (freq, z, y)
+                        comp_power = np.abs(comp_fft) * component_weights[comp_idx]
+                        if power_components is None:
+                            power_components = comp_power
+                        else:
+                            power_components += comp_power
+                
+                # Aggregate spatially (over z, and possibly y)
+                if config.y_integration_mode in ("sum_m", "sum_fft"):
+                    # (freq, z) → aggregate over z
+                    if config.average_mode == "none":
+                        aggregated = power_components[:, 0]  # Just take z=0
+                    elif config.average_mode == "mean":
+                        aggregated = power_components.mean(axis=1)
+                    else:
+                        # Fallback to mean
+                        aggregated = power_components.mean(axis=1)
+                else:
+                    # (freq, z, y) → aggregate over z and y
+                    if config.average_mode == "none":
+                        aggregated = power_components[:, 0, :].mean(axis=1)  # z=0, mean over y
+                    elif config.average_mode == "mean":
+                        aggregated = power_components.mean(axis=(1, 2))
+                    else:
+                        aggregated = power_components.mean(axis=(1, 2))
+                
+                power_map[:, win_idx] = aggregated
+            
+            print(f"✅ PRE_FFT complete: computed {n_windows} FFTs")
+            t_fft_end = time.time()
+            log.info("PRE_FFT mode completed in %.3fs for %d windows", 
+                     t_fft_end - t_fft_start, n_windows)
+            
+            # Skip the post-FFT processing section entirely
+            use_post_fft_processing = False
+            
+        else:  # "post_fft" - current fast implementation
+            # 🚀 FAST PATH: Compute FFT once, then extract windows (current implementation)
+            log.info("🚀 Spatial window mode: POST_FFT (computing FFT once, then extracting windows - FAST)")
+            use_post_fft_processing = True
+            
+            # 🔑 Y-AXIS INTEGRATION: Handle different methods for summing across y-dimension
+            if config.y_integration_mode == "sum_m":
+                # Method 1: Sum magnetization data along y BEFORE FFT
+                # windowed shape: (t, z, y, x, comp) → sum over y → (t, z, x, comp)
+                log.info("Y-integration: sum_m (summing magnetization before FFT)")
+                windowed_integrated = windowed.sum(axis=2)  # Sum over y (axis=2)
+                print(f"🔧 SUM_M: summed over y-axis → shape {windowed_integrated.shape}")
+                
+                if use_scipy:
+                    full_spectrum = scipy_fft.rfft(windowed_integrated, axis=0)
+                else:
+                    full_spectrum = np.fft.rfft(windowed_integrated, axis=0)
+                
+                # 🔍 DEBUG: Verify FFT output
+                abs_spectrum = np.abs(full_spectrum)
+                print(f"✅ FFT complete: full_spectrum.shape = {full_spectrum.shape}")
+                print(f"   |FFT| min: {abs_spectrum.min():.8e}, max: {abs_spectrum.max():.8e}")
+            
+            elif config.y_integration_mode == "sum_fft":
+                # Method 2: Compute FFT first, THEN sum complex FFT along y (preserve phase!)
+                log.info("Y-integration: sum_fft (computing FFT first, then summing complex values)")
+                
+                if use_scipy:
+                    full_spectrum_raw = scipy_fft.rfft(windowed, axis=0)
+                else:
+                    full_spectrum_raw = np.fft.rfft(windowed, axis=0)
+                
+                print(f"✅ FFT complete (raw): shape = {full_spectrum_raw.shape}")
+                
+                # Sum complex FFT along y-axis: (freq, z, y, x, comp) → (freq, z, x, comp)
+                # ⚠️ IMPORTANT: Sum complex values, NOT absolute values - preserves phase!
+                full_spectrum = np.sum(full_spectrum_raw, axis=2)  # Sum over y (axis=2)
+                print(f"🔧 SUM_FFT: summed complex FFT over y-axis → shape {full_spectrum.shape}")
+                abs_spectrum = np.abs(full_spectrum)
+                print(f"   |sum(complex FFT)| min: {abs_spectrum.min():.8e}, max: {abs_spectrum.max():.8e}")
+            
+            else:  # "none"
+                # No y-integration: keep full 5D spectrum
+                log.info("Y-integration: none (keeping full 5D spectrum)")
+                
+                if use_scipy:
+                    full_spectrum = scipy_fft.rfft(windowed, axis=0)
+                else:
+                    full_spectrum = np.fft.rfft(windowed, axis=0)
+                
+                # 🔍 DEBUG: Verify FFT output
+                abs_spectrum = np.abs(full_spectrum)
+                print(f"✅ FFT complete: full_spectrum.shape = {full_spectrum.shape}")
+                print(f"   |FFT| min: {abs_spectrum.min():.8e}, max: {abs_spectrum.max():.8e}")
+
+
+            t_fft_end = time.time()
+            log.info("FFT completed in %.3fs (shape: %s → %s)", 
+                     t_fft_end - t_fft_start, windowed.shape, full_spectrum.shape)
+
+            # 🚀 RAW FFT OUTPUT MODE: Skip all post-processing and return raw spectrum
+            if config.raw_fft_output:
+                log.info("⚡ RAW FFT OUTPUT MODE: Skipping all post-processing, returning full_spectrum directly")
+                print(f"⚡ RAW FFT OUTPUT: Returning full_spectrum shape={full_spectrum.shape}")
+                
+                # Create minimal result with raw FFT spectrum
+                # Note: transmission and power_map will contain the raw complex spectrum
+                # User should access result.power_map or result.transmission to get full_spectrum
+                metadata = {
+                    "dataset": dataset,
+                    "z_layer": config.z_layer,
+                    "time_step": dt,
+                    "raw_fft_output": True,
+                    "fft_shape": full_spectrum.shape,
+                }
+                if dx_m is not None:
+                    metadata["dx_m"] = dx_m
+                    metadata["dx_nm"] = dx_nm
+                    metadata["x_unit"] = "nm"
+                else:
+                    metadata["x_unit"] = "index"
+                
+                # Return full_spectrum as both transmission and power_map
+                # Shape depends on y_integration_mode:
+                # - sum_m/sum_fft: (freq, z, x, comp)
+                # - none: (freq, z, y, x, comp)
+                return TransmissionResult(
+                    frequencies=freqs,
+                    x_positions=np.arange(n_x, dtype=float) * (dx_nm if dx_nm else 1.0),  # All X positions
+                    transmission=full_spectrum,  # Raw complex FFT
+                    power_map=np.abs(full_spectrum),  # FFT magnitude (not squared)
+                    reference_power=np.ones(n_freq, dtype=float),  # Dummy reference
+                    config=config,
+                    dx=dx_m,
+                    metadata=metadata,
+                )
+
+            # Now extract windows from pre-computed FFT (much faster!)
+            # 🚀 OPTIMIZATION 2: Vectorize or parallelize window processing
+            
+            # 🔑 Determine spectrum shape based on y_integration_mode
+            # - sum_m or sum_fft: (freq, z, x, comp) - y already integrated
+            # - none: (freq, z, y, x, comp) - full 5D
+            y_already_integrated = config.y_integration_mode in ("sum_m", "sum_fft")
+            
+            # Decide on processing strategy
+            use_parallel = _USE_JOBLIB and n_windows > 100  # Only parallelize for many windows
+            use_vectorized = (config.average_mode == "none" and 
                           not config.enable_circular_components and 
                           not config.store_component_maps and
                           not use_parallel)
-        
-        # 🚀 ULTRA-OPTIMIZATION for average_mode='none' with sliding_window_view
-        use_sliding_window = (use_vectorized and 
-                             config.spatial_step == 1 and 
-                             hasattr(np.lib.stride_tricks, 'sliding_window_view'))
-        
-        if use_sliding_window:
-            # 🔥 FASTEST PATH: Zero Python loops - pure NumPy vectorization!
-            log.info("Using sliding_window_view optimization (step=1, average_mode='none')")
-            log.info("Processing %d windows with vectorized operations (no progress bar - too fast!)", n_windows)
-            t_process_start = time.time()
             
-            # Sum over y dimension (integrate across width) - this is physically correct for transmission!
-            # Extract z=0, sum all y, keep x and components
-            # Shape: (n_freq, n_x, n_comp)
-            relevant_spectrum = full_spectrum[:, 0, :, :, :].sum(axis=1)  # Sum over y (axis=1)
-            log.debug("Summed spectrum over y-dimension: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
+            # 🚀 ULTRA-OPTIMIZATION for average_mode='none' with sliding_window_view
+            use_sliding_window = (use_vectorized and 
+                                 config.spatial_step == 1 and 
+                                 hasattr(np.lib.stride_tricks, 'sliding_window_view'))
             
-            # Create sliding window view - NO COPIES, just strides!
-            # sliding_window_view adds new axis at the END!
-            # Input:  (n_freq, n_x, n_comp)
-            # Output: (n_freq, n_windows, n_comp, window_size) ← window_size at END!
-            windowed_view = np.lib.stride_tricks.sliding_window_view(
-                relevant_spectrum, 
-                window_shape=window_size, 
-                axis=1  # Slide along x-axis
-            )
-            # windowed_view shape: (n_freq, n_windows, n_comp, window_size)
-            
-            # Compute power for ALL windows - iterate only over active components
-            # Initialize with zeros - shape (n_freq, n_windows, window_size)
-            power_all_windows = np.zeros((n_freq, n_windows, window_size), dtype=float)
-            
-            # Add contribution from each component with non-zero weight
-            for comp_idx in range(n_comp):
-                if component_weights[comp_idx] != 0:
-                    # Extract component: (n_freq, n_windows, window_size)
-                    comp_fft_all = windowed_view[:, :, comp_idx, :]
-                    power_all_windows += np.abs(comp_fft_all) ** 2 * component_weights[comp_idx]
-            
-            # Mean over window_size dimension - NO LOOP!
-            # power_all_windows shape: (n_freq, n_windows, window_size)
-            power_map = power_all_windows.mean(axis=2)  # Result: (n_freq, n_windows)
-            
-            t_process_end = time.time()
-            log.info("Sliding window vectorization: %.3fs for %d windows (%.1f µs/window)", 
-                      t_process_end - t_process_start, n_windows,
-                      (t_process_end - t_process_start) * 1e6 / n_windows)
-                      
-        elif use_vectorized:
-            # 🔥 OPTIMIZED PATH: Loop with reduced dimensions (for step != 1)
-            log.debug("Using optimized vectorized processing (average_mode='none', step=%d)", 
-                     config.spatial_step)
-            t_process_start = time.time()
-            
-            # Sum over y dimension (integrate across width) - physically correct for transmission!
-            # Extract z=0, sum all y, keep x and components
-            # Shape: (n_freq, n_x, n_comp) instead of (n_freq, n_z, n_y, n_x, n_comp)
-            relevant_spectrum = full_spectrum[:, 0, :, :, :].sum(axis=1)  # Sum over y (axis=1)
-            log.debug("Summed spectrum over y-dimension: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
-            
-            # Now loop with much smaller slicing operations
-            for win_idx, start in tqdm(enumerate(window_starts), 
-                                       total=n_windows,
-                                       desc="Processing windows",
-                                       unit="win",
-                                       disable=n_windows < 10):  # Disable for very few windows
-                end = min(start + window_size, n_x)
+            if use_sliding_window:
+                # 🔥 FASTEST PATH: Zero Python loops - pure NumPy vectorization!
+                log.info("Using sliding_window_view optimization (step=1, average_mode='none')")
+                log.info("Processing %d windows with vectorized operations (no progress bar - too fast!)", n_windows)
+                t_process_start = time.time()
                 
-                # Slice from reduced 3D array (n_freq, n_x, n_comp)
-                # instead of 5D array - much faster!
-                spectrum_slice = relevant_spectrum[:, start:end, :]  # (n_freq, window_len, n_comp)
+                if y_already_integrated:
+                    # Y already summed: (freq, z, x, comp) → extract z=0 → (freq, x, comp)
+                    relevant_spectrum = full_spectrum[:, 0, :, :]  # Extract z=0
+                    print(f"🔍 Extracted z=0: {full_spectrum.shape} → {relevant_spectrum.shape}")
+                    log.debug("Y already integrated, extracted z=0: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
+                else:
+                    # Y not summed yet: (freq, z, y, x, comp) → sum over y, extract z=0 → (freq, x, comp)
+                    relevant_spectrum = full_spectrum[:, 0, :, :, :].sum(axis=1)  # Sum over y (axis=1)
+                    print(f"🔍 Summed over y at z=0: {full_spectrum.shape} → {relevant_spectrum.shape}")
+                    log.debug("Summed spectrum over y-dimension: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
                 
-                # Compute power - iterate only over active components
-                # Initialize with zeros
-                power_components = np.zeros((n_freq, end - start), dtype=float)
+                print(f"🔍 relevant_spectrum stats: min={np.abs(relevant_spectrum).min():.8e}, max={np.abs(relevant_spectrum).max():.8e}")
+                
+                # Create sliding window view - NO COPIES, just strides!
+                # sliding_window_view adds new axis at the END!
+                # Input:  (n_freq, n_x, n_comp)
+                # Output: (n_freq, n_windows, n_comp, window_size) ← window_size at END!
+                windowed_view = np.lib.stride_tricks.sliding_window_view(
+                    relevant_spectrum, 
+                    window_shape=window_size, 
+                    axis=1  # Slide along x-axis
+                )
+                # windowed_view shape: (n_freq, n_windows, n_comp, window_size)
+                print(f"🔍 windowed_view.shape: {windowed_view.shape} (window_size={window_size})")
+                
+                # Compute power for ALL windows - iterate only over active components
+                # Initialize with zeros - shape (n_freq, n_windows, window_size)
+                power_all_windows = np.zeros((n_freq, n_windows, window_size), dtype=float)
                 
                 # Add contribution from each component with non-zero weight
                 for comp_idx in range(n_comp):
                     if component_weights[comp_idx] != 0:
-                        comp_fft = spectrum_slice[..., comp_idx]  # (n_freq, window_len)
-                        power_components += np.abs(comp_fft) ** 2 * component_weights[comp_idx]
+                        # Extract component: (n_freq, n_windows, window_size)
+                        comp_fft_all = windowed_view[:, :, comp_idx, :]
+                        power_all_windows += np.abs(comp_fft_all) * component_weights[comp_idx]
                 
-                # Fast aggregation: mean over window dimension
-                # power_components shape: (n_freq, window_len)
-                power_map[:, win_idx] = power_components.mean(axis=1)
-            
-            t_process_end = time.time()
-            log.info("Optimized vectorized processing: %.3fs for %d windows (%.1f µs/window)", 
-                      t_process_end - t_process_start, n_windows,
-                      (t_process_end - t_process_start) * 1e6 / n_windows)
-                      
-        elif use_parallel:
-            # Parallel path: use joblib to process windows in parallel
-            log.info("Using parallel processing with joblib (%d windows, %d CPUs)", 
-                     n_windows, -1)  # -1 = use all CPUs
-            t_process_start = time.time()
-            
-            def process_window(win_idx: int, start: int):
-                """Process single window - can run in parallel."""
-                end = min(start + window_size, n_x)
-                window_slice = slice(start, end)
-                # Extract: (n_freq, n_z, n_y, window_x, n_comp)
-                spectrum = full_spectrum[:, :, :, window_slice, :]
-                # Sum over y dimension (integrate across width) - physically correct!
-                # Result: (n_freq, n_z, window_x, n_comp)
-                spectrum = spectrum.sum(axis=2)
+                print(f"🔍 power_all_windows stats BEFORE mean: min={power_all_windows.min():.8e}, max={power_all_windows.max():.8e}")
                 
+                # Mean over window_size dimension - NO LOOP!
+                # power_all_windows shape: (n_freq, n_windows, window_size)
+                power_map = power_all_windows.mean(axis=2)  # Result: (n_freq, n_windows)
+                
+                print(f"🔍 power_map stats AFTER mean: min={power_map.min():.8e}, max={power_map.max():.8e}")
+                
+                t_process_end = time.time()
+                log.info("Sliding window vectorization: %.3fs for %d windows (%.1f µs/window)", 
+                          t_process_end - t_process_start, n_windows,
+                          (t_process_end - t_process_start) * 1e6 / n_windows)
+                          
+            elif use_vectorized:
+                # 🔥 OPTIMIZED PATH: Loop with reduced dimensions (for step != 1)
+                log.debug("Using optimized vectorized processing (average_mode='none', step=%d)", 
+                         config.spatial_step)
+                t_process_start = time.time()
+                
+                if y_already_integrated:
+                    # Y already summed: (freq, z, x, comp) → extract z=0 → (freq, x, comp)
+                    relevant_spectrum = full_spectrum[:, 0, :, :]  # Extract z=0
+                    log.debug("Y already integrated, extracted z=0: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
+                else:
+                    # Y not summed yet: (freq, z, y, x, comp) → sum over y, extract z=0 → (freq, x, comp)
+                    relevant_spectrum = full_spectrum[:, 0, :, :, :].sum(axis=1)  # Sum over y (axis=1)
+                    log.debug("Summed spectrum over y-dimension: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
+                
+                # Now loop with much smaller slicing operations
+                for win_idx, start in tqdm(enumerate(window_starts), 
+                                           total=n_windows,
+                                           desc="Processing windows",
+                                           unit="win",
+                                           disable=n_windows < 10):  # Disable for very few windows
+                    end = min(start + window_size, n_x)
+                    
+                    # Slice from reduced 3D array (n_freq, n_x, n_comp)
+                    # instead of 5D array - much faster!
+                    spectrum_slice = relevant_spectrum[:, start:end, :]  # (n_freq, window_len, n_comp)
+                    
+                    # Compute power - iterate only over active components
+                    # Initialize with zeros
+                    power_components = np.zeros((n_freq, end - start), dtype=float)
+                    
+                    # Add contribution from each component with non-zero weight
+                    for comp_idx in range(n_comp):
+                        if component_weights[comp_idx] != 0:
+                            comp_fft = spectrum_slice[..., comp_idx]  # (n_freq, window_len)
+                            power_components += np.abs(comp_fft) * component_weights[comp_idx]
+                    
+                    # Fast aggregation: mean over window dimension
+                    # power_components shape: (n_freq, window_len)
+                    power_map[:, win_idx] = power_components.mean(axis=1)
+                
+                t_process_end = time.time()
+                log.info("Optimized vectorized processing: %.3fs for %d windows (%.1f µs/window)", 
+                          t_process_end - t_process_start, n_windows,
+                          (t_process_end - t_process_start) * 1e6 / n_windows)
+                          
+            elif use_parallel:
+                # Parallel path: use joblib to process windows in parallel
+                log.info("Using parallel processing with joblib (%d windows, %d CPUs)", 
+                         n_windows, -1)  # -1 = use all CPUs
+                t_process_start = time.time()
+                
+                def process_window(win_idx: int, start: int):
+                    """Process single window - can run in parallel."""
+                    end = min(start + window_size, n_x)
+                    window_slice = slice(start, end)
+                    
+                    if y_already_integrated:
+                        # Y already summed: (freq, z, x, comp) → extract window
+                        # Result: (freq, z, window_x, comp)
+                        spectrum = full_spectrum[:, :, window_slice, :]
+                    else:
+                        # Extract: (n_freq, n_z, n_y, window_x, n_comp)
+                        spectrum = full_spectrum[:, :, :, window_slice, :]
+                        # Sum over y dimension (integrate across width) - physically correct!
+                        # Result: (n_freq, n_z, window_x, n_comp)
+                        spectrum = spectrum.sum(axis=2)
+                    
                 mx_fft = spectrum[..., 0]
                 my_fft = spectrum[..., 1]
-                power_components = np.abs(mx_fft) ** 2 * component_weights[0]
-                power_components += np.abs(my_fft) ** 2 * component_weights[1]
+                power_components = np.abs(mx_fft) * component_weights[0]
+                power_components += np.abs(my_fft) * component_weights[1]
                 
                 if n_comp > 2:
                     mz_fft = spectrum[..., 2]
-                    power_components += np.abs(mz_fft) ** 2 * component_weights[2]
+                    power_components += np.abs(mz_fft) * component_weights[2]
                 
                 aggregated = _aggregate_spatial(
                     power_components,
@@ -859,17 +1125,17 @@ class TransmissionCompute:
                 )
                 
                 results = {'power': aggregated}
-                
+                    
                 if transverse_map is not None:
                     results['transverse'] = _aggregate_spatial(
-                        np.abs(mx_fft) ** 2 + np.abs(my_fft) ** 2,
+                        np.abs(mx_fft) + np.abs(my_fft),
                         config.average_mode,
                         config.edge_taper_power,
                     )
                 
                 if longitudinal_map is not None and n_comp > 2:
                     results['longitudinal'] = _aggregate_spatial(
-                        np.abs(mz_fft) ** 2,
+                        np.abs(mz_fft),
                         config.average_mode,
                         config.edge_taper_power,
                     )
@@ -878,147 +1144,152 @@ class TransmissionCompute:
                     m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
                     m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
                     results['power_plus'] = _aggregate_spatial(
-                        np.abs(m_plus) ** 2,
+                        np.abs(m_plus),
                         config.average_mode,
                         config.edge_taper_power,
                     )
                     results['power_minus'] = _aggregate_spatial(
-                        np.abs(m_minus) ** 2,
+                        np.abs(m_minus),
                         config.average_mode,
                         config.edge_taper_power,
                     )
                 
                 return win_idx, results
-            
-            # Process windows in parallel
-            results_list = Parallel(n_jobs=-1, backend='threading')(
-                delayed(process_window)(win_idx, start)
-                for win_idx, start in enumerate(window_starts)
-            )
-            
-            # Collect results
-            for win_idx, results in results_list:
-                power_map[:, win_idx] = results['power']
-                if transverse_map is not None and 'transverse' in results:
-                    transverse_map[:, win_idx] = results['transverse']
-                if longitudinal_map is not None and 'longitudinal' in results:
-                    longitudinal_map[:, win_idx] = results['longitudinal']
-                if config.enable_circular_components:
-                    if power_plus is not None:
-                        power_plus[:, win_idx] = results.get('power_plus', 0)
-                    if power_minus is not None:
-                        power_minus[:, win_idx] = results.get('power_minus', 0)
-            
-            t_process_end = time.time()
-            log.info("Parallel processing: %.3fs for %d windows", 
-                      t_process_end - t_process_start, n_windows)
-        
-        else:
-            # Standard path: use _aggregate_spatial for each window (serial)
-            log.debug("Using standard serial processing (average_mode='%s')", config.average_mode)
-            t_process_start = time.time()
-            
-            for win_idx, start in tqdm(enumerate(window_starts),
-                                       total=n_windows,
-                                       desc="Processing windows",
-                                       unit="win",
-                                       disable=n_windows < 10):  # Disable for very few windows
-                end = min(start + window_size, n_x)
-                window_slice = slice(start, end)
                 
-                # Extract window from pre-computed FFT spectrum
-                # Shape: (n_freq, n_z, n_y, window_x, n_comp)
-                spectrum = full_spectrum[:, :, :, window_slice, :]
-                # Sum over y dimension (integrate across width) - physically correct!
-                # Result: (n_freq, n_z, window_x, n_comp)
-                spectrum = spectrum.sum(axis=2)
-
-                # Compute power - iterate only over active components
-                power_components = None
-                for comp_idx in range(n_comp):
-                    if component_weights[comp_idx] != 0:
-                        comp_fft = spectrum[..., comp_idx]
-                        comp_power = np.abs(comp_fft) ** 2 * component_weights[comp_idx]
-                        if power_components is None:
-                            power_components = comp_power
-                        else:
-                            power_components += comp_power
+                # Process windows in parallel
+                results_list = Parallel(n_jobs=-1, backend='threading')(
+                    delayed(process_window)(win_idx, start)
+                    for win_idx, start in enumerate(window_starts)
+                )
                 
-                # Handle case where no components are active (shouldn't happen but be safe)
-                # Note: y dimension already summed, so shape is (n_freq, n_z, window_x)
-                if power_components is None:
-                    power_components = np.zeros((n_freq, n_z, end - start), dtype=float)
+                # Collect results
+                for win_idx, results in results_list:
+                    power_map[:, win_idx] = results['power']
+                    if transverse_map is not None and 'transverse' in results:
+                        transverse_map[:, win_idx] = results['transverse']
+                    if longitudinal_map is not None and 'longitudinal' in results:
+                        longitudinal_map[:, win_idx] = results['longitudinal']
+                    if config.enable_circular_components:
+                        if power_plus is not None:
+                            power_plus[:, win_idx] = results.get('power_plus', 0)
+                        if power_minus is not None:
+                            power_minus[:, win_idx] = results.get('power_minus', 0)
+                
+                t_process_end = time.time()
+                log.info("Parallel processing: %.3fs for %d windows", 
+                          t_process_end - t_process_start, n_windows)
+            
+            else:
+                # Standard path: use _aggregate_spatial for each window (serial)
+                log.debug("Using standard serial processing (average_mode='%s')", config.average_mode)
+                t_process_start = time.time()
+                
+                for win_idx, start in tqdm(enumerate(window_starts),
+                                           total=n_windows,
+                                           desc="Processing windows",
+                                           unit="win",
+                                           disable=n_windows < 10):  # Disable for very few windows
+                    end = min(start + window_size, n_x)
+                    window_slice = slice(start, end)
+                    
+                    if y_already_integrated:
+                        # Y already summed: (freq, z, x, comp) → extract window
+                        # Result: (freq, z, window_x, comp)
+                        spectrum = full_spectrum[:, :, window_slice, :]
+                    else:
+                        # Extract window from pre-computed FFT spectrum
+                        # Shape: (n_freq, n_z, n_y, window_x, n_comp)
+                        spectrum = full_spectrum[:, :, :, window_slice, :]
+                        # Sum over y dimension (integrate across width) - physically correct!
+                        # Result: (n_freq, n_z, window_x, n_comp)
+                        spectrum = spectrum.sum(axis=2)
 
-                # Store longitudinal component map if requested
-                if longitudinal_map is not None and n_comp > 2 and component_weights[2] != 0:
-                    mz_fft = spectrum[..., 2]
-                    longitudinal_map[:, win_idx] = _aggregate_spatial(
-                        np.abs(mz_fft) ** 2,
+                    # Compute power - iterate only over active components
+                    power_components = None
+                    for comp_idx in range(n_comp):
+                        if component_weights[comp_idx] != 0:
+                            comp_fft = spectrum[..., comp_idx]
+                            comp_power = np.abs(comp_fft) * component_weights[comp_idx]
+                            if power_components is None:
+                                power_components = comp_power
+                            else:
+                                power_components += comp_power
+                    
+                    # Handle case where no components are active (shouldn't happen but be safe)
+                    # Note: y dimension already summed, so shape is (n_freq, n_z, window_x)
+                    if power_components is None:
+                        power_components = np.zeros((n_freq, n_z, end - start), dtype=float)
+
+                    # Store longitudinal component map if requested
+                    if longitudinal_map is not None and n_comp > 2 and component_weights[2] != 0:
+                        mz_fft = spectrum[..., 2]
+                        longitudinal_map[:, win_idx] = _aggregate_spatial(
+                            np.abs(mz_fft),
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+
+                    # Accumulate lightweight complex-spectrum summary per component (mean across z,window)
+                    # Note: y dimension already summed
+                    if complex_accum is not None:
+                        for comp_idx in range(n_comp):
+                            comp_spec = spectrum[..., comp_idx]
+                            # mean over z and the window dimension (note: block may be smaller than window_size at edges)
+                            comp_mean = comp_spec.mean(axis=(1, 2))  # axes: z, window_x
+                            complex_accum[:, comp_idx] += comp_mean
+
+                    aggregated = _aggregate_spatial(
+                        power_components,
                         config.average_mode,
                         config.edge_taper_power,
                     )
 
-                # Accumulate lightweight complex-spectrum summary per component (mean across z,window)
-                # Note: y dimension already summed
-                if complex_accum is not None:
-                    for comp_idx in range(n_comp):
-                        comp_spec = spectrum[..., comp_idx]
-                        # mean over z and the window dimension (note: block may be smaller than window_size at edges)
-                        comp_mean = comp_spec.mean(axis=(1, 2))  # axes: z, window_x
-                        complex_accum[:, comp_idx] += comp_mean
+                    power_map[:, win_idx] = aggregated
 
-                aggregated = _aggregate_spatial(
-                    power_components,
-                    config.average_mode,
-                    config.edge_taper_power,
-                )
+                    # Store transverse component map if requested (mx + my)
+                    if transverse_map is not None:
+                        transverse_power = None
+                        if n_comp > 0 and component_weights[0] != 0:  # mx
+                            mx_fft = spectrum[..., 0]
+                            transverse_power = np.abs(mx_fft)
+                        if n_comp > 1 and component_weights[1] != 0:  # my
+                            my_fft = spectrum[..., 1]
+                            my_power = np.abs(my_fft)
+                            if transverse_power is None:
+                                transverse_power = my_power
+                            else:
+                                transverse_power += my_power
+                        
+                        if transverse_power is not None:
+                            transverse_map[:, win_idx] = _aggregate_spatial(
+                                transverse_power,
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
 
-                power_map[:, win_idx] = aggregated
+                    # Store circular components if requested
+                    if config.enable_circular_components and power_plus is not None and power_minus is not None:
+                        # Need mx and my for circular components
+                        if n_comp > 1:
+                            mx_fft = spectrum[..., 0]
+                            my_fft = spectrum[..., 1]
+                            m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
+                            m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
+                            power_plus[:, win_idx] = _aggregate_spatial(
+                                np.abs(m_plus),
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
+                            power_minus[:, win_idx] = _aggregate_spatial(
+                                np.abs(m_minus),
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
 
-                # Store transverse component map if requested (mx + my)
-                if transverse_map is not None:
-                    transverse_power = None
-                    if n_comp > 0 and component_weights[0] != 0:  # mx
-                        mx_fft = spectrum[..., 0]
-                        transverse_power = np.abs(mx_fft) ** 2
-                    if n_comp > 1 and component_weights[1] != 0:  # my
-                        my_fft = spectrum[..., 1]
-                        my_power = np.abs(my_fft) ** 2
-                        if transverse_power is None:
-                            transverse_power = my_power
-                        else:
-                            transverse_power += my_power
-                    
-                    if transverse_power is not None:
-                        transverse_map[:, win_idx] = _aggregate_spatial(
-                            transverse_power,
-                            config.average_mode,
-                            config.edge_taper_power,
-                        )
-
-                # Store circular components if requested
-                if config.enable_circular_components and power_plus is not None and power_minus is not None:
-                    # Need mx and my for circular components
-                    if n_comp > 1:
-                        mx_fft = spectrum[..., 0]
-                        my_fft = spectrum[..., 1]
-                        m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
-                        m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
-                        power_plus[:, win_idx] = _aggregate_spatial(
-                            np.abs(m_plus) ** 2,
-                            config.average_mode,
-                            config.edge_taper_power,
-                        )
-                        power_minus[:, win_idx] = _aggregate_spatial(
-                            np.abs(m_minus) ** 2,
-                            config.average_mode,
-                            config.edge_taper_power,
-                        )
-
-            # End of serial window processing loop
-            t_process_end = time.time()
-            log.debug("Serial processing: %.3fs for %d windows", 
-                      t_process_end - t_process_start, n_windows)
+                # End of serial window processing loop
+                t_process_end = time.time()
+                log.debug("Serial processing: %.3fs for %d windows", 
+                          t_process_end - t_process_start, n_windows)
 
         reference_mask = self._select_reference_windows(
             x_centers,
