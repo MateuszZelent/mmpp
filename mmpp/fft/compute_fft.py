@@ -7,7 +7,7 @@ Provides low-level FFT calculations without user interface elements.
 
 import time
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 import numpy as np
 
@@ -64,9 +64,10 @@ if not PYZFN_AVAILABLE:
 WINDOW_TYPES = Literal[
     "none", "hann", "hamming", "blackman", "bartlett", "kaiser", "tukey", "gaussian"
 ]
-FILTER_TYPES = Literal[
+FILTER_TYPE_OPTIONS = Literal[
     "none", "remove_mean", "remove_static", "detrend_linear", "remove_mean_and_static"
 ]
+FILTER_TYPES = Union[FILTER_TYPE_OPTIONS, list[FILTER_TYPE_OPTIONS]]
 FFT_ENGINES = Literal["numpy", "pyfftw", "scipy", "auto"]
 
 
@@ -335,14 +336,25 @@ class FFTCompute:
         -----------
         data : np.ndarray
             Input data (time axis first)
-        filter_type : str
-            Filter type
+        filter_type : str or list of str
+            Filter type or list of filter types to apply sequentially
 
         Returns:
         --------
         np.ndarray
             Filtered data
         """
+        # Handle list of filters - apply sequentially
+        if isinstance(filter_type, list):
+            result = data
+            for single_filter in filter_type:
+                result = self._apply_single_filter(result, single_filter)
+            return result
+        else:
+            return self._apply_single_filter(data, filter_type)
+
+    def _apply_single_filter(self, data: np.ndarray, filter_type: str) -> np.ndarray:
+        """Apply a single filter to data."""
         if filter_type == "none":
             return data
         elif filter_type == "remove_mean":
@@ -711,10 +723,39 @@ class FFTCompute:
         # Load data with timing (apply slicing if provided)
         data_load_start = time.time()
         
+        # Determine if we should apply tmax limit
+        # Priority: explicit user slice > tmax parameter
+        apply_tmax = tmax is not None and tmax > 0
+        user_provided_time_slice = False
+        
         if slice_info is not None:
             # Apply user-provided slicing (e.g., from job[0].m_layer[:100,...])
             log.info(f"Applying slice_info: {slice_info}")
             data = data_set[slice_info]
+            
+            # Check if user explicitly sliced time dimension
+            # If so, DON'T apply tmax (user's slice takes priority)
+            if isinstance(slice_info, tuple) and len(slice_info) > 0:
+                first_slice = slice_info[0]
+                if first_slice is not Ellipsis:
+                    if isinstance(first_slice, slice):
+                        # User provided time slice (e.g., [:1000] or [100:200])
+                        user_provided_time_slice = True
+                        if first_slice.stop is not None:
+                            # Explicit stop means user wants specific number of timesteps
+                            log.debug(
+                                "User provided explicit time slice %s - tmax parameter will be ignored",
+                                first_slice
+                            )
+                            apply_tmax = False
+                        else:
+                            # [:] means "all timesteps" - also ignore tmax
+                            log.debug("User provided [:] slice - using ALL timesteps (ignoring tmax)")
+                            apply_tmax = False
+                    elif isinstance(first_slice, int):
+                        # User selected single timestep
+                        user_provided_time_slice = True
+                        apply_tmax = False
         else:
             # Load all data
             data = data_set[...]
@@ -723,8 +764,8 @@ class FFTCompute:
 
         log.debug(f"Data loading time: {data_load_time:.3f}s")
 
-        # Apply tmax limit if specified
-        if tmax is not None and tmax > 0:
+        # Apply tmax limit ONLY if no explicit user time slice
+        if apply_tmax:
             original_time_steps = data.shape[0] if len(data.shape) > 0 else 0
             if tmax < original_time_steps:
                 data = data[:tmax]
@@ -738,22 +779,48 @@ class FFTCompute:
         log.debug(f"Data size: {data_size_mb:.1f} MB")
         log.debug(f"Loading speed: {loading_speed:.1f} MB/s")
 
-        # Handle z-layer selection
+        # Handle z-layer selection BEFORE determining final shape
+        # CRITICAL: z-layer selection must happen BEFORE component selection is interpreted
+        # because slice [:,...,2] removes component axis, making 5D→4D, which could be
+        # misinterpreted as (t,y,x,comp) instead of (t,z,y,x)
         layer_select_start = time.time()
-        if len(data.shape) == 5:  # (t, z, y, x, comp)
+        original_ndim = len(data.shape)
+        
+        if original_ndim == 5:  # (t, z, y, x, comp)
             if z_layer == -1:
                 data = data[:, -1, :, :, :]  # Take last layer
-                log.debug("Selected last z-layer")
+                log.debug("Selected last z-layer from 5D data")
             else:
                 data = data[:, z_layer, :, :, :]
-                log.debug(f"Selected z-layer {z_layer}")
-        elif len(data.shape) == 4:  # (t, y, x, comp)
-            log.debug("No z-dimension in data")
-        elif len(data.shape) == 3:  # (t, y, x) or (t, y, comp)
+                log.debug(f"Selected z-layer {z_layer} from 5D data")
+        elif original_ndim == 4:
+            # Ambiguity: could be (t,z,y,x) with component pre-selected, OR (t,y,x,comp)
+            # Heuristic: if slice_info selected component (e.g., [...,2]), assume (t,z,y,x)
+            # Check if last element of slice_info is an integer (component selection)
+            component_was_selected = False
+            if slice_info is not None and isinstance(slice_info, tuple):
+                # Find the last non-Ellipsis element
+                non_ellipsis_slices = [s for s in slice_info if s is not Ellipsis]
+                if non_ellipsis_slices and isinstance(non_ellipsis_slices[-1], (int, np.integer)):
+                    component_was_selected = True
+                    log.debug("Detected component selection in slice - treating 4D as (t,z,y,x)")
+            
+            if component_was_selected:
+                # User selected component via slicing, so this is (t, z, y, x)
+                if z_layer == -1:
+                    data = data[:, -1, :, :]  # Take last z-layer
+                    log.debug("Selected last z-layer from 4D data (component pre-selected)")
+                else:
+                    data = data[:, z_layer, :, :]
+                    log.debug(f"Selected z-layer {z_layer} from 4D data (component pre-selected)")
+            else:
+                # No component selection detected - assume (t, y, x, comp)
+                log.debug("No z-dimension in 4D data (assuming t,y,x,comp)")
+        elif original_ndim == 3:  # (t, y, x) or (t, y, comp)
             log.debug("3D dataset detected - using provided dimensions without z-layer selection")
-        elif len(data.shape) == 2:  # (t, comp) or (t, y)
+        elif original_ndim == 2:  # (t, comp) or (t, y)
             log.debug("2D dataset detected - interpreting first axis as time")
-        elif len(data.shape) == 1:  # (t,)
+        elif original_ndim == 1:  # (t,)
             log.debug("1D time series detected")
         else:
             raise ValueError(f"Unsupported data shape: {data.shape}")
@@ -761,8 +828,18 @@ class FFTCompute:
         layer_select_time = time.time() - layer_select_start
         log.debug(f"Layer selection time: {layer_select_time:.3f}s")
 
-        # Get time step
-        dt = job.attrs.get("t_sampl", 1e-12)
+        # Get time step - use dataset-specific t_sampl, not global zarr attrs
+        # Priority: data_set.attrs > job.attrs > default fallback
+        dt = None
+        if hasattr(data_set, 'attrs') and 't_sampl' in data_set.attrs:
+            dt = data_set.attrs['t_sampl']
+            log.debug(f"Using dt from data_set.attrs['t_sampl']: {dt}")
+        elif hasattr(job, 'attrs') and 't_sampl' in job.attrs:
+            dt = job.attrs['t_sampl']
+            log.warning(f"Using dt from job.attrs['t_sampl']: {dt} (dataset-specific t_sampl not found)")
+        else:
+            dt = 1e-12
+            log.warning(f"t_sampl not found in attrs, using default: {dt}")
 
         # Final timing and memory measurement
         total_time = time.time() - start_time

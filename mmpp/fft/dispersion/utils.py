@@ -376,31 +376,53 @@ def normalize_magnetization_components(M: np.ndarray) -> np.ndarray:
     ----------
     M : np.ndarray
         Magnetization array, expected shapes:
-        - (T, Z, Y, X, 3)  
-        - (T, Y, X, 3)
-        - (T, X, 3)
+        - (T, Z, Y, X, 3)  - full 3-component vector
+        - (T, Y, X, 3)     - 2D with 3 components
+        - (T, X, 3)        - 1D with 3 components
+        - (T, Z, Y, X)     - single component pre-selected
+        - (T, Y, X)        - 2D single component
+        - (T, X)           - 1D single component
         
     Returns
     -------
     np.ndarray
-        Normalized array with shape (T, Z, Y, X, 3)
+        Normalized array with shape (T, Z, Y, X, C) where C is 1 or 3
     """
+    # Case 1: Full 3-component data
     if M.ndim == 5:
-        T, Z, Y, X, C = M.shape
+        # (T, Z, Y, X, 3)
+        if M.shape[-1] != 3:
+            raise ValueError(f"5D array must have last axis=3 (mx,my,mz), got {M.shape[-1]}")
+        return M
     elif M.ndim == 4:
-        T, Y, X, C = M.shape
-        Z = 1
-        M = M.reshape(T, 1, Y, X, C)
+        # Could be (T, Y, X, 3) or (T, Z, Y, X) single component
+        if M.shape[-1] == 3:
+            # (T, Y, X, 3) -> (T, 1, Y, X, 3)
+            T, Y, X, C = M.shape
+            return M.reshape(T, 1, Y, X, C)
+        else:
+            # (T, Z, Y, X) single component -> (T, Z, Y, X, 1)
+            return M[..., np.newaxis]
     elif M.ndim == 3:
-        T, X, C = M.shape
-        Z = 1
-        Y = 1
-        M = M.reshape(T, 1, 1, X, C)
+        # Could be (T, X, 3) or (T, Y, X) single component
+        if M.shape[-1] == 3:
+            # (T, X, 3) -> (T, 1, 1, X, 3)
+            T, X, C = M.shape
+            return M.reshape(T, 1, 1, X, C)
+        else:
+            # (T, Y, X) single component -> (T, 1, Y, X, 1)
+            T, Y, X = M.shape
+            return M.reshape(T, 1, Y, X, 1)
+    elif M.ndim == 2:
+        # (T, X) single component -> (T, 1, 1, X, 1)
+        T, X = M.shape
+        return M.reshape(T, 1, 1, X, 1)
     else:
-        raise ValueError("M must have shape (T,Z,Y,X,3) or (T,Y,X,3) or (T,X,3)")
-
-    if M.shape[-1] != 3:
-        raise ValueError("Last axis must be 3 (mx,my,mz)")
+        raise ValueError(
+            f"M must have 2-5 dimensions, got {M.ndim}. "
+            f"Expected shapes: (T,Z,Y,X,3), (T,Y,X,3), (T,X,3), "
+            f"or single-component (T,Z,Y,X), (T,Y,X), (T,X)"
+        )
         
     return M
 
@@ -415,23 +437,47 @@ def extract_magnetization_component(
     Parameters
     ----------
     M : np.ndarray
-        Magnetization array (..., 3) with (mx, my, mz)
+        Magnetization array (..., C) where C is 1 (single component) or 3 (mx, my, mz)
     component : str
         Component to extract:
         - 'perp': mx + i*my (complex transverse)
         - 'mx', 'my', 'mz': individual components
         - 'sum': rough sum of all components
+        - None or 'auto': use data as-is if already single component
         
     Returns
     -------
     np.ndarray
         Selected component(s), complex dtype
     """
+    # If M only has 1 component (already selected via slicing), return it as-is
+    if M.shape[-1] == 1:
+        if component is None or component == "auto":
+            # Already single component, just return it
+            return M[..., 0].astype(np.complex128)
+        else:
+            # User specified component but data already has only 1 component
+            # This is fine - just use what we have
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"Magnetization data already has single component (shape[-1]=1). "
+                f"Ignoring component='{component}' parameter and using existing data."
+            )
+            return M[..., 0].astype(np.complex128)
+    
+    # Standard case: M has 3 components
+    if M.shape[-1] != 3:
+        raise ValueError(
+            f"Magnetization array must have last axis = 1 (single component) or 3 (mx,my,mz). "
+            f"Got shape[-1] = {M.shape[-1]}"
+        )
+    
     mx = M[..., 0]
     my = M[..., 1] 
     mz = M[..., 2]
 
-    if component == "perp":
+    if component == "perp" or component is None:
         return (mx + 1j * my).astype(np.complex128)
     elif component == "mx":
         return mx.astype(np.complex128)

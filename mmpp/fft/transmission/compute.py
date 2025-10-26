@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Tuple
+import math
 import time
 
 import numpy as np
@@ -84,8 +86,13 @@ class TransmissionConfig:
             start, stop = self.reference_window
             if stop < start:
                 raise ValueError("reference_window stop must be >= start")
-        if self.component_weights is not None and len(self.component_weights) != 3:
-            raise ValueError("component_weights must contain three entries for (mx, my, mz)")
+        if self.component_weights is not None:
+            weights = np.atleast_1d(self.component_weights)
+            if weights.size not in (1, 3):
+                raise ValueError(
+                    "component_weights must contain either one entry (for a sliced component) "
+                    "or three entries for (mx, my, mz)"
+                )
 
 
 @dataclass
@@ -93,11 +100,12 @@ class TransmissionResult:
     """Result of a transmission analysis."""
 
     frequencies: np.ndarray
-    x_positions: np.ndarray
+    x_positions: np.ndarray  # In nm if dx available, otherwise cell indices
     transmission: np.ndarray
     power_map: np.ndarray
     reference_power: np.ndarray
     config: TransmissionConfig
+    dx: Optional[float] = None  # Cell size in meters (None if not available)
     metadata: Dict[str, Any] = field(default_factory=dict)
     power_plus: Optional[np.ndarray] = None
     power_minus: Optional[np.ndarray] = None
@@ -138,7 +146,10 @@ class TransmissionResult:
         Parameters
         ----------
         x : float
-            X-position in meters (e.g., 2000e-9 for 2000 nm)
+            Target X-position. When dx is known, values greater than 1 are
+            interpreted as nanometers, while values ≤ 1 are treated as meters
+            for backward compatibility with earlier releases. When dx is not
+            available, ``x`` is interpreted as a cell index.
         freq_unit : str, optional
             Frequency unit ("Hz", "kHz", "MHz", "GHz"), default "GHz"
         trim_0f : int, optional
@@ -170,8 +181,17 @@ class TransmissionResult:
 
         from .plot import FREQ_SCALE
 
+        # Interpret requested x in the same units as x_positions
+        if self.dx is not None:
+            if x <= 1.0:
+                target_x = x * 1e9  # meters → nanometers (legacy behaviour)
+            else:
+                target_x = x  # assume already in nanometers
+        else:
+            target_x = x  # indices
+
         # Find closest x-position index
-        x_idx = np.argmin(np.abs(self.x_positions - x))
+        x_idx = np.argmin(np.abs(self.x_positions - target_x))
         actual_x = self.x_positions[x_idx]
 
         # Get transmission slice at this x
@@ -227,8 +247,13 @@ class TransmissionResult:
                 ax.set_yscale('log')
 
         # Title
+        if self.dx is not None:
+            position_label = f"{actual_x:.1f} nm"
+        else:
+            position_label = f"cell {actual_x:.1f}"
+
         ax.set_title(
-            f"Transmission Cross-section at x = {actual_x*1e9:.1f} nm"
+            f"Transmission Cross-section at x = {position_label}"
             + (f" (trimmed {trim_idx} pts)" if trim_idx > 0 else ""),
             fontsize=13,
             fontweight="bold"
@@ -257,54 +282,52 @@ def _aggregate_spatial(
     mode: AverageMode,
     edge_taper_power: float,
 ) -> np.ndarray:
-    """Reduce spatial dimensions (z, y, window_x) of the local power map.
+    """Reduce spatial dimensions (z, window_x) of the local power map.
+    
+    NOTE: Y dimension is already summed before calling this function (physically correct for transmission).
     
     Parameters
     ----------
+    power : np.ndarray
+        Power array with shape (freq, z, window) - y already summed!
     mode : AverageMode
         "mean" - simple average
         "median" - median (robust to outliers)
         "edge_taper" - weighted average with Hann window
-        "none" - no averaging, take only first slice (z=0, y=0)
+        "none" - no averaging, take only first slice (z=0), mean over window
     """
 
-    if power.ndim != 4:
-        raise ValueError("Expected power array with shape (freq, z, y, window)")
+    if power.ndim != 3:
+        raise ValueError(f"Expected power array with shape (freq, z, window), got {power.shape}")
 
     freq_axis = 0
     z_axis = 1
-    y_axis = 2
-    x_axis = 3
+    x_axis = 2
 
     if mode == "none":
-        # Raw mode: no averaging - take only z=0, y=0, average over window_x
-        # After slicing [:, 0, 0, :], we have (freq, window_x), so axis=1 for window_x
-        return power[:, 0, 0, :].mean(axis=1)
+        # Raw mode: no averaging - take only z=0, average over window_x
+        # After slicing [:, 0, :], we have (freq, window_x), so axis=1 for window_x
+        return power[:, 0, :].mean(axis=1)
 
     if mode == "mean":
-        return power.mean(axis=(z_axis, y_axis, x_axis))
+        return power.mean(axis=(z_axis, x_axis))
 
     if mode == "median":
-        return np.median(power, axis=(z_axis, y_axis, x_axis))
+        return np.median(power, axis=(z_axis, x_axis))
 
     if mode == "edge_taper":
-        n_z, n_y, n_w = power.shape[1:]
-        weights_y = _compute_hann_weights(n_y, edge_taper_power)
+        n_z, n_w = power.shape[1:]
         weights_z = np.ones((n_z,), dtype=float)
         weights_z /= weights_z.sum() if weights_z.sum() > 0 else 1.0
         weights_w = np.ones((n_w,), dtype=float)
         weights_w /= weights_w.sum() if weights_w.sum() > 0 else 1.0
 
-        combined = (
-            weights_z[:, None, None]
-            * weights_y[None, :, None]
-            * weights_w[None, None, :]
-        )
+        combined = weights_z[:, None] * weights_w[None, :]
         weighted = power * combined[None, ...]
         normalization = combined.sum()
         if normalization <= 0:
             normalization = 1.0
-        return weighted.sum(axis=(z_axis, y_axis, x_axis)) / normalization
+        return weighted.sum(axis=(z_axis, x_axis)) / normalization
 
     raise ValueError(f"Unsupported averaging mode: {mode}")
 
@@ -315,6 +338,170 @@ class TransmissionCompute:
     def __init__(self, fft_compute: FFTCompute, job_result: Any):
         self._fft_compute = fft_compute
         self._job_result = job_result
+
+    def _get_dx(self, dataset_name: str) -> Optional[float]:
+        """Resolve spatial cell size (dx) in **meters** using job[0]-style access."""
+
+        dx_attr_names = [
+            "dx",
+            "Dx",
+            "cellsize_x",
+            "cell_size_x",
+            "gridsize_x",
+            "grid_size_x",
+        ]
+
+        def _normalize_dx(value: Any, source: str) -> Optional[float]:
+            if value is None:
+                return None
+            if isinstance(value, (list, tuple, np.ndarray)):
+                if len(value) == 0:
+                    return None
+                value = value[0]
+            try:
+                raw = float(value)
+            except (TypeError, ValueError):
+                log.debug("_get_dx: %s is not a numeric dx (value=%r)", source, value)
+                return None
+
+            if not math.isfinite(raw) or raw <= 0:
+                log.debug("_get_dx: Ignoring invalid dx=%r from %s", raw, source)
+                return None
+
+            if raw <= 1.0:
+                dx_m = raw
+                unit = "m"
+            else:
+                dx_m = raw / 1e9
+                unit = "nm"
+
+            log.debug(
+                "_get_dx: Candidate %.6e %s → %.6e m from %s",
+                raw,
+                unit,
+                dx_m,
+                source,
+            )
+            return dx_m
+
+        def _from_attrs(attrs: Any, source: str) -> Optional[float]:
+            if attrs is None:
+                return None
+            mapping: Mapping[Any, Any]
+            if isinstance(attrs, Mapping):
+                mapping = attrs  # type: ignore[assignment]
+            else:
+                try:
+                    keys = attrs.keys()  # type: ignore[attr-defined]
+                except AttributeError:
+                    return None
+                mapping = {key: attrs[key] for key in keys}  # type: ignore[index]
+
+            for key in dx_attr_names:
+                if key in mapping:
+                    dx_m = _normalize_dx(mapping[key], f"{source}['{key}']")
+                    if dx_m is not None:
+                        return dx_m
+            return None
+
+        def _from_object(obj: Any, source: str) -> Optional[float]:
+            if obj is None:
+                return None
+
+            # Direct attributes (obj.dx, obj.cellsize_x, ...)
+            for attr in dx_attr_names:
+                try:
+                    value = getattr(obj, attr)
+                except AttributeError:
+                    continue
+                dx_m = _normalize_dx(value, f"{source}.{attr}")
+                if dx_m is not None:
+                    log.debug("_get_dx: ✅ Using dx from %s.%s", source, attr)
+                    return dx_m
+
+            # Associated attribute containers
+            dx_m = _from_attrs(getattr(obj, "attrs", None), f"{source}.attrs")
+            if dx_m is not None:
+                log.debug("_get_dx: ✅ Using dx from %s.attrs", source)
+                return dx_m
+
+            dx_m = _from_attrs(getattr(obj, "attributes", None), f"{source}.attributes")
+            if dx_m is not None:
+                log.debug("_get_dx: ✅ Using dx from %s.attributes", source)
+                return dx_m
+
+            metadata = getattr(obj, "metadata", None)
+            if isinstance(metadata, Mapping):
+                dx_m = _from_attrs(metadata, f"{source}.metadata")
+                if dx_m is not None:
+                    log.debug("_get_dx: ✅ Using dx from %s.metadata", source)
+                    return dx_m
+
+            return None
+
+        try:
+            log.debug("_get_dx: Resolving dx for dataset '%s'", dataset_name)
+            log.debug("_get_dx: job_result type = %s", type(self._job_result))
+
+            dataset_obj = None
+            if hasattr(self._job_result, "__getitem__"):
+                try:
+                    dataset_obj = self._job_result[dataset_name]
+                    log.debug(
+                        "_get_dx: job_result['%s'] → %s",
+                        dataset_name,
+                        type(dataset_obj),
+                    )
+                except (KeyError, TypeError, AttributeError, NameError, AssertionError) as exc:
+                    log.debug(
+                        "_get_dx: Unable to access job_result['%s']: %s",
+                        dataset_name,
+                        exc,
+                    )
+
+            dx_m = _from_object(dataset_obj, f"job_result['{dataset_name}']")
+            if dx_m is not None:
+                return dx_m
+
+            if dataset_obj is not None:
+                base_array = getattr(dataset_obj, "zarr_array", None)
+                dx_m = _from_object(base_array, f"job_result['{dataset_name}'].zarr_array")
+                if dx_m is not None:
+                    return dx_m
+
+            try:
+                z_dataset = self._job_result.z[dataset_name]
+            except Exception as exc:  # pragma: no cover - defensive
+                log.debug(
+                    "_get_dx: job_result.z['%s'] unavailable: %s",
+                    dataset_name,
+                    exc,
+                )
+            else:
+                dx_m = _from_object(z_dataset, f"job_result.z['{dataset_name}']")
+                if dx_m is not None:
+                    return dx_m
+
+            dx_m = _from_object(self._job_result, "job_result")
+            if dx_m is not None:
+                return dx_m
+
+            dx_m = _from_attrs(getattr(self._job_result, "attributes", None), "job_result.attributes")
+            if dx_m is not None:
+                return dx_m
+
+            log.warning(
+                "Could not find dx for dataset '%s'; falling back to cell indices",
+                dataset_name,
+            )
+            return None
+
+        except Exception as exc:  # pragma: no cover - defensive logging
+            import traceback
+
+            log.warning("Error getting dx for '%s': %s", dataset_name, exc)
+            log.debug("_get_dx traceback:\n%s", traceback.format_exc())
+            return None
 
     def _prepare_data(
         self,
@@ -331,18 +518,47 @@ class TransmissionCompute:
             slice_info=slice_info,
         )
 
-        if data.ndim == 4:  # (t, y, x, comp)
-            data = data[:, np.newaxis, ...]
-        elif data.ndim == 5:
+        # Check if component was pre-selected via slicing
+        component_was_selected = False
+        if slice_info is not None and isinstance(slice_info, tuple):
+            non_ellipsis_slices = [s for s in slice_info if s is not Ellipsis]
+            if non_ellipsis_slices and isinstance(non_ellipsis_slices[-1], (int, np.integer)):
+                component_was_selected = True
+                log.debug("Component was pre-selected via slicing - will add component axis")
+
+        # Normalize to 5D: (t, z, y, x, comp)
+        if data.ndim == 5:
+            # Already 5D (t, z, y, x, comp)
             pass
+        elif data.ndim == 4:
+            # Could be (t, y, x, comp) or (t, z, y, x) with component pre-selected
+            if component_was_selected:
+                # (t, z, y, x) → add component axis → (t, z, y, x, 1)
+                data = data[..., np.newaxis]
+                log.debug("Added component axis to (t,z,y,x) data → (t,z,y,x,1)")
+            else:
+                # (t, y, x, comp) → add z axis → (t, 1, y, x, comp)
+                data = data[:, np.newaxis, ...]
+                log.debug("Added z-axis to (t,y,x,comp) data → (t,1,y,x,comp)")
+        elif data.ndim == 3:
+            # Could be (t, y, x) with component pre-selected
+            if component_was_selected:
+                # (t, y, x) → add z and component axes → (t, 1, y, x, 1)
+                data = data[:, np.newaxis, :, :, np.newaxis]
+                log.debug("Added z and component axes to (t,y,x) data → (t,1,y,x,1)")
+            else:
+                # Ambiguous - assume (t, y, comp), add z and x
+                data = data[:, np.newaxis, :, np.newaxis, :]
+                log.debug("Added z and x axes to (t,y,comp) data → (t,1,y,1,comp)")
         else:
             raise ValueError(
-                "Transmission analysis requires 4D (t,y,x,c) or 5D (t,z,y,x,c) datasets"
+                f"Transmission analysis requires 3D, 4D or 5D datasets, got {data.ndim}D with shape {data.shape}"
             )
 
-        if data.shape[-1] < 2:
+        # Validate component dimension
+        if data.shape[-1] < 1:
             raise ValueError(
-                "Expected vector magnetization components (>=2) in the last dimension"
+                f"Expected at least 1 magnetization component in last dimension, got {data.shape[-1]}"
             )
 
         return data, dt
@@ -353,18 +569,43 @@ class TransmissionCompute:
         dataset = config.dataset_name or self._job_result.get_largest_m_dataset()
         data, dt = self._prepare_data(config, slice_info=slice_info)
 
+        # Check if component was pre-selected via slicing
+        component_was_selected = False
+        if slice_info is not None and isinstance(slice_info, tuple):
+            non_ellipsis_slices = [s for s in slice_info if s is not Ellipsis]
+            if non_ellipsis_slices and isinstance(non_ellipsis_slices[-1], (int, np.integer)):
+                component_was_selected = True
+
         # Debug: basic metadata about data being processed
         log.debug(
-            "Transmission compute: dataset=%s, data.shape=%s, dt=%s",
+            "Transmission compute: dataset=%s, data.shape=%s, dt=%s, component_pre_selected=%s",
             dataset,
             getattr(data, 'shape', None),
             dt,
+            component_was_selected,
         )
 
         n_time, n_z, n_y, n_x, n_comp = data.shape
 
+        # Get cell size (dx) for spatial positions
+        dx_m = self._get_dx(dataset)
+        if dx_m is not None:
+            dx_nm = dx_m * 1e9
+            log.debug(
+                "Using dx=%.6e m (%.3f nm) for spatial positions",
+                dx_m,
+                dx_nm,
+            )
+        else:
+            dx_nm = None
+            log.warning("dx not found, x_positions will be in cell indices")
+
         # Apply filtering (optional - can be None)
         if config.filter_type is not None:
+            if isinstance(config.filter_type, list):
+                log.debug(f"Applying sequential filters: {config.filter_type}")
+            else:
+                log.debug(f"Applying filter: {config.filter_type}")
             filtered = self._fft_compute.apply_filter(data, config.filter_type)
         else:
             filtered = data
@@ -384,10 +625,22 @@ class TransmissionCompute:
         if not window_starts:
             window_starts = [0]
 
-        x_centers = np.array(
+        # Calculate x_centers in cell indices first
+        x_centers_idx = np.array(
             [start + (window_size - 1) / 2.0 for start in window_starts],
             dtype=float,
         )
+        
+        # Convert to nanometers if dx is available
+        if dx_nm is not None:
+            x_centers = x_centers_idx * dx_nm
+            log.debug(
+                "Converted x_positions to nanometers (first 3 values: %s)",
+                x_centers[:3],
+            )
+        else:
+            x_centers = x_centers_idx
+            log.debug("Using x_positions as cell indices")
 
         n_windows = len(window_starts)
         n_freq = n_time // 2 + 1
@@ -424,18 +677,29 @@ class TransmissionCompute:
         )
 
         # Normalize / broadcast component_weights defensively
-        component_weights = np.asarray(config.component_weights, dtype=float)
-        if component_weights.ndim == 0:
-            component_weights = np.full((n_comp,), float(component_weights), dtype=float)
-        elif component_weights.size < n_comp:
-            # If fewer weights provided, repeat last value to match n_comp
-            last = float(component_weights[-1]) if component_weights.size > 0 else 1.0
-            component_weights = np.concatenate(
-                [component_weights, np.full((n_comp - component_weights.size,), last, dtype=float)]
+        # 🔑 SPECIAL CASE: If component was pre-selected via slicing (n_comp=1),
+        # user's component_weights=(0,0,1) would be trimmed to [0], giving zero transmission!
+        # Solution: When n_comp=1 AND component was pre-selected, override to (1,)
+        if component_was_selected and n_comp == 1:
+            component_weights = np.array([1.0], dtype=float)
+            log.info(
+                "Component pre-selected via slicing → auto-setting component_weights=(1,) "
+                "(ignoring user-provided weights %s)", 
+                config.component_weights
             )
-        elif component_weights.size > n_comp:
-            component_weights = component_weights[:n_comp]
-        log.debug("Component weights after broadcast/trim: %s", component_weights)
+        else:
+            component_weights = np.asarray(config.component_weights, dtype=float)
+            if component_weights.ndim == 0:
+                component_weights = np.full((n_comp,), float(component_weights), dtype=float)
+            elif component_weights.size < n_comp:
+                # If fewer weights provided, repeat last value to match n_comp
+                last = float(component_weights[-1]) if component_weights.size > 0 else 1.0
+                component_weights = np.concatenate(
+                    [component_weights, np.full((n_comp - component_weights.size,), last, dtype=float)]
+                )
+            elif component_weights.size > n_comp:
+                component_weights = component_weights[:n_comp]
+            log.debug("Component weights after broadcast/trim: %s", component_weights)
 
         # Prepare lightweight complex-spectrum accumulator if requested
         complex_accum = None
@@ -483,9 +747,11 @@ class TransmissionCompute:
             log.info("Processing %d windows with vectorized operations (no progress bar - too fast!)", n_windows)
             t_process_start = time.time()
             
-            # Extract only relevant z=0, y=0 slice ONCE (huge memory saving!)
+            # Sum over y dimension (integrate across width) - this is physically correct for transmission!
+            # Extract z=0, sum all y, keep x and components
             # Shape: (n_freq, n_x, n_comp)
-            relevant_spectrum = full_spectrum[:, 0, 0, :, :]
+            relevant_spectrum = full_spectrum[:, 0, :, :, :].sum(axis=1)  # Sum over y (axis=1)
+            log.debug("Summed spectrum over y-dimension: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
             
             # Create sliding window view - NO COPIES, just strides!
             # sliding_window_view adds new axis at the END!
@@ -524,10 +790,11 @@ class TransmissionCompute:
                      config.spatial_step)
             t_process_start = time.time()
             
-            # KEY OPTIMIZATION: Extract z=0, y=0 slice ONCE before loop
-            # Reduces indexing overhead from 4D → 2D per iteration
+            # Sum over y dimension (integrate across width) - physically correct for transmission!
+            # Extract z=0, sum all y, keep x and components
             # Shape: (n_freq, n_x, n_comp) instead of (n_freq, n_z, n_y, n_x, n_comp)
-            relevant_spectrum = full_spectrum[:, 0, 0, :, :]
+            relevant_spectrum = full_spectrum[:, 0, :, :, :].sum(axis=1)  # Sum over y (axis=1)
+            log.debug("Summed spectrum over y-dimension: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
             
             # Now loop with much smaller slicing operations
             for win_idx, start in tqdm(enumerate(window_starts), 
@@ -570,7 +837,11 @@ class TransmissionCompute:
                 """Process single window - can run in parallel."""
                 end = min(start + window_size, n_x)
                 window_slice = slice(start, end)
+                # Extract: (n_freq, n_z, n_y, window_x, n_comp)
                 spectrum = full_spectrum[:, :, :, window_slice, :]
+                # Sum over y dimension (integrate across width) - physically correct!
+                # Result: (n_freq, n_z, window_x, n_comp)
+                spectrum = spectrum.sum(axis=2)
                 
                 mx_fft = spectrum[..., 0]
                 my_fft = spectrum[..., 1]
@@ -656,7 +927,11 @@ class TransmissionCompute:
                 window_slice = slice(start, end)
                 
                 # Extract window from pre-computed FFT spectrum
+                # Shape: (n_freq, n_z, n_y, window_x, n_comp)
                 spectrum = full_spectrum[:, :, :, window_slice, :]
+                # Sum over y dimension (integrate across width) - physically correct!
+                # Result: (n_freq, n_z, window_x, n_comp)
+                spectrum = spectrum.sum(axis=2)
 
                 # Compute power - iterate only over active components
                 power_components = None
@@ -670,8 +945,9 @@ class TransmissionCompute:
                             power_components += comp_power
                 
                 # Handle case where no components are active (shouldn't happen but be safe)
+                # Note: y dimension already summed, so shape is (n_freq, n_z, window_x)
                 if power_components is None:
-                    power_components = np.zeros((n_freq, n_z, n_y, end - start), dtype=float)
+                    power_components = np.zeros((n_freq, n_z, end - start), dtype=float)
 
                 # Store longitudinal component map if requested
                 if longitudinal_map is not None and n_comp > 2 and component_weights[2] != 0:
@@ -682,12 +958,13 @@ class TransmissionCompute:
                         config.edge_taper_power,
                     )
 
-                # Accumulate lightweight complex-spectrum summary per component (mean across z,y,window)
+                # Accumulate lightweight complex-spectrum summary per component (mean across z,window)
+                # Note: y dimension already summed
                 if complex_accum is not None:
                     for comp_idx in range(n_comp):
                         comp_spec = spectrum[..., comp_idx]
-                        # mean over z, y, and the window dimension (note: block may be smaller than window_size at edges)
-                        comp_mean = comp_spec.mean(axis=(1, 2, 3))
+                        # mean over z and the window dimension (note: block may be smaller than window_size at edges)
+                        comp_mean = comp_spec.mean(axis=(1, 2))  # axes: z, window_x
                         complex_accum[:, comp_idx] += comp_mean
 
                 aggregated = _aggregate_spatial(
@@ -777,6 +1054,12 @@ class TransmissionCompute:
             "method": config.method,
         }
         metadata.update(config.metadata)
+        if dx_m is not None:
+            metadata.setdefault("dx_m", dx_m)
+            metadata.setdefault("dx_nm", dx_nm)
+            metadata.setdefault("x_unit", "nm")
+        else:
+            metadata.setdefault("x_unit", "index")
 
         result = TransmissionResult(
             frequencies=freqs,
@@ -785,6 +1068,7 @@ class TransmissionCompute:
             power_map=power_map,
             reference_power=reference_values,
             config=config,
+            dx=dx_m,  # Store dx in meters to match job[0].dx
             metadata=metadata,
             power_plus=power_plus,
             power_minus=power_minus,

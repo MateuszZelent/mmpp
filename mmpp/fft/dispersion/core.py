@@ -64,15 +64,61 @@ class SpinWaveAnalyzer:
 
     def __init__(
         self,
-        zarr_path: str | Path,
-        config: Optional[DispersionConfig] = None,
+        zarr_path: Union[str, Path],
+        config: DispersionConfig,
         tmax: int = 100,
-        slice_info: Optional[Any] = None,
+        slice_info: Optional[tuple] = None,
+        dataset_name: Optional[str] = None,
+    ) -> None:
+        """
+        Initialize SpinWaveAnalyzer.
+
+        Parameters
+        ----------
+        zarr_path : Union[str, Path]
+            Path to zarr file
+        config : DispersionConfig
+            Analysis configuration
+        tmax : int, optional
+            Maximum time steps to load (default: 100)
+        slice_info : Optional[tuple], optional
+            Spatial slicing specification
+        dataset_name : Optional[str], optional
+            Name of magnetization dataset to use (default: auto-detect)
+        """
+        self.zarr_path: Path = Path(zarr_path)
+    def __init__(
+        self,
+        zarr_path: str,
+        config: Optional[DispersionConfig] = None,
+        tmax: Optional[int] = 100,
+        slice_info: Optional[tuple] = None,
+        dataset_name: Optional[str] = None,
     ):
+        """
+        Initialize spin-wave analyzer.
+
+        Parameters
+        ----------
+        zarr_path : str
+            Path to zarr simulation file
+        config : DispersionConfig, optional
+            Analysis configuration parameters
+        tmax : int or None, optional
+            Maximum time steps to load. If None, loads ALL available timesteps.
+            Default is 100 for optimization.
+        slice_info : tuple, optional
+            Slicing information from DatasetAwareWrapper
+        dataset_name : str, optional
+            Name of magnetization dataset in zarr file
+        """
+        self.config: DispersionConfig = config
+        self.tmax: Optional[int] = tmax if tmax is None else int(tmax)
+        self.slice_info: Optional[tuple] = slice_info
+        self.dataset_name: Optional[str] = dataset_name
+        self.zarr_file: Optional[zarr.Group] = None
         self.zarr_path = Path(zarr_path)
         self.config = config or DispersionConfig()
-        self.tmax = int(tmax)
-        self.slice_info = slice_info
 
         # Data storage
         self.zarr_file: Optional[zarr.Group] = None
@@ -108,8 +154,11 @@ class SpinWaveAnalyzer:
         self._extract_grid_parameters()
 
     def _load_magnetization(self) -> None:
-        """Load time-domain magnetization data M(t,x,y,z)."""
-        possible_paths = [
+        """Load time-domain magnetization data M(t,x,y,z) or single component."""
+        possible_paths = []
+        if self.dataset_name:
+            possible_paths.append(self.dataset_name)
+        possible_paths.extend([
             "m_layer",
             "m",
             "M",
@@ -117,18 +166,26 @@ class SpinWaveAnalyzer:
             "m_full",
             "m_resonator",
             "table/m",
-        ]
+        ])
 
         if self.zarr_file is None:
             raise ValueError("Zarr file not loaded")
 
+        logger.debug("Searching for magnetization data in paths: %s", possible_paths)
+        logger.debug("Available datasets in zarr file: %s", list(self.zarr_file.keys()))
+        logger.debug("Slice info: %s", self.slice_info)
+        
+        failed_attempts = []
+        
         for path in possible_paths:
             if path not in self.zarr_file:
+                logger.debug("Path '%s' not found in zarr file", path)
                 continue
             try:
                 M_ref = self.zarr_file[path]
                 if not (hasattr(M_ref, "shape") and hasattr(M_ref, "dtype")):
                     logger.info("'%s' is not an array, skipping", path)
+                    failed_attempts.append((path, "not an array"))
                     continue
 
                 logger.info("Found magnetization at '%s': shape %s, dtype %s", path, M_ref.shape, M_ref.dtype)
@@ -138,13 +195,41 @@ class SpinWaveAnalyzer:
 
                 self.M_data = self._load_reference_data(self.tmax)
                 logger.info("Loaded magnetization data: shape %s", self.M_data.shape)
-                break
+
+                # Accept arrays with any last dimension (1 for single component, 3 for vector)
+                # The slicing may have already selected a single component
+                if self.M_data.ndim >= 1:
+                    last_dim = self.M_data.shape[-1] if self.M_data.ndim > 1 else 1
+                    if last_dim == 1:
+                        logger.info(
+                            "Single-component magnetization data detected (last axis = 1). "
+                            "This is expected when component was pre-selected via slicing (e.g., [:,...,2])."
+                        )
+                    elif last_dim == 3:
+                        logger.info("Vector magnetization data detected (mx, my, mz).")
+                    else:
+                        logger.warning(
+                            "Magnetization array last axis is %d (expected 1 or 3). "
+                            "Attempting to proceed anyway.",
+                            last_dim,
+                        )
+                    # Successfully loaded data
+                    logger.info("Successfully loaded magnetization from '%s'", path)
+                    break
             except Exception as exc:  # noqa: BLE001
+                import traceback
                 logger.warning("Failed to access magnetization at '%s': %s", path, exc)
+                logger.debug("Full traceback: %s", traceback.format_exc())
+                failed_attempts.append((path, str(exc)))
                 self._M_ref = None
                 continue
         else:
-            raise ValueError(f"No magnetization data found in {self.zarr_path}")
+            error_msg = f"No magnetization data found in {self.zarr_path}"
+            if failed_attempts:
+                error_msg += "\nFailed attempts:"
+                for path, reason in failed_attempts:
+                    error_msg += f"\n  - {path}: {reason}"
+            raise ValueError(error_msg)
 
     def _configure_indexing(self, M_ref: Any) -> None:
         """Prepare base slice/indexer information for repeated loads."""
@@ -156,7 +241,9 @@ class SpinWaveAnalyzer:
             logger.debug("Magnetization shape unavailable; skipping indexer configuration")
             return
 
+        logger.debug("Configuring indexing for shape %s with slice_info %s", shape, self.slice_info)
         base_indexer = self._normalize_slice(shape)
+        logger.debug("Normalized slice: %s", base_indexer)
         self._base_indexer = base_indexer
         self._time_axis_pos, self._time_axis_length = self._resolve_time_axis(base_indexer, shape)
         if self._time_axis_pos is None:
@@ -399,6 +486,7 @@ class SpinWaveAnalyzer:
         axis: str = "x",
         component: Optional[str] = None,
         avg_over_orthogonal: Optional[bool] = None,
+        orthogonal_avg_mode: Optional[str] = None,
         time_window: Optional[str] = None,
         space_window: Optional[str] = None,
         detrend: Optional[str] = None,
@@ -419,6 +507,14 @@ class SpinWaveAnalyzer:
         avg_over_orthogonal : Optional[bool] 
             Whether to average over orthogonal spatial dimensions
             If None, uses config.avg_over_orthogonal
+        orthogonal_avg_mode : Optional[str]
+            Strategy for collapsing the orthogonal axis. Supported values:
+            - 'magnetization': average signal before spatial FFT (legacy default)
+            - 'fft_power': mean spectral power after FFT (phase-robust)
+            - 'fft_abs': mean |FFT|, squared back to power (preserves localized modes)
+            - 'fft_power_max': keep max spectral power along orth axis
+            - 'fft_power_median': median spectral power (outlier resistant)
+            If None, uses config.orthogonal_avg_mode.
         time_window : Optional[str]
             Time-domain window function ('hann' or None)
             If None, uses config.time_window
@@ -445,7 +541,33 @@ class SpinWaveAnalyzer:
         """
         # Use config defaults if not specified
         component = component or self.config.component
-        avg_over_orthogonal = avg_over_orthogonal if avg_over_orthogonal is not None else self.config.avg_over_orthogonal
+        avg_over_orthogonal = (
+            avg_over_orthogonal if avg_over_orthogonal is not None else self.config.avg_over_orthogonal
+        )
+        orthogonal_avg_mode = (
+            orthogonal_avg_mode
+            if orthogonal_avg_mode is not None
+            else getattr(self.config, "orthogonal_avg_mode", "magnetization")
+        )
+        orthogonal_avg_mode = str(orthogonal_avg_mode).lower()
+        valid_modes = {
+            "magnetization",
+            "fft_power",
+            "fft_abs",
+            "fft_power_max",
+            "fft_power_median",
+        }
+        if orthogonal_avg_mode not in valid_modes:
+            raise ValueError(
+                f"Unknown orthogonal_avg_mode='{orthogonal_avg_mode}'. "
+                f"Supported: {', '.join(sorted(valid_modes))}",
+            )
+        if not avg_over_orthogonal and orthogonal_avg_mode == "magnetization":
+            logger.warning(
+                "orthogonal_avg_mode='magnetization' is incompatible with avg_over_orthogonal=False; "
+                "falling back to 'fft_power' for orthogonal collapse",
+            )
+            orthogonal_avg_mode = "fft_power"
         time_window = time_window if time_window is not None else self.config.time_window
         space_window = space_window if space_window is not None else self.config.space_window
         detrend = detrend or self.config.detrend
@@ -522,29 +644,32 @@ class SpinWaveAnalyzer:
         S_local = None
         orth_axis_values = None
         orth_axis_label = None
+        store_local_spectra = not avg_over_orthogonal
+        keep_orthogonal_dimension = store_local_spectra or orthogonal_avg_mode != "magnetization"
 
-        if avg_over_orthogonal:
+        if keep_orthogonal_dimension:
+            # Always average over Z, keep orthogonal plane for spectrum-level aggregation
+            spatial_signal = np.mean(signal, axis=1)  # -> (T, Y, X)
+            if store_local_spectra:
+                if axis == "x":
+                    orth_axis_label = "y"
+                    if "dy" in self.grid_spacings:
+                        orth_axis_values = np.arange(spatial_signal.shape[1]) * self.grid_spacings["dy"]
+                    else:
+                        orth_axis_values = np.arange(spatial_signal.shape[1])
+                else:
+                    orth_axis_label = "x"
+                    if "dx" in self.grid_spacings:
+                        orth_axis_values = np.arange(spatial_signal.shape[2]) * self.grid_spacings["dx"]
+                    else:
+                        orth_axis_values = np.arange(spatial_signal.shape[2])
+        else:
             if axis == "x":
                 # Average over Z(1), Y(2) -> shape (T, X)
                 spatial_signal = np.mean(signal, axis=(1, 2))
             else:  # axis == "y"
                 # Average over Z(1), X(3) -> shape (T, Y)
                 spatial_signal = np.mean(signal, axis=(1, 3))
-        else:
-            # Average only over Z, keep full orthogonal slice for local analysis
-            spatial_signal = np.mean(signal, axis=1)  # -> (T, Y, X)
-            if axis == "x":
-                orth_axis_label = "y"
-                if "dy" in self.grid_spacings:
-                    orth_axis_values = np.arange(spatial_signal.shape[1]) * self.grid_spacings["dy"]
-                else:
-                    orth_axis_values = np.arange(spatial_signal.shape[1])
-            else:
-                orth_axis_label = "x"
-                if "dx" in self.grid_spacings:
-                    orth_axis_values = np.arange(spatial_signal.shape[2]) * self.grid_spacings["dx"]
-                else:
-                    orth_axis_values = np.arange(spatial_signal.shape[2])
 
         # Spatial FFT -> k-domain signal(t, k)
         if spatial_signal.ndim == 2:
@@ -563,17 +688,17 @@ class SpinWaveAnalyzer:
         power = np.abs(Sk_shift) ** 2
         power = np.moveaxis(power, 0, -1)  # -> (..., Nf)
 
-        if avg_over_orthogonal:
+        if not keep_orthogonal_dimension:
             S = power.astype(np.float64, copy=False)
         else:
             if axis == "x":
-                # power shape: (Ny, Nx, Nf)
-                S_local = power.astype(np.float64, copy=False)
-                S = np.mean(S_local, axis=0)
+                orthogonal_spectra = power.astype(np.float64, copy=False)
             else:
-                # power shape: (Ny, Nx, Nf) -> move orth axis to front for storage
-                S_local = np.moveaxis(power, 1, 0).astype(np.float64, copy=False)
-                S = np.mean(power, axis=1)
+                orthogonal_spectra = np.moveaxis(power, 1, 0).astype(np.float64, copy=False)
+
+            if store_local_spectra:
+                S_local = orthogonal_spectra
+            S = self._collapse_orthogonal_spectra(orthogonal_spectra, orthogonal_avg_mode)
 
         logger.info(
             "Computed dispersion: S.shape=%s, k_range=[%.2e, %.2e], f_range=[%.1f, %.1f] Hz",
@@ -587,6 +712,8 @@ class SpinWaveAnalyzer:
         notes = [f"1D dispersion along {axis}-axis"]
         if not avg_over_orthogonal:
             notes.append("Orthogonal averaging disabled; local spectra stored in S_local")
+        elif orthogonal_avg_mode != "magnetization":
+            notes.append(f"Orthogonal collapse via {orthogonal_avg_mode}")
 
         # Create result object
         result = DispersionResult1D(
@@ -614,6 +741,35 @@ class SpinWaveAnalyzer:
             result.notes.append(f"BZ folded with period {fold_period} m")
             
         return result
+
+    def _collapse_orthogonal_spectra(self, spectra: np.ndarray, mode: str) -> np.ndarray:
+        """
+        Reduce orthogonal spectra using the requested aggregation strategy.
+
+        Parameters
+        ----------
+        spectra : np.ndarray
+            Array shaped (N_orthogonal, Nk, Nf).
+        mode : str
+            Aggregation strategy name.
+
+        Returns
+        -------
+        np.ndarray
+            Collapsed spectrum with shape (Nk, Nf).
+        """
+        spectra = spectra.astype(np.float64, copy=False)
+        if mode == "fft_power":
+            return np.mean(spectra, axis=0)
+        if mode == "fft_abs":
+            amplitudes = np.sqrt(np.clip(spectra, 0.0, None))
+            return np.square(np.mean(amplitudes, axis=0))
+        if mode == "fft_power_max":
+            return np.max(spectra, axis=0)
+        if mode == "fft_power_median":
+            return np.median(spectra, axis=0)
+
+        raise ValueError(f"Unsupported orthogonal aggregation mode '{mode}'")
         
     def compute_dispersion_2d(
         self,

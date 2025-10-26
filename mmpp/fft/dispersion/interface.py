@@ -23,7 +23,7 @@ from typing import Any, Optional, Sequence, Tuple, Union, cast
 import matplotlib.pyplot as plt
 import numpy as np
 import zarr
-from matplotlib.colors import LogNorm, Normalize
+from matplotlib.colors import CenteredNorm, FuncNorm, LogNorm, Normalize, PowerNorm, SymLogNorm, TwoSlopeNorm
 
 try:
     from scipy.signal import savgol_filter
@@ -96,6 +96,7 @@ class FFTDispersionInterface:
                 config=config,
                 tmax=effective_tmax,
                 slice_info=self.slice_info,
+                dataset_name=self.dataset_name,
             )
         return self._analyzer
 
@@ -111,27 +112,73 @@ class FFTDispersionInterface:
         """
         return self._last_plot_result
 
-    def _determine_tmax(self, default: int = 100) -> int:
-        """Determine number of time steps to load based on config and slicing."""
-        tmax = self._tmax if self._tmax is not None else default
-
+    def _determine_tmax(self, default: int = 100) -> Optional[int]:
+        """
+        Determine number of time steps to load based on config and slicing.
+        
+        Priority order:
+        1. Explicit slice from user (e.g., [:1000,...,2]) - ALWAYS respected
+        2. Configured tmax via .configure(tmax=X)
+        3. Default tmax=100 (only if no slice and no config)
+        
+        Returns
+        -------
+        int or None
+            Number of timesteps, or None to use ALL available timesteps
+        """
+        # Check if user provided explicit time slice
         slice_length = self._infer_time_length_from_slice()
+        
         if slice_length is not None:
-            tmax = max(tmax, slice_length)
-
-        # Ensure positive integer fallback
-        if tmax is None or tmax <= 0:
-            return default
-        return int(tmax)
+            # User explicitly specified number of timesteps (e.g., [:1000])
+            logger.debug("Using EXPLICIT time slice from user: %d timesteps", slice_length)
+            return slice_length
+        
+        # slice_length is None - could be two cases:
+        # A) User used [:] (slice with no stop) → wants ALL timesteps → return None
+        # B) No slice at all (slice_info is None) → wants default optimization → use tmax
+        
+        if self.slice_info is not None:
+            # Case A: User DID provide a slice, but it's [:] (no stop)
+            # This means "use ALL available timesteps"
+            logger.debug("User provided [:] slice - using ALL available timesteps (no tmax limit)")
+            return None  # None means "don't limit timesteps"
+        
+        # Case B: No slice at all - use configured tmax or default
+        if self._tmax is not None:
+            logger.debug("No user slice - using configured tmax: %d timesteps", self._tmax)
+            return int(self._tmax)
+        
+        # No slice, no config - use default for optimization
+        logger.debug("No slice or config - using default tmax: %d timesteps", default)
+        return default
 
     def _infer_time_length_from_slice(self) -> Optional[int]:
-        """Infer desired time window length from dataset slice info."""
+        """
+        Infer desired time window length from dataset slice info.
+        
+        Extracts the time dimension specification from user's slice.
+        For 5D data (t,z,y,x,c): data[:1000,...,2] → returns 1000
+        
+        Returns
+        -------
+        Optional[int]
+            - None if no slice info, or slice is [:] (meaning "all timesteps")
+            - Positive int if explicit time range specified (e.g., [:1000] → 1000)
+        
+        Examples
+        --------
+        [:1000, ..., 2]  → 1000 (explicit: use 1000 timesteps)
+        [:, ..., 2]      → None (implicit: use all available)
+        [100:200, ...]   → 100 (explicit: use 100 timesteps)
+        """
         if self.slice_info is None:
             return None
 
         candidate = self.slice_info
         if isinstance(candidate, tuple) and candidate:
-            # Prefer first non-ellipsis entry
+            # For 5D data: (t_slice, z_slice, y_slice, x_slice, c_index)
+            # First element is the time dimension
             for item in candidate:
                 if item is Ellipsis:
                     continue
@@ -141,12 +188,18 @@ class FFTDispersionInterface:
         if isinstance(candidate, slice):
             start = 0 if candidate.start is None else candidate.start
             stop = candidate.stop
+            
+            # If stop is None → [:] or [start:] → user wants ALL timesteps
             if stop is None:
+                logger.debug("Time slice has no stop (e.g., [:] or [%s:]) - will use all available timesteps", start)
                 return None
+            
+            # If stop is specified → [:1000] → user wants EXACTLY that many
             step = 1 if candidate.step is None else candidate.step
             if step == 0:
                 return None
             length = math.ceil((stop - start) / step)
+            logger.debug("Explicit time slice detected: [%s:%s:%s] → %d timesteps", start, stop, step, length)
             return max(0, length)
 
         return None
@@ -1043,7 +1096,328 @@ class FFTDispersionInterface:
             List of (k, f, amplitude) tuples for detected peaks
         """
         return self.analyzer.find_all_peaks(dispersion_result, **kwargs)
-    
+
+
+    def _resolve_colornorm(
+        self,
+        spectrum: np.ndarray,
+        *,
+        lognorm_flag: bool,
+        vmin: Optional[float],
+        vmax: Optional[float],
+        colornorm: Union[str, Normalize, None],
+        colornorm_kwargs: Optional[dict[str, Any]],
+        context: str,
+    ) -> Optional[Normalize]:
+        """Return a matplotlib Normalize instance based on user settings."""
+        kwargs = dict(colornorm_kwargs or {})
+
+        if isinstance(colornorm, Normalize):
+            if lognorm_flag:
+                logger.info("%s: custom Normalize provided; ignoring lognorm flag", context)
+            return colornorm
+
+        norm_name = None
+        if colornorm is not None:
+            norm_name = str(colornorm).strip().lower()
+            if lognorm_flag:
+                logger.info("%s: colornorm=%s overrides lognorm flag", context, norm_name)
+
+        normalized_key = None
+        if norm_name:
+            normalized_key = re.sub(r"[^a-z]", "", norm_name)
+
+        builder_map = {
+            "linear": self._build_linear_norm,
+            "norm": self._build_linear_norm,
+            "normalize": self._build_linear_norm,
+            "log": self._build_lognorm,
+            "lognorm": self._build_lognorm,
+            "power": self._build_power_norm,
+            "powernorm": self._build_power_norm,
+            "pow": self._build_power_norm,
+            "symlog": self._build_symlog_norm,
+            "symlognorm": self._build_symlog_norm,
+            "centered": self._build_centered_norm,
+            "centerednorm": self._build_centered_norm,
+            "twoslope": self._build_two_slope_norm,
+            "twoslopenorm": self._build_two_slope_norm,
+            "func": self._build_func_norm,
+            "funcnorm": self._build_func_norm,
+        }
+
+        if normalized_key and normalized_key not in builder_map:
+            logger.warning(
+                "%s: Unknown colornorm '%s'; falling back to default normalization",
+                context,
+                colornorm,
+            )
+
+        if normalized_key in builder_map:
+            return builder_map[normalized_key](spectrum, vmin, vmax, kwargs, context)
+
+        if lognorm_flag:
+            return self._build_lognorm(spectrum, vmin, vmax, kwargs, context)
+        if vmin is not None or vmax is not None or kwargs:
+            return self._build_linear_norm(spectrum, vmin, vmax, kwargs, context)
+        return None
+
+    def _build_linear_norm(
+        self,
+        data: np.ndarray,
+        vmin: Optional[float],
+        vmax: Optional[float],
+        kwargs: dict[str, Any],
+        context: str,
+    ) -> Optional[Normalize]:
+        """Construct a standard Normalize."""
+        norm_vmin = kwargs.pop("vmin", None)
+        norm_vmax = kwargs.pop("vmax", None)
+        if vmin is not None:
+            norm_vmin = vmin
+        if vmax is not None:
+            norm_vmax = vmax
+
+        limits = None
+        if norm_vmin is None or norm_vmax is None:
+            limits = self._auto_limits(data)
+
+        if norm_vmin is None and limits is not None:
+            norm_vmin = limits[0]
+        if norm_vmax is None and limits is not None:
+            norm_vmax = limits[1]
+
+        if norm_vmin is None and norm_vmax is None and not kwargs:
+            return None
+
+        if norm_vmax is not None and norm_vmin is not None and norm_vmax <= norm_vmin:
+            logger.warning(
+                "%s: vmax=%s ≤ vmin=%s; using automatic limits",
+                context,
+                norm_vmax,
+                norm_vmin,
+            )
+            limits = limits or self._auto_limits(data)
+            if limits is None:
+                return None
+            norm_vmin, norm_vmax = limits
+
+        logger.info(
+            "%s: Applying linear normalization (vmin=%s, vmax=%s, extra=%s)",
+            context,
+            f"{norm_vmin:.2e}" if norm_vmin is not None else None,
+            f"{norm_vmax:.2e}" if norm_vmax is not None else None,
+            kwargs or {},
+        )
+        return Normalize(vmin=norm_vmin, vmax=norm_vmax, **kwargs)
+
+    def _build_lognorm(
+        self,
+        data: np.ndarray,
+        vmin: Optional[float],
+        vmax: Optional[float],
+        kwargs: dict[str, Any],
+        context: str,
+    ) -> Optional[Normalize]:
+        """Construct a LogNorm based on spectrum values."""
+        norm_vmin = kwargs.pop("vmin", None)
+        norm_vmax = kwargs.pop("vmax", None)
+        if vmin is not None:
+            norm_vmin = vmin
+        if vmax is not None:
+            norm_vmax = vmax
+
+        limits = None
+        if norm_vmin is None or norm_vmax is None:
+            limits = self._auto_limits(data, positive_only=True)
+            if limits is None:
+                logger.warning("%s: Cannot apply lognorm; spectrum has no positive values", context)
+                return None
+
+        if norm_vmin is None:
+            norm_vmin = limits[0]
+        if norm_vmax is None:
+            norm_vmax = limits[1]
+
+        if norm_vmin <= 0:
+            logger.warning(
+                "%s: vmin=%s ≤ 0 for log scale; using automatic positive bound",
+                context,
+                norm_vmin,
+            )
+            norm_vmin = max(limits[0], np.finfo(float).tiny)
+        if norm_vmax <= norm_vmin:
+            logger.warning(
+                "%s: vmax=%s ≤ vmin=%s for log scale; using automatic limits",
+                context,
+                norm_vmax,
+                norm_vmin,
+            )
+            norm_vmin, norm_vmax = limits
+
+        logger.info(
+            "%s: Applying log normalization (vmin=%s, vmax=%s, extra=%s)",
+            context,
+            f"{norm_vmin:.2e}",
+            f"{norm_vmax:.2e}",
+            kwargs or {},
+        )
+        return LogNorm(vmin=norm_vmin, vmax=norm_vmax, **kwargs)
+
+    def _build_power_norm(
+        self,
+        data: np.ndarray,
+        vmin: Optional[float],
+        vmax: Optional[float],
+        kwargs: dict[str, Any],
+        context: str,
+    ) -> Optional[Normalize]:
+        gamma = kwargs.pop("gamma", kwargs.pop("power", 0.5))
+        if gamma is None:
+            gamma = 0.5
+        norm_vmin = kwargs.pop("vmin", None)
+        norm_vmax = kwargs.pop("vmax", None)
+        if vmin is not None:
+            norm_vmin = vmin
+        if vmax is not None:
+            norm_vmax = vmax
+        limits = None
+        if norm_vmin is None or norm_vmax is None:
+            limits = self._auto_limits(data)
+            if limits is None:
+                return None
+        if norm_vmin is None:
+            norm_vmin = limits[0]
+        if norm_vmax is None:
+            norm_vmax = limits[1]
+        if norm_vmax <= norm_vmin:
+            norm_vmin, norm_vmax = limits
+        logger.info(
+            "%s: Applying power normalization (gamma=%s, vmin=%s, vmax=%s)",
+            context,
+            gamma,
+            f"{norm_vmin:.2e}",
+            f"{norm_vmax:.2e}",
+        )
+        return PowerNorm(gamma=gamma, vmin=norm_vmin, vmax=norm_vmax, **kwargs)
+
+    def _build_symlog_norm(
+        self,
+        data: np.ndarray,
+        vmin: Optional[float],
+        vmax: Optional[float],
+        kwargs: dict[str, Any],
+        context: str,
+    ) -> Optional[Normalize]:
+        norm_vmin = kwargs.pop("vmin", None)
+        norm_vmax = kwargs.pop("vmax", None)
+        if vmin is not None:
+            norm_vmin = vmin
+        if vmax is not None:
+            norm_vmax = vmax
+        limits = None
+        if norm_vmin is None or norm_vmax is None:
+            limits = self._auto_limits(data)
+        if norm_vmin is None and limits is not None:
+            norm_vmin = limits[0]
+        if norm_vmax is None and limits is not None:
+            norm_vmax = limits[1]
+        linthresh = kwargs.pop("linthresh", None)
+        if linthresh is None:
+            linthresh = self._default_linthresh(data)
+        logger.info(
+            "%s: Applying symlog normalization (linthresh=%s, vmin=%s, vmax=%s, extra=%s)",
+            context,
+            linthresh,
+            norm_vmin,
+            norm_vmax,
+            kwargs,
+        )
+        return SymLogNorm(linthresh=linthresh, vmin=norm_vmin, vmax=norm_vmax, **kwargs)
+
+    def _build_centered_norm(
+        self,
+        data: np.ndarray,
+        vmin: Optional[float],
+        vmax: Optional[float],
+        kwargs: dict[str, Any],
+        context: str,
+    ) -> Normalize:
+        vcenter = kwargs.pop("vcenter", 0.0)
+        logger.info("%s: Applying centered normalization (vcenter=%s, extra=%s)", context, vcenter, kwargs)
+        return CenteredNorm(vcenter=vcenter, **kwargs)
+
+    def _build_two_slope_norm(
+        self,
+        data: np.ndarray,
+        vmin: Optional[float],
+        vmax: Optional[float],
+        kwargs: dict[str, Any],
+        context: str,
+    ) -> Normalize:
+        vcenter = kwargs.pop("vcenter", 0.0)
+        norm_vmin = kwargs.pop("vmin", None)
+        norm_vmax = kwargs.pop("vmax", None)
+        if vmin is not None:
+            norm_vmin = vmin
+        if vmax is not None:
+            norm_vmax = vmax
+        limits = None
+        if norm_vmin is None or norm_vmax is None:
+            limits = self._auto_limits(data)
+        if norm_vmin is None and limits is not None:
+            norm_vmin = limits[0]
+        if norm_vmax is None and limits is not None:
+            norm_vmax = limits[1]
+        logger.info(
+            "%s: Applying TwoSlope normalization (vcenter=%s, vmin=%s, vmax=%s)",
+            context,
+            vcenter,
+            norm_vmin,
+            norm_vmax,
+        )
+        return TwoSlopeNorm(vcenter=vcenter, vmin=norm_vmin, vmax=norm_vmax, **kwargs)
+
+    def _build_func_norm(
+        self,
+        data: np.ndarray,
+        vmin: Optional[float],
+        vmax: Optional[float],
+        kwargs: dict[str, Any],
+        context: str,
+    ) -> Normalize:
+        functions = kwargs.pop("functions", None)
+        if functions is None:
+            raise ValueError(
+                f"{context}: colornorm='funcnorm' requires 'functions=(forward, inverse)' in colornorm_kwargs",
+            )
+        norm_vmin = kwargs.pop("vmin", None)
+        norm_vmax = kwargs.pop("vmax", None)
+        if vmin is not None:
+            norm_vmin = vmin
+        if vmax is not None:
+            norm_vmax = vmax
+        logger.info("%s: Applying FuncNorm", context)
+        return FuncNorm(functions=functions, vmin=norm_vmin, vmax=norm_vmax, **kwargs)
+
+    def _auto_limits(self, data: np.ndarray, positive_only: bool = False) -> Optional[tuple[float, float]]:
+        """Infer data limits while ignoring NaNs and infs."""
+        arr = np.asarray(data, dtype=float)
+        mask = np.isfinite(arr)
+        if positive_only:
+            mask &= arr > 0
+        if not np.any(mask):
+            return None
+        subset = arr[mask]
+        return float(np.nanmin(subset)), float(np.nanmax(subset))
+
+    def _default_linthresh(self, data: np.ndarray) -> float:
+        arr = np.asarray(data, dtype=float)
+        arr = np.abs(arr[np.isfinite(arr)])
+        arr = arr[arr > 0]
+        if arr.size == 0:
+            return 1e-9
+        return float(np.nanpercentile(arr, 5))
 
 
     def _apply_k0_normalization(
@@ -1315,6 +1689,8 @@ class FFTDispersionInterface:
         vmax: Optional[float] = None,
         trim_0f: Optional[int] = None,
         fmax: Optional[float] = None,
+        colornorm: Union[str, Normalize, None] = None,
+        colornorm_kwargs: Optional[dict[str, Any]] = None,
         **kwargs,
     ) -> tuple:
         """
@@ -1349,6 +1725,16 @@ class FFTDispersionInterface:
             Limits for wave-vector axis after unit conversion (default ±10 rad/μm for rad_um, ±20 m⁻¹ for meter)
         lognorm : bool, default=False
             Use logarithmic normalization for color scale
+        colornorm : str | matplotlib.colors.Normalize | None, optional
+            Advanced Matplotlib normalization selector. Supported string values:
+            "lognorm", "symlognorm", "powernorm", "twoslopenorm",
+            "centerednorm", "funcnorm". You can also pass a pre-built
+            Normalize instance. When provided, overrides the legacy ``lognorm``
+            flag. ``colornorm="lognorm"`` is equivalent to ``lognorm=True``.
+        colornorm_kwargs : dict, optional
+            Extra keyword arguments forwarded to the normalization constructor
+            (e.g. ``{"linthresh": 1e-5}`` for ``symlognorm``). Ignored when
+            ``colornorm`` is a Normalize instance.
         k0_normalization : int or float, default=0
             Adaptive k≈0 mode suppression intensity. 0=disabled, 1-10=increasing suppression strength.
             Uses advanced dynamic thresholding based on k≠0 statistical reference with soft audio-style
@@ -1437,6 +1823,7 @@ class FFTDispersionInterface:
 
 
         comsol_style = comsol_style or {}
+        colornorm_kwargs = dict(colornorm_kwargs or {})
         comsol_data = None
         if add_comsol_points is not None:
             from .comsol import read_data_from_comsol
@@ -1547,49 +1934,15 @@ class FFTDispersionInterface:
             )
 
         # Plot dispersion
-        norm = None
-        
-        # Handle color normalization with manual vmin/vmax control
-        if lognorm:
-            # Logarithmic normalization
-            positive_values = spectrum[spectrum > 0]
-            if positive_values.size:
-                # Default log scale bounds from data
-                auto_vmin = float(np.nanmin(positive_values))
-                auto_vmax = float(np.nanmax(positive_values))
-                if auto_vmin <= 0:
-                    auto_vmin = max(float(val) for val in positive_values if val > 0)
-                
-                # Apply manual limits if provided
-                norm_vmin = vmin if vmin is not None else auto_vmin
-                norm_vmax = vmax if vmax is not None else auto_vmax
-                
-                # Ensure positive values for log scale
-                if norm_vmin <= 0:
-                    logger.warning(f"vmin={norm_vmin} ≤ 0 for log scale; using auto_vmin={auto_vmin:.2e}")
-                    norm_vmin = auto_vmin
-                if norm_vmax <= norm_vmin:
-                    logger.warning(f"vmax={norm_vmax} ≤ vmin={norm_vmin} for log scale; using auto scaling")
-                    norm_vmin, norm_vmax = auto_vmin, auto_vmax
-                    
-                norm = LogNorm(vmin=norm_vmin, vmax=norm_vmax)
-                logger.info(f"Applied log normalization: vmin={norm_vmin:.2e}, vmax={norm_vmax:.2e}")
-        else:
-            # Linear normalization
-            if vmin is not None or vmax is not None:
-                # Manual linear bounds
-                auto_vmin = float(np.nanmin(spectrum))
-                auto_vmax = float(np.nanmax(spectrum))
-                
-                norm_vmin = vmin if vmin is not None else auto_vmin
-                norm_vmax = vmax if vmax is not None else auto_vmax
-                
-                if norm_vmax <= norm_vmin:
-                    logger.warning(f"vmax={norm_vmax} ≤ vmin={norm_vmin}; using auto scaling")
-                    norm_vmin, norm_vmax = auto_vmin, auto_vmax
-                
-                norm = Normalize(vmin=norm_vmin, vmax=norm_vmax)
-                logger.info(f"Applied linear normalization: vmin={norm_vmin:.2e}, vmax={norm_vmax:.2e}")
+        norm = self._resolve_colornorm(
+            spectrum,
+            lognorm_flag=lognorm,
+            vmin=vmin,
+            vmax=vmax,
+            colornorm=colornorm,
+            colornorm_kwargs=colornorm_kwargs,
+            context="plot_dispersion",
+        )
 
         im = ax.pcolormesh(
             k_axis,
@@ -1821,6 +2174,8 @@ class FFTDispersionInterface:
         vmax: Optional[float] = None,
         trim_0f: Optional[int] = None,
         fmax: Optional[float] = None,
+        colornorm: Union[str, Normalize, None] = None,
+        colornorm_kwargs: Optional[dict[str, Any]] = None,
     ) -> tuple:
         """
         Plot a pre-computed dispersion result without recomputation.
@@ -1856,6 +2211,12 @@ class FFTDispersionInterface:
             Limits for wave-vector axis after unit conversion
         lognorm : bool, default=False
             Use logarithmic color scale normalization
+        colornorm : str | matplotlib.colors.Normalize | None, optional
+            Select Matplotlib normalization: \"lognorm\", \"symlognorm\", \"powernorm\",
+            \"twoslopenorm\", \"centerednorm\", \"funcnorm\" or provide a Normalize instance.
+            Overrides the legacy ``lognorm`` flag.
+        colornorm_kwargs : dict, optional
+            Extra keyword arguments forwarded to the selected normalization constructor.
         k0_normalization : int or float, default=0
             k≈0 mode suppression intensity (0=disabled, 1-10=increasing strength)
         k0_normalization_width : int, default=1
@@ -1901,6 +2262,7 @@ class FFTDispersionInterface:
         # We'll extract and reuse the plotting code from plot_dispersion
         
         comsol_style = comsol_style or {}
+        colornorm_kwargs = dict(colornorm_kwargs or {})
         comsol_data = None
         if add_comsol_points is not None:
             from .comsol import read_data_from_comsol
@@ -2013,49 +2375,15 @@ class FFTDispersionInterface:
             )
 
         # Plot dispersion
-        norm = None
-        
-        # Handle color normalization with manual vmin/vmax control
-        if lognorm:
-            # Logarithmic normalization
-            positive_values = spectrum[spectrum > 0]
-            if positive_values.size:
-                # Default log scale bounds from data
-                auto_vmin = float(np.nanmin(positive_values))
-                auto_vmax = float(np.nanmax(positive_values))
-                if auto_vmin <= 0:
-                    auto_vmin = max(float(val) for val in positive_values if val > 0)
-                
-                # Apply manual limits if provided
-                norm_vmin = vmin if vmin is not None else auto_vmin
-                norm_vmax = vmax if vmax is not None else auto_vmax
-                
-                # Ensure positive values for log scale
-                if norm_vmin <= 0:
-                    logger.warning(f"vmin={norm_vmin} ≤ 0 for log scale; using auto_vmin={auto_vmin:.2e}")
-                    norm_vmin = auto_vmin
-                if norm_vmax <= norm_vmin:
-                    logger.warning(f"vmax={norm_vmax} ≤ vmin={norm_vmin} for log scale; using auto scaling")
-                    norm_vmin, norm_vmax = auto_vmin, auto_vmax
-                    
-                norm = LogNorm(vmin=norm_vmin, vmax=norm_vmax)
-                logger.info(f"Applied log normalization: vmin={norm_vmin:.2e}, vmax={norm_vmax:.2e}")
-        else:
-            # Linear normalization
-            if vmin is not None or vmax is not None:
-                # Manual linear bounds
-                auto_vmin = float(np.nanmin(spectrum))
-                auto_vmax = float(np.nanmax(spectrum))
-                
-                norm_vmin = vmin if vmin is not None else auto_vmin
-                norm_vmax = vmax if vmax is not None else auto_vmax
-                
-                if norm_vmax <= norm_vmin:
-                    logger.warning(f"vmax={norm_vmax} ≤ vmin={norm_vmin}; using auto scaling")
-                    norm_vmin, norm_vmax = auto_vmin, auto_vmax
-                
-                norm = Normalize(vmin=norm_vmin, vmax=norm_vmax)
-                logger.info(f"Applied linear normalization: vmin={norm_vmin:.2e}, vmax={norm_vmax:.2e}")
+        norm = self._resolve_colornorm(
+            spectrum,
+            lognorm_flag=lognorm,
+            vmin=vmin,
+            vmax=vmax,
+            colornorm=colornorm,
+            colornorm_kwargs=colornorm_kwargs,
+            context="plot_result",
+        )
 
         im = ax.pcolormesh(
             k_axis,
@@ -2272,6 +2600,11 @@ class FFTDispersionInterface:
         compute_table.add_row("axis", "'x'", "Propagation axis ('x' | 'y')")
         compute_table.add_row("component", "config.component", "Magnetization component ('perp', 'mx', ...)")
         compute_table.add_row("avg_over_orthogonal", "config.avg_over_orthogonal", "Average orthogonal plane (False keeps slices)")
+        compute_table.add_row(
+            "orthogonal_avg_mode",
+            "config.orthogonal_avg_mode",
+            "Collapse strategy: 'magnetization', 'fft_power', 'fft_abs', ...",
+        )
         compute_table.add_row("time_window", "config.time_window", "Time-domain window ('hann', None, ...)")
         compute_table.add_row("space_window", "config.space_window", "Spatial window before FFT")
         compute_table.add_row("detrend", "config.detrend", "Detrend strategy ('mean', 'initial', None)")
@@ -2317,6 +2650,8 @@ class FFTDispersionInterface:
         plot_table.add_row("dpi", "None", "Figure resolution override")
         plot_table.add_row("cmap", "'cmc.davos'", "Colormap for heatmap plot (crameri davos)")
         plot_table.add_row("lognorm", "False", "Use logarithmic color scaling")
+        plot_table.add_row("colornorm", "None", "Advanced normalization: lognorm, symlognorm, powernorm, ...")
+        plot_table.add_row("colornorm_kwargs", "None", "Extra kwargs for selected normalization")
         plot_table.add_row("vmin", "None", "Manual minimum for color scale normalization")
         plot_table.add_row("vmax", "None", "Manual maximum for color scale normalization")
         plot_table.add_row("k0_normalization", "0", "k≈0 compression strength: 0=off, 1-10=increasing suppression")

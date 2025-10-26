@@ -25,7 +25,8 @@ class DispersionConfig:
     dz: Optional[float] = None  # Grid spacing in z [m] 
     space_window: Optional[str] = None  # Window function for spatial domain
     avg_over_orthogonal: bool = True  # Average over orthogonal directions
-    
+    orthogonal_avg_mode: str = "magnetization"  # How to collapse orthogonal axis
+
     # Component selection
     component: str = "perp"  # 'perp', 'mx', 'my', 'mz', 'sum'
     

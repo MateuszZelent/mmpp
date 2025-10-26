@@ -64,7 +64,7 @@ class TransmissionPlotConfig:
     vmin: Optional[float] = None
     vmax: Optional[float] = None
     title: Optional[str] = None
-    trim_0f: Optional[int] = None  # Number of lowest frequency points to remove
+    trim_0f: Optional[int] = None  # Number of lowest frequency points to set to zero (suppress DC/low freq)
     fmax: Optional[float] = None  # Maximum frequency to display (in freq_unit units)
 
 
@@ -107,6 +107,21 @@ class TransmissionPlotter:
         if config is None:
             config = TransmissionPlotConfig()
 
+        if debug:
+            print(f"\n{'='*60}")
+            print(f"🔍 DEBUG: TransmissionPlotter.plot()")
+            print(f"{'='*60}")
+            print(f"Config: {config}")
+            if self.result.dx is not None:
+                print(
+                    f"result.dx = {self.result.dx:.3e} m ({self.result.dx * 1e9:.3f} nm)"
+                )
+            else:
+                print("result.dx = None")
+            print(f"result.x_positions shape: {self.result.x_positions.shape}")
+            print(f"result.x_positions[0:5]: {self.result.x_positions[:5]}")
+            print(f"result.frequencies shape: {self.result.frequencies.shape}")
+
         data, default_label = self._select_data(config.which)
         if data.size == 0:
             raise ValueError("Transmission result contains no data to plot")
@@ -116,14 +131,26 @@ class TransmissionPlotter:
             raise ValueError(f"Unsupported frequency unit: {freq_unit}")
         freq_scale = FREQ_SCALE[freq_unit]
         freqs = self.result.frequencies * freq_scale
+        
+        if debug:
+            print(f"\nFrequency scaling:")
+            print(f"  freq_unit = {freq_unit}")
+            print(f"  freq_scale = {freq_scale}")
+            print(f"  freqs[0:5] = {freqs[:5]}")
 
-        # Apply trim_0f if specified (remove lowest frequency points)
+        # Apply trim_0f if specified (set lowest frequency points to zero)
         trim_idx = 0
         if config.trim_0f is not None and config.trim_0f > 0:
             trim_idx = min(config.trim_0f, len(freqs) - 1)
-            freqs = freqs[trim_idx:]
-            data = data[trim_idx:, :]
-            log.debug(f"Trimmed {trim_idx} lowest frequency points (trim_0f={config.trim_0f})")
+            if debug:
+                print(f"\nApplying trim_0f:")
+                print(f"  trim_0f = {config.trim_0f}")
+                print(f"  trim_idx = {trim_idx}")
+                print(f"  Setting data[0:{trim_idx}, :] to zero")
+            data[:trim_idx, :] = 0  # Set to zero instead of removing
+            log.debug(f"Set {trim_idx} lowest frequency points to zero (trim_0f={config.trim_0f})")
+        elif debug:
+            print(f"\nNo trim_0f applied (trim_0f={config.trim_0f})")
 
         # Apply fmax if specified (remove frequencies above maximum)
         if config.fmax is not None and config.fmax > 0:
@@ -139,6 +166,23 @@ class TransmissionPlotter:
         x_positions = self.result.x_positions
         x_edges = _centers_to_edges(x_positions)
         freq_edges = _centers_to_edges(freqs)
+        
+        if debug:
+            print(f"\nX-axis setup:")
+            if self.result.dx is not None:
+                print(
+                    f"  result.dx = {self.result.dx:.3e} m ({self.result.dx * 1e9:.3f} nm)"
+                )
+            else:
+                print("  result.dx = None")
+            print(f"  x_positions shape = {x_positions.shape}")
+            print(f"  x_positions[0:5] = {x_positions[:5]}")
+            print(f"  x_edges[0:5] = {x_edges[:5]}")
+            print(f"  x_unit = {config.x_unit}")
+            if self.result.dx is not None:
+                print(f"  ✅ dx available → x should be in nm")
+            else:
+                print(f"  ⚠️  dx NOT available → x will be in indices")
 
         mesh_data = np.ma.masked_invalid(data)
 
@@ -173,7 +217,21 @@ class TransmissionPlotter:
         )
 
         ylabel = f"Frequency ({freq_unit})"
-        xlabel = "$x-axis$" if config.x_unit == "index" else "x"
+        # Auto-detect x label based on whether dx is available
+        if config.x_unit == "index":
+            xlabel = "x (cell index)"
+        elif self.result.dx is not None:
+            xlabel = "x (nm)"
+        else:
+            xlabel = "x (cell index)"
+        
+        if debug:
+            print(f"\nAxis labels:")
+            print(f"  xlabel = '{xlabel}'")
+            print(f"  ylabel = '{ylabel}'")
+            print(f"  config.x_unit = '{config.x_unit}'")
+            print(f"  Logic: x_unit={config.x_unit}, dx={self.result.dx} → xlabel={xlabel}")
+        
         ax.set_ylabel(ylabel)
         ax.set_xlabel(xlabel)
 
