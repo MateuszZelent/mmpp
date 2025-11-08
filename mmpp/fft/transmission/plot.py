@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 import numpy as np
+import matplotlib as mpl
 
 from ...cli.logging_config import get_mmpp_logger, setup_mmpp_logging
 
@@ -37,6 +38,34 @@ FREQ_SCALE = {
     "MHz": 1e-6,
     "GHz": 1e-9,
 }
+
+
+def tex_escape(s: str) -> str:
+    """Escape special LaTeX characters when usetex=True.
+    
+    Args:
+        s: String to escape
+        
+    Returns:
+        Escaped string safe for LaTeX rendering
+    """
+    # Escapowanie potrzebne tylko gdy usetex=True
+    if not mpl.rcParams.get('text.usetex', False):
+        return s
+    for a, b in {
+        '\\': r'\textbackslash{}',
+        '_': r'\_',
+        '%': r'\%',
+        '&': r'\&',
+        '#': r'\#',
+        '{': r'\{',
+        '}': r'\}',
+        '$': r'\$',
+        '~': r'\textasciitilde{}',
+        '^': r'\textasciicircum{}',
+    }.items():
+        s = s.replace(a, b)
+    return s
 
 
 def _centers_to_edges(values: np.ndarray) -> np.ndarray:
@@ -292,7 +321,15 @@ class TransmissionPlotter:
         ax.set_ylabel(ylabel)
         ax.set_xlabel(xlabel)
 
-        title = config.title or default_label
+        # Include spatial_window and formula in the title if using auto title
+        if config.title:
+            title = config.title
+        else:
+            # Get spatial window size
+            spatial_window = self.result.config.spatial_window
+            # Equation showing: sum over y, then spatial window, then FFT
+            # Use .format() to insert W value
+            title = r"Transmission: $\left|\operatorname{{FFT}}_{{t}}\!\left(\sum_{{x' \in W(x)}} \sum_{{y}} m_{{z}}(t, x', y)\right)\right|$, W={}".format(spatial_window)
         ax.set_title(title)
 
         if config.show_colorbar:

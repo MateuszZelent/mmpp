@@ -17,27 +17,13 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import numpy as np
 
-# Import shared logging configuration  
+# Import shared logging configuration
 from ...cli.logging_config import get_mmpp_logger, setup_mmpp_logging
 
 # Get logger for FMR modes
 log = get_mmpp_logger("mmpp.fft.modes")
 
 # Import electromagnetic analysis module
-try:
-    from ..electromagnetic_analysis import (
-        ElectromagneticAnalysisConfig,
-        PoyntingVectorAnalysis,
-        QFactorAnalysis,
-        RadiationPatternAnalysis,
-        analyze_electromagnetic_properties,
-        create_comprehensive_em_report,
-    )
-
-    EM_ANALYSIS_AVAILABLE = True
-except ImportError:
-    EM_ANALYSIS_AVAILABLE = False
-    log.warning("Electromagnetic analysis module not available")
 
 from .ffmpeg_utils import (
     _create_ffmpeg_writer,
@@ -70,19 +56,18 @@ from .compat import (
     zarr,
 )
 from .styling import STYLING_AVAILABLE, MidpointNormalize, setup_animation_styling
-from ..mode_characterization import (
+from ...mode_characterization import (
     ModeCharacterAnalyzer,
     ModeCharacteristicConfig,
     ModeCharacterizationResult,
 )
-from ..metrics import (
+from ...metrics import (
     PeakWidth,
     compute_half_width_at_half_max,
     format_width_value,
     normalize_peak_width_option,
 )
 
-# FFmpeg installation utilities
 # FFmpeg installation utilities
 @dataclass
 class ModeVisualizationConfig:
@@ -789,7 +774,7 @@ class FMRModeAnalyzer:
         verbose: bool = False,
     ) -> "VortexModeResult":
         """
-        Advanced vortex/skyrmion mode classification using theoretical equations.
+        Advanced vortex/skyrmion mode classification.
         
         Implements rigorous classification based on:
         - Thiele equation dynamics for gyration modes
@@ -824,7 +809,7 @@ class FMRModeAnalyzer:
         try:
             result = analyzer.analyze_vortex(
                 mode_data,
-                core_position=core_position,
+                core_position=core_position,  # type: ignore
                 R_dot=R_dot,
                 verbose=verbose,
             )
@@ -834,7 +819,7 @@ class FMRModeAnalyzer:
             log.error(f"Advanced vortex classifier not available: {e}")
             print(f"❌ Advanced vortex classifier not available.")
             print(f"   Falling back to standard characterization...")
-            
+
             # Fallback to standard analysis  
             std_result = analyzer.analyze(
                 mode_data,
@@ -845,16 +830,16 @@ class FMRModeAnalyzer:
                 self._print_characterization_details(std_result, frequency, z_layer)
                 
             # Convert to VortexModeResult format (basic mapping)
-            from .vortex_classifier import VortexModeResult
+            from ...mode_characterization.vortex_classifier import VortexModeResult
             
             basic_result = VortexModeResult(
                 frequency=frequency,
                 m_index=0,  # would need proper analysis
-                n_index=0,  
+                n_index=0,
                 mode_type=std_result.primary_class,
                 confidence=std_result.confidence,
                 core_position=core_position or (0, 0),
-                notes=["Fallback to standard analysis - advanced vortex classifier unavailable"]
+                notes=["Fallback to standard analysis - advanced vortex classifier unavailable"],
             )
             
             return basic_result

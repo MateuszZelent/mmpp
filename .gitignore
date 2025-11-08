@@ -150,7 +150,20 @@ Thumbs.db
 data/
 results/
 temp/
-
+*.ipynb
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.tiff
+*.bmp
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.log
 # Archive folder - old tests, debug files, and development artifacts
 .archive/
 mmpp/Untitled-1.ipynb
+mmpp/fft/transmission/experiment/*
+mmpp/fft/transmission/experiment/

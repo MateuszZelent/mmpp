@@ -147,15 +147,43 @@ class TransmissionResult:
         plotter = TransmissionPlotter(self)
         return plotter.plot(config=plot_config, **kwargs)
 
+    def overlay_transmission(self, **kwargs):
+        """Overlay experimental transmission data on a plot.
+
+        This is a convenience wrapper around the standalone
+        :func:`~mmpp.fft.transmission.overlay_transmission` function.
+
+        All keyword arguments are forwarded to the underlying function.
+        The `ax` keyword argument is required.
+
+        Parameters
+        ----------
+        **kwargs
+            Keyword arguments for :func:`~mmpp.fft.transmission.overlay_transmission`.
+            See its docstring for details (e.g., `ax`, `d`, `p`, `base_path`).
+
+        Returns
+        -------
+        matplotlib.lines.Line2D
+        """
+        from .experimental import overlay_transmission as overlay_transmission_func
+
+        # Pass the result object itself to the overlay function so it can access
+        # simulation data for normalization.
+        return overlay_transmission_func(sim_result=self, **kwargs)
+
     def plot_transmission_crosssection(
         self,
         x: float,
         freq_unit: str = "GHz",
         trim_0f: Optional[int] = None,
+        fmin: Optional[float] = None,
+        fmax: Optional[float] = None,
         flip: bool = False,
         log_scale: bool = False,
         ax=None,
         mark_on_ax=None,
+        find_minima: Optional[dict] = None,
         **kwargs
     ):
         """Plot 1D transmission cross-section at specific x position.
@@ -171,6 +199,10 @@ class TransmissionResult:
             Frequency unit ("Hz", "kHz", "MHz", "GHz"), default "GHz"
         trim_0f : int, optional
             Number of lowest frequency points to remove
+        fmin : float, optional
+            Minimum frequency to display (in `freq_unit` units).
+        fmax : float, optional
+            Maximum frequency to display (in `freq_unit` units).
         flip : bool, optional
             If True, frequency is on Y-axis and transmission on X-axis.
             If False (default), frequency on X-axis and transmission on Y-axis.
@@ -185,13 +217,34 @@ class TransmissionResult:
         mark_on_ax : matplotlib.axes.Axes, optional
             If provided, draws a vertical line on this axes object at the crosssection position.
             Useful for marking the crosssection location on a transmission heatmap.
+        find_minima : dict, optional
+            If provided, finds local minima in the transmission data and marks them.
+            Dictionary can contain:
+            - 'height': maximum height for minima (default: median of data)
+            - 'distance': minimum distance between minima in points (default: 5)
+            - 'prominence': minimum prominence of minima (default: None)
+            - 'width': minimum width of minima (default: None)
+            - 'freq_range': (fmin, fmax) tuple in freq_unit - only search in this range (default: None = all)
+            - 'threshold': float - only find minima below this transmission value (e.g., 0.5 for T<50%)
+            - 'label_minima': bool, whether to add text labels with frequency for each minimum (default: True)
+            - 'label_rounding': int, number of decimal places for frequency labels (e.g., 2). Overrides 'label_format'.
+            - 'label_format': str, format string for the label (default: '{:.2f}').
+            - 'mark': bool, whether to mark minima on plot (default: True)
+            - 'color': color for minima markers (default: 'cyan')
+            - 'marker': marker style (default: 'o')
+            - 'markersize': marker size (default: 8)
+            Returns minima frequencies as third output.
+            Example: {'freq_range': (1.0, 3.0), 'threshold': 0.3, 'distance': 10, 'label_rounding': 3}
         **kwargs
             Additional matplotlib plot kwargs (color, linewidth, label, etc.)
 
         Returns
         -------
-        fig, ax
+        fig, ax : matplotlib objects
             Matplotlib figure and axes objects
+        minima_freqs : list or None
+            If find_minima is provided, returns list of frequencies (in freq_unit) where minima occur.
+            Otherwise returns None.
         """
         # Import here to avoid circular imports
         try:
@@ -229,6 +282,19 @@ class TransmissionResult:
             trim_idx = min(trim_0f, len(freqs) - 1)
             freqs = freqs[trim_idx:]
             transmission_slice = transmission_slice[trim_idx:]
+
+        # Apply fmin/fmax if specified
+        if fmin is not None:
+            mask = freqs >= fmin
+            freqs = freqs[mask]
+            transmission_slice = transmission_slice[mask]
+
+        if fmax is not None:
+            mask = freqs <= fmax
+            freqs = freqs[mask]
+            transmission_slice = transmission_slice[mask]
+
+
 
         # Create figure if needed
         if ax is None:
@@ -292,8 +358,132 @@ class TransmissionResult:
                 alpha=0.7,
                 label=f'Crosssection at {position_label}'
             )
+        
+        # Find minima if requested
+        minima_freqs = None
+        if find_minima is not None:
+            try:
+                from scipy.signal import find_peaks
+                
+                # Default parameters
+                minima_params = {
+                    'height': None,  # Will be set to median if None
+                    'distance': 5,
+                    'prominence': None,
+                    'width': None,
+                    'mark': True,
+                    'color': 'cyan',
+                    'label_minima': True,
+                    'label_rounding': None,
+                    'label_format': '{:.2f}',
+                    'marker': 'o',
+                    'markersize': 8,
+                    'freq_range': None,  # (fmin, fmax) in freq_unit - search only in this range
+                    'threshold': None,  # Only minima below this transmission value (e.g., 0.5 for T<50%)
+                }
+                minima_params.update(find_minima)
 
-        return fig, ax
+                # If label_rounding is provided, it overrides label_format
+                if minima_params.get('label_rounding') is not None:
+                    try:
+                        rounding_places = int(minima_params['label_rounding'])
+                        minima_params['label_format'] = f'{{:.{rounding_places}f}}'
+                    except (ValueError, TypeError):
+                        import warnings
+                        warnings.warn(f"Invalid value for 'label_rounding': {minima_params['label_rounding']}. Using default format.")
+                
+                # Create frequency mask if freq_range is specified
+                freq_mask = np.ones(len(freqs), dtype=bool)
+                if minima_params['freq_range'] is not None:
+                    freq_min, freq_max = minima_params['freq_range']
+                    freq_mask = (freqs >= freq_min) & (freqs <= freq_max)
+                
+                # Apply threshold if specified (only find minima below this value)
+                if minima_params['threshold'] is not None:
+                    freq_mask &= (transmission_slice <= minima_params['threshold'])
+                
+                # For minima, we need to invert the signal
+                inverted_transmission = -transmission_slice.copy()
+                
+                # Mask out regions we don't want to search
+                inverted_transmission[~freq_mask] = np.inf  # Won't be detected as peaks
+                
+                # Set default height to median if not provided
+                if minima_params['height'] is None:
+                    # Use median of valid (masked) region
+                    valid_transmission = transmission_slice[freq_mask]
+                    if len(valid_transmission) > 0:
+                        minima_params['height'] = -np.median(valid_transmission)
+                    else:
+                        minima_params['height'] = -np.median(transmission_slice)
+                
+                # Find peaks in inverted signal (= minima in original)
+                peak_kwargs = {
+                    'height': minima_params['height'],
+                    'distance': minima_params['distance'],
+                }
+                if minima_params['prominence'] is not None:
+                    peak_kwargs['prominence'] = minima_params['prominence']
+                if minima_params['width'] is not None:
+                    peak_kwargs['width'] = minima_params['width']
+                
+                minima_indices, properties = find_peaks(inverted_transmission, **peak_kwargs)
+                minima_freqs = freqs[minima_indices].tolist()
+                minima_values = transmission_slice[minima_indices]
+                
+                # Mark minima on plot if requested
+                if minima_params['mark'] and len(minima_indices) > 0:
+                    if flip:
+                        # Frequency on Y-axis, transmission on X-axis
+                        ax.plot(
+                            minima_values, 
+                            minima_freqs,
+                            minima_params['marker'],
+                            color=minima_params['color'],
+                            markersize=minima_params['markersize'],
+                            markeredgecolor='white',
+                            markeredgewidth=1.5,
+                            label=f'Minima ({len(minima_indices)} found)',
+                            zorder=10
+                        )
+                    else:
+                        # Frequency on X-axis, transmission on Y-axis
+                        ax.plot(
+                            minima_freqs, 
+                            minima_values,
+                            minima_params['marker'],
+                            color=minima_params['color'],
+                            markersize=minima_params['markersize'],
+                            markeredgecolor='white',
+                            markeredgewidth=1.5,
+                            label=f'Minima ({len(minima_indices)} found)',
+                            zorder=10
+                        )
+                    # Add text labels for each minimum if requested
+                    if minima_params['label_minima']:
+                        for freq, val in zip(minima_freqs, minima_values):
+                            label_text = minima_params['label_format'].format(freq)
+                            if flip:
+                                # Text to the right of the point
+                                ax.text(val, freq, f' {label_text}', 
+                                        ha='left', va='center', 
+                                        color=minima_params['color'], fontsize=9)
+                            else:
+                                # Text above the point
+                                ax.text(freq, val, label_text, 
+                                        ha='center', va='bottom', 
+                                        color=minima_params['color'], fontsize=9)
+                
+            except ImportError:
+                import warnings
+                warnings.warn("scipy is required for find_minima functionality. Install with: pip install scipy")
+                minima_freqs = None
+
+        ax.legend(loc='best', framealpha=0.8)
+        if find_minima is not None:
+            return fig, ax, minima_freqs
+        else:
+            return fig, ax
 
 
 def _compute_hann_weights(length: int, power: float) -> np.ndarray:

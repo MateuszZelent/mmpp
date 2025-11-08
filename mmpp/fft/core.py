@@ -256,16 +256,85 @@ class FFT:
         np.ndarray
             Frequency array
         """
-        result = self._compute_fft(
-            dset,
-            z_layer,
-            method,
-            save=save,
-            force=force,
-            save_dataset_name=save_dataset_name,
-            **kwargs,
-        )
-        return result.frequencies
+        # Try to compute frequencies efficiently without loading data
+        try:
+            return self._compute_frequencies_fast(dset, **kwargs)
+        except Exception:
+            # Fallback to full FFT computation
+            result = self._compute_fft(
+                dset,
+                z_layer,
+                method,
+                save=save,
+                force=force,
+                save_dataset_name=save_dataset_name,
+                **kwargs,
+            )
+            return result.frequencies
+
+    def _compute_frequencies_fast(
+        self,
+        dataset_name: Optional[str] = None,
+        **kwargs,
+    ) -> np.ndarray:
+        """
+        Compute frequency array without loading full dataset.
+        Only reads metadata (dt and shape) from zarr.
+        """
+        # Auto-select largest m dataset if none specified
+        if dataset_name is None:
+            dataset_name = self.job_result.get_largest_m_dataset()
+
+        if not isinstance(dataset_name, str):
+            dataset_name = str(dataset_name)
+
+        # Get dt and shape without loading data
+        try:
+            from .compute_fft import PYZFN_AVAILABLE
+            if not PYZFN_AVAILABLE:
+                raise ImportError("pyzfn required")
+            
+            from pyzfn import Pyzfn
+            job = Pyzfn(self.job_result.path)
+            
+            # Get dataset
+            data_set = None
+            if hasattr(job, dataset_name):
+                data_set = getattr(job, dataset_name)
+            else:
+                z_group = getattr(job, "z", None)
+                if z_group is not None and dataset_name in z_group:
+                    data_set = z_group[dataset_name]
+            
+            if data_set is None:
+                raise ValueError(f"Dataset {dataset_name} not found")
+            
+            # Get shape (without loading data)
+            data_shape = data_set.shape
+            n_timesteps = data_shape[0]
+            
+            # Get dt from job metadata
+            dt = float(job.dt)
+            
+            # Determine FFT length (same logic as in compute_fft)
+            fft_length = n_timesteps
+            
+            zero_padding = kwargs.get("zero_padding", self._compute.config.zero_padding)
+            nfft = kwargs.get("nfft", self._compute.config.nfft)
+            
+            if nfft is not None:
+                fft_length = nfft
+            elif zero_padding:
+                next_power_two = 1 << (n_timesteps - 1).bit_length()
+                if next_power_two > n_timesteps:
+                    fft_length = next_power_two
+            
+            # Compute frequencies
+            frequencies = np.fft.rfftfreq(fft_length, dt)
+            return frequencies
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to compute frequencies from metadata: {e}") from e
 
     def power(
         self,
