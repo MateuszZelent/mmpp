@@ -12,6 +12,10 @@ import numpy as np
 from .compute_fft import FFTCompute, FFTComputeResult
 from .plot import FFTPlotter
 from .transmission.interface import FFTTransmissionInterface
+from ..cli.logging_config import get_mmpp_logger
+
+# Get logger for FFT core
+log = get_mmpp_logger("mmpp.fft")
 
 # Import mode visualization capabilities
 try:
@@ -258,9 +262,13 @@ class FFT:
         """
         # Try to compute frequencies efficiently without loading data
         try:
-            return self._compute_frequencies_fast(dset, **kwargs)
-        except Exception:
+            log.debug(f"Attempting fast frequency calculation for dataset '{dset}'")
+            frequencies = self._compute_frequencies_fast(dset, **kwargs)
+            log.debug(f"✓ Fast frequency calculation successful (shape: {frequencies.shape})")
+            return frequencies
+        except Exception as e:
             # Fallback to full FFT computation
+            log.debug(f"Fast frequency calculation failed: {e}, falling back to full FFT")
             result = self._compute_fft(
                 dset,
                 z_layer,
