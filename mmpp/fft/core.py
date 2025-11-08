@@ -27,11 +27,12 @@ except ImportError:
 
 # Import dispersion analysis capabilities
 try:
-    from .dispersion import SpinWaveAnalyzer, DispersionConfig, FFTDispersionInterface
+    from .dispersion import SpinWaveAnalyzer, DispersionConfig, FFTDispersionInterface, find_peaks_1d
     
     DISPERSION_AVAILABLE = True
 except ImportError:
     DISPERSION_AVAILABLE = False
+    find_peaks_1d = None  # type: ignore
 
 
 class FFT:
@@ -223,8 +224,9 @@ class FFT:
         force: bool = False,
         save_dataset_name: Optional[str] = None,
         slice_info: Optional[Any] = None,
+        find_peaks: Optional[dict] = None,
         **kwargs,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ):
         """
         Compute FFT spectrum.
 
@@ -242,13 +244,19 @@ class FFT:
             Force recalculation and overwrite existing (default: False)
         save_dataset_name : str, optional
             Custom name for saved dataset (default: auto-generated)
+        find_peaks : dict, optional
+            If provided, detect peaks in the spectrum. Dictionary with parameters:
+            - 'min_prominence': float, minimum peak prominence (default: 0.0)
+            Example: find_peaks={'min_prominence': 0.1}
         **kwargs : Any
             Additional FFT configuration options
 
         Returns:
         --------
-        tuple[np.ndarray, np.ndarray]
-            (frequencies, complex FFT spectrum)
+        tuple[np.ndarray, np.ndarray] or tuple[np.ndarray, np.ndarray, dict]
+            If find_peaks is None: (frequencies, complex FFT spectrum)
+            If find_peaks is provided: (frequencies, complex FFT spectrum, peaks_info)
+            where peaks_info is a dict with 'indices', 'frequencies', and 'amplitudes'
         """
         result = self._compute_fft(
             dset,
@@ -260,7 +268,34 @@ class FFT:
             slice_info=slice_info,
             **kwargs,
         )
-        return result.frequencies, result.spectrum
+        
+        if find_peaks is None:
+            return result.frequencies, result.spectrum
+        
+        # Find peaks in spectrum
+        if find_peaks_1d is None:
+            log.warning("Peak finding requested but dispersion module not available. Install required dependencies.")
+            return result.frequencies, result.spectrum
+        
+        # Extract parameters
+        min_prominence = find_peaks.get('min_prominence', 0.0)
+        
+        # Use absolute value of spectrum for peak detection
+        spectrum_abs = np.abs(result.spectrum)
+        
+        # Find peaks
+        peak_indices = find_peaks_1d(spectrum_abs, min_prominence=min_prominence)
+        
+        # Create peaks info dictionary
+        peaks_info = {
+            'indices': peak_indices,
+            'frequencies': result.frequencies[peak_indices],
+            'amplitudes': spectrum_abs[peak_indices],
+        }
+        
+        log.info(f"Found {len(peak_indices)} peaks with prominence >= {min_prominence}")
+        
+        return result.frequencies, result.spectrum, peaks_info
 
     def frequencies(
         self,
@@ -495,7 +530,7 @@ class FFT:
         np.ndarray
             Power spectrum (|FFT|^2)
         """
-        _, spectrum = self.spectrum(
+        result = self.spectrum(
             dset,
             z_layer,
             method,
@@ -505,6 +540,7 @@ class FFT:
             slice_info=slice_info,
             **kwargs,
         )
+        spectrum = result[1]  # Extract spectrum from tuple
         return np.abs(spectrum) ** 2
 
     def phase(
@@ -534,9 +570,10 @@ class FFT:
         np.ndarray
             Phase spectrum
         """
-        _, spectrum = self.spectrum(
+        result = self.spectrum(
             dset, z_layer, method, slice_info=slice_info, **kwargs
         )
+        spectrum = result[1]  # Extract spectrum from tuple
         return np.angle(spectrum)
 
     def magnitude(
@@ -568,9 +605,10 @@ class FFT:
         np.ndarray
             Magnitude spectrum (\\|FFT\\|)
         """
-        _, spectrum = self.spectrum(
+        result = self.spectrum(
             dset, z_layer, method, slice_info=slice_info, **kwargs
         )
+        spectrum = result[1]  # Extract spectrum from tuple
         return np.abs(spectrum)
 
     def plot_spectrum(
