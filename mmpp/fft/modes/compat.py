@@ -21,7 +21,7 @@ zarr = _zarr
 
 # pyzfn
 try:
-    from pyzfn import Pyzfn as _Pyzfn
+    from ...pyzfn import Pyzfn as _Pyzfn
 
     PYZFN_AVAILABLE = True
 except ImportError:

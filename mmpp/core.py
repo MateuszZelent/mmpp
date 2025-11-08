@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 import numpy as np
 import pandas as pd
 import zarr
-from pyzfn import Pyzfn
+from .pyzfn import Pyzfn
 from rich.console import Console
 from rich.syntax import Syntax
 

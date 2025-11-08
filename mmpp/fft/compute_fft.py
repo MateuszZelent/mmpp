@@ -42,7 +42,7 @@ except ImportError:
     PYFFTW_AVAILABLE = False
 
 try:
-    from pyzfn import Pyzfn
+    from ..pyzfn import Pyzfn
 
     PYZFN_AVAILABLE = True
 except ImportError:

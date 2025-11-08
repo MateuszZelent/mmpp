@@ -43,7 +43,7 @@ except ImportError:
     log.error("Zarr not available - mode analysis disabled")
 
 try:
-    from pyzfn import Pyzfn
+    from ...pyzfn import Pyzfn
     PYZFN_AVAILABLE = True
 except ImportError:
     PYZFN_AVAILABLE = False

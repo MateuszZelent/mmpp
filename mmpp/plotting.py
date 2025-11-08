@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
-from pyzfn import Pyzfn
+from .pyzfn import Pyzfn
 
 # Import shared logging configuration
 from .cli.logging_config import get_mmpp_logger, setup_mmpp_logging
@@ -28,7 +28,7 @@ def _find_largest_m_dataset(zarr_path: str) -> str:
         Name of the largest m dataset (e.g., "m_z5-8", "m_z11-12", or fallback "m")
     """
     try:
-        from pyzfn import Pyzfn
+        from ..pyzfn import Pyzfn
 
         job = Pyzfn(zarr_path)
 
