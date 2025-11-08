@@ -28,7 +28,7 @@ Wyświetli się:
 🔧 CORE FFT METHODS:
 ──────────────────────────────────────────────────────
   • spectrum()      Get complex FFT spectrum
-    └─ result.fft.spectrum('m_z11', z_layer=-1)
+    └─ freqs, spec = result.fft.spectrum('m_z11', z_layer=-1)
   • frequencies()   Get frequency array  
     └─ result.fft.frequencies()
   • power()         Get power spectrum |FFT|²
@@ -60,7 +60,7 @@ import matplotlib.pyplot as plt
 
 # Pobierz spektrum kompleksowe
 fft = result.fft
-spectrum = fft.spectrum(dset='m_z11', z_layer=-1)
+freqs, spectrum = fft.spectrum(dset='m_z11', z_layer=-1)
 
 print(f"Typ spektrum: {spectrum.dtype}")  # complex128
 print(f"Kształt: {spectrum.shape}")
@@ -411,7 +411,7 @@ print("Wpisy w cache:", len(fft._cache))
 print("Klucze cache:", list(fft._cache.keys())[:3])  # Pierwsze 3
 
 # Wymuś przeliczenie z nowymi parametrami
-spectrum_forced = fft.spectrum(
+freqs_forced, spectrum_forced = fft.spectrum(
     dset='m_z11',
     method=2,        # Inna metoda
     force=True       # Ignoruj cache
@@ -426,11 +426,11 @@ print("Cache wyczyszczony")
 
 ```python
 # Użyj save=True aby zapisać wyniki do zarr
-spectrum = fft.spectrum(dset='m_z11', save=True)
+freqs, spectrum = fft.spectrum(dset='m_z11', save=True)
 print("Spektrum zapisane do pliku zarr")
 
 # Kolejne wywołania będą szybsze (z zarr)
-spectrum_cached = fft.spectrum(dset='m_z11')  # Ładuje z zarr
+freqs_cached, spectrum_cached = fft.spectrum(dset='m_z11')  # Ładuje z zarr
 print("Spektrum załadowane z cache")
 
 # Sprawdź co zostało zapisane

@@ -148,7 +148,7 @@ print(result.fft)
 🔧 CORE FFT METHODS:
 ──────────────────────────────────────────────────────────
   • spectrum()      Get complex FFT spectrum
-    └─ op[0].fft.spectrum('m_z11', z_layer=-1)
+    └─ freqs, spec = op[0].fft.spectrum('m_z11', z_layer=-1)
   • frequencies()   Get frequency array
     └─ op[0].fft.frequencies()
   • power()         Get power spectrum |FFT|²
@@ -186,7 +186,7 @@ print(result.fft)
   # Basic FFT operations
   power = op[0].fft.power('m_z11')
   freqs = op[0].fft.frequencies()
-  spectrum = op[0].fft.spectrum(save=True, force=True)
+  freqs, spectrum = op[0].fft.spectrum(save=True, force=True)
   
   # Plotting
   fig, ax = op[0].fft.plot_spectrum(log_scale=True)

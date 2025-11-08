@@ -784,7 +784,7 @@ class DatasetSpecificFFT:
             core_methods_text = Text()
             core_methods_text.append("🔧 FFT Methods (dataset pre-set):\n", style="bold yellow")
             methods = [
-                ("spectrum()", f"FFT spectrum for {self.dataset_name}"),
+                ("spectrum()", f"(freqs, spectrum) for {self.dataset_name}"),
                 ("frequencies()", "Frequency array"),
                 ("power()", f"|FFT|² power spectrum"),
                 ("magnitude()", f"|FFT| magnitude"),
@@ -809,7 +809,7 @@ class DatasetSpecificFFT:
 
             # Usage examples
             example_code = f"""# Dataset-specific FFT usage (no dataset_name needed)
-spectrum = m_layer.fft.spectrum()  # Uses '{self.dataset_name}' automatically
+freqs, spectrum = m_layer.fft.spectrum()  # Uses '{self.dataset_name}' automatically
 power = m_layer.fft.power()
 frequencies = m_layer.fft.frequencies()
 
@@ -821,15 +821,15 @@ modes = disp.compute_1d()
 fig, ax = m_layer.fft.plot_spectrum(log_scale=True)
 
 # Compare with regular FFT (requires dataset_name)
-regular_fft = job[0].fft.spectrum(dataset_name='{self.dataset_name}')
-dataset_fft = job[0].{self.dataset_name}.fft.spectrum()  # Same result!"""
+freqs_full, regular_fft = job[0].fft.spectrum(dataset_name='{self.dataset_name}')
+freqs_ds, dataset_fft = job[0].{self.dataset_name}.fft.spectrum()  # Same result!"""
 
             if self.slice_info:
                 example_code += f"""
 
 # Sliced dataset FFT
 sliced_data = job[0].{self.dataset_name}{slice_str}
-sliced_fft = sliced_data.fft.spectrum()  # FFT of sliced data
+sliced_freqs, sliced_fft = sliced_data.fft.spectrum()  # FFT of sliced data
 sliced_dispersion = sliced_data.fft.dispersion.compute_1d()"""
 
             syntax = Syntax(
@@ -891,10 +891,10 @@ sliced_dispersion = sliced_data.fft.dispersion.compute_1d()"""
 Dataset-specific FFT Interface:
 • Pre-configured for dataset: {self.dataset_name}{slice_str}
 • Available methods: spectrum(), power(), magnitude(), phase(), dispersion
-• Usage: m_layer.fft.spectrum()  # No dataset_name needed!
+• Usage: freq, spec = m_layer.fft.spectrum()  # No dataset_name needed!
 
 Examples:
-spectrum = m_layer.fft.spectrum()  # Auto-uses '{self.dataset_name}'
+freqs, spectrum = m_layer.fft.spectrum()  # Auto-uses '{self.dataset_name}'
 power = m_layer.fft.power()
 dispersion = m_layer.fft.dispersion.compute_1d()
 

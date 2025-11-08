@@ -1272,12 +1272,16 @@ class FMRModeAnalyzer:
                     if self.spectrum.shape[1] == 3
                     else np.sum(self.spectrum, axis=tuple(range(1, self.spectrum.ndim)))
                 )
+            if np.iscomplexobj(self.spectrum):
+                self.spectrum = np.abs(self.spectrum)
             log.info(f"Loaded spectrum data: shape {self.spectrum.shape}")
         else:
             # Try to load power_sum from computed modes as fallback spectrum
             modes_power_path = f"modes/{self.dataset_name}/power_sum"
             if modes_power_path in self.zarr_file:
                 self.spectrum = np.array(self.zarr_file[modes_power_path])
+                if np.iscomplexobj(self.spectrum):
+                    self.spectrum = np.abs(self.spectrum)
                 log.info(f"Using computed modes power_sum as spectrum: shape {self.spectrum.shape}")
             else:
                 self.spectrum = None

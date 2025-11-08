@@ -40,7 +40,7 @@ import numpy as np
 fft = result[0].fft
 
 # Get complex spectrum
-spectrum = fft.spectrum(dset='m_z11')
+freqs, spectrum = fft.spectrum(dset='m_z11')
 print(f"Spectrum shape: {spectrum.shape}")
 
 # Get frequency array

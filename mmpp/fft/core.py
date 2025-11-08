@@ -92,14 +92,41 @@ class FFT:
             )
         return self._transmission_interface
 
+    def _format_slice_identifier(self, slice_info: Optional[Any]) -> str:
+        """Create a deterministic identifier for slice_info for caching/saving."""
+        if slice_info is None:
+            return "slice=None"
+
+        def format_item(item: Any) -> str:
+            if isinstance(item, slice):
+                return f"{item.start}:{item.stop}:{item.step}"
+            if item is Ellipsis:
+                return "..."
+            if isinstance(item, tuple):
+                return "(" + ",".join(format_item(sub) for sub in item) + ")"
+            if isinstance(item, (int, np.integer)):
+                return str(int(item))
+            return repr(item)
+
+        slice_tuple = slice_info if isinstance(slice_info, tuple) else (slice_info,)
+        formatted = ",".join(format_item(part) for part in slice_tuple)
+        return f"slice={formatted}"
+
     def _get_cache_key(
-        self, dataset_name: str, z_layer: int, method: int, **kwargs
+        self,
+        dataset_name: str,
+        z_layer: int,
+        method: int,
+        slice_identifier: Optional[str] = None,
+        **kwargs,
     ) -> str:
         """Generate cache key for FFT results."""
         # Normalize z_layer for consistent cache keys
         # For cache purposes, we use the raw z_layer value since the actual normalization
         # happens in calculate_fft_data and we want consistent caching behavior
         key_parts = [dataset_name, str(z_layer), str(method)]
+        if slice_identifier:
+            key_parts.append(slice_identifier)
         for k, v in sorted(kwargs.items()):
             key_parts.append(f"{k}={v}")
         return "|".join(key_parts)
@@ -113,6 +140,7 @@ class FFT:
         save: bool = False,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
         **kwargs,
     ) -> FFTComputeResult:
         """
@@ -134,6 +162,8 @@ class FFT:
             Force recalculation and overwrite existing (default: False)
         save_dataset_name : str, optional
             Custom name for saved dataset (default: auto-generated)
+        slice_info : Any, optional
+            Optional slicing (e.g., [:1000, ..., 0]) applied before FFT and used in caching
         **kwargs : Any
             Additional FFT configuration options
 
@@ -149,7 +179,10 @@ class FFT:
         if not isinstance(dataset_name, str):
             dataset_name = str(dataset_name)
 
-        cache_key = self._get_cache_key(dataset_name, z_layer, method, **kwargs)
+        slice_identifier = self._format_slice_identifier(slice_info)
+        cache_key = self._get_cache_key(
+            dataset_name, z_layer, method, slice_identifier=slice_identifier, **kwargs
+        )
 
         # Check memory cache only if not forcing and not saving
         if use_cache and not force and not save and cache_key in self._cache:
@@ -164,6 +197,8 @@ class FFT:
                 save=save,
                 force=force,
                 save_dataset_name=save_dataset_name,
+                slice_info=slice_info,
+                slice_identifier=None if slice_identifier == "slice=None" else slice_identifier,
                 **kwargs,
             )
         except OSError as e:
@@ -187,8 +222,9 @@ class FFT:
         save: bool = False,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
         **kwargs,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Compute FFT spectrum.
 
@@ -211,8 +247,8 @@ class FFT:
 
         Returns:
         --------
-        np.ndarray
-            Complex FFT spectrum
+        tuple[np.ndarray, np.ndarray]
+            (frequencies, complex FFT spectrum)
         """
         result = self._compute_fft(
             dset,
@@ -221,9 +257,10 @@ class FFT:
             save=save,
             force=force,
             save_dataset_name=save_dataset_name,
+            slice_info=slice_info,
             **kwargs,
         )
-        return result.spectrum
+        return result.frequencies, result.spectrum
 
     def frequencies(
         self,
@@ -233,6 +270,7 @@ class FFT:
         save: bool = False,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
         **kwargs,
     ) -> np.ndarray:
         """
@@ -263,7 +301,9 @@ class FFT:
         # Try to compute frequencies efficiently without loading data
         try:
             log.debug(f"Attempting fast frequency calculation for dataset '{dset}'")
-            frequencies = self._compute_frequencies_fast(dset, **kwargs)
+            frequencies = self._compute_frequencies_fast(
+                dset, slice_info=slice_info, **kwargs
+            )
             log.debug(f"✓ Fast frequency calculation successful (shape: {frequencies.shape})")
             return frequencies
         except Exception as e:
@@ -276,6 +316,7 @@ class FFT:
                 save=save,
                 force=force,
                 save_dataset_name=save_dataset_name,
+                slice_info=slice_info,
                 **kwargs,
             )
             return result.frequencies
@@ -283,6 +324,7 @@ class FFT:
     def _compute_frequencies_fast(
         self,
         dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
         **kwargs,
     ) -> np.ndarray:
         """
@@ -296,53 +338,126 @@ class FFT:
         if not isinstance(dataset_name, str):
             dataset_name = str(dataset_name)
 
-        # Get dt and shape without loading data
+        def _extract_dt(value: Any) -> Optional[float]:
+            if value is None:
+                return None
+            try:
+                if hasattr(value, "item"):
+                    value = value.item()
+                return float(value)
+            except Exception:
+                return None
+
+        # Get dataset metadata without materializing the data
         try:
-            from .compute_fft import PYZFN_AVAILABLE
-            if not PYZFN_AVAILABLE:
-                raise ImportError("pyzfn required")
-            
-            from pyzfn import Pyzfn
-            job = Pyzfn(self.job_result.path)
-            
-            # Get dataset
             data_set = None
-            if hasattr(job, dataset_name):
-                data_set = getattr(job, dataset_name)
-            else:
-                z_group = getattr(job, "z", None)
-                if z_group is not None and dataset_name in z_group:
-                    data_set = z_group[dataset_name]
-            
+            zarr_group = None
+
+            # Prefer existing job_result handle to avoid reopening the store
+            try:
+                zarr_group = self.job_result.z
+                data_set = self.job_result.get_dset(dataset_name)
+            except Exception as access_error:
+                log.debug(
+                    f"Fast frequency metadata lookup via job_result failed for {dataset_name}: {access_error}"
+                )
+
             if data_set is None:
-                raise ValueError(f"Dataset {dataset_name} not found")
-            
-            # Get shape (without loading data)
-            data_shape = data_set.shape
+                import zarr
+
+                zarr_group = zarr.open(self.job_result.path, mode="r")
+                if dataset_name not in zarr_group:
+                    raise ValueError(
+                        f"Dataset '{dataset_name}' not found in {self.job_result.path}"
+                    )
+                data_set = zarr_group[dataset_name]
+
+            data_shape = getattr(data_set, "shape", None)
+            if not data_shape:
+                raise ValueError(f"Could not determine shape for dataset {dataset_name}")
+
             n_timesteps = data_shape[0]
-            
-            # Get dt from job metadata
-            dt = float(job.dt)
-            
+            n_timesteps = self._apply_time_slice_length(n_timesteps, slice_info)
+            if n_timesteps <= 0:
+                raise ValueError(f"Dataset {dataset_name} has no time dimension")
+
+            # Respect optional tmax override if provided
+            tmax = kwargs.get("tmax")
+            if tmax is not None:
+                try:
+                    tmax_int = int(tmax)
+                    if tmax_int > 0:
+                        n_timesteps = min(n_timesteps, tmax_int)
+                except (TypeError, ValueError):
+                    log.debug(f"Ignoring invalid tmax value: {tmax}")
+
+            # Get dt from dataset attrs or fall back to root attrs
+            dt = None
+            if hasattr(data_set, "attrs"):
+                dataset_attrs = getattr(data_set, "attrs", {})
+                for key in ("t_sampl", "dt"):
+                    dt = _extract_dt(dataset_attrs.get(key))
+                    if dt:
+                        break
+
+            if dt is None and zarr_group is not None and hasattr(zarr_group, "attrs"):
+                for key in ("t_sampl", "dt"):
+                    dt = _extract_dt(zarr_group.attrs.get(key))
+                    if dt:
+                        break
+
+            if dt is None:
+                dt = 1e-12
+                log.warning(
+                    f"t_sampl not found in metadata for {dataset_name}, using default dt={dt}"
+                )
+
             # Determine FFT length (same logic as in compute_fft)
             fft_length = n_timesteps
-            
+
             zero_padding = kwargs.get("zero_padding", self._compute.config.zero_padding)
             nfft = kwargs.get("nfft", self._compute.config.nfft)
-            
+
             if nfft is not None:
                 fft_length = nfft
             elif zero_padding:
                 next_power_two = 1 << (n_timesteps - 1).bit_length()
                 if next_power_two > n_timesteps:
                     fft_length = next_power_two
-            
+
             # Compute frequencies
             frequencies = np.fft.rfftfreq(fft_length, dt)
             return frequencies
-            
+
         except Exception as e:
             raise RuntimeError(f"Failed to compute frequencies from metadata: {e}") from e
+
+    def _apply_time_slice_length(
+        self, n_timesteps: int, slice_info: Optional[Any]
+    ) -> int:
+        """Estimate resulting time length after applying slice info."""
+        if slice_info is None or n_timesteps <= 0:
+            return n_timesteps
+
+        slice_tuple = slice_info if isinstance(slice_info, tuple) else (slice_info,)
+        if not slice_tuple:
+            return n_timesteps
+
+        first = slice_tuple[0]
+        if first is Ellipsis or first is None:
+            return n_timesteps
+
+        if isinstance(first, slice):
+            start, stop, step = first.indices(n_timesteps)
+            if step == 0:
+                return n_timesteps
+            length = max(0, (stop - start + (step - 1)) // step)
+            return max(0, min(length, n_timesteps))
+
+        if isinstance(first, (int, np.integer)):
+            return 1
+
+        return n_timesteps
 
     def power(
         self,
@@ -352,6 +467,7 @@ class FFT:
         save: bool = False,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
         **kwargs,
     ) -> np.ndarray:
         """
@@ -379,19 +495,25 @@ class FFT:
         np.ndarray
             Power spectrum (|FFT|^2)
         """
-        spectrum = self.spectrum(
+        _, spectrum = self.spectrum(
             dset,
             z_layer,
             method,
             save=save,
             force=force,
             save_dataset_name=save_dataset_name,
+            slice_info=slice_info,
             **kwargs,
         )
         return np.abs(spectrum) ** 2
 
     def phase(
-        self, dset: str = "m_z11", z_layer: int = -1, method: int = 1, **kwargs
+        self,
+        dset: str = "m_z11",
+        z_layer: int = -1,
+        method: int = 1,
+        slice_info: Optional[Any] = None,
+        **kwargs,
     ) -> np.ndarray:
         """
         Compute phase spectrum.
@@ -412,11 +534,18 @@ class FFT:
         np.ndarray
             Phase spectrum
         """
-        spectrum = self.spectrum(dset, z_layer, method, **kwargs)
+        _, spectrum = self.spectrum(
+            dset, z_layer, method, slice_info=slice_info, **kwargs
+        )
         return np.angle(spectrum)
 
     def magnitude(
-        self, dset: str = "m_z11", z_layer: int = -1, method: int = 1, **kwargs
+        self,
+        dset: str = "m_z11",
+        z_layer: int = -1,
+        method: int = 1,
+        slice_info: Optional[Any] = None,
+        **kwargs,
     ) -> np.ndarray:
         """
         Compute magnitude spectrum.
@@ -429,6 +558,8 @@ class FFT:
             Z-layer (default: -1)
         method : int, optional
             FFT method (default: 1)
+        slice_info : Any, optional
+            Optional slicing applied before FFT
         \\*\\*kwargs : Any
             Additional FFT configuration options
 
@@ -437,7 +568,9 @@ class FFT:
         np.ndarray
             Magnitude spectrum (\\|FFT\\|)
         """
-        spectrum = self.spectrum(dset, z_layer, method, **kwargs)
+        _, spectrum = self.spectrum(
+            dset, z_layer, method, slice_info=slice_info, **kwargs
+        )
         return np.abs(spectrum)
 
     def plot_spectrum(
@@ -537,7 +670,7 @@ class FFT:
             core_methods_text = Text()
             core_methods_text.append("🔧 Core FFT Methods:\n", style="bold yellow")
             methods = [
-                ("spectrum()", "Get complex FFT spectrum"),
+                ("spectrum()", "Get (freqs, complex FFT) tuple"),
                 ("frequencies()", "Get frequency array"),
                 ("power()", "Get power spectrum |FFT|²"),
                 ("magnitude()", "Get magnitude |FFT|"),
@@ -623,7 +756,7 @@ class FFT:
             example_code = """# Basic FFT operations (auto-selects optimal dataset)
 power = job[0].fft.power()
 freqs = job[0].fft.frequencies()
-spectrum = job[0].fft.spectrum(save=True, force=True)
+freqs_fft, spectrum = job[0].fft.spectrum(save=True, force=True)
 
 # Or specify dataset explicitly
 power = job[0].fft.power('m_z11')
@@ -734,8 +867,8 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
         methods = [
             (
                 "spectrum()",
-                "Get complex FFT spectrum",
-                "job[0].fft.spectrum('m_z11', z_layer=-1)",
+                "Get (freqs, complex FFT spectrum)",
+                "freqs, spectrum = job[0].fft.spectrum('m_z11', z_layer=-1)",
             ),
             ("frequencies()", "Get frequency array", "job[0].fft.frequencies()"),
             ("power()", "Get power spectrum |FFT|²", "job[0].fft.power()"),
@@ -853,7 +986,7 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
             "# Basic FFT operations",
             "power = job[0].fft.power('m_z11')",
             "freqs = job[0].fft.frequencies()",
-            "spectrum = job[0].fft.spectrum(save=True, force=True)",
+            "freqs_fft, spectrum = job[0].fft.spectrum(save=True, force=True)",
             "",
             "# Plotting",
             "fig, ax = job[0].fft.plot_spectrum(log_scale=True)",

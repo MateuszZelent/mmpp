@@ -5,6 +5,7 @@ Core FFT computation functionality moved from old_fft_module.py and main.py.
 Provides low-level FFT calculations without user interface elements.
 """
 
+import hashlib
 import time
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, Union
@@ -495,19 +496,13 @@ class FFTCompute:
             nfft=nfft,
         )
 
-        # Calculate magnitude spectrum
-        magnitude = np.abs(fft_data)
+        spectrum = fft_data
 
-        # Average over spatial dimensions (keep time and component axes)
-        if magnitude.ndim > 2:  # (freq, spatial..., components)
-            # Average over spatial dimensions (all except first and last)
-            spatial_axes = tuple(range(1, magnitude.ndim - 1))
+        # Average over spatial dimensions (keep frequency/component axes)
+        if spectrum.ndim > 2:
+            spatial_axes = tuple(range(1, spectrum.ndim - 1))
             if spatial_axes:
-                spectrum = np.mean(magnitude, axis=spatial_axes)
-            else:
-                spectrum = magnitude
-        else:
-            spectrum = magnitude
+                spectrum = np.mean(spectrum, axis=spatial_axes)
 
         calculation_time = time.time() - start_time
 
@@ -600,8 +595,7 @@ class FFTCompute:
             nfft=nfft,
         )
 
-        # Calculate magnitude spectrum
-        spectrum = np.abs(fft_data)
+        spectrum = fft_data
 
         calculation_time = time.time() - start_time
 
@@ -993,7 +987,7 @@ class FFTCompute:
 
         # Compare metadata that affects FFT calculation
         # (add other relevant metadata fields as needed)
-        metadata_keys_to_check = ["z_layer", "source_dataset"]
+        metadata_keys_to_check = ["z_layer", "source_dataset", "slice_identifier"]
         metadata_match = True
         for key in metadata_keys_to_check:
             if key in kwargs and key in existing_result.metadata:
@@ -1012,6 +1006,8 @@ class FFTCompute:
         save: bool = False,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
+        slice_identifier: Optional[str] = None,
         tmax: Optional[int] = None,
         **kwargs,
     ) -> FFTComputeResult:
@@ -1034,6 +1030,10 @@ class FFTCompute:
             Force recalculation and overwrite existing (default: False)
         save_dataset_name : str, optional
             Custom name for saved dataset (default: auto-generated)
+        slice_info : Any, optional
+            Slicing arguments applied before loading (e.g., [:1000, ..., 0])
+        slice_identifier : str, optional
+            Deterministic identifier for cache/save naming (derived from slice_info)
         tmax : int, optional
             Maximum number of time steps to use for FFT calculation (default: None, use all)
         **kwargs : Any
@@ -1087,6 +1087,9 @@ class FFTCompute:
         # Generate save dataset name if not provided - use normalized z_layer for consistency
         if save_dataset_name is None:
             save_dataset_name = f"{dataset}_z{normalized_z_layer}_m{method}"
+            if slice_identifier:
+                slice_hash = hashlib.md5(slice_identifier.encode("utf-8")).hexdigest()[:8]
+                save_dataset_name = f"{save_dataset_name}_s{slice_hash}"
 
         # Try to load existing data if not forcing recalculation
         if not force:
@@ -1095,7 +1098,11 @@ class FFTCompute:
             if existing_result is not None:
                 # Verify that parameters match
                 if self._verify_fft_parameters(
-                    existing_result, z_layer=z_layer, source_dataset=dataset, **kwargs
+                    existing_result,
+                    z_layer=z_layer,
+                    source_dataset=dataset,
+                    slice_identifier=slice_identifier,
+                    **kwargs,
                 ):
                     log.info(
                         f"✓ Loaded existing FFT data for {save_dataset_name} (parameters verified)"
@@ -1134,7 +1141,9 @@ class FFTCompute:
 
         # Time the data loading
         load_start_time = time.time()
-        data, dt = self.load_data_from_zarr(zarr_path, dataset, z_layer, tmax=tmax)
+        data, dt = self.load_data_from_zarr(
+            zarr_path, dataset, z_layer, tmax=tmax, slice_info=slice_info
+        )
         load_end_time = time.time()
 
         # Memory after loading (if psutil available)
@@ -1222,6 +1231,7 @@ class FFTCompute:
                 "source_dataset": dataset,
                 "z_layer": z_layer,
                 "save_dataset_name": save_dataset_name,
+                "slice_identifier": slice_identifier,
             }
         )
 

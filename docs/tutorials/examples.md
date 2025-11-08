@@ -11,7 +11,7 @@ result = mmpp.MMPP('simulation.zarr')[0]
 
 # Compute FFT spectrum
 fft = result.fft
-spectrum = fft.spectrum(dset='m_z5-8')
+freqs, spectrum = fft.spectrum(dset='m_z5-8')
 
 # Plot results
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -98,7 +98,7 @@ def analyze_peak_characteristics(zarr_result):
         fft = zarr_result.fft
         
         # Compute spectrum
-        spectrum = fft.spectrum(dset='m_z5-8')
+        freqs, spectrum = fft.spectrum(dset='m_z5-8')
         frequencies = fft.frequencies()
         
         # Find peaks
@@ -177,7 +177,7 @@ print(f"Advanced method found {len(advanced_modes)} modes")
 fig, axes = plt.subplots(2, 2, figsize=(15, 10))
 
 # Plot spectrum
-spectrum = fft.spectrum(dset='m_z5-8')
+freqs, spectrum = fft.spectrum(dset='m_z5-8')
 frequencies = fft.frequencies()
 
 axes[0,0].plot(frequencies, np.abs(spectrum))

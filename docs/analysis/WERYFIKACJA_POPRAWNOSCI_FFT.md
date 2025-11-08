@@ -32,7 +32,7 @@ print(result.fft)  # Wyświetla szczegółowy przewodnik
 
 ```python
 # Wszystkie te metody istnieją i działają:
-spectrum = result.fft.spectrum(dset='m_z11', z_layer=-1, method=1)     # Linie 142-174
+freqs, spectrum = result.fft.spectrum(dset='m_z11', z_layer=-1, method=1)     # Linie 142-174
 frequencies = result.fft.frequencies(dset='m_z11', z_layer=-1)        # Linie 176-208  
 power = result.fft.power(dset='m_z11', z_layer=-1, method=1)          # Linie 210-242
 magnitude = result.fft.magnitude(dset='m_z11', z_layer=-1)            # Linie 278-298
@@ -147,13 +147,13 @@ fig, ax = result.fft.plot_spectrum(
 print(f"Cache entries: {len(result.fft._cache)}")
 
 # Pierwsze obliczenie - zostanie zapisane w cache
-spectrum1 = result.fft.spectrum(dset='m_z11', save=False)
+freqs1, spectrum1 = result.fft.spectrum(dset='m_z11', save=False)
 
 # Drugie obliczenie - pobrane z cache (szybkie)
-spectrum2 = result.fft.spectrum(dset='m_z11', save=False)  
+freqs2, spectrum2 = result.fft.spectrum(dset='m_z11', save=False)  
 
 # Wymuś nowe obliczenie
-spectrum3 = result.fft.spectrum(dset='m_z11', force=True)
+freqs3, spectrum3 = result.fft.spectrum(dset='m_z11', force=True)
 
 # Wyczyść cache
 result.fft.clear_cache()
@@ -163,7 +163,7 @@ print(f"Cache po wyczyszczeniu: {len(result.fft._cache)}")
 ### Przykład 3: Zapisywanie wyników
 ```python
 # ✅ Działa - zapis do zarr
-spectrum = result.fft.spectrum(
+freqs, spectrum = result.fft.spectrum(
     dset='m_z11',
     z_layer=-1,
     method=1,

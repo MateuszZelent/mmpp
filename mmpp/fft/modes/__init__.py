@@ -523,10 +523,14 @@ class FMRModeAnalyzer:
         log.debug(f"Looking for fresh modes spectrum at: {modes_power_sum_path}")
         if modes_power_sum_path in self.zarr_file:
             self.spectrum = np.array(self.zarr_file[modes_power_sum_path])
+            if np.iscomplexobj(self.spectrum):
+                self.spectrum = np.abs(self.spectrum)
             log.info(f"Using fresh modes power_sum as spectrum: shape {self.spectrum.shape}")
         elif modes_power_max_path in self.zarr_file:
             log.debug(f"power_sum not found, trying power_max at: {modes_power_max_path}")
             self.spectrum = np.array(self.zarr_file[modes_power_max_path])
+            if np.iscomplexobj(self.spectrum):
+                self.spectrum = np.abs(self.spectrum)
             log.info(f"Using fresh modes power_max as spectrum: shape {self.spectrum.shape}")
         elif self.spectrum_path:
             # Fallback to FFT spectrum (may be stale)
@@ -539,6 +543,8 @@ class FMRModeAnalyzer:
                     if self.spectrum.shape[1] == 3
                     else np.sum(self.spectrum, axis=tuple(range(1, self.spectrum.ndim)))
                 )
+            if np.iscomplexobj(self.spectrum):
+                self.spectrum = np.abs(self.spectrum)
             log.info(f"Loaded FFT spectrum data: shape {self.spectrum.shape}")
         else:
             log.error(f"No spectrum data found - neither modes nor FFT data available")

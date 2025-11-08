@@ -32,7 +32,7 @@ Po wykonaniu `print(fft)` zostanie wyświetlony szczegółowy przewodnik:
 🔧 CORE FFT METHODS:
 ──────────────────────────────────────────────────────
   • spectrum()      Get complex FFT spectrum
-    └─ op[0].fft.spectrum('m_z11', z_layer=-1)
+    └─ freqs, spec = op[0].fft.spectrum('m_z11', z_layer=-1)
   • frequencies()   Get frequency array
     └─ op[0].fft.frequencies()
   • power()         Get power spectrum |FFT|²
@@ -66,10 +66,10 @@ Zwraca kompletne kompleksowe spektrum FFT.
 
 ```python
 # Podstawowe użycie
-complex_spectrum = fft.spectrum()
+freqs, complex_spectrum = fft.spectrum()
 
 # Z parametrami
-complex_spectrum = fft.spectrum(
+freqs, complex_spectrum = fft.spectrum(
     dset='m_z11',          # Zestaw danych: 'm_z11', 'm_x11', 'm_y11'
     z_layer=-1,            # Warstwa Z: -1 (góra), 0 (dół), 1, 2, ...
     method=1,              # Metoda FFT: 1, 2, 3
@@ -384,7 +384,7 @@ for i, peak in enumerate(peaks[:3]):  # Pierwsze 3 szczyty
 print("Cache info:", fft._cache.keys())
 
 # Wymuś przeliczenie z nowymi parametrami
-spectrum_high_res = fft.spectrum(
+freqs_high_res, spectrum_high_res = fft.spectrum(
     method=2,      # Inna metoda
     force=True     # Wymuś przeliczenie
 )
@@ -401,7 +401,7 @@ print("Cache wyczyszczony")
 ```python
 # Sprawdź czy dane istnieją
 try:
-    spectrum = fft.spectrum()
+    freqs, spectrum = fft.spectrum()
     print("✓ Dane FFT dostępne")
 except Exception as e:
     print(f"✗ Błąd: {e}")
@@ -420,7 +420,7 @@ print("Dostępne zestawy:", available_datasets)
 fft._compute.debug = True
 
 # Sprawdź metadane
-spectrum = fft.spectrum()
+freqs, spectrum = fft.spectrum()
 result_info = fft._compute.get_last_result_info()
 print("Informacje o obliczeniu:", result_info)
 ```
