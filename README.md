@@ -430,6 +430,9 @@ pip install mmpp[dev]  # For full functionality
 ### 📁 **Q: What file formats does MMPP support?**
 A: MMPP primarily works with Zarr archives (.zarr) from micromagnetic simulations. The library is optimized for this format's high-performance capabilities.
 
+### 🔌 **Q: Do I need to install pyzfn separately?**
+A: No! MMPP now includes an embedded version of pyzfn. This ensures stability and compatibility without requiring a separate pyzfn installation.
+
 ## 🔧 Troubleshooting
 
 ### Common Issues
