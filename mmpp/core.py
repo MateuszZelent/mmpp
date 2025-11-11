@@ -225,9 +225,12 @@ class ZarrJobResult:
         self._ensure_zarr_loaded()
         if item in dir(self._z):
             return self._z[item]
-        if item in self._z.attrs:
-            return self._z.attrs[item]
-        return self._get_zarr_member(item)
+        try:
+            return self._get_zarr_member(item)
+        except NameError:
+            if item in self._z.attrs:
+                return self._z.attrs[item]
+            raise
 
     def __setitem__(self, key: str, value: str) -> None:
         """Set zarr dataset or attribute."""
@@ -244,9 +247,12 @@ class ZarrJobResult:
         self._ensure_zarr_loaded()
         if name in dir(self._z):
             return getattr(self._z, name)
-        if name in self._z.attrs:
-            return self._z.attrs[name]
-        zarr_item = self._get_zarr_member(name)
+        try:
+            zarr_item = self._get_zarr_member(name)
+        except NameError:
+            if name in self._z.attrs:
+                return self._z.attrs[name]
+            raise
         if isinstance(zarr_item, zarr.Array):
             return DatasetAwareWrapper(self, name, zarr_item)
         return zarr_item

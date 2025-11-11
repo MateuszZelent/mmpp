@@ -33,10 +33,10 @@ setup(
         "numpy>=1.20.0",
         "pandas>=1.3.0", 
         "matplotlib>=3.5.0",
-        "pyzfn",
-        "zarr",
+        "zarr>=3.0.0",
         "rich",
         "tqdm",
+        "PyYAML>=5.4.0",
     ],
     extras_require={
         "dev": [
