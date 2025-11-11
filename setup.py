@@ -46,6 +46,10 @@ setup(
             "mypy",
             "build",
             "twine",
+            "sphinx>=4.0",
+            "sphinx-rtd-theme",
+            "sphinx-autodoc-typehints",
+            "myst-parser",
         ],
         "interactive": [
             "itables",
@@ -72,6 +76,7 @@ setup(
             "paper.mplstyle",
             "fonts/**/*",
             "dracula.tcss",
+            "pyzfn/**/*.py",
         ],
     },
     entry_points={

@@ -10,11 +10,12 @@ authors = [
 ]
 description = "A library for MMPP (Micro Magnetic Post Processing) simulation and analysis"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = { text = "MIT" }
 requires-python = ">=3.9"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -54,6 +55,16 @@ interactive = [
 plotting = [
     "cmocean",
 ]
+tui = [
+    "textual>=0.40.0",
+]
+full = [
+    "textual>=0.40.0",
+    "cmocean",
+    "itables",
+    "IPython",
+    "jupyter",
+]
 
 [project.urls]
 Homepage = "https://github.com/mateuszzelent/mmpp"
@@ -62,6 +73,8 @@ Issues = "https://github.com/mateuszzelent/mmpp/issues"
 
 [project.scripts]
 mmpp = "mmpp.cli:main"
+mmpp-tui = "mmpp.cli_new:main"
+mmpp-classic = "mmpp.cli.main:main"
 
 [tool.setuptools]
 license-files = []
@@ -71,7 +84,7 @@ where = ["."]
 include = ["mmpp", "mmpp.*"]
 
 [tool.setuptools.package-data]
-mmpp = ["paper.mplstyle", "fonts/**/*", "pyzfn/**/*.py"]
+mmpp = ["paper.mplstyle", "fonts/**/*", "pyzfn/**/*.py", "dracula.tcss"]
 
 [tool.ruff]
 line-length = 88
