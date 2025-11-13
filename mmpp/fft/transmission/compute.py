@@ -184,6 +184,7 @@ class TransmissionResult:
         ax=None,
         mark_on_ax=None,
         find_minima: Optional[dict] = None,
+        x_width: Optional[float] = None,
         **kwargs
     ):
         """Plot 1D transmission cross-section at specific x position.
@@ -235,6 +236,11 @@ class TransmissionResult:
             - 'markersize': marker size (default: 8)
             Returns minima frequencies as third output.
             Example: {'freq_range': (1.0, 3.0), 'threshold': 0.3, 'distance': 10, 'label_rounding': 3}
+        x_width : float, optional
+            Width of the spatial averaging window around the target x position (in nanometers if dx available, otherwise in indices).
+            If provided, the transmission cross-section will be averaged over the range [x - x_width/2, x + x_width/2].
+            For example, x_width=500 will average ±250 nm around the specified x position.
+            Default is None (no averaging, single x position).
         **kwargs
             Additional matplotlib plot kwargs (color, linewidth, label, etc.)
 
@@ -267,8 +273,26 @@ class TransmissionResult:
         x_idx = np.argmin(np.abs(self.x_positions - target_x))
         actual_x = self.x_positions[x_idx]
 
-        # Get transmission slice at this x
-        transmission_slice = self.transmission[:, x_idx]
+        # Get transmission slice at this x (or averaged over x_width)
+        if x_width is not None and x_width > 0:
+            # Average over spatial range [x - x_width/2, x + x_width/2]
+            half_width = x_width / 2.0
+            x_min = target_x - half_width
+            x_max = target_x + half_width
+            
+            # Find indices within range
+            mask = (self.x_positions >= x_min) & (self.x_positions <= x_max)
+            if np.sum(mask) == 0:
+                # Fallback to single closest point if no points in range
+                transmission_slice = self.transmission[:, x_idx]
+            else:
+                # Average transmission over all x positions in range
+                transmission_slice = self.transmission[:, mask].mean(axis=1)
+                # Update actual_x to reflect the center of the averaging range
+                actual_x = self.x_positions[mask].mean()
+        else:
+            # Single x position (no averaging)
+            transmission_slice = self.transmission[:, x_idx]
 
         # Convert frequencies to requested unit
         if freq_unit not in FREQ_SCALE:
@@ -338,8 +362,16 @@ class TransmissionResult:
         else:
             position_label = f"cell {actual_x:.1f}"
 
+        # Add width info to title if averaging
+        width_info = ""
+        if x_width is not None and x_width > 0:
+            if self.dx is not None:
+                width_info = f" (±{x_width/2:.1f} nm avg)"
+            else:
+                width_info = f" (±{x_width/2:.1f} cells avg)"
+
         ax.set_title(
-            f"Transmission Cross-section at x = {position_label}"
+            f"Transmission Cross-section at x = {position_label}{width_info}"
             + (f" (trimmed {trim_idx} pts)" if trim_idx > 0 else ""),
             fontsize=13,
             fontweight="bold"
