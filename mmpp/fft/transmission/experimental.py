@@ -116,6 +116,8 @@ def overlay_transmission(
         Matplotlib axes returned by :meth:`TransmissionResult.plot_transmission_crosssection`.
     d, p:
         Thickness ``d`` and period ``p`` values used to locate the experimental file.
+        **Special case**: If ``d=0`` and ``p=0``, loads reference data from ``ref.txt``
+        instead of the standard ``d{d}p{p}_{width_tag}.txt`` file.
     base_path:
         Directory that contains the experimental spectra (default ``"experiment"``).
     width_tag:
@@ -151,7 +153,13 @@ def overlay_transmission(
         target_freq_unit = freq_file_unit
 
     base_path = Path(base_path)
-    spectra_path = base_path / f"d{d}p{p}_{width_tag}.txt"
+    
+    # Special case: d=0 and p=0 means load reference file
+    if d == 0 and p == 0:
+        spectra_path = base_path / "ref.txt"
+    else:
+        spectra_path = base_path / f"d{d}p{p}_{width_tag}.txt"
+    
     freq_path = base_path / freq_filename
 
     if not spectra_path.exists():
