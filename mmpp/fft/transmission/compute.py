@@ -275,18 +275,39 @@ class TransmissionResult:
 
         # Get transmission slice at this x (or averaged over x_width)
         if x_width is not None and x_width > 0:
+            # Interpret x_width units (same as x interpretation logic)
+            if self.dx is not None:
+                # x_width already in nanometers (or convert if needed)
+                width_in_nm = x_width
+            else:
+                # x_width in indices
+                width_in_nm = x_width
+            
             # Average over spatial range [x - x_width/2, x + x_width/2]
-            half_width = x_width / 2.0
+            half_width = width_in_nm / 2.0
             x_min = target_x - half_width
             x_max = target_x + half_width
             
             # Find indices within range
             mask = (self.x_positions >= x_min) & (self.x_positions <= x_max)
-            if np.sum(mask) == 0:
-                # Fallback to single closest point if no points in range
+            num_points = np.sum(mask)
+            
+            if num_points == 0:
+                # Fallback: no points in range - use single closest point
+                # This happens when x_width is smaller than dx spacing
+                import warnings
+                warnings.warn(
+                    f"x_width={x_width} nm is too small (no points in range). "
+                    f"Using single point at x={actual_x:.1f} nm. "
+                    f"Try x_width >= {self.dx * 1e9 if self.dx else 1:.1f} nm.",
+                    UserWarning
+                )
                 transmission_slice = self.transmission[:, x_idx]
+            elif num_points == 1:
+                # Exactly one point in range - extract it directly
+                transmission_slice = self.transmission[:, mask].flatten()
             else:
-                # Average transmission over all x positions in range
+                # Multiple points - average transmission over all x positions in range
                 transmission_slice = self.transmission[:, mask].mean(axis=1)
                 # Update actual_x to reflect the center of the averaging range
                 actual_x = self.x_positions[mask].mean()
