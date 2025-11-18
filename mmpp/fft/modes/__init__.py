@@ -68,6 +68,7 @@ from ...metrics import (
     normalize_peak_width_option,
 )
 
+
 # FFmpeg installation utilities
 @dataclass
 class ModeVisualizationConfig:
@@ -107,14 +108,14 @@ class ModeVisualizationConfig:
     scalebar_height_fraction: float = 0.01
     scale_units: str = "nm"
 
-    colorbar_fraction: float = 0.04   # Proper colorbar width
-    colorbar_pad: float = 0.01       # Small padding for close positioning
+    colorbar_fraction: float = 0.04  # Proper colorbar width
+    colorbar_pad: float = 0.01  # Small padding for close positioning
     colorbar_ticklabel_size: int = 9  # Larger tick labels
-    colorbar_label_size: int = 10     # Larger labels
+    colorbar_label_size: int = 10  # Larger labels
     colorbar_labels: dict[str, str] = field(
         default_factory=lambda: {
             "magnitude": "Magnetization |m|",
-            "phase": "Phase (rad)", 
+            "phase": "Phase (rad)",
             "combined": "Re(m) × cos(φ)",
         }
     )
@@ -324,7 +325,7 @@ class FMRModeAnalyzer:
         debug : bool, optional
             Enable debug logging (default: False)
         log_level : str or int, optional
-            Set specific log level. Can be string ("DEBUG", "INFO", "WARNING", "ERROR") 
+            Set specific log level. Can be string ("DEBUG", "INFO", "WARNING", "ERROR")
             or integer constant (logging.DEBUG, logging.INFO, etc.).
             If provided, overrides debug parameter.
             Default: None (uses debug flag - DEBUG if True, INFO if False)
@@ -345,23 +346,23 @@ class FMRModeAnalyzer:
 
         # Set up logging with flexible level control
         import logging
-        
+
         # Convert string log level to integer if needed
         numeric_level = None
         if log_level is not None:
             if isinstance(log_level, str):
                 numeric_level = getattr(logging, log_level.upper(), None)
                 if numeric_level is None:
-                    raise ValueError(f"Invalid log level: {log_level}. Use DEBUG, INFO, WARNING, or ERROR")
+                    raise ValueError(
+                        f"Invalid log level: {log_level}. Use DEBUG, INFO, WARNING, or ERROR"
+                    )
             else:
                 numeric_level = log_level
-                
+
         setup_mmpp_logging(
-            debug=debug, 
-            logger_name="mmpp.fft.modes", 
-            level=numeric_level
+            debug=debug, logger_name="mmpp.fft.modes", level=numeric_level
         )
-        
+
         if debug or (numeric_level is not None and numeric_level <= logging.DEBUG):
             log.debug("FMR mode analyzer debug logging enabled")
 
@@ -463,7 +464,7 @@ class FMRModeAnalyzer:
             # Try other z_layers and methods
             *[f"fft/{self.dataset_name}_z{z}_m1/spectrum" for z in range(-5, 10)],
         ]
-        
+
         for path in spectrum_candidates:
             if path in self.zarr_file:
                 spectrum_path = path
@@ -515,26 +516,34 @@ class FMRModeAnalyzer:
 
         # Load spectrum - prioritize fresh modes data over potentially stale FFT data
         self.spectrum = None
-        
+
         # First try modes data (most up-to-date)
         modes_power_sum_path = f"modes/{self.dataset_name}/power_sum"
         modes_power_max_path = f"modes/{self.dataset_name}/power_max"
-        
+
         log.debug(f"Looking for fresh modes spectrum at: {modes_power_sum_path}")
         if modes_power_sum_path in self.zarr_file:
             self.spectrum = np.array(self.zarr_file[modes_power_sum_path])
             if np.iscomplexobj(self.spectrum):
                 self.spectrum = np.abs(self.spectrum)
-            log.info(f"Using fresh modes power_sum as spectrum: shape {self.spectrum.shape}")
+            log.info(
+                f"Using fresh modes power_sum as spectrum: shape {self.spectrum.shape}"
+            )
         elif modes_power_max_path in self.zarr_file:
-            log.debug(f"power_sum not found, trying power_max at: {modes_power_max_path}")
+            log.debug(
+                f"power_sum not found, trying power_max at: {modes_power_max_path}"
+            )
             self.spectrum = np.array(self.zarr_file[modes_power_max_path])
             if np.iscomplexobj(self.spectrum):
                 self.spectrum = np.abs(self.spectrum)
-            log.info(f"Using fresh modes power_max as spectrum: shape {self.spectrum.shape}")
+            log.info(
+                f"Using fresh modes power_max as spectrum: shape {self.spectrum.shape}"
+            )
         elif self.spectrum_path:
             # Fallback to FFT spectrum (may be stale)
-            log.warning(f"No fresh modes spectrum found, falling back to FFT spectrum (may be outdated)")
+            log.warning(
+                f"No fresh modes spectrum found, falling back to FFT spectrum (may be outdated)"
+            )
             self.spectrum = np.array(self.zarr_file[self.spectrum_path])
             if self.spectrum.ndim > 1:
                 # Take first component if multi-component
@@ -682,12 +691,12 @@ class FMRModeAnalyzer:
         # Validate and normalize z_layer bounds
         mode_shape = self.zarr_file[self.modes_path].shape
         n_layers = mode_shape[1]
-        
+
         # Handle negative indexing (like Python lists)
         if z_layer < 0:
             z_layer = n_layers + z_layer
             log.debug(f"Converted negative z_layer to {z_layer}")
-            
+
         if z_layer < 0 or z_layer >= n_layers:
             raise ValueError(
                 f"z_layer {z_layer} out of range. Available layers: 0-{n_layers - 1} (or negative: -{n_layers} to -1)"
@@ -734,7 +743,7 @@ class FMRModeAnalyzer:
     ) -> ModeCharacterizationResult:
         """
         Classify the mode at ``frequency`` into gyration/breathing/azimuthal families.
-        
+
         Parameters:
         -----------
         frequency : float
@@ -749,24 +758,28 @@ class FMRModeAnalyzer:
             Configuration for analysis (default: instance config)
         verbose : bool, optional
             Show detailed calculation results and classification criteria (default: False)
-            
+
         Returns:
         --------
         ModeCharacterizationResult
             Classification result with detailed metrics
         """
 
-        analyzer = self._character_analyzer if config is None else ModeCharacterAnalyzer(config)
+        analyzer = (
+            self._character_analyzer
+            if config is None
+            else ModeCharacterAnalyzer(config)
+        )
         mode_data = self.get_mode(frequency, z_layer)
         result = analyzer.analyze(
             mode_data,
             core_position=core_position,
             analysis_radius=analysis_radius,
         )
-        
+
         if verbose:
             self._print_characterization_details(result, frequency, z_layer)
-            
+
         return result
 
     def characterize_vortex_mode(
@@ -781,37 +794,41 @@ class FMRModeAnalyzer:
     ) -> "VortexModeResult":
         """
         Advanced vortex/skyrmion mode classification.
-        
+
         Implements rigorous classification based on:
         - Thiele equation dynamics for gyration modes
-        - Azimuthal index m from phase winding  
+        - Azimuthal index m from phase winding
         - Radial index n from amplitude nodes
         - Energy partitioning and phase coherence
-        
+
         Parameters:
         -----------
         frequency : float
             Frequency to analyze [GHz]
         z_layer : int, optional
-            Layer index (default: 0)  
+            Layer index (default: 0)
         core_position : tuple[float, float], optional
             Core position in pixels (default: auto-detected)
         R_dot : float, optional
             Dot radius in same units as spatial resolution (default: auto-estimated)
         config : ModeCharacteristicConfig, optional
-            Configuration for analysis (default: instance config)  
+            Configuration for analysis (default: instance config)
         verbose : bool, optional
             Show detailed vortex analysis (default: False)
-            
+
         Returns:
         --------
         VortexModeResult
             Advanced classification with m,n indices, energies, and physics
         """
-        
-        analyzer = self._character_analyzer if config is None else ModeCharacterAnalyzer(config)
+
+        analyzer = (
+            self._character_analyzer
+            if config is None
+            else ModeCharacterAnalyzer(config)
+        )
         mode_data = self.get_mode(frequency, z_layer)
-        
+
         try:
             result = analyzer.analyze_vortex(
                 mode_data,
@@ -820,24 +837,24 @@ class FMRModeAnalyzer:
                 verbose=verbose,
             )
             return result
-            
+
         except ImportError as e:
             log.error(f"Advanced vortex classifier not available: {e}")
             print(f"❌ Advanced vortex classifier not available.")
             print(f"   Falling back to standard characterization...")
 
-            # Fallback to standard analysis  
+            # Fallback to standard analysis
             std_result = analyzer.analyze(
                 mode_data,
                 core_position=core_position,
             )
-            
+
             if verbose:
                 self._print_characterization_details(std_result, frequency, z_layer)
-                
+
             # Convert to VortexModeResult format (basic mapping)
             from ...mode_characterization.vortex_classifier import VortexModeResult
-            
+
             basic_result = VortexModeResult(
                 frequency=frequency,
                 m_index=0,  # would need proper analysis
@@ -845,33 +862,37 @@ class FMRModeAnalyzer:
                 mode_type=std_result.primary_class,
                 confidence=std_result.confidence,
                 core_position=core_position or (0, 0),
-                notes=["Fallback to standard analysis - advanced vortex classifier unavailable"],
+                notes=[
+                    "Fallback to standard analysis - advanced vortex classifier unavailable"
+                ],
             )
-            
+
             return basic_result
-    
+
     def _print_characterization_details(
         self, result: ModeCharacterizationResult, frequency: float, z_layer: int
     ) -> None:
         """Print detailed characterization analysis results."""
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print(f"🔍 DETAILED MODE CHARACTERIZATION ANALYSIS")
-        print("="*80)
+        print("=" * 80)
         print(f"Frequency: {frequency:.3f} GHz, Layer: {z_layer}")
         print(f"Final Classification: {result.primary_class.upper()}")
         print(f"Confidence: {result.confidence:.3f}")
         print(f"Labels: {', '.join(result.labels)}")
-        
+
         print("\n📊 ENERGY DISTRIBUTION:")
         print(f"   • In-plane energy (Ex + Ey):  {result.energy_parallel:.6e}")
         print(f"   • Out-of-plane energy (Ez):   {result.energy_perp:.6e}")
         total_energy = result.energy_parallel + result.energy_perp
-        parallel_ratio = result.energy_parallel / total_energy if total_energy > 0 else 0
+        parallel_ratio = (
+            result.energy_parallel / total_energy if total_energy > 0 else 0
+        )
         perp_ratio = result.energy_perp / total_energy if total_energy > 0 else 0
         print(f"   • In-plane ratio:             {parallel_ratio:.3f}")
         print(f"   • Out-of-plane ratio:         {perp_ratio:.3f}")
         print(f"   • Dominant component:         {result.dominant_component}")
-        
+
         print("\n🌀 GYRATION ANALYSIS:")
         if result.m_index is not None:
             print(f"   • Winding number (m):         {result.m_index}")
@@ -879,45 +900,58 @@ class FMRModeAnalyzer:
             print(f"   • Rotation sense:             {result.rotation_sense or 'N/A'}")
         else:
             print(f"   • Winding number (m):         Not determined")
-            
+
         if result.phase_xy_mean is not None:
             phase_deg = np.degrees(result.phase_xy_mean)
-            print(f"   • Phase difference mx-my:     {phase_deg:.1f}° ({result.phase_xy_mean:.3f} rad)")
+            print(
+                f"   • Phase difference mx-my:     {phase_deg:.1f}° ({result.phase_xy_mean:.3f} rad)"
+            )
             # Klasyfikacja kwadratura
-            is_quadrature = abs(abs(result.phase_xy_mean) - np.pi/2) < np.pi/4
-            print(f"   • Quadrature relation:        {'✅ YES' if is_quadrature else '❌ NO'} (±90° ± 45°)")
+            is_quadrature = abs(abs(result.phase_xy_mean) - np.pi / 2) < np.pi / 4
+            print(
+                f"   • Quadrature relation:        {'✅ YES' if is_quadrature else '❌ NO'} (±90° ± 45°)"
+            )
         print(f"   • Phase coherence (mx,my):    {result.phase_xy_coherence:.3f}")
-        
+
         print("\n💨 BREATHING ANALYSIS:")
         print(f"   • mz phase uniformity:        {result.phase_z_uniformity:.3f}")
         print(f"   • Radial nodes:               {result.radial_nodes}")
         breathing_indicator = result.phase_z_uniformity > 0.65  # z config
-        print(f"   • Strong breathing mode:      {'✅ YES' if breathing_indicator else '❌ NO'} (uniformity > 0.65)")
-        
+        print(
+            f"   • Strong breathing mode:      {'✅ YES' if breathing_indicator else '❌ NO'} (uniformity > 0.65)"
+        )
+
         print("\n📐 SPATIAL CHARACTERISTICS:")
-        if 'analysis_radius' in result.diagnostics:
-            print(f"   • Analysis radius:            {result.diagnostics['analysis_radius']:.1f} pixels")
-        if 'core_position' in result.diagnostics:
-            cx, cy = result.diagnostics['core_position']
+        if "analysis_radius" in result.diagnostics:
+            print(
+                f"   • Analysis radius:            {result.diagnostics['analysis_radius']:.1f} pixels"
+            )
+        if "core_position" in result.diagnostics:
+            cx, cy = result.diagnostics["core_position"]
             print(f"   • Core position:              ({cx:.1f}, {cy:.1f}) pixels")
-        if 'ring_coverage' in result.diagnostics:
-            print(f"   • Ring coverage:              {result.diagnostics['ring_coverage']:.3f}")
-            
+        if "ring_coverage" in result.diagnostics:
+            print(
+                f"   • Ring coverage:              {result.diagnostics['ring_coverage']:.3f}"
+            )
+
         print("\n🎯 CLASSIFICATION CRITERIA:")
         # Gyration criteria
         print("   GYRATION requires:")
         print(f"      - Winding |m| = 1:          {abs(result.m_index or 0) == 1}")
         print(f"      - In-plane dominance:       {parallel_ratio > 0.5}")
         print(f"      - Good phase coherence:     {result.phase_xy_coherence > 0.5}")
-        is_quadrature = result.phase_xy_mean is not None and abs(abs(result.phase_xy_mean) - np.pi/2) < 0.55  # z config
+        is_quadrature = (
+            result.phase_xy_mean is not None
+            and abs(abs(result.phase_xy_mean) - np.pi / 2) < 0.55
+        )  # z config
         print(f"      - Quadrature phase:         {is_quadrature}")
-        
-        # Breathing criteria  
+
+        # Breathing criteria
         print("\n   BREATHING requires:")
         print(f"      - Out-of-plane dominance:   {perp_ratio > 0.5}")
         print(f"      - mz phase uniformity:      {result.phase_z_uniformity > 0.65}")
         print(f"      - Low winding quality:      {result.m_quality < 0.5}")
-        
+
         # Configuration thresholds
         config = self._character_analyzer.config
         print(f"\n⚙️  CONFIGURATION THRESHOLDS:")
@@ -926,19 +960,19 @@ class FMRModeAnalyzer:
         print(f"   • Breathing uniformity:       {config.breathing_phase_uniformity}")
         print(f"   • Gyration parallel ratio:   {config.gyration_parallel_ratio}")
         print(f"   • Min ring coverage:          {config.min_ring_coverage}")
-        
+
         if result.diagnostics:
             print(f"\n🔧 RAW DIAGNOSTICS:")
             for key, value in result.diagnostics.items():
-                if key not in ['analysis_radius', 'core_position', 'ring_coverage']:
+                if key not in ["analysis_radius", "core_position", "ring_coverage"]:
                     print(f"   • {key}: {value}")
-                    
+
         if result.notes:
             print(f"\n📝 ANALYSIS NOTES:")
             for note in result.notes:
                 print(f"   • {note}")
-                
-        print("="*80)
+
+        print("=" * 80)
 
     def _update_cache(
         self, frequency: float, z_layer: int, mode_data: FMRModeData
@@ -989,7 +1023,7 @@ class FMRModeAnalyzer:
         # Use provided spectrum/frequencies or fallback to instance data
         spectrum_data = spectrum if spectrum is not None else self.spectrum
         freq_data = frequencies if frequencies is not None else self.frequencies
-        
+
         if spectrum_data is None:
             log.warning("No spectrum data available for peak detection")
             return []
@@ -1003,9 +1037,7 @@ class FMRModeAnalyzer:
             spectrum_work = spectrum_work / np.max(spectrum_work)
 
         # Filter frequency range
-        freq_mask = (freq_data >= self.config.f_min) & (
-            freq_data <= self.config.f_max
-        )
+        freq_mask = (freq_data >= self.config.f_min) & (freq_data <= self.config.f_max)
         freqs_filtered = freq_data[freq_mask]
         spectrum_filtered = spectrum_work[freq_mask]
 
@@ -1193,7 +1225,7 @@ class FMRModeAnalyzer:
         **Interactive Requirements:**
         - Jupyter/IPython: Function automatically tries to enable `%matplotlib widget`
         - Standalone Python: Requires interactive backend (Qt5Agg, TkAgg, etc.)
-        - If interactivity doesn't work, manually run: `%matplotlib widget` (Jupyter) 
+        - If interactivity doesn't work, manually run: `%matplotlib widget` (Jupyter)
           or install ipympl: `pip install ipympl`
 
         Each mode panel now includes a publication-ready scale bar (auto-sized in nm)
@@ -1261,7 +1293,9 @@ class FMRModeAnalyzer:
 
         # Force reload data if requested
         if force:
-            log.info(f"Force reloading data for interactive spectrum (dataset: {self.dataset_name})")
+            log.info(
+                f"Force reloading data for interactive spectrum (dataset: {self.dataset_name})"
+            )
             self._load_data()
 
         peak_width_option = kwargs.pop("peak_width", None)
@@ -1282,9 +1316,12 @@ class FMRModeAnalyzer:
             else:
                 # Default filename with timestamp
                 from datetime import datetime
+
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 self._saveanim_path = f"mode_animation_{timestamp}.mp4"
-            log.info(f"Animation saving enabled. Press 's' to save to: {self._saveanim_path}")
+            log.info(
+                f"Animation saving enabled. Press 's' to save to: {self._saveanim_path}"
+            )
         else:
             self._saveanim_path = None
 
@@ -1300,25 +1337,45 @@ class FMRModeAnalyzer:
         # Use FFT spectrum for consistency with plot_spectrum
         spectrum_to_use = self.spectrum
         frequencies_to_use = self.frequencies
-        
+
         # Check if we have consistent data sizes
-        if (self.spectrum is not None and self.frequencies is not None and 
-            len(self.spectrum) != len(self.frequencies)):
-            log.warning(f"Inconsistent data sizes: spectrum ({len(self.spectrum)}) vs frequencies ({len(self.frequencies)}). Using modes spectrum only.")
+        if (
+            self.spectrum is not None
+            and self.frequencies is not None
+            and len(self.spectrum) != len(self.frequencies)
+        ):
+            log.warning(
+                f"Inconsistent data sizes: spectrum ({len(self.spectrum)}) vs frequencies ({len(self.frequencies)}). Using modes spectrum only."
+            )
             use_fft_spectrum = False
-        
+
         if use_fft_spectrum:
             try:
                 # Try to load spectrum from standard FFT analysis
-                fft_spectrum_path = f"fft/{self.dataset_name}_z{z_layer}_m{method}/spectrum"
-                fft_freqs_path = f"fft/{self.dataset_name}_z{z_layer}_m{method}/frequencies"
-                
-                if fft_spectrum_path in self.zarr_file and fft_freqs_path in self.zarr_file:
-                    spectrum_to_use = np.abs(np.array(self.zarr_file[fft_spectrum_path])) ** 2
-                    frequencies_to_use = np.array(self.zarr_file[fft_freqs_path]) / 1e9  # Convert to GHz
-                    log.info(f"Using FFT spectrum from {fft_spectrum_path} for consistency with plot_spectrum")
+                fft_spectrum_path = (
+                    f"fft/{self.dataset_name}_z{z_layer}_m{method}/spectrum"
+                )
+                fft_freqs_path = (
+                    f"fft/{self.dataset_name}_z{z_layer}_m{method}/frequencies"
+                )
+
+                if (
+                    fft_spectrum_path in self.zarr_file
+                    and fft_freqs_path in self.zarr_file
+                ):
+                    spectrum_to_use = (
+                        np.abs(np.array(self.zarr_file[fft_spectrum_path])) ** 2
+                    )
+                    frequencies_to_use = (
+                        np.array(self.zarr_file[fft_freqs_path]) / 1e9
+                    )  # Convert to GHz
+                    log.info(
+                        f"Using FFT spectrum from {fft_spectrum_path} for consistency with plot_spectrum"
+                    )
                 else:
-                    log.warning(f"FFT spectrum not found at {fft_spectrum_path}, using modes spectrum")
+                    log.warning(
+                        f"FFT spectrum not found at {fft_spectrum_path}, using modes spectrum"
+                    )
                     # Reset to modes data for consistency
                     spectrum_to_use = self.spectrum
                     frequencies_to_use = self.frequencies
@@ -1327,9 +1384,11 @@ class FMRModeAnalyzer:
                 # Reset to modes data for consistency
                 spectrum_to_use = self.spectrum
                 frequencies_to_use = self.frequencies
-                
+
         # Debug: Log the final array sizes
-        log.debug(f"Final arrays - spectrum: {spectrum_to_use.shape if spectrum_to_use is not None else None}, frequencies: {frequencies_to_use.shape if frequencies_to_use is not None else None}")
+        log.debug(
+            f"Final arrays - spectrum: {spectrum_to_use.shape if spectrum_to_use is not None else None}, frequencies: {frequencies_to_use.shape if frequencies_to_use is not None else None}"
+        )
 
         if spectrum_to_use is None:
             raise ValueError("No spectrum data available for interactive mode")
@@ -1391,21 +1450,22 @@ class FMRModeAnalyzer:
         # Automatically configure interactive backend for Jupyter
         try:
             import matplotlib
-            
+
             current_backend = matplotlib.get_backend()
-            
+
             # Check if we're in Jupyter/IPython environment
             try:
                 from IPython import get_ipython
+
                 ipython = get_ipython()
-                in_jupyter = ipython is not None and hasattr(ipython, 'kernel')
+                in_jupyter = ipython is not None and hasattr(ipython, "kernel")
             except ImportError:
                 in_jupyter = False
-            
+
             # Auto-configure interactive backend for Jupyter
             if in_jupyter:
                 if (
-                    "ipympl" not in current_backend.lower() 
+                    "ipympl" not in current_backend.lower()
                     and "widget" not in current_backend.lower()
                     and "nbagg" not in current_backend.lower()
                 ):
@@ -1413,16 +1473,18 @@ class FMRModeAnalyzer:
                         f"Current backend '{current_backend}' may not support full interactivity in Jupyter. "
                         "For best experience, run '%matplotlib widget' or install ipympl: pip install ipympl"
                     )
-                    
+
                     # Try to automatically switch to widget backend
                     try:
-                        ipython.run_line_magic('matplotlib', 'widget')
-                        log.info("Automatically switched to matplotlib widget backend for interactivity")
+                        ipython.run_line_magic("matplotlib", "widget")
+                        log.info(
+                            "Automatically switched to matplotlib widget backend for interactivity"
+                        )
                     except Exception as e:
                         log.debug(f"Could not auto-switch to widget backend: {e}")
                         # Try nbagg as fallback
                         try:
-                            ipython.run_line_magic('matplotlib', 'nbagg')  
+                            ipython.run_line_magic("matplotlib", "nbagg")
                             log.info("Switched to nbagg backend as fallback")
                         except Exception:
                             log.warning(
@@ -1433,7 +1495,7 @@ class FMRModeAnalyzer:
                     log.info(f"Using Jupyter-compatible backend: {current_backend}")
             else:
                 # Not in Jupyter - check for standalone interactive backends
-                interactive_backends = ['qt5agg', 'tkagg', 'gtk3agg', 'wxagg', 'macosx']
+                interactive_backends = ["qt5agg", "tkagg", "gtk3agg", "wxagg", "macosx"]
                 current_lower = current_backend.lower()
                 if current_lower not in interactive_backends:
                     log.info(
@@ -1442,7 +1504,7 @@ class FMRModeAnalyzer:
                     )
                 else:
                     log.info(f"Using interactive backend: {current_backend}")
-                    
+
         except Exception as e:
             log.warning(f"Could not configure interactive backend: {e}")
 
@@ -1507,7 +1569,9 @@ class FMRModeAnalyzer:
         ax_spectrum.grid(True, alpha=0.3)
 
         # Find and mark peaks using the same spectrum data
-        peaks = self.find_peaks(spectrum=spectrum_to_use, frequencies=frequencies_to_use)
+        peaks = self.find_peaks(
+            spectrum=spectrum_to_use, frequencies=frequencies_to_use
+        )
         for peak in peaks:
             if self.config.f_min <= peak.freq <= self.config.f_max:
                 y_val = spectrum_plot[np.argmin(np.abs(freqs_plot - peak.freq))]
@@ -1527,7 +1591,9 @@ class FMRModeAnalyzer:
             if width_info is None:
                 log.debug("FWHM annotation skipped: could not determine half-width")
             else:
-                scale_factor = width_info.peak_value if self.config.spectrum_normalize else 1.0
+                scale_factor = (
+                    width_info.peak_value if self.config.spectrum_normalize else 1.0
+                )
                 if scale_factor <= 0:
                     log.debug("FWHM annotation skipped: invalid scale factor")
                 else:
@@ -1573,7 +1639,8 @@ class FMRModeAnalyzer:
                         text = ax_spectrum.annotate(
                             f"{peak_width_label}: {format_width_value(width_info.width)}",
                             xy=(
-                                (width_info.left_frequency + width_info.right_frequency) / 2.0,
+                                (width_info.left_frequency + width_info.right_frequency)
+                                / 2.0,
                                 half_level_plot,
                             ),
                             xytext=(0, 10),
@@ -1594,7 +1661,9 @@ class FMRModeAnalyzer:
                         self._fwhm_artists.append(text)
                         self._last_fwhm = width_info
                     else:
-                        log.debug("FWHM annotation skipped: non-positive half level for log axis")
+                        log.debug(
+                            "FWHM annotation skipped: non-positive half level for log axis"
+                        )
 
         # Initial frequency line
         init_freq = peaks[0].freq if peaks else freqs_plot[len(freqs_plot) // 2]
@@ -1627,7 +1696,7 @@ class FMRModeAnalyzer:
                 self._current_frequency = selected_freq
                 self._update_mode_plots(components, z_layer)
                 self._interactive_fig.canvas.draw()
-            
+
             # Handle double-clicks on mode plots for animation
             elif event.dblclick and event.inaxes is not None:
                 # Find which mode axis was double-clicked
@@ -1635,7 +1704,9 @@ class FMRModeAnalyzer:
                     for col_idx, ax in enumerate(ax_row):
                         if event.inaxes == ax:
                             component = components[col_idx]
-                            self._toggle_mode_animation(ax, row_idx, col_idx, component, z_layer)
+                            self._toggle_mode_animation(
+                                ax, row_idx, col_idx, component, z_layer
+                            )
                             return
 
         # Store event connection for cleanup
@@ -1649,14 +1720,20 @@ class FMRModeAnalyzer:
             """Handle keyboard events for mode characterization"""
             if event is None or event.key is None:
                 return
-                
-            log.debug(f"Key pressed: '{event.key}' at frequency {self._current_frequency}")
-            
-            if event.key == 'c' and self._current_frequency is not None:
+
+            log.debug(
+                f"Key pressed: '{event.key}' at frequency {self._current_frequency}"
+            )
+
+            if event.key == "c" and self._current_frequency is not None:
                 try:
-                    log.info(f"Characterizing mode at {self._current_frequency:.3f} GHz...")
-                    characterization = self.characterize_mode(self._current_frequency, z_layer, verbose=False)
-                    
+                    log.info(
+                        f"Characterizing mode at {self._current_frequency:.3f} GHz..."
+                    )
+                    characterization = self.characterize_mode(
+                        self._current_frequency, z_layer, verbose=False
+                    )
+
                     # Display characterization results
                     char_info = (
                         f"Mode Classification at {self._current_frequency:.3f} GHz:\n"
@@ -1667,84 +1744,101 @@ class FMRModeAnalyzer:
                         f"• Confidence: {characterization.confidence:.2f}\n"
                         f"• Labels: {', '.join(characterization.labels)}"
                     )
-                    
-                    print("\n" + "="*60)
+
+                    print("\n" + "=" * 60)
                     print(char_info)
-                    print("="*60)
-                    
+                    print("=" * 60)
+
                     # Update figure title with classification
                     main_title = f"Interactive Mode Spectrum - {characterization.primary_class.upper()} mode"
                     if characterization.m_index is not None:
                         main_title += f" (m={characterization.m_index})"
                     if characterization.rotation_sense:
                         main_title += f" [{characterization.rotation_sense}]"
-                    
-                    self._interactive_fig.suptitle(main_title, fontsize=12, fontweight='bold')
+
+                    self._interactive_fig.suptitle(
+                        main_title, fontsize=12, fontweight="bold"
+                    )
                     self._interactive_fig.canvas.draw()
-                    
-                    log.info(f"Mode classified as: {characterization.primary_class} (confidence: {characterization.confidence:.2f})")
-                    
+
+                    log.info(
+                        f"Mode classified as: {characterization.primary_class} (confidence: {characterization.confidence:.2f})"
+                    )
+
                 except Exception as e:
                     log.error(f"Failed to characterize mode: {e}")
                     print(f"Error characterizing mode: {e}")
-                    
-            elif event.key == 'v' and self._current_frequency is not None:
+
+            elif event.key == "v" and self._current_frequency is not None:
                 # Verbose mode characterization - show detailed calculations
                 try:
-                    print(f"\n🔍 VERBOSE MODE CHARACTERIZATION at {self._current_frequency:.3f} GHz")
+                    print(
+                        f"\n🔍 VERBOSE MODE CHARACTERIZATION at {self._current_frequency:.3f} GHz"
+                    )
                     print("=" * 70)
-                    log.info(f"Verbose characterizing mode at {self._current_frequency:.3f} GHz...")
-                    characterization = self.characterize_mode(self._current_frequency, z_layer, verbose=True)
-                    
+                    log.info(
+                        f"Verbose characterizing mode at {self._current_frequency:.3f} GHz..."
+                    )
+                    characterization = self.characterize_mode(
+                        self._current_frequency, z_layer, verbose=True
+                    )
+
                     # Update figure title with classification
                     main_title = f"Interactive Mode Spectrum - {characterization.primary_class.upper()} mode (VERBOSE)"
                     if characterization.m_index is not None:
                         main_title += f" (m={characterization.m_index})"
                     if characterization.rotation_sense:
                         main_title += f" [{characterization.rotation_sense}]"
-                    
-                    self._interactive_fig.suptitle(main_title, fontsize=12, fontweight='bold')
+
+                    self._interactive_fig.suptitle(
+                        main_title, fontsize=12, fontweight="bold"
+                    )
                     self._interactive_fig.canvas.draw()
                     print("=" * 70)
-                    
+
                 except Exception as e:
                     log.error(f"Failed to verbose characterize mode: {e}")
                     print(f"❌ Error in verbose mode characterization: {e}")
                     import traceback
+
                     traceback.print_exc()
-                    
-            elif event.key == 's' and self._saveanim_enabled:
+
+            elif event.key == "s" and self._saveanim_enabled:
                 # Save animation of current animated modes
                 try:
                     if not self._mode_animations:
-                        print("❌ No active animations to save! Double-click mode plots first.")
+                        print(
+                            "❌ No active animations to save! Double-click mode plots first."
+                        )
                         return
-                        
+
                     log.info(f"Saving animation to: {self._saveanim_path}")
-                    print(f"💾 Saving animation with {len(self._mode_animations)} animated modes...")
-                    
+                    print(
+                        f"💾 Saving animation with {len(self._mode_animations)} animated modes..."
+                    )
+
                     self._save_animated_view(self._saveanim_path, z_layer)
                     print(f"✅ Animation saved to: {self._saveanim_path}")
-                    
+
                 except Exception as e:
                     log.error(f"Failed to save animation: {e}")
                     print(f"❌ Error saving animation: {e}")
-            
-            elif event.key == 'h':
+
+            elif event.key == "h":
                 # Show help
                 help_controls = [
                     "• Click spectrum: Select frequency",
-                    "• Right-click spectrum: Snap to nearest peak", 
+                    "• Right-click spectrum: Snap to nearest peak",
                     "• Double-click mode: Toggle animation",
                     "• 'c' key: Characterize current mode",
-                    "• 'v' key: Verbose characterization (detailed calculations)"
+                    "• 'v' key: Verbose characterization (detailed calculations)",
                 ]
-                
+
                 if self._saveanim_enabled:
                     help_controls.append("• 's' key: Save animated view")
-                    
+
                 help_controls.append("• 'h' key: Show this help")
-                
+
                 help_text = f"""
 Interactive Spectrum Controls:
 ============================
@@ -1753,9 +1847,14 @@ Interactive Spectrum Controls:
                 print(help_text)
             else:
                 # Debug: show unhandled keys
-                if event.key in ['v', 'c', 's', 'h'] and self._current_frequency is None:
-                    print(f"⚠️  Key '{event.key}' pressed but no frequency selected. Click spectrum first.")
-                elif event.key not in ['v', 'c', 's', 'h', None]:
+                if (
+                    event.key in ["v", "c", "s", "h"]
+                    and self._current_frequency is None
+                ):
+                    print(
+                        f"⚠️  Key '{event.key}' pressed but no frequency selected. Click spectrum first."
+                    )
+                elif event.key not in ["v", "c", "s", "h", None]:
                     log.debug(f"Unhandled key: '{event.key}'")
 
         # Connect keyboard handler
@@ -1767,35 +1866,37 @@ Interactive Spectrum Controls:
         # Add cleanup method to figure
         def cleanup():
             # Stop all running animations first
-            if hasattr(self, '_mode_animations') and self._mode_animations:
-                log.debug(f"Stopping {len(self._mode_animations)} running animations...")
+            if hasattr(self, "_mode_animations") and self._mode_animations:
+                log.debug(
+                    f"Stopping {len(self._mode_animations)} running animations..."
+                )
                 for animation in self._mode_animations.values():
                     try:
                         animation.event_source.stop()
                     except AttributeError:
                         pass  # Animation might not have been started yet
                 self._mode_animations.clear()
-                if hasattr(self, '_animated_axes'):
+                if hasattr(self, "_animated_axes"):
                     self._animated_axes.clear()
-            
+
             # Disconnect event handlers
             if hasattr(self, "_click_connection") and self._click_connection:
                 self._interactive_fig.canvas.mpl_disconnect(self._click_connection)
                 self._click_connection = None
                 log.debug("Click handler disconnected")
-                
+
             if hasattr(self, "_key_connection") and self._key_connection:
                 self._interactive_fig.canvas.mpl_disconnect(self._key_connection)
                 self._key_connection = None
                 log.debug("Keyboard handler disconnected")
-                
+
             log.debug("Interactive plot event handlers cleaned up")
 
         # Store cleanup function for later use
         self._interactive_fig._mmpp_cleanup = cleanup
 
         plt.tight_layout()
-        
+
         # Auto-animate all mode plots if requested
         if auto_animate:
             log.info("Auto-animating all mode plots...")
@@ -1803,26 +1904,32 @@ Interactive Spectrum Controls:
             if self.config.show_magnitude:
                 vis_types.append("magnitude")
             if self.config.show_phase:
-                vis_types.append("phase") 
+                vis_types.append("phase")
             if self.config.show_combined:
                 vis_types.append("combined")
-                
+
             for row_idx in range(len(vis_types)):
                 for col_idx in range(len(components)):
                     try:
                         ax = self._mode_axes[row_idx][col_idx]
                         component = components[col_idx]
-                        self._toggle_mode_animation(ax, row_idx, col_idx, component, z_layer)
+                        self._toggle_mode_animation(
+                            ax, row_idx, col_idx, component, z_layer
+                        )
                     except Exception as e:
-                        log.warning(f"Failed to auto-animate mode plot at ({row_idx}, {col_idx}): {e}")
-                        
+                        log.warning(
+                            f"Failed to auto-animate mode plot at ({row_idx}, {col_idx}): {e}"
+                        )
+
             # Auto-save animation if requested
             if auto_save and self._saveanim_enabled:
                 try:
                     if self._mode_animations:
                         log.info(f"Auto-saving animation to: {self._saveanim_path}")
-                        print(f"🎬 Auto-saving animation with {len(self._mode_animations)} animated modes...")
-                        
+                        print(
+                            f"🎬 Auto-saving animation with {len(self._mode_animations)} animated modes..."
+                        )
+
                         self._save_animated_view(self._saveanim_path, z_layer)
                         log.info("✅ Animation auto-saved successfully!")
                         print(f"✅ Animation auto-saved to: {self._saveanim_path}")
@@ -1834,8 +1941,10 @@ Interactive Spectrum Controls:
                     print(f"❌ Auto-save failed: {e}")
             elif auto_save and not self._saveanim_enabled:
                 log.warning("auto_save=True requires saveanim to be enabled")
-                print("⚠️ auto_save=True requires saveanim parameter (True or custom path)")
-        
+                print(
+                    "⚠️ auto_save=True requires saveanim parameter (True or custom path)"
+                )
+
         # Update log message based on animation saving capability
         log_message = (
             "Interactive spectrum plot created. Click to select frequency, right-click to snap to peaks. "
@@ -1849,7 +1958,7 @@ Interactive Spectrum Controls:
         if auto_save:
             log_message += " (animation auto-saved)"
         log_message += ", 'h' for help."
-        
+
         log.info(log_message)
 
         # Control figure display to avoid double showing
@@ -1867,14 +1976,18 @@ Interactive Spectrum Controls:
             return
 
         # Check for active animations and restart them with new frequency data
-        has_active_animations = hasattr(self, '_mode_animations') and self._mode_animations
+        has_active_animations = (
+            hasattr(self, "_mode_animations") and self._mode_animations
+        )
         active_animation_keys = set()
-        
+
         if has_active_animations:
             # Store which axes were animated
             active_animation_keys = set(self._animated_axes)
-            log.debug(f"Found {len(active_animation_keys)} active animations, will restart them")
-            
+            log.debug(
+                f"Found {len(active_animation_keys)} active animations, will restart them"
+            )
+
             # Stop all current animations
             for axis_key in list(self._mode_animations.keys()):
                 self._stop_mode_animation(axis_key)
@@ -1882,7 +1995,7 @@ Interactive Spectrum Controls:
         # Clear previous shared colorbars safely
         for cbar in getattr(self, "_row_colorbars", []):
             try:
-                if cbar is not None and hasattr(cbar, 'ax') and cbar.ax is not None:
+                if cbar is not None and hasattr(cbar, "ax") and cbar.ax is not None:
                     cbar.remove()
             except (ValueError, AttributeError) as e:
                 # Silently ignore already removed or invalid colorbars
@@ -1953,7 +2066,9 @@ Interactive Spectrum Controls:
                     if images_for_colorbar[row_idx] is None:
                         images_for_colorbar[row_idx] = img
                     if i == 0:
-                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
+                        self._add_scale_bar(
+                            self._mode_axes[row_idx, i], mode_data.extent
+                        )
                     row_idx += 1
 
                 # Phase plot (if enabled)
@@ -1972,7 +2087,9 @@ Interactive Spectrum Controls:
                     if images_for_colorbar[row_idx] is None:
                         images_for_colorbar[row_idx] = img
                     if i == 0:
-                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
+                        self._add_scale_bar(
+                            self._mode_axes[row_idx, i], mode_data.extent
+                        )
                     row_idx += 1
 
                 # Combined plot (if enabled)
@@ -1991,13 +2108,13 @@ Interactive Spectrum Controls:
                         interpolation=self.config.interpolation,
                         origin="lower",
                     )
-                    self._mode_axes[row_idx, i].set_title(
-                        f"m_{comp} (mag×cos(φ))"
-                    )
+                    self._mode_axes[row_idx, i].set_title(f"m_{comp} (mag×cos(φ))")
                     if images_for_colorbar[row_idx] is None:
                         images_for_colorbar[row_idx] = img
                     if i == 0:
-                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
+                        self._add_scale_bar(
+                            self._mode_axes[row_idx, i], mode_data.extent
+                        )
 
             except Exception as e:
                 log.error(f"Failed to plot component {comp}: {e}")
@@ -2017,14 +2134,17 @@ Interactive Spectrum Controls:
             try:
                 # Get the rightmost axis in this row for colorbar placement
                 rightmost_ax = self._mode_axes[row_idx, -1]
-                
+
                 if AXES_GRID_AVAILABLE:
                     from mpl_toolkits.axes_grid1 import make_axes_locatable
+
                     # Use make_axes_locatable for proper positioning
                     divider = make_axes_locatable(rightmost_ax)
-                    cax = divider.append_axes("right", 
-                                             size=f"{self.config.colorbar_fraction*100}%",
-                                             pad=self.config.colorbar_pad)
+                    cax = divider.append_axes(
+                        "right",
+                        size=f"{self.config.colorbar_fraction*100}%",
+                        pad=self.config.colorbar_pad,
+                    )
                     cbar = self._interactive_fig.colorbar(img, cax=cax)
                 else:
                     # Fallback to basic colorbar positioned at rightmost axis
@@ -2042,35 +2162,48 @@ Interactive Spectrum Controls:
             cbar.set_label(label, fontsize=self.config.colorbar_label_size)
             cbar.ax.tick_params(labelsize=self.config.colorbar_ticklabel_size)
             self._row_colorbars.append(cbar)
-            
+
         # Restart animations that were active before the update
         if has_active_animations and active_animation_keys:
-            log.debug(f"Restarting {len(active_animation_keys)} animations with new frequency data")
+            log.debug(
+                f"Restarting {len(active_animation_keys)} animations with new frequency data"
+            )
             for row_idx, col_idx in active_animation_keys:
                 try:
                     if row_idx < len(self._mode_axes) and col_idx < len(components):
                         ax = self._mode_axes[row_idx, col_idx]
                         component = components[col_idx]
-                        self._start_mode_animation(ax, row_idx, col_idx, component, z_layer)
-                        log.debug(f"Restarted animation for m_{component} at {self._current_frequency:.3f} GHz")
+                        self._start_mode_animation(
+                            ax, row_idx, col_idx, component, z_layer
+                        )
+                        log.debug(
+                            f"Restarted animation for m_{component} at {self._current_frequency:.3f} GHz"
+                        )
                 except Exception as e:
-                    log.warning(f"Failed to restart animation for axis ({row_idx}, {col_idx}): {e}")
+                    log.warning(
+                        f"Failed to restart animation for axis ({row_idx}, {col_idx}): {e}"
+                    )
 
     def _toggle_mode_animation(
-        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+        self,
+        ax: Any,
+        row_idx: int,
+        col_idx: int,
+        component: Union[str, int],
+        z_layer: int,
     ) -> None:
         """Toggle between static mode plot and in-place animation."""
         if not ANIMATION_AVAILABLE:
             log.warning("Animation not available - matplotlib.animation required")
             return
-            
+
         # Initialize animation tracking if needed
-        if not hasattr(self, '_mode_animations'):
+        if not hasattr(self, "_mode_animations"):
             self._mode_animations: dict[tuple[int, int], Any] = {}
             self._animated_axes: set[tuple[int, int]] = set()
-        
+
         axis_key = (row_idx, col_idx)
-        
+
         # Check if this axis is currently animated
         if axis_key in self._animated_axes:
             # Stop animation and revert to static
@@ -2078,11 +2211,15 @@ Interactive Spectrum Controls:
             # Redraw static mode
             self._update_single_mode_plot(ax, row_idx, col_idx, component, z_layer)
             self._interactive_fig.canvas.draw()
-            log.info(f"Stopped animation for m_{component} (row {row_idx}, col {col_idx})")
+            log.info(
+                f"Stopped animation for m_{component} (row {row_idx}, col {col_idx})"
+            )
         else:
             # Start animation
             self._start_mode_animation(ax, row_idx, col_idx, component, z_layer)
-            log.info(f"Started animation for m_{component} (row {row_idx}, col {col_idx})")
+            log.info(
+                f"Started animation for m_{component} (row {row_idx}, col {col_idx})"
+            )
 
     def _stop_mode_animation(self, axis_key: tuple[int, int]) -> None:
         """Stop animation for specific axis."""
@@ -2093,71 +2230,75 @@ Interactive Spectrum Controls:
                 del self._mode_animations[axis_key]
             except Exception as e:
                 log.debug(f"Error stopping animation: {e}")
-        
+
         self._animated_axes.discard(axis_key)
 
     def _save_animated_view(self, save_path: str, z_layer: int = 0) -> None:
         """Save current animated view to video file."""
         if not self._mode_animations:
             raise ValueError("No active animations to save")
-            
+
         # Import required modules
         try:
             from matplotlib.animation import FuncAnimation, PillowWriter
         except ImportError:
             raise ImportError("Animation saving requires matplotlib.animation")
-            
+
         log.info(f"Creating animation with {len(self._mode_animations)} animated modes")
-        
+
         # Determine writer based on file extension
-        file_ext = save_path.lower().split('.')[-1]
-        
-        if file_ext == 'mp4':
+        file_ext = save_path.lower().split(".")[-1]
+
+        if file_ext == "mp4":
             # Ensure FFmpeg is available
             ffmpeg_path = _ensure_ffmpeg_available()
             if ffmpeg_path:
                 try:
                     writer = _create_ffmpeg_writer(ffmpeg_path, fps=20, bitrate=1800)
-                    writer_name = 'ffmpeg'
+                    writer_name = "ffmpeg"
                 except Exception as e:
-                    log.warning(f"FFMpeg initialization failed: {e}, falling back to Pillow")
+                    log.warning(
+                        f"FFMpeg initialization failed: {e}, falling back to Pillow"
+                    )
                     writer = PillowWriter(fps=10)
-                    writer_name = 'pillow'
+                    writer_name = "pillow"
                     # Change extension to gif for Pillow
-                    save_path = save_path.replace('.mp4', '.gif')
+                    save_path = save_path.replace(".mp4", ".gif")
             else:
                 log.warning("FFMpeg not available, falling back to Pillow")
                 writer = PillowWriter(fps=10)
-                writer_name = 'pillow'
+                writer_name = "pillow"
                 # Change extension to gif for Pillow
-                save_path = save_path.replace('.mp4', '.gif')
-                
-        elif file_ext == 'gif':
+                save_path = save_path.replace(".mp4", ".gif")
+
+        elif file_ext == "gif":
             writer = PillowWriter(fps=10)
-            writer_name = 'pillow'
-        elif file_ext == 'avi':
+            writer_name = "pillow"
+        elif file_ext == "avi":
             # Ensure FFmpeg is available
             ffmpeg_path = _ensure_ffmpeg_available()
             if ffmpeg_path:
                 try:
                     writer = _create_ffmpeg_writer(ffmpeg_path, fps=20, bitrate=1800)
-                    writer_name = 'ffmpeg'
+                    writer_name = "ffmpeg"
                 except Exception as e:
-                    log.warning(f"FFMpeg initialization failed: {e}, falling back to GIF")
+                    log.warning(
+                        f"FFMpeg initialization failed: {e}, falling back to GIF"
+                    )
                     writer = PillowWriter(fps=10)
-                    writer_name = 'pillow'
-                    save_path = save_path.replace('.avi', '.gif')
+                    writer_name = "pillow"
+                    save_path = save_path.replace(".avi", ".gif")
             else:
                 log.warning("FFMpeg not available, falling back to GIF")
                 writer = PillowWriter(fps=10)
-                writer_name = 'pillow'
-                save_path = save_path.replace('.avi', '.gif')
+                writer_name = "pillow"
+                save_path = save_path.replace(".avi", ".gif")
         else:
             # Default to gif with Pillow
             writer = PillowWriter(fps=10)
-            writer_name = 'pillow'
-            save_path = save_path.replace(f'.{file_ext}', '.gif')
-            
+            writer_name = "pillow"
+            save_path = save_path.replace(f".{file_ext}", ".gif")
+
         # Create master animation that coordinates all mode animations
         # We need to manually recreate the animation logic since we can't easily extract it from FuncAnimation
         def animate_all_modes(frame):
@@ -2165,36 +2306,40 @@ Interactive Spectrum Controls:
             try:
                 # Get frame index (cycle through 30 frames)
                 time_step = (frame % 30) / 30.0 * 2 * np.pi
-                
+
                 # Update each animated axis
-                for (row_idx, col_idx) in self._animated_axes:
+                for row_idx, col_idx in self._animated_axes:
                     try:
                         ax = self._mode_axes[row_idx][col_idx]
-                        
+
                         # Get mode data
                         mode_data = self.get_mode(self._current_frequency, z_layer)
-                        
+
                         # Determine component and visualization type
                         components = ["x", "y", "z"]  # Default components
                         component = components[col_idx]
                         comp_data = mode_data.get_component(component)
-                        
+
                         # Determine visualization type
                         vis_types = []
                         if self.config.show_magnitude:
                             vis_types.append("magnitude")
                         if self.config.show_phase:
-                            vis_types.append("phase") 
+                            vis_types.append("phase")
                         if self.config.show_combined:
                             vis_types.append("combined")
-                        
+
                         vis_type = vis_types[row_idx]
-                        
+
                         # Find the image object in the axis and update it
-                        images = [child for child in ax.get_children() if hasattr(child, 'set_array')]
+                        images = [
+                            child
+                            for child in ax.get_children()
+                            if hasattr(child, "set_array")
+                        ]
                         if images:
                             im = images[0]  # Get the first image object
-                            
+
                             if vis_type == "magnitude":
                                 # Pulsing magnitude
                                 amplitude = np.abs(comp_data)
@@ -2204,7 +2349,11 @@ Interactive Spectrum Controls:
                                 # Rotating phase
                                 phase = np.angle(comp_data)
                                 current_phase = (phase + time_step) % (2 * np.pi)
-                                current_phase = np.where(current_phase > np.pi, current_phase - 2*np.pi, current_phase)
+                                current_phase = np.where(
+                                    current_phase > np.pi,
+                                    current_phase - 2 * np.pi,
+                                    current_phase,
+                                )
                                 im.set_array(current_phase)
                             elif vis_type == "combined":
                                 # Temporal oscillation
@@ -2212,84 +2361,95 @@ Interactive Spectrum Controls:
                                 phase = np.angle(comp_data)
                                 real_part = amplitude * np.cos(phase + time_step)
                                 im.set_array(real_part)
-                                
+
                     except Exception as e:
-                        log.debug(f"Error updating animation for ({row_idx}, {col_idx}): {e}")
-                
+                        log.debug(
+                            f"Error updating animation for ({row_idx}, {col_idx}): {e}"
+                        )
+
                 return []
-                
+
             except Exception as e:
                 log.debug(f"Error in animate_all_modes: {e}")
                 return []
-            
+
         # Use fixed frame count for export (30 frames = 1.5 seconds at 20fps)
         total_frames = 30
-        
+
         # Create animation object
         anim = FuncAnimation(
-            self._interactive_fig, 
-            animate_all_modes, 
+            self._interactive_fig,
+            animate_all_modes,
             frames=total_frames,
             interval=50,  # 50ms between frames
-            blit=False,   # Disable blitting for complex plots
-            repeat=True
+            blit=False,  # Disable blitting for complex plots
+            repeat=True,
         )
-        
+
         log.info(f"Saving {total_frames} frames using {writer_name} writer...")
-        
+
         try:
             anim.save(save_path, writer=writer, dpi=150)
             log.info("✅ Animation saved successfully!")
         except Exception as e:
             log.error(f"Failed to save animation: {e}")
             # Try to save as static frames as fallback
-            base_name = save_path.rsplit('.', 1)[0]
+            base_name = save_path.rsplit(".", 1)[0]
             for i in range(min(100, total_frames)):  # Limit to 100 frames
                 animate_all_modes(i)
                 self._interactive_fig.canvas.draw()
                 static_path = f"{base_name}_frame_{i:03d}.png"
-                self._interactive_fig.savefig(static_path, dpi=150, bbox_inches='tight')
-                
+                self._interactive_fig.savefig(static_path, dpi=150, bbox_inches="tight")
+
             log.info(f"Saved static frames to {base_name}_frame_*.png")
-            raise RuntimeError(f"Could not save as {file_ext}, saved static frames instead")
+            raise RuntimeError(
+                f"Could not save as {file_ext}, saved static frames instead"
+            )
 
     def _start_mode_animation(
-        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+        self,
+        ax: Any,
+        row_idx: int,
+        col_idx: int,
+        component: Union[str, int],
+        z_layer: int,
     ) -> None:
         """Start in-place animation for specific mode axis."""
         from matplotlib.animation import FuncAnimation
-        
+
         try:
             # Get mode data
             mode_data = self.get_mode(self._current_frequency, z_layer)
             comp_data = mode_data.get_component(component)
-            
+
             # Determine visualization type based on row
             vis_types = []
             if self.config.show_magnitude:
                 vis_types.append("magnitude")
             if self.config.show_phase:
-                vis_types.append("phase") 
+                vis_types.append("phase")
             if self.config.show_combined:
                 vis_types.append("combined")
-            
+
             if row_idx >= len(vis_types):
                 log.error(f"Invalid row index {row_idx} for visualization types")
                 return
-                
+
             vis_type = vis_types[row_idx]
-            
+
             # Clear the axis
             ax.clear()
             ax.set_xticks([])
             ax.set_yticks([])
-            
+
             # Setup animation data based on visualization type
             if vis_type == "magnitude":
                 # Animate magnitude (static - just pulsing intensity)
                 amplitude = np.abs(comp_data)
-                time_steps = np.linspace(0, 2*np.pi, 30)  # 30 frames for smooth animation
-                
+                time_steps = np.linspace(
+                    0, 2 * np.pi, 30
+                )  # 30 frames for smooth animation
+
                 # Create initial plot
                 im = ax.imshow(
                     amplitude,
@@ -2300,13 +2460,13 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"|m_{component}| (animated)")
-                
+
                 def animate_magnitude(frame):
                     # Gentle pulsing effect for magnitude
                     pulse = 0.8 + 0.2 * np.sin(time_steps[frame])
                     im.set_array(amplitude * pulse)
                     return [im]
-                    
+
                 # Create animation
                 anim = FuncAnimation(
                     self._interactive_fig,
@@ -2314,15 +2474,15 @@ Interactive Spectrum Controls:
                     frames=len(time_steps),
                     interval=100,  # 10 FPS
                     blit=True,
-                    repeat=True
+                    repeat=True,
                 )
-                
+
             elif vis_type == "phase":
                 # Animate phase rotation
                 amplitude = np.abs(comp_data)
                 phase = np.angle(comp_data)
-                time_steps = np.linspace(0, 2*np.pi, 30)
-                
+                time_steps = np.linspace(0, 2 * np.pi, 30)
+
                 # Create initial plot
                 current_phase = (phase + time_steps[0]) % (2 * np.pi)
                 im = ax.imshow(
@@ -2336,15 +2496,17 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"arg(m_{component}) (animated)")
-                
+
                 def animate_phase(frame):
                     # Rotating phase
                     current_phase = (phase + time_steps[frame]) % (2 * np.pi)
                     # Convert to -π to π range for better visualization
-                    current_phase = np.where(current_phase > np.pi, current_phase - 2*np.pi, current_phase)
+                    current_phase = np.where(
+                        current_phase > np.pi, current_phase - 2 * np.pi, current_phase
+                    )
                     im.set_array(current_phase)
                     return [im]
-                    
+
                 # Create animation
                 anim = FuncAnimation(
                     self._interactive_fig,
@@ -2352,39 +2514,39 @@ Interactive Spectrum Controls:
                     frames=len(time_steps),
                     interval=100,  # 10 FPS
                     blit=True,
-                    repeat=True
+                    repeat=True,
                 )
-                
+
             elif vis_type == "combined":
                 # Animate real part oscillation (true temporal dynamics)
                 amplitude = np.abs(comp_data)
                 phase = np.angle(comp_data)
-                time_steps = np.linspace(0, 2*np.pi, 30)
-                
+                time_steps = np.linspace(0, 2 * np.pi, 30)
+
                 # Setup symmetric normalization for oscillating data
                 vmax = np.max(amplitude)
-                
+
                 # Create initial plot
                 real_part = amplitude * np.cos(phase + time_steps[0])
                 im = ax.imshow(
                     real_part,
                     cmap=self.config._resolve_colormap(self.config.colormap_phase),
                     extent=mode_data.extent,
-                    aspect="equal", 
+                    aspect="equal",
                     interpolation=self.config.interpolation,
                     vmin=-vmax,
                     vmax=vmax,
                     origin="lower",
                 )
                 ax.set_title(f"Re[m_{component}] (temporal)")
-                
+
                 def animate_combined(frame):
                     # True temporal oscillation: Re[A * e^(i*φ) * e^(i*ω*t)]
                     t = time_steps[frame]
                     real_part = amplitude * np.cos(phase + t)
                     im.set_array(real_part)
                     return [im]
-                    
+
                 # Create animation
                 anim = FuncAnimation(
                     self._interactive_fig,
@@ -2392,26 +2554,31 @@ Interactive Spectrum Controls:
                     frames=len(time_steps),
                     interval=100,  # 10 FPS
                     blit=True,
-                    repeat=True
+                    repeat=True,
                 )
-            
+
             # Store animation and mark axis as animated
             axis_key = (row_idx, col_idx)
             self._mode_animations[axis_key] = anim
             self._animated_axes.add(axis_key)
-            
+
         except Exception as e:
             log.error(f"Failed to start mode animation: {e}")
 
     def _update_single_mode_plot(
-        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+        self,
+        ax: Any,
+        row_idx: int,
+        col_idx: int,
+        component: Union[str, int],
+        z_layer: int,
     ) -> None:
         """Update single mode plot (used when stopping animation)."""
         try:
             # Get mode data
             mode_data = self.get_mode(self._current_frequency, z_layer)
             comp_data = mode_data.get_component(component)
-            
+
             # Determine visualization type
             vis_types = []
             if self.config.show_magnitude:
@@ -2420,14 +2587,14 @@ Interactive Spectrum Controls:
                 vis_types.append("phase")
             if self.config.show_combined:
                 vis_types.append("combined")
-                
+
             vis_type = vis_types[row_idx]
-            
+
             # Clear and redraw
             ax.clear()
             ax.set_xticks([])
             ax.set_yticks([])
-            
+
             if vis_type == "magnitude":
                 magnitude = np.abs(comp_data)
                 ax.imshow(
@@ -2439,7 +2606,7 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"|m_{component}|")
-                
+
             elif vis_type == "phase":
                 phase = np.angle(comp_data)
                 ax.imshow(
@@ -2453,7 +2620,7 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"arg(m_{component})")
-                
+
             elif vis_type == "combined":
                 magnitude = np.abs(comp_data)
                 phase = np.angle(comp_data)
@@ -2467,7 +2634,7 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"m_{component} (mag×cos(φ))")
-                
+
         except Exception as e:
             log.error(f"Failed to update single mode plot: {e}")
 
@@ -2592,9 +2759,7 @@ Interactive Spectrum Controls:
         if self.dataset_name not in self.zarr_file:
             available = self._list_available_datasets()
             suggestion = (
-                f" Available datasets: {', '.join(available)}"
-                if available
-                else ""
+                f" Available datasets: {', '.join(available)}" if available else ""
             )
             raise ValueError(
                 f"Dataset '{self.dataset_name}' not found in zarr file '{self.zarr_path}'.{suggestion}"
@@ -2640,7 +2805,10 @@ Interactive Spectrum Controls:
             return None
 
         if dt is None:
-            for attrs in (getattr(dset, "attrs", {}), getattr(self.zarr_file, "attrs", {})):
+            for attrs in (
+                getattr(dset, "attrs", {}),
+                getattr(self.zarr_file, "attrs", {}),
+            ):
                 for key in ("t_sampl", "dt"):
                     dt_candidate = _extract_dt(attrs.get(key))
                     if dt_candidate is not None:
@@ -2739,9 +2907,11 @@ Interactive Spectrum Controls:
                 overwrite=True,
             )
 
-            # Save power spectrum summary in modes group 
+            # Save power spectrum summary in modes group
             power_spec = np.abs(fft_result)
-            reduction_axes = tuple(range(1, power_spec.ndim)) if power_spec.ndim > 1 else None
+            reduction_axes = (
+                tuple(range(1, power_spec.ndim)) if power_spec.ndim > 1 else None
+            )
             power_max = (
                 np.max(power_spec, axis=reduction_axes)
                 if reduction_axes
@@ -3142,7 +3312,9 @@ Interactive Spectrum Controls:
                         )
                     except Exception as ffmpeg_error:
                         # If FFmpeg fails, try with a more basic writer configuration
-                        log.warning(f"FFmpeg save with advanced options failed: {ffmpeg_error}")
+                        log.warning(
+                            f"FFmpeg save with advanced options failed: {ffmpeg_error}"
+                        )
                         log.info("Trying basic FFmpeg configuration...")
                         anim.save(
                             save_path,
@@ -3190,16 +3362,16 @@ Interactive Spectrum Controls:
     def install_ffmpeg(self) -> Optional[str]:
         """
         Install FFmpeg for MP4 animation support.
-        
+
         This method ensures FFmpeg is available for high-quality video
         animation export. If FFmpeg is not found on the system, it will
         be automatically downloaded and installed.
-        
+
         Returns:
         --------
         str or None
             Path to ffmpeg executable if successful, None if failed
-            
+
         Examples:
         ---------
         >>> analyzer = FMRModeAnalyzer(zarr_file, dataset_name)
@@ -3234,7 +3406,7 @@ class FFTModeInterface:
     ) -> ModeCharacterizationResult:
         """
         Characterize the mode at a given frequency (GHz).
-        
+
         Parameters:
         -----------
         frequency : float
@@ -3243,14 +3415,16 @@ class FFTModeInterface:
             Show detailed calculation results and classification criteria (default: False)
         **kwargs
             Additional arguments passed to mode analyzer
-            
+
         Returns:
         --------
         ModeCharacterizationResult
             Classification result with detailed metrics
         """
 
-        return self.mode_analyzer.characterize_mode(frequency, verbose=verbose, **kwargs)
+        return self.mode_analyzer.characterize_mode(
+            frequency, verbose=verbose, **kwargs
+        )
 
     def __repr__(self) -> str:
         """Rich representation of the FFT mode interface."""
@@ -3315,7 +3489,10 @@ class FFTModeInterface:
                 ("install_ffmpeg()", "Install FFmpeg for MP4 animations"),
                 ("compute_modes(dset=None, **kwargs)", "Compute/recompute modes"),
                 ("[freq_index].plot_modes(**kwargs)", "Plot modes at frequency index"),
-                ("[freq_index].characterize(**kwargs)", "Get mode labels at frequency index"),
+                (
+                    "[freq_index].characterize(**kwargs)",
+                    "Get mode labels at frequency index",
+                ),
             ]
 
             for method, description in methods:
@@ -3326,8 +3503,8 @@ class FFTModeInterface:
             examples_text = Text()
             examples_text.append("💡 Usage examples:\n", style="bold green")
             examples = [
-                "modes.interactive_spectrum(dset='m_z11')",
-                "modes.plot_modes(frequency=1.5, dset='m_z11')",
+                "modes.interactive_spectrum(dset='m')",
+                "modes.plot_modes(frequency=1.5, dset='m')",
                 "modes.save_modes_animation(frequency=1.5, animation_type='temporal')",
                 "modes[0][150].plot_modes()  # freq index 0, freq point 150",
                 "modes.compute_modes(dset='m_z5-8')",
@@ -3412,16 +3589,20 @@ MMPP FFT Mode Analyzer:
                 else False
             )
             # Check if parent has log_level attribute
-            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
+            log_level = (
+                getattr(self.parent_fft.mmpp, "log_level", None)
+                if self.parent_fft.mmpp
+                else None
+            )
             self._mode_analyzer = FMRModeAnalyzer(
-                zarr_path, 
-                debug=debug_mode, 
-                log_level=log_level
+                zarr_path, debug=debug_mode, log_level=log_level
             )
 
         return self._mode_analyzer
 
-    def interactive_spectrum(self, dset: str = None, force: bool = False, **kwargs) -> Figure:
+    def interactive_spectrum(
+        self, dset: str = None, force: bool = False, **kwargs
+    ) -> Figure:
         """Create interactive spectrum plot."""
         # If dset is specified, create a new analyzer for that dataset
         if dset is not None and dset != self.mode_analyzer.dataset_name:
@@ -3432,7 +3613,11 @@ MMPP FFT Mode Analyzer:
                 else False
             )
             # Check if parent has log_level attribute
-            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
+            log_level = (
+                getattr(self.parent_fft.mmpp, "log_level", None)
+                if self.parent_fft.mmpp
+                else None
+            )
             temp_analyzer = FMRModeAnalyzer(
                 zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
             )
@@ -3463,7 +3648,11 @@ MMPP FFT Mode Analyzer:
                 else False
             )
             # Check if parent has log_level attribute
-            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
+            log_level = (
+                getattr(self.parent_fft.mmpp, "log_level", None)
+                if self.parent_fft.mmpp
+                else None
+            )
             temp_analyzer = FMRModeAnalyzer(
                 zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
             )
@@ -3484,7 +3673,11 @@ MMPP FFT Mode Analyzer:
                 else False
             )
             # Check if parent has log_level attribute
-            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
+            log_level = (
+                getattr(self.parent_fft.mmpp, "log_level", None)
+                if self.parent_fft.mmpp
+                else None
+            )
             temp_analyzer = FMRModeAnalyzer(
                 zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
             )
@@ -3550,7 +3743,11 @@ MMPP FFT Mode Analyzer:
                 else False
             )
             # Check if parent has log_level attribute
-            log_level = getattr(self.parent_fft.mmpp, "log_level", None) if self.parent_fft.mmpp else None
+            log_level = (
+                getattr(self.parent_fft.mmpp, "log_level", None)
+                if self.parent_fft.mmpp
+                else None
+            )
             temp_analyzer = FMRModeAnalyzer(
                 zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
             )
@@ -3592,19 +3789,19 @@ MMPP FFT Mode Analyzer:
     def install_ffmpeg(self) -> str:
         """
         Install FFmpeg for MP4 animation support.
-        
+
         This method ensures FFmpeg is available for high-quality video
         animation export. If FFmpeg is not found on the system, it will
         be automatically downloaded and installed.
-        
+
         Returns:
         --------
         str or None
             Path to ffmpeg executable if successful, None if failed
-            
+
         Example:
         --------
-        >>> job = load_zarr("data.zarr")  
+        >>> job = load_zarr("data.zarr")
         >>> ffmpeg_path = job[0].fft.modes.install_ffmpeg()
         >>> if ffmpeg_path:
         ...     job[0].fft.modes.save_modes_animation("animation.mp4")

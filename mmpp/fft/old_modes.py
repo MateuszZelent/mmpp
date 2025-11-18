@@ -48,64 +48,65 @@ except ImportError:
     STYLING_AVAILABLE = False
     log.warning("Styling functions not available - using default matplotlib styling")
 
+
 # FFmpeg installation utilities
 def _detect_platform():
     """Detect the current platform for FFmpeg installation."""
     import platform
-    
+
     system = platform.system().lower()
     machine = platform.machine().lower()
-    
-    if system == 'linux':
-        if machine in ['x86_64', 'amd64']:
-            return 'linux-amd64'
-        elif machine in ['aarch64', 'arm64']:
-            return 'linux-arm64'
-        elif machine.startswith('arm'):
-            return 'linux-armhf'
-    elif system == 'darwin':  # macOS
-        if machine in ['x86_64', 'amd64']:
-            return 'macos-amd64'
-        elif machine in ['arm64', 'aarch64']:
-            return 'macos-arm64'
-    elif system == 'windows':
-        if machine in ['x86_64', 'amd64']:
-            return 'windows-amd64'
-    
+
+    if system == "linux":
+        if machine in ["x86_64", "amd64"]:
+            return "linux-amd64"
+        elif machine in ["aarch64", "arm64"]:
+            return "linux-arm64"
+        elif machine.startswith("arm"):
+            return "linux-armhf"
+    elif system == "darwin":  # macOS
+        if machine in ["x86_64", "amd64"]:
+            return "macos-amd64"
+        elif machine in ["arm64", "aarch64"]:
+            return "macos-arm64"
+    elif system == "windows":
+        if machine in ["x86_64", "amd64"]:
+            return "windows-amd64"
+
     return None
 
 
 def _get_ffmpeg_download_info(platform_id):
     """Get download URL and extraction info for different platforms."""
-    
+
     urls = {
-        'linux-amd64': {
-            'url': 'https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz',
-            'format': 'tar.xz',
-            'binary_pattern': '*/ffmpeg'
+        "linux-amd64": {
+            "url": "https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz",
+            "format": "tar.xz",
+            "binary_pattern": "*/ffmpeg",
         },
-        'linux-arm64': {
-            'url': 'https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-arm64-static.tar.xz',
-            'format': 'tar.xz', 
-            'binary_pattern': '*/ffmpeg'
+        "linux-arm64": {
+            "url": "https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-arm64-static.tar.xz",
+            "format": "tar.xz",
+            "binary_pattern": "*/ffmpeg",
         },
-        'linux-armhf': {
-            'url': 'https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-armhf-static.tar.xz',
-            'format': 'tar.xz',
-            'binary_pattern': '*/ffmpeg'
-        }
+        "linux-armhf": {
+            "url": "https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-armhf-static.tar.xz",
+            "format": "tar.xz",
+            "binary_pattern": "*/ffmpeg",
+        },
     }
-    
+
     return urls.get(platform_id)
 
 
 def _ensure_ffmpeg_available():
     """
     Ensure FFmpeg is available for animation saving.
-    
+
     If FFmpeg is not found in system PATH, automatically downloads
     and installs a static build from appropriate source.
-    
+
     Returns:
     --------
     str or None
@@ -118,48 +119,51 @@ def _ensure_ffmpeg_available():
     import tarfile
     import tempfile
     from pathlib import Path
-    
+
     # Check if FFmpeg is already in PATH
-    ffmpeg_path = shutil.which('ffmpeg')
+    ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
         log.debug(f"FFmpeg found in system PATH: {ffmpeg_path}")
         return ffmpeg_path
-    
+
     # Check if we already have a downloaded version
-    mmpp_cache_dir = Path.home() / '.mmpp' / 'bin'
-    cached_ffmpeg = mmpp_cache_dir / 'ffmpeg'
-    
+    mmpp_cache_dir = Path.home() / ".mmpp" / "bin"
+    cached_ffmpeg = mmpp_cache_dir / "ffmpeg"
+
     if cached_ffmpeg.exists() and cached_ffmpeg.is_file():
         # Test if cached version works
         try:
-            result = subprocess.run([str(cached_ffmpeg), '-version'], 
-                                  capture_output=True, timeout=5)
+            result = subprocess.run(
+                [str(cached_ffmpeg), "-version"], capture_output=True, timeout=5
+            )
             if result.returncode == 0:
                 log.debug(f"Using cached FFmpeg: {cached_ffmpeg}")
                 return str(cached_ffmpeg)
         except (subprocess.TimeoutExpired, FileNotFoundError):
             log.warning("Cached FFmpeg not working, will re-download")
-    
+
     # Attempt automatic installation
     log.info("FFmpeg not found in system, attempting automatic installation...")
-    
+
     try:
         return _install_ffmpeg_automatic()
     except Exception as e:
         log.error(f"Automatic FFmpeg installation failed: {e}")
-        log.warning("Please install FFmpeg manually or call mmpp.fft.modes.install_ffmpeg() for detailed installation help")
+        log.warning(
+            "Please install FFmpeg manually or call mmpp.fft.modes.install_ffmpeg() for detailed installation help"
+        )
         return None
 
 
 def _install_ffmpeg_automatic():
     """
     Automatically install FFmpeg with minimal user interaction.
-    
+
     Returns:
     --------
     str
         Path to installed FFmpeg executable
-        
+
     Raises:
     -------
     RuntimeError
@@ -171,69 +175,76 @@ def _install_ffmpeg_automatic():
     import tarfile
     import tempfile
     from pathlib import Path
-    
+
     # Detect platform
     platform_id = _detect_platform()
     if not platform_id:
         raise RuntimeError(f"Unsupported platform for automatic FFmpeg installation")
-    
+
     # Get download info
     download_info = _get_ffmpeg_download_info(platform_id)
     if not download_info:
         raise RuntimeError(f"No download URL available for platform: {platform_id}")
-    
+
     # Create cache directory
-    mmpp_cache_dir = Path.home() / '.mmpp' / 'bin'
+    mmpp_cache_dir = Path.home() / ".mmpp" / "bin"
     mmpp_cache_dir.mkdir(parents=True, exist_ok=True)
-    cached_ffmpeg = mmpp_cache_dir / 'ffmpeg'
-    
+    cached_ffmpeg = mmpp_cache_dir / "ffmpeg"
+
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        archive_path = temp_path / f"ffmpeg-static.{download_info['format'].replace('.', '_')}"
-        
+        archive_path = (
+            temp_path / f"ffmpeg-static.{download_info['format'].replace('.', '_')}"
+        )
+
         # Download with timeout and retry
         for attempt in range(3):
             try:
-                log.info(f"Downloading FFmpeg from {download_info['url']} (attempt {attempt + 1}/3)...")
-                
+                log.info(
+                    f"Downloading FFmpeg from {download_info['url']} (attempt {attempt + 1}/3)..."
+                )
+
                 # Simple download with timeout
-                urllib.request.urlretrieve(download_info['url'], archive_path)
+                urllib.request.urlretrieve(download_info["url"], archive_path)
                 log.info("Download completed, extracting...")
                 break
-                
+
             except Exception as e:
                 if attempt == 2:  # Last attempt
-                    raise RuntimeError(f"Failed to download FFmpeg after 3 attempts: {e}")
+                    raise RuntimeError(
+                        f"Failed to download FFmpeg after 3 attempts: {e}"
+                    )
                 log.warning(f"Download attempt {attempt + 1} failed: {e}, retrying...")
-        
+
         # Extract archive
-        if download_info['format'] == 'tar.xz':
-            with tarfile.open(archive_path, 'r:xz') as tar:
+        if download_info["format"] == "tar.xz":
+            with tarfile.open(archive_path, "r:xz") as tar:
                 # Find ffmpeg binary in archive
                 ffmpeg_member = None
                 for member in tar.getmembers():
-                    if member.name.endswith('/ffmpeg') and member.isfile():
+                    if member.name.endswith("/ffmpeg") and member.isfile():
                         ffmpeg_member = member
                         break
-                
+
                 if not ffmpeg_member:
                     raise RuntimeError("FFmpeg binary not found in downloaded archive")
-                
+
                 # Extract just the ffmpeg binary
                 tar.extract(ffmpeg_member, temp_path)
                 extracted_ffmpeg = temp_path / ffmpeg_member.name
-                
+
                 # Copy to cache directory
                 shutil.copy2(extracted_ffmpeg, cached_ffmpeg)
                 cached_ffmpeg.chmod(0o755)  # Make executable
         else:
             raise RuntimeError(f"Unsupported archive format: {download_info['format']}")
-        
+
         log.info(f"FFmpeg installed successfully to {cached_ffmpeg}")
-        
+
         # Test the installation
-        result = subprocess.run([str(cached_ffmpeg), '-version'], 
-                              capture_output=True, timeout=10)
+        result = subprocess.run(
+            [str(cached_ffmpeg), "-version"], capture_output=True, timeout=10
+        )
         if result.returncode == 0:
             log.info("FFmpeg installation verified successfully")
             return str(cached_ffmpeg)
@@ -244,28 +255,28 @@ def _install_ffmpeg_automatic():
 def install_ffmpeg(force: bool = False, verbose: bool = True) -> Optional[str]:
     """
     Install FFmpeg for animation support with comprehensive error handling.
-    
-    This function provides multiple installation methods and detailed 
+
+    This function provides multiple installation methods and detailed
     troubleshooting information for FFmpeg installation.
-    
+
     Parameters:
     -----------
     force : bool, default False
         Force reinstallation even if FFmpeg is already available
     verbose : bool, default True
         Show detailed installation progress and troubleshooting info
-        
+
     Returns:
     --------
     str or None
         Path to ffmpeg executable if successful, None if failed
-        
+
     Examples:
     ---------
     >>> import mmpp
     >>> # Install FFmpeg automatically
     >>> ffmpeg_path = mmpp.fft.modes.install_ffmpeg()
-    >>> 
+    >>>
     >>> # Force reinstallation
     >>> ffmpeg_path = mmpp.fft.modes.install_ffmpeg(force=True)
     """
@@ -273,49 +284,52 @@ def install_ffmpeg(force: bool = False, verbose: bool = True) -> Optional[str]:
     import subprocess
     import platform
     from pathlib import Path
-    
+
     if verbose:
         log.info("🔧 Installing FFmpeg for animation support...")
-    
+
     # Check if already available (unless forcing)
     if not force:
-        ffmpeg_path = shutil.which('ffmpeg')
+        ffmpeg_path = shutil.which("ffmpeg")
         if ffmpeg_path:
             if verbose:
                 log.info(f"✅ FFmpeg already available in system PATH: {ffmpeg_path}")
             return ffmpeg_path
-            
+
         # Check cached version
-        cached_ffmpeg = Path.home() / '.mmpp' / 'bin' / 'ffmpeg'
+        cached_ffmpeg = Path.home() / ".mmpp" / "bin" / "ffmpeg"
         if cached_ffmpeg.exists():
             try:
-                result = subprocess.run([str(cached_ffmpeg), '-version'], 
-                                      capture_output=True, timeout=5)
+                result = subprocess.run(
+                    [str(cached_ffmpeg), "-version"], capture_output=True, timeout=5
+                )
                 if result.returncode == 0:
                     if verbose:
-                        log.info(f"✅ FFmpeg already available in cache: {cached_ffmpeg}")
+                        log.info(
+                            f"✅ FFmpeg already available in cache: {cached_ffmpeg}"
+                        )
                     return str(cached_ffmpeg)
             except:
                 pass
-    
+
     # Detect platform
     platform_id = _detect_platform()
     if verbose:
         log.info(f"🔍 Detected platform: {platform_id or 'Unsupported'}")
-    
+
     if not platform_id:
         if verbose:
             log.error("❌ Unsupported platform for automatic installation")
             _show_manual_installation_help()
         return None
-    
+
     # Attempt automatic installation
     try:
         ffmpeg_path = _install_ffmpeg_automatic()
         if verbose:
             log.info(f"✅ FFmpeg successfully installed: {ffmpeg_path}")
         return ffmpeg_path
-        
+
     except Exception as e:
         if verbose:
             log.error(f"❌ Automatic installation failed: {e}")
@@ -326,29 +340,29 @@ def install_ffmpeg(force: bool = False, verbose: bool = True) -> Optional[str]:
 def _show_manual_installation_help():
     """Show detailed manual installation instructions."""
     import platform
-    
+
     system = platform.system().lower()
-    
+
     log.info("📖 Manual FFmpeg Installation Instructions:")
     log.info("=" * 50)
-    
-    if system == 'linux':
+
+    if system == "linux":
         log.info("🐧 Linux:")
         log.info("  Ubuntu/Debian: sudo apt update && sudo apt install ffmpeg")
         log.info("  RHEL/CentOS:   sudo yum install ffmpeg  (or dnf)")
         log.info("  Arch Linux:    sudo pacman -S ffmpeg")
         log.info("  Conda:         conda install -c conda-forge ffmpeg")
-    elif system == 'darwin':
+    elif system == "darwin":
         log.info("🍎 macOS:")
         log.info("  Homebrew:      brew install ffmpeg")
         log.info("  MacPorts:      sudo port install ffmpeg")
         log.info("  Conda:         conda install -c conda-forge ffmpeg")
-    elif system == 'windows':
+    elif system == "windows":
         log.info("🪟 Windows:")
         log.info("  Chocolatey:    choco install ffmpeg")
         log.info("  Scoop:         scoop install ffmpeg")
         log.info("  Manual:        Download from https://ffmpeg.org/download.html")
-    
+
     log.info("")
     log.info("🔗 Official Downloads: https://ffmpeg.org/download.html")
     log.info("📚 Documentation:     https://ffmpeg.org/documentation.html")
@@ -360,12 +374,12 @@ def _show_manual_installation_help():
 def check_ffmpeg_installation() -> dict:
     """
     Check current FFmpeg installation status and provide diagnostics.
-    
+
     Returns:
     --------
     dict
         Dictionary containing installation status and diagnostics
-        
+
     Examples:
     ---------
     >>> import mmpp
@@ -377,68 +391,75 @@ def check_ffmpeg_installation() -> dict:
     import shutil
     import subprocess
     from pathlib import Path
-    
+
     result = {
-        'available': False,
-        'path': None,
-        'version': None,
-        'cached_version': False,
-        'platform': _detect_platform(),
-        'diagnostics': []
+        "available": False,
+        "path": None,
+        "version": None,
+        "cached_version": False,
+        "platform": _detect_platform(),
+        "diagnostics": [],
     }
-    
+
     # Check system PATH
-    system_ffmpeg = shutil.which('ffmpeg')
+    system_ffmpeg = shutil.which("ffmpeg")
     if system_ffmpeg:
-        result['available'] = True
-        result['path'] = system_ffmpeg
-        result['diagnostics'].append(f"✅ Found in system PATH: {system_ffmpeg}")
-        
+        result["available"] = True
+        result["path"] = system_ffmpeg
+        result["diagnostics"].append(f"✅ Found in system PATH: {system_ffmpeg}")
+
         # Get version
         try:
-            version_result = subprocess.run([system_ffmpeg, '-version'], 
-                                          capture_output=True, timeout=10)
+            version_result = subprocess.run(
+                [system_ffmpeg, "-version"], capture_output=True, timeout=10
+            )
             if version_result.returncode == 0:
-                version_line = version_result.stdout.decode().split('\n')[0]
-                result['version'] = version_line
-                result['diagnostics'].append(f"✅ Version: {version_line}")
+                version_line = version_result.stdout.decode().split("\n")[0]
+                result["version"] = version_line
+                result["diagnostics"].append(f"✅ Version: {version_line}")
             else:
-                result['diagnostics'].append("⚠️  Could not determine version")
+                result["diagnostics"].append("⚠️  Could not determine version")
         except Exception as e:
-            result['diagnostics'].append(f"⚠️  Version check failed: {e}")
+            result["diagnostics"].append(f"⚠️  Version check failed: {e}")
     else:
-        result['diagnostics'].append("❌ Not found in system PATH")
-    
+        result["diagnostics"].append("❌ Not found in system PATH")
+
     # Check cached version
-    cached_ffmpeg = Path.home() / '.mmpp' / 'bin' / 'ffmpeg'
+    cached_ffmpeg = Path.home() / ".mmpp" / "bin" / "ffmpeg"
     if cached_ffmpeg.exists():
-        result['diagnostics'].append(f"🔍 Found cached version: {cached_ffmpeg}")
-        
-        if not result['available']:  # Only test if system version not found
+        result["diagnostics"].append(f"🔍 Found cached version: {cached_ffmpeg}")
+
+        if not result["available"]:  # Only test if system version not found
             try:
-                version_result = subprocess.run([str(cached_ffmpeg), '-version'], 
-                                              capture_output=True, timeout=10)
+                version_result = subprocess.run(
+                    [str(cached_ffmpeg), "-version"], capture_output=True, timeout=10
+                )
                 if version_result.returncode == 0:
-                    result['available'] = True
-                    result['path'] = str(cached_ffmpeg)
-                    result['cached_version'] = True
-                    version_line = version_result.stdout.decode().split('\n')[0]
-                    result['version'] = version_line
-                    result['diagnostics'].append(f"✅ Cached version working: {version_line}")
+                    result["available"] = True
+                    result["path"] = str(cached_ffmpeg)
+                    result["cached_version"] = True
+                    version_line = version_result.stdout.decode().split("\n")[0]
+                    result["version"] = version_line
+                    result["diagnostics"].append(
+                        f"✅ Cached version working: {version_line}"
+                    )
                 else:
-                    result['diagnostics'].append("❌ Cached version not working")
+                    result["diagnostics"].append("❌ Cached version not working")
             except Exception as e:
-                result['diagnostics'].append(f"❌ Cached version test failed: {e}")
+                result["diagnostics"].append(f"❌ Cached version test failed: {e}")
     else:
-        result['diagnostics'].append("❌ No cached version found")
-    
+        result["diagnostics"].append("❌ No cached version found")
+
     # Add platform info
-    if result['platform']:
-        result['diagnostics'].append(f"🔍 Platform: {result['platform']}")
+    if result["platform"]:
+        result["diagnostics"].append(f"🔍 Platform: {result['platform']}")
     else:
-        result['diagnostics'].append("⚠️  Unsupported platform for automatic installation")
-    
+        result["diagnostics"].append(
+            "⚠️  Unsupported platform for automatic installation"
+        )
+
     return result
+
 
 # Import electromagnetic analysis module
 try:
@@ -603,7 +624,7 @@ class MidpointNormalize(mcolors.Normalize):
 def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
     """
     Create FFMpegWriter with compatibility across matplotlib versions.
-    
+
     Parameters:
     -----------
     ffmpeg_path : str
@@ -612,7 +633,7 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
         Frames per second for animation
     bitrate : int, default 1800
         Bitrate for video encoding
-        
+
     Returns:
     --------
     FFMpegWriter
@@ -622,49 +643,49 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
     import matplotlib
     import inspect
     import os
-    
+
     # Ensure FFmpeg is available and executable
     if not os.path.exists(ffmpeg_path) or not os.access(ffmpeg_path, os.X_OK):
         raise FileNotFoundError(f"FFmpeg not found or not executable: {ffmpeg_path}")
-    
+
     # Configure matplotlib to use our FFmpeg
-    matplotlib.rcParams['animation.ffmpeg_path'] = ffmpeg_path
-    
+    matplotlib.rcParams["animation.ffmpeg_path"] = ffmpeg_path
+
     # Also set environment variable for some matplotlib versions
-    os.environ['FFMPEG_BINARY'] = ffmpeg_path
-    
+    os.environ["FFMPEG_BINARY"] = ffmpeg_path
+
     try:
         # Get the signature of FFMpegWriter.__init__ to check supported parameters
         init_signature = inspect.signature(FFMpegWriter.__init__)
         supported_params = set(init_signature.parameters.keys())
-        
+
         # Build kwargs dict with only supported parameters
         kwargs = {}
-        
+
         # Common parameters
-        if 'fps' in supported_params:
-            kwargs['fps'] = fps
-        if 'bitrate' in supported_params:
-            kwargs['bitrate'] = bitrate
-            
+        if "fps" in supported_params:
+            kwargs["fps"] = fps
+        if "bitrate" in supported_params:
+            kwargs["bitrate"] = bitrate
+
         # Additional parameters that might be supported
-        if 'codec' in supported_params:
-            kwargs['codec'] = 'libx264'
-        if 'extra_args' in supported_params:
-            kwargs['extra_args'] = ['-pix_fmt', 'yuv420p']
-        
-        # Handle exec parameter for older matplotlib versions    
-        if 'exec' in supported_params:
-            kwargs['exec'] = [ffmpeg_path]
-            
+        if "codec" in supported_params:
+            kwargs["codec"] = "libx264"
+        if "extra_args" in supported_params:
+            kwargs["extra_args"] = ["-pix_fmt", "yuv420p"]
+
+        # Handle exec parameter for older matplotlib versions
+        if "exec" in supported_params:
+            kwargs["exec"] = [ffmpeg_path]
+
         # Create writer with supported parameters
         writer = FFMpegWriter(**kwargs)
-        
+
         # Try multiple methods to set the path for different matplotlib versions
-        
+
         # Method 1: Direct binary path setting
         try:
-            if hasattr(writer, 'bin_path'):
+            if hasattr(writer, "bin_path"):
                 if callable(writer.bin_path):
                     # Some versions expect a callable
                     original_bin_path = writer.bin_path
@@ -674,12 +695,12 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
                     writer.bin_path = ffmpeg_path
         except:
             pass
-            
+
         # Method 2: Command args modification
         try:
-            if hasattr(writer, '_args'):
+            if hasattr(writer, "_args"):
                 if isinstance(writer._args, dict):
-                    writer._args['executable'] = ffmpeg_path
+                    writer._args["executable"] = ffmpeg_path
                 elif isinstance(writer._args, list):
                     # Replace first argument (executable) if it exists
                     if len(writer._args) > 0:
@@ -688,47 +709,51 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
                         writer._args.append(ffmpeg_path)
         except:
             pass
-            
+
         # Method 3: Set via class attribute
         try:
-            writer.__class__.bin_path = staticmethod(lambda *args, **kwargs: ffmpeg_path)
+            writer.__class__.bin_path = staticmethod(
+                lambda *args, **kwargs: ffmpeg_path
+            )
         except:
             pass
-            
+
         # Method 4: Direct attribute assignment
         try:
             writer._ffmpeg_path = ffmpeg_path
             writer.executable = ffmpeg_path
         except:
             pass
-            
+
         return writer
-        
+
     except Exception as e:
         log.warning(f"Failed to create FFMpegWriter with advanced options: {e}")
-        
+
         # Fallback to minimal initialization
         try:
             # Try with minimal parameters
             writer = FFMpegWriter(fps=fps)
-            
+
             # Apply path setting methods
             try:
                 writer.bin_path = lambda *args, **kwargs: ffmpeg_path
             except:
                 pass
-                
+
             try:
-                if hasattr(writer, '_args') and isinstance(writer._args, dict):
-                    writer._args['executable'] = ffmpeg_path
+                if hasattr(writer, "_args") and isinstance(writer._args, dict):
+                    writer._args["executable"] = ffmpeg_path
             except:
                 pass
-                
+
             try:
-                writer.__class__.bin_path = staticmethod(lambda *args, **kwargs: ffmpeg_path)
+                writer.__class__.bin_path = staticmethod(
+                    lambda *args, **kwargs: ffmpeg_path
+                )
             except:
                 pass
-                    
+
             return writer
         except Exception as e2:
             log.error(f"Failed to create basic FFMpegWriter: {e2}")
@@ -821,21 +846,21 @@ def check_ffmpeg_available() -> bool:
 def install_ffmpeg_simple() -> Optional[str]:
     """
     Install FFmpeg if not available on the system.
-    
+
     This is a simple wrapper that calls the main install_ffmpeg function
     with user-friendly defaults.
-    
+
     Returns:
     --------
     str or None
         Path to ffmpeg executable if successful, None if failed
-        
+
     Examples:
     ---------
     >>> import mmpp
     >>> # Install FFmpeg with detailed output
     >>> ffmpeg_path = mmpp.fft.modes.install_ffmpeg_simple()
-    >>> 
+    >>>
     >>> # Or use the main function with parameters
     >>> ffmpeg_path = mmpp.fft.modes.install_ffmpeg(force=True, verbose=True)
     """
@@ -881,14 +906,14 @@ class ModeVisualizationConfig:
     scalebar_height_fraction: float = 0.01
     scale_units: str = "nm"
 
-    colorbar_fraction: float = 0.04   # Proper colorbar width
-    colorbar_pad: float = 0.01       # Small padding for close positioning
+    colorbar_fraction: float = 0.04  # Proper colorbar width
+    colorbar_pad: float = 0.01  # Small padding for close positioning
     colorbar_ticklabel_size: int = 9  # Larger tick labels
-    colorbar_label_size: int = 10     # Larger labels
+    colorbar_label_size: int = 10  # Larger labels
     colorbar_labels: dict[str, str] = field(
         default_factory=lambda: {
             "magnitude": "Magnetization |m|",
-            "phase": "Phase (rad)", 
+            "phase": "Phase (rad)",
             "combined": "Re(m) × cos(φ)",
         }
     )
@@ -1212,7 +1237,7 @@ class FMRModeAnalyzer:
             # Try other z_layers and methods
             *[f"fft/{self.dataset_name}_z{z}_m1/spectrum" for z in range(-5, 10)],
         ]
-        
+
         for path in spectrum_candidates:
             if path in self.zarr_file:
                 spectrum_path = path
@@ -1282,7 +1307,9 @@ class FMRModeAnalyzer:
                 self.spectrum = np.array(self.zarr_file[modes_power_path])
                 if np.iscomplexobj(self.spectrum):
                     self.spectrum = np.abs(self.spectrum)
-                log.info(f"Using computed modes power_sum as spectrum: shape {self.spectrum.shape}")
+                log.info(
+                    f"Using computed modes power_sum as spectrum: shape {self.spectrum.shape}"
+                )
             else:
                 self.spectrum = None
 
@@ -1418,12 +1445,12 @@ class FMRModeAnalyzer:
         # Validate and normalize z_layer bounds
         mode_shape = self.zarr_file[self.modes_path].shape
         n_layers = mode_shape[1]
-        
+
         # Handle negative indexing (like Python lists)
         if z_layer < 0:
             z_layer = n_layers + z_layer
             log.debug(f"Converted negative z_layer to {z_layer}")
-            
+
         if z_layer < 0 or z_layer >= n_layers:
             raise ValueError(
                 f"z_layer {z_layer} out of range. Available layers: 0-{n_layers - 1} (or negative: -{n_layers} to -1)"
@@ -1469,7 +1496,11 @@ class FMRModeAnalyzer:
     ) -> ModeCharacterizationResult:
         """Classify the mode at ``frequency`` into gyration/breathing/azimuthal families."""
 
-        analyzer = self._character_analyzer if config is None else ModeCharacterAnalyzer(config)
+        analyzer = (
+            self._character_analyzer
+            if config is None
+            else ModeCharacterAnalyzer(config)
+        )
         mode_data = self.get_mode(frequency, z_layer)
         return analyzer.analyze(
             mode_data,
@@ -1526,7 +1557,7 @@ class FMRModeAnalyzer:
         # Use provided spectrum/frequencies or fallback to instance data
         spectrum_data = spectrum if spectrum is not None else self.spectrum
         freq_data = frequencies if frequencies is not None else self.frequencies
-        
+
         if spectrum_data is None:
             log.warning("No spectrum data available for peak detection")
             return []
@@ -1540,9 +1571,7 @@ class FMRModeAnalyzer:
             spectrum_work = spectrum_work / np.max(spectrum_work)
 
         # Filter frequency range
-        freq_mask = (freq_data >= self.config.f_min) & (
-            freq_data <= self.config.f_max
-        )
+        freq_mask = (freq_data >= self.config.f_min) & (freq_data <= self.config.f_max)
         freqs_filtered = freq_data[freq_mask]
         spectrum_filtered = spectrum_work[freq_mask]
 
@@ -1730,7 +1759,7 @@ class FMRModeAnalyzer:
         **Interactive Requirements:**
         - Jupyter/IPython: Function automatically tries to enable `%matplotlib widget`
         - Standalone Python: Requires interactive backend (Qt5Agg, TkAgg, etc.)
-        - If interactivity doesn't work, manually run: `%matplotlib widget` (Jupyter) 
+        - If interactivity doesn't work, manually run: `%matplotlib widget` (Jupyter)
           or install ipympl: `pip install ipympl`
 
         Each mode panel now includes a publication-ready scale bar (auto-sized in nm)
@@ -1798,7 +1827,9 @@ class FMRModeAnalyzer:
 
         # Force reload data if requested
         if force:
-            log.info(f"Force reloading data for interactive spectrum (dataset: {self.dataset_name})")
+            log.info(
+                f"Force reloading data for interactive spectrum (dataset: {self.dataset_name})"
+            )
             self._load_data()
 
         peak_width_option = kwargs.pop("peak_width", None)
@@ -1819,9 +1850,12 @@ class FMRModeAnalyzer:
             else:
                 # Default filename with timestamp
                 from datetime import datetime
+
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 self._saveanim_path = f"mode_animation_{timestamp}.mp4"
-            log.info(f"Animation saving enabled. Press 's' to save to: {self._saveanim_path}")
+            log.info(
+                f"Animation saving enabled. Press 's' to save to: {self._saveanim_path}"
+            )
         else:
             self._saveanim_path = None
 
@@ -1837,19 +1871,34 @@ class FMRModeAnalyzer:
         # Use FFT spectrum for consistency with plot_spectrum
         spectrum_to_use = self.spectrum
         frequencies_to_use = self.frequencies
-        
+
         if use_fft_spectrum:
             try:
                 # Try to load spectrum from standard FFT analysis
-                fft_spectrum_path = f"fft/{self.dataset_name}_z{z_layer}_m{method}/spectrum"
-                fft_freqs_path = f"fft/{self.dataset_name}_z{z_layer}_m{method}/frequencies"
-                
-                if fft_spectrum_path in self.zarr_file and fft_freqs_path in self.zarr_file:
-                    spectrum_to_use = np.abs(np.array(self.zarr_file[fft_spectrum_path])) ** 2
-                    frequencies_to_use = np.array(self.zarr_file[fft_freqs_path]) / 1e9  # Convert to GHz
-                    log.info(f"Using FFT spectrum from {fft_spectrum_path} for consistency with plot_spectrum")
+                fft_spectrum_path = (
+                    f"fft/{self.dataset_name}_z{z_layer}_m{method}/spectrum"
+                )
+                fft_freqs_path = (
+                    f"fft/{self.dataset_name}_z{z_layer}_m{method}/frequencies"
+                )
+
+                if (
+                    fft_spectrum_path in self.zarr_file
+                    and fft_freqs_path in self.zarr_file
+                ):
+                    spectrum_to_use = (
+                        np.abs(np.array(self.zarr_file[fft_spectrum_path])) ** 2
+                    )
+                    frequencies_to_use = (
+                        np.array(self.zarr_file[fft_freqs_path]) / 1e9
+                    )  # Convert to GHz
+                    log.info(
+                        f"Using FFT spectrum from {fft_spectrum_path} for consistency with plot_spectrum"
+                    )
                 else:
-                    log.warning(f"FFT spectrum not found at {fft_spectrum_path}, using modes spectrum")
+                    log.warning(
+                        f"FFT spectrum not found at {fft_spectrum_path}, using modes spectrum"
+                    )
             except Exception as e:
                 log.warning(f"Failed to load FFT spectrum: {e}, using modes spectrum")
 
@@ -1913,21 +1962,22 @@ class FMRModeAnalyzer:
         # Automatically configure interactive backend for Jupyter
         try:
             import matplotlib
-            
+
             current_backend = matplotlib.get_backend()
-            
+
             # Check if we're in Jupyter/IPython environment
             try:
                 from IPython import get_ipython
+
                 ipython = get_ipython()
-                in_jupyter = ipython is not None and hasattr(ipython, 'kernel')
+                in_jupyter = ipython is not None and hasattr(ipython, "kernel")
             except ImportError:
                 in_jupyter = False
-            
+
             # Auto-configure interactive backend for Jupyter
             if in_jupyter:
                 if (
-                    "ipympl" not in current_backend.lower() 
+                    "ipympl" not in current_backend.lower()
                     and "widget" not in current_backend.lower()
                     and "nbagg" not in current_backend.lower()
                 ):
@@ -1935,16 +1985,18 @@ class FMRModeAnalyzer:
                         f"Current backend '{current_backend}' may not support full interactivity in Jupyter. "
                         "For best experience, run '%matplotlib widget' or install ipympl: pip install ipympl"
                     )
-                    
+
                     # Try to automatically switch to widget backend
                     try:
-                        ipython.run_line_magic('matplotlib', 'widget')
-                        log.info("Automatically switched to matplotlib widget backend for interactivity")
+                        ipython.run_line_magic("matplotlib", "widget")
+                        log.info(
+                            "Automatically switched to matplotlib widget backend for interactivity"
+                        )
                     except Exception as e:
                         log.debug(f"Could not auto-switch to widget backend: {e}")
                         # Try nbagg as fallback
                         try:
-                            ipython.run_line_magic('matplotlib', 'nbagg')  
+                            ipython.run_line_magic("matplotlib", "nbagg")
                             log.info("Switched to nbagg backend as fallback")
                         except Exception:
                             log.warning(
@@ -1955,7 +2007,7 @@ class FMRModeAnalyzer:
                     log.info(f"Using Jupyter-compatible backend: {current_backend}")
             else:
                 # Not in Jupyter - check for standalone interactive backends
-                interactive_backends = ['qt5agg', 'tkagg', 'gtk3agg', 'wxagg', 'macosx']
+                interactive_backends = ["qt5agg", "tkagg", "gtk3agg", "wxagg", "macosx"]
                 current_lower = current_backend.lower()
                 if current_lower not in interactive_backends:
                     log.info(
@@ -1964,7 +2016,7 @@ class FMRModeAnalyzer:
                     )
                 else:
                     log.info(f"Using interactive backend: {current_backend}")
-                    
+
         except Exception as e:
             log.warning(f"Could not configure interactive backend: {e}")
 
@@ -2029,7 +2081,9 @@ class FMRModeAnalyzer:
         ax_spectrum.grid(True, alpha=0.3)
 
         # Find and mark peaks using the same spectrum data
-        peaks = self.find_peaks(spectrum=spectrum_to_use, frequencies=frequencies_to_use)
+        peaks = self.find_peaks(
+            spectrum=spectrum_to_use, frequencies=frequencies_to_use
+        )
         for peak in peaks:
             if self.config.f_min <= peak.freq <= self.config.f_max:
                 y_val = spectrum_plot[np.argmin(np.abs(freqs_plot - peak.freq))]
@@ -2049,7 +2103,9 @@ class FMRModeAnalyzer:
             if width_info is None:
                 log.debug("FWHM annotation skipped: could not determine half-width")
             else:
-                scale_factor = width_info.peak_value if self.config.spectrum_normalize else 1.0
+                scale_factor = (
+                    width_info.peak_value if self.config.spectrum_normalize else 1.0
+                )
                 if scale_factor <= 0:
                     log.debug("FWHM annotation skipped: invalid scale factor")
                 else:
@@ -2095,7 +2151,8 @@ class FMRModeAnalyzer:
                         text = ax_spectrum.annotate(
                             f"{peak_width_label}: {format_width_value(width_info.width)}",
                             xy=(
-                                (width_info.left_frequency + width_info.right_frequency) / 2.0,
+                                (width_info.left_frequency + width_info.right_frequency)
+                                / 2.0,
                                 half_level_plot,
                             ),
                             xytext=(0, 10),
@@ -2116,7 +2173,9 @@ class FMRModeAnalyzer:
                         self._fwhm_artists.append(text)
                         self._last_fwhm = width_info
                     else:
-                        log.debug("FWHM annotation skipped: non-positive half level for log axis")
+                        log.debug(
+                            "FWHM annotation skipped: non-positive half level for log axis"
+                        )
 
         # Initial frequency line
         init_freq = peaks[0].freq if peaks else freqs_plot[len(freqs_plot) // 2]
@@ -2149,7 +2208,7 @@ class FMRModeAnalyzer:
                 self._current_frequency = selected_freq
                 self._update_mode_plots(components, z_layer)
                 self._interactive_fig.canvas.draw()
-            
+
             # Handle double-clicks on mode plots for animation
             elif event.dblclick and event.inaxes is not None:
                 # Find which mode axis was double-clicked
@@ -2157,7 +2216,9 @@ class FMRModeAnalyzer:
                     for col_idx, ax in enumerate(ax_row):
                         if event.inaxes == ax:
                             component = components[col_idx]
-                            self._toggle_mode_animation(ax, row_idx, col_idx, component, z_layer)
+                            self._toggle_mode_animation(
+                                ax, row_idx, col_idx, component, z_layer
+                            )
                             return
 
         # Store event connection for cleanup
@@ -2169,11 +2230,15 @@ class FMRModeAnalyzer:
         # Add keyboard handler for mode characterization
         def on_key_press(event):
             """Handle keyboard events for mode characterization"""
-            if event.key == 'c' and self._current_frequency is not None:
+            if event.key == "c" and self._current_frequency is not None:
                 try:
-                    log.info(f"Characterizing mode at {self._current_frequency:.3f} GHz...")
-                    characterization = self.characterize_mode(self._current_frequency, z_layer)
-                    
+                    log.info(
+                        f"Characterizing mode at {self._current_frequency:.3f} GHz..."
+                    )
+                    characterization = self.characterize_mode(
+                        self._current_frequency, z_layer
+                    )
+
                     # Display characterization results
                     char_info = (
                         f"Mode Classification at {self._current_frequency:.3f} GHz:\n"
@@ -2184,58 +2249,66 @@ class FMRModeAnalyzer:
                         f"• Confidence: {characterization.confidence:.2f}\n"
                         f"• Labels: {', '.join(characterization.labels)}"
                     )
-                    
-                    print("\n" + "="*60)
+
+                    print("\n" + "=" * 60)
                     print(char_info)
-                    print("="*60)
-                    
+                    print("=" * 60)
+
                     # Update figure title with classification
                     main_title = f"Interactive Mode Spectrum - {characterization.primary_class.upper()} mode"
                     if characterization.m_index is not None:
                         main_title += f" (m={characterization.m_index})"
                     if characterization.rotation_sense:
                         main_title += f" [{characterization.rotation_sense}]"
-                    
-                    self._interactive_fig.suptitle(main_title, fontsize=12, fontweight='bold')
+
+                    self._interactive_fig.suptitle(
+                        main_title, fontsize=12, fontweight="bold"
+                    )
                     self._interactive_fig.canvas.draw()
-                    
-                    log.info(f"Mode classified as: {characterization.primary_class} (confidence: {characterization.confidence:.2f})")
-                    
+
+                    log.info(
+                        f"Mode classified as: {characterization.primary_class} (confidence: {characterization.confidence:.2f})"
+                    )
+
                 except Exception as e:
                     log.error(f"Failed to characterize mode: {e}")
                     print(f"Error characterizing mode: {e}")
-                    
-            elif event.key == 's' and self._saveanim_enabled:
+
+            elif event.key == "s" and self._saveanim_enabled:
                 # Save animation of current animated modes
                 try:
                     if not self._mode_animations:
-                        print("❌ No active animations to save! Double-click mode plots first.")
+                        print(
+                            "❌ No active animations to save! Double-click mode plots first."
+                        )
                         return
-                        
+
                     log.info(f"Saving animation to: {self._saveanim_path}")
-                    print(f"💾 Saving animation with {len(self._mode_animations)} animated modes...")
-                    
+                    print(
+                        f"💾 Saving animation with {len(self._mode_animations)} animated modes..."
+                    )
+
                     self._save_animated_view(self._saveanim_path, z_layer)
                     print(f"✅ Animation saved to: {self._saveanim_path}")
-                    
+
                 except Exception as e:
                     log.error(f"Failed to save animation: {e}")
                     print(f"❌ Error saving animation: {e}")
-            
-            elif event.key == 'h':
+
+            elif event.key == "h":
                 # Show help
                 help_controls = [
                     "• Click spectrum: Select frequency",
-                    "• Right-click spectrum: Snap to nearest peak", 
+                    "• Right-click spectrum: Snap to nearest peak",
                     "• Double-click mode: Toggle animation",
-                    "• 'c' key: Characterize current mode"
+                    "• 'c' key: Characterize current mode",
                 ]
-                
+
                 if self._saveanim_enabled:
                     help_controls.append("• 's' key: Save animated view")
-                    
+
                 help_controls.append("• 'h' key: Show this help")
-                
+
                 help_text = f"""
 Interactive Spectrum Controls:
 ============================
@@ -2252,35 +2325,37 @@ Interactive Spectrum Controls:
         # Add cleanup method to figure
         def cleanup():
             # Stop all running animations first
-            if hasattr(self, '_mode_animations') and self._mode_animations:
-                log.debug(f"Stopping {len(self._mode_animations)} running animations...")
+            if hasattr(self, "_mode_animations") and self._mode_animations:
+                log.debug(
+                    f"Stopping {len(self._mode_animations)} running animations..."
+                )
                 for animation in self._mode_animations.values():
                     try:
                         animation.event_source.stop()
                     except AttributeError:
                         pass  # Animation might not have been started yet
                 self._mode_animations.clear()
-                if hasattr(self, '_animated_axes'):
+                if hasattr(self, "_animated_axes"):
                     self._animated_axes.clear()
-            
+
             # Disconnect event handlers
             if hasattr(self, "_click_connection") and self._click_connection:
                 self._interactive_fig.canvas.mpl_disconnect(self._click_connection)
                 self._click_connection = None
                 log.debug("Click handler disconnected")
-                
+
             if hasattr(self, "_key_connection") and self._key_connection:
                 self._interactive_fig.canvas.mpl_disconnect(self._key_connection)
                 self._key_connection = None
                 log.debug("Keyboard handler disconnected")
-                
+
             log.debug("Interactive plot event handlers cleaned up")
 
         # Store cleanup function for later use
         self._interactive_fig._mmpp_cleanup = cleanup
 
         plt.tight_layout()
-        
+
         # Auto-animate all mode plots if requested
         if auto_animate:
             log.info("Auto-animating all mode plots...")
@@ -2288,26 +2363,32 @@ Interactive Spectrum Controls:
             if self.config.show_magnitude:
                 vis_types.append("magnitude")
             if self.config.show_phase:
-                vis_types.append("phase") 
+                vis_types.append("phase")
             if self.config.show_combined:
                 vis_types.append("combined")
-                
+
             for row_idx in range(len(vis_types)):
                 for col_idx in range(len(components)):
                     try:
                         ax = self._mode_axes[row_idx][col_idx]
                         component = components[col_idx]
-                        self._toggle_mode_animation(ax, row_idx, col_idx, component, z_layer)
+                        self._toggle_mode_animation(
+                            ax, row_idx, col_idx, component, z_layer
+                        )
                     except Exception as e:
-                        log.warning(f"Failed to auto-animate mode plot at ({row_idx}, {col_idx}): {e}")
-                        
+                        log.warning(
+                            f"Failed to auto-animate mode plot at ({row_idx}, {col_idx}): {e}"
+                        )
+
             # Auto-save animation if requested
             if auto_save and self._saveanim_enabled:
                 try:
                     if self._mode_animations:
                         log.info(f"Auto-saving animation to: {self._saveanim_path}")
-                        print(f"🎬 Auto-saving animation with {len(self._mode_animations)} animated modes...")
-                        
+                        print(
+                            f"🎬 Auto-saving animation with {len(self._mode_animations)} animated modes..."
+                        )
+
                         self._save_animated_view(self._saveanim_path, z_layer)
                         log.info("✅ Animation auto-saved successfully!")
                         print(f"✅ Animation auto-saved to: {self._saveanim_path}")
@@ -2319,8 +2400,10 @@ Interactive Spectrum Controls:
                     print(f"❌ Auto-save failed: {e}")
             elif auto_save and not self._saveanim_enabled:
                 log.warning("auto_save=True requires saveanim to be enabled")
-                print("⚠️ auto_save=True requires saveanim parameter (True or custom path)")
-        
+                print(
+                    "⚠️ auto_save=True requires saveanim parameter (True or custom path)"
+                )
+
         # Update log message based on animation saving capability
         log_message = (
             "Interactive spectrum plot created. Click to select frequency, right-click to snap to peaks. "
@@ -2334,7 +2417,7 @@ Interactive Spectrum Controls:
         if auto_save:
             log_message += " (animation auto-saved)"
         log_message += ", 'h' for help."
-        
+
         log.info(log_message)
 
         # Control figure display to avoid double showing
@@ -2354,7 +2437,7 @@ Interactive Spectrum Controls:
         # Clear previous shared colorbars
         for cbar in getattr(self, "_row_colorbars", []):
             try:
-                if cbar is not None and hasattr(cbar, 'ax') and cbar.ax is not None:
+                if cbar is not None and hasattr(cbar, "ax") and cbar.ax is not None:
                     cbar.remove()
             except (ValueError, AttributeError):
                 pass
@@ -2423,7 +2506,9 @@ Interactive Spectrum Controls:
                     if images_for_colorbar[row_idx] is None:
                         images_for_colorbar[row_idx] = img
                     if i == 0:
-                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
+                        self._add_scale_bar(
+                            self._mode_axes[row_idx, i], mode_data.extent
+                        )
                     row_idx += 1
 
                 # Phase plot (if enabled)
@@ -2442,7 +2527,9 @@ Interactive Spectrum Controls:
                     if images_for_colorbar[row_idx] is None:
                         images_for_colorbar[row_idx] = img
                     if i == 0:
-                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
+                        self._add_scale_bar(
+                            self._mode_axes[row_idx, i], mode_data.extent
+                        )
                     row_idx += 1
 
                 # Combined plot (if enabled)
@@ -2461,13 +2548,13 @@ Interactive Spectrum Controls:
                         interpolation=self.config.interpolation,
                         origin="lower",
                     )
-                    self._mode_axes[row_idx, i].set_title(
-                        f"m_{comp} (mag×cos(φ))"
-                    )
+                    self._mode_axes[row_idx, i].set_title(f"m_{comp} (mag×cos(φ))")
                     if images_for_colorbar[row_idx] is None:
                         images_for_colorbar[row_idx] = img
                     if i == 0:
-                        self._add_scale_bar(self._mode_axes[row_idx, i], mode_data.extent)
+                        self._add_scale_bar(
+                            self._mode_axes[row_idx, i], mode_data.extent
+                        )
 
             except Exception as e:
                 log.error(f"Failed to plot component {comp}: {e}")
@@ -2487,14 +2574,17 @@ Interactive Spectrum Controls:
             try:
                 # Get the rightmost axis in this row for colorbar placement
                 rightmost_ax = self._mode_axes[row_idx, -1]
-                
+
                 if AXES_GRID_AVAILABLE:
                     from mpl_toolkits.axes_grid1 import make_axes_locatable
+
                     # Use make_axes_locatable for proper positioning
                     divider = make_axes_locatable(rightmost_ax)
-                    cax = divider.append_axes("right", 
-                                             size=f"{self.config.colorbar_fraction*100}%",
-                                             pad=self.config.colorbar_pad)
+                    cax = divider.append_axes(
+                        "right",
+                        size=f"{self.config.colorbar_fraction*100}%",
+                        pad=self.config.colorbar_pad,
+                    )
                     cbar = self._interactive_fig.colorbar(img, cax=cax)
                 else:
                     # Fallback to basic colorbar positioned at rightmost axis
@@ -2514,20 +2604,25 @@ Interactive Spectrum Controls:
             self._row_colorbars.append(cbar)
 
     def _toggle_mode_animation(
-        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+        self,
+        ax: Any,
+        row_idx: int,
+        col_idx: int,
+        component: Union[str, int],
+        z_layer: int,
     ) -> None:
         """Toggle between static mode plot and in-place animation."""
         if not ANIMATION_AVAILABLE:
             log.warning("Animation not available - matplotlib.animation required")
             return
-            
+
         # Initialize animation tracking if needed
-        if not hasattr(self, '_mode_animations'):
+        if not hasattr(self, "_mode_animations"):
             self._mode_animations: dict[tuple[int, int], Any] = {}
             self._animated_axes: set[tuple[int, int]] = set()
-        
+
         axis_key = (row_idx, col_idx)
-        
+
         # Check if this axis is currently animated
         if axis_key in self._animated_axes:
             # Stop animation and revert to static
@@ -2535,11 +2630,15 @@ Interactive Spectrum Controls:
             # Redraw static mode
             self._update_single_mode_plot(ax, row_idx, col_idx, component, z_layer)
             self._interactive_fig.canvas.draw()
-            log.info(f"Stopped animation for m_{component} (row {row_idx}, col {col_idx})")
+            log.info(
+                f"Stopped animation for m_{component} (row {row_idx}, col {col_idx})"
+            )
         else:
             # Start animation
             self._start_mode_animation(ax, row_idx, col_idx, component, z_layer)
-            log.info(f"Started animation for m_{component} (row {row_idx}, col {col_idx})")
+            log.info(
+                f"Started animation for m_{component} (row {row_idx}, col {col_idx})"
+            )
 
     def _stop_mode_animation(self, axis_key: tuple[int, int]) -> None:
         """Stop animation for specific axis."""
@@ -2550,112 +2649,122 @@ Interactive Spectrum Controls:
                 del self._mode_animations[axis_key]
             except Exception as e:
                 log.debug(f"Error stopping animation: {e}")
-        
+
         self._animated_axes.discard(axis_key)
 
     def _save_animated_view(self, save_path: str, z_layer: int = 0) -> None:
         """Save current animated view to video file."""
         if not self._mode_animations:
             raise ValueError("No active animations to save")
-            
+
         # Import required modules
         try:
             from matplotlib.animation import FuncAnimation, PillowWriter
         except ImportError:
             raise ImportError("Animation saving requires matplotlib.animation")
-            
+
         log.info(f"Creating animation with {len(self._mode_animations)} animated modes")
-        
+
         # Determine writer based on file extension
-        file_ext = save_path.lower().split('.')[-1]
-        
-        if file_ext == 'mp4':
+        file_ext = save_path.lower().split(".")[-1]
+
+        if file_ext == "mp4":
             # Ensure FFmpeg is available
             ffmpeg_path = _ensure_ffmpeg_available()
             if ffmpeg_path:
                 try:
                     writer = _create_ffmpeg_writer(ffmpeg_path, fps=20, bitrate=1800)
-                    writer_name = 'ffmpeg'
+                    writer_name = "ffmpeg"
                 except Exception as e:
-                    log.warning(f"FFMpeg initialization failed: {e}, falling back to Pillow")
+                    log.warning(
+                        f"FFMpeg initialization failed: {e}, falling back to Pillow"
+                    )
                     writer = PillowWriter(fps=10)
-                    writer_name = 'pillow'
+                    writer_name = "pillow"
                     # Change extension to gif for Pillow
-                    save_path = save_path.replace('.mp4', '.gif')
+                    save_path = save_path.replace(".mp4", ".gif")
             else:
                 log.warning("FFMpeg not available, falling back to Pillow")
                 writer = PillowWriter(fps=10)
-                writer_name = 'pillow'
+                writer_name = "pillow"
                 # Change extension to gif for Pillow
-                save_path = save_path.replace('.mp4', '.gif')
-                
-        elif file_ext == 'gif':
+                save_path = save_path.replace(".mp4", ".gif")
+
+        elif file_ext == "gif":
             writer = PillowWriter(fps=10)
-            writer_name = 'pillow'
-        elif file_ext == 'avi':
+            writer_name = "pillow"
+        elif file_ext == "avi":
             # Ensure FFmpeg is available
             ffmpeg_path = _ensure_ffmpeg_available()
             if ffmpeg_path:
                 try:
                     writer = _create_ffmpeg_writer(ffmpeg_path, fps=20, bitrate=1800)
-                    writer_name = 'ffmpeg'
+                    writer_name = "ffmpeg"
                 except Exception as e:
-                    log.warning(f"FFMpeg initialization failed: {e}, falling back to GIF")
+                    log.warning(
+                        f"FFMpeg initialization failed: {e}, falling back to GIF"
+                    )
                     writer = PillowWriter(fps=10)
-                    writer_name = 'pillow'
-                    save_path = save_path.replace('.avi', '.gif')
+                    writer_name = "pillow"
+                    save_path = save_path.replace(".avi", ".gif")
             else:
                 log.warning("FFMpeg not available, falling back to GIF")
                 writer = PillowWriter(fps=10)
-                writer_name = 'pillow'
-                save_path = save_path.replace('.avi', '.gif')
+                writer_name = "pillow"
+                save_path = save_path.replace(".avi", ".gif")
         else:
             # Default to gif with Pillow
             writer = PillowWriter(fps=10)
-            writer_name = 'pillow'
-            save_path = save_path.replace(f'.{file_ext}', '.gif')
-            
+            writer_name = "pillow"
+            save_path = save_path.replace(f".{file_ext}", ".gif")
+
         # Create master animation that coordinates all mode animations
         # Store the current z_layer and components for animation context
         current_z_layer = z_layer
-        
+
         # Get components from the interactive plot setup
         components_list = ["x", "y", "z"]  # Default components
-        
+
         def animate_all_modes(frame):
             """Update all animated mode plots simultaneously"""
             try:
                 # Get frame index (cycle through 30 frames)
                 time_step = (frame % 30) / 30.0 * 2 * np.pi
-                
+
                 # Update each animated axis
-                for (row_idx, col_idx) in self._animated_axes:
+                for row_idx, col_idx in self._animated_axes:
                     try:
                         ax = self._mode_axes[row_idx][col_idx]
-                        
+
                         # Get mode data
-                        mode_data = self.get_mode(self._current_frequency, current_z_layer)
-                        
+                        mode_data = self.get_mode(
+                            self._current_frequency, current_z_layer
+                        )
+
                         # Determine component and visualization type
                         component = components_list[col_idx]
                         comp_data = mode_data.get_component(component)
-                        
+
                         # Determine visualization type
                         vis_types = []
                         if self.config.show_magnitude:
                             vis_types.append("magnitude")
                         if self.config.show_phase:
-                            vis_types.append("phase") 
+                            vis_types.append("phase")
                         if self.config.show_combined:
                             vis_types.append("combined")
-                        
+
                         vis_type = vis_types[row_idx]
-                        
+
                         # Find the image object in the axis and update it
-                        images = [child for child in ax.get_children() if hasattr(child, 'set_array')]
+                        images = [
+                            child
+                            for child in ax.get_children()
+                            if hasattr(child, "set_array")
+                        ]
                         if images:
                             im = images[0]  # Get the first image object
-                            
+
                             if vis_type == "magnitude":
                                 # Pulsing magnitude
                                 amplitude = np.abs(comp_data)
@@ -2665,7 +2774,11 @@ Interactive Spectrum Controls:
                                 # Rotating phase
                                 phase = np.angle(comp_data)
                                 current_phase = (phase + time_step) % (2 * np.pi)
-                                current_phase = np.where(current_phase > np.pi, current_phase - 2*np.pi, current_phase)
+                                current_phase = np.where(
+                                    current_phase > np.pi,
+                                    current_phase - 2 * np.pi,
+                                    current_phase,
+                                )
                                 im.set_array(current_phase)
                             elif vis_type == "combined":
                                 # Temporal oscillation
@@ -2673,84 +2786,95 @@ Interactive Spectrum Controls:
                                 phase = np.angle(comp_data)
                                 real_part = amplitude * np.cos(phase + time_step)
                                 im.set_array(real_part)
-                                
+
                     except Exception as e:
-                        log.debug(f"Error updating animation for ({row_idx}, {col_idx}): {e}")
-                
+                        log.debug(
+                            f"Error updating animation for ({row_idx}, {col_idx}): {e}"
+                        )
+
                 return []
-                
+
             except Exception as e:
                 log.debug(f"Error in animate_all_modes: {e}")
                 return []
-            
+
         # Use fixed frame count for export (30 frames = 1.5 seconds at 20fps)
         total_frames = 30
-        
+
         # Create animation object
         anim = FuncAnimation(
-            self._interactive_fig, 
-            animate_all_modes, 
+            self._interactive_fig,
+            animate_all_modes,
             frames=total_frames,
             interval=50,  # 50ms between frames
-            blit=False,   # Disable blitting for complex plots
-            repeat=True
+            blit=False,  # Disable blitting for complex plots
+            repeat=True,
         )
-        
+
         log.info(f"Saving {total_frames} frames using {writer_name} writer...")
-        
+
         try:
             anim.save(save_path, writer=writer, dpi=150)
             log.info("✅ Animation saved successfully!")
         except Exception as e:
             log.error(f"Failed to save animation: {e}")
             # Try to save as static frames as fallback
-            base_name = save_path.rsplit('.', 1)[0]
+            base_name = save_path.rsplit(".", 1)[0]
             for i in range(min(100, total_frames)):  # Limit to 100 frames
                 animate_all_modes(i)
                 self._interactive_fig.canvas.draw()
                 static_path = f"{base_name}_frame_{i:03d}.png"
-                self._interactive_fig.savefig(static_path, dpi=150, bbox_inches='tight')
-                
+                self._interactive_fig.savefig(static_path, dpi=150, bbox_inches="tight")
+
             log.info(f"Saved static frames to {base_name}_frame_*.png")
-            raise RuntimeError(f"Could not save as {file_ext}, saved static frames instead")
+            raise RuntimeError(
+                f"Could not save as {file_ext}, saved static frames instead"
+            )
 
     def _start_mode_animation(
-        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+        self,
+        ax: Any,
+        row_idx: int,
+        col_idx: int,
+        component: Union[str, int],
+        z_layer: int,
     ) -> None:
         """Start in-place animation for specific mode axis."""
         from matplotlib.animation import FuncAnimation
-        
+
         try:
             # Get mode data
             mode_data = self.get_mode(self._current_frequency, z_layer)
             comp_data = mode_data.get_component(component)
-            
+
             # Determine visualization type based on row
             vis_types = []
             if self.config.show_magnitude:
                 vis_types.append("magnitude")
             if self.config.show_phase:
-                vis_types.append("phase") 
+                vis_types.append("phase")
             if self.config.show_combined:
                 vis_types.append("combined")
-            
+
             if row_idx >= len(vis_types):
                 log.error(f"Invalid row index {row_idx} for visualization types")
                 return
-                
+
             vis_type = vis_types[row_idx]
-            
+
             # Clear the axis
             ax.clear()
             ax.set_xticks([])
             ax.set_yticks([])
-            
+
             # Setup animation data based on visualization type
             if vis_type == "magnitude":
                 # Animate magnitude (static - just pulsing intensity)
                 amplitude = np.abs(comp_data)
-                time_steps = np.linspace(0, 2*np.pi, 30)  # 30 frames for smooth animation
-                
+                time_steps = np.linspace(
+                    0, 2 * np.pi, 30
+                )  # 30 frames for smooth animation
+
                 # Create initial plot
                 im = ax.imshow(
                     amplitude,
@@ -2761,13 +2885,13 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"|m_{component}| (animated)")
-                
+
                 def animate_magnitude(frame):
                     # Gentle pulsing effect for magnitude
                     pulse = 0.8 + 0.2 * np.sin(time_steps[frame])
                     im.set_array(amplitude * pulse)
                     return [im]
-                    
+
                 # Create animation
                 anim = FuncAnimation(
                     self._interactive_fig,
@@ -2775,15 +2899,15 @@ Interactive Spectrum Controls:
                     frames=len(time_steps),
                     interval=100,  # 10 FPS
                     blit=True,
-                    repeat=True
+                    repeat=True,
                 )
-                
+
             elif vis_type == "phase":
                 # Animate phase rotation
                 amplitude = np.abs(comp_data)
                 phase = np.angle(comp_data)
-                time_steps = np.linspace(0, 2*np.pi, 30)
-                
+                time_steps = np.linspace(0, 2 * np.pi, 30)
+
                 # Create initial plot
                 current_phase = (phase + time_steps[0]) % (2 * np.pi)
                 im = ax.imshow(
@@ -2797,15 +2921,17 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"arg(m_{component}) (animated)")
-                
+
                 def animate_phase(frame):
                     # Rotating phase
                     current_phase = (phase + time_steps[frame]) % (2 * np.pi)
                     # Convert to -π to π range for better visualization
-                    current_phase = np.where(current_phase > np.pi, current_phase - 2*np.pi, current_phase)
+                    current_phase = np.where(
+                        current_phase > np.pi, current_phase - 2 * np.pi, current_phase
+                    )
                     im.set_array(current_phase)
                     return [im]
-                    
+
                 # Create animation
                 anim = FuncAnimation(
                     self._interactive_fig,
@@ -2813,39 +2939,39 @@ Interactive Spectrum Controls:
                     frames=len(time_steps),
                     interval=100,  # 10 FPS
                     blit=True,
-                    repeat=True
+                    repeat=True,
                 )
-                
+
             elif vis_type == "combined":
                 # Animate real part oscillation (true temporal dynamics)
                 amplitude = np.abs(comp_data)
                 phase = np.angle(comp_data)
-                time_steps = np.linspace(0, 2*np.pi, 30)
-                
+                time_steps = np.linspace(0, 2 * np.pi, 30)
+
                 # Setup symmetric normalization for oscillating data
                 vmax = np.max(amplitude)
-                
+
                 # Create initial plot
                 real_part = amplitude * np.cos(phase + time_steps[0])
                 im = ax.imshow(
                     real_part,
                     cmap=self.config._resolve_colormap(self.config.colormap_phase),
                     extent=mode_data.extent,
-                    aspect="equal", 
+                    aspect="equal",
                     interpolation=self.config.interpolation,
                     vmin=-vmax,
                     vmax=vmax,
                     origin="lower",
                 )
                 ax.set_title(f"Re[m_{component}] (temporal)")
-                
+
                 def animate_combined(frame):
                     # True temporal oscillation: Re[A * e^(i*φ) * e^(i*ω*t)]
                     t = time_steps[frame]
                     real_part = amplitude * np.cos(phase + t)
                     im.set_array(real_part)
                     return [im]
-                    
+
                 # Create animation
                 anim = FuncAnimation(
                     self._interactive_fig,
@@ -2853,26 +2979,31 @@ Interactive Spectrum Controls:
                     frames=len(time_steps),
                     interval=100,  # 10 FPS
                     blit=True,
-                    repeat=True
+                    repeat=True,
                 )
-            
+
             # Store animation and mark axis as animated
             axis_key = (row_idx, col_idx)
             self._mode_animations[axis_key] = anim
             self._animated_axes.add(axis_key)
-            
+
         except Exception as e:
             log.error(f"Failed to start mode animation: {e}")
 
     def _update_single_mode_plot(
-        self, ax: Any, row_idx: int, col_idx: int, component: Union[str, int], z_layer: int
+        self,
+        ax: Any,
+        row_idx: int,
+        col_idx: int,
+        component: Union[str, int],
+        z_layer: int,
     ) -> None:
         """Update single mode plot (used when stopping animation)."""
         try:
             # Get mode data
             mode_data = self.get_mode(self._current_frequency, z_layer)
             comp_data = mode_data.get_component(component)
-            
+
             # Determine visualization type
             vis_types = []
             if self.config.show_magnitude:
@@ -2881,14 +3012,14 @@ Interactive Spectrum Controls:
                 vis_types.append("phase")
             if self.config.show_combined:
                 vis_types.append("combined")
-                
+
             vis_type = vis_types[row_idx]
-            
+
             # Clear and redraw
             ax.clear()
             ax.set_xticks([])
             ax.set_yticks([])
-            
+
             if vis_type == "magnitude":
                 magnitude = np.abs(comp_data)
                 ax.imshow(
@@ -2900,7 +3031,7 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"|m_{component}|")
-                
+
             elif vis_type == "phase":
                 phase = np.angle(comp_data)
                 ax.imshow(
@@ -2914,7 +3045,7 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"arg(m_{component})")
-                
+
             elif vis_type == "combined":
                 magnitude = np.abs(comp_data)
                 phase = np.angle(comp_data)
@@ -2928,7 +3059,7 @@ Interactive Spectrum Controls:
                     origin="lower",
                 )
                 ax.set_title(f"m_{component} (mag×cos(φ))")
-                
+
         except Exception as e:
             log.error(f"Failed to update single mode plot: {e}")
 
@@ -3053,9 +3184,7 @@ Interactive Spectrum Controls:
         if self.dataset_name not in self.zarr_file:
             available = self._list_available_datasets()
             suggestion = (
-                f" Available datasets: {', '.join(available)}"
-                if available
-                else ""
+                f" Available datasets: {', '.join(available)}" if available else ""
             )
             raise ValueError(
                 f"Dataset '{self.dataset_name}' not found in zarr file '{self.zarr_path}'.{suggestion}"
@@ -3101,7 +3230,10 @@ Interactive Spectrum Controls:
             return None
 
         if dt is None:
-            for attrs in (getattr(dset, "attrs", {}), getattr(self.zarr_file, "attrs", {})):
+            for attrs in (
+                getattr(dset, "attrs", {}),
+                getattr(self.zarr_file, "attrs", {}),
+            ):
                 for key in ("t_sampl", "dt"):
                     dt_candidate = _extract_dt(attrs.get(key))
                     if dt_candidate is not None:
@@ -3200,9 +3332,11 @@ Interactive Spectrum Controls:
                 overwrite=True,
             )
 
-            # Save power spectrum summary in modes group 
+            # Save power spectrum summary in modes group
             power_spec = np.abs(fft_result)
-            reduction_axes = tuple(range(1, power_spec.ndim)) if power_spec.ndim > 1 else None
+            reduction_axes = (
+                tuple(range(1, power_spec.ndim)) if power_spec.ndim > 1 else None
+            )
             power_max = (
                 np.max(power_spec, axis=reduction_axes)
                 if reduction_axes
@@ -3603,7 +3737,9 @@ Interactive Spectrum Controls:
                         )
                     except Exception as ffmpeg_error:
                         # If FFmpeg fails, try with a more basic writer configuration
-                        log.warning(f"FFmpeg save with advanced options failed: {ffmpeg_error}")
+                        log.warning(
+                            f"FFmpeg save with advanced options failed: {ffmpeg_error}"
+                        )
                         log.info("Trying basic FFmpeg configuration...")
                         anim.save(
                             save_path,
@@ -3651,16 +3787,16 @@ Interactive Spectrum Controls:
     def install_ffmpeg(self) -> Optional[str]:
         """
         Install FFmpeg for MP4 animation support.
-        
+
         This method ensures FFmpeg is available for high-quality video
         animation export. If FFmpeg is not found on the system, it will
         be automatically downloaded and installed.
-        
+
         Returns:
         --------
         str or None
             Path to ffmpeg executable if successful, None if failed
-            
+
         Examples:
         ---------
         >>> analyzer = FMRModeAnalyzer(zarr_file, dataset_name)
@@ -3759,7 +3895,10 @@ class FFTModeInterface:
                 ("install_ffmpeg()", "Install FFmpeg for MP4 animations"),
                 ("compute_modes(dset=None, **kwargs)", "Compute/recompute modes"),
                 ("[freq_index].plot_modes(**kwargs)", "Plot modes at frequency index"),
-                ("[freq_index].characterize(**kwargs)", "Get mode labels at frequency index"),
+                (
+                    "[freq_index].characterize(**kwargs)",
+                    "Get mode labels at frequency index",
+                ),
             ]
 
             for method, description in methods:
@@ -3770,8 +3909,8 @@ class FFTModeInterface:
             examples_text = Text()
             examples_text.append("💡 Usage examples:\n", style="bold green")
             examples = [
-                "modes.interactive_spectrum(dset='m_z11')",
-                "modes.plot_modes(frequency=1.5, dset='m_z11')",
+                "modes.interactive_spectrum(dset='m')",
+                "modes.plot_modes(frequency=1.5, dset='m')",
                 "modes.save_modes_animation(frequency=1.5, animation_type='temporal')",
                 "modes[0][150].plot_modes()  # freq index 0, freq point 150",
                 "modes.compute_modes(dset='m_z5-8')",
@@ -3859,7 +3998,9 @@ MMPP FFT Mode Analyzer:
 
         return self._mode_analyzer
 
-    def interactive_spectrum(self, dset: str = None, force: bool = False, **kwargs) -> Figure:
+    def interactive_spectrum(
+        self, dset: str = None, force: bool = False, **kwargs
+    ) -> Figure:
         """Create interactive spectrum plot."""
         # If dset is specified, create a new analyzer for that dataset
         if dset is not None and dset != self.mode_analyzer.dataset_name:
@@ -4022,19 +4163,19 @@ MMPP FFT Mode Analyzer:
     def install_ffmpeg(self) -> str:
         """
         Install FFmpeg for MP4 animation support.
-        
+
         This method ensures FFmpeg is available for high-quality video
         animation export. If FFmpeg is not found on the system, it will
         be automatically downloaded and installed.
-        
+
         Returns:
         --------
         str or None
             Path to ffmpeg executable if successful, None if failed
-            
+
         Example:
         --------
-        >>> job = load_zarr("data.zarr")  
+        >>> job = load_zarr("data.zarr")
         >>> ffmpeg_path = job[0].fft.modes.install_ffmpeg()
         >>> if ffmpeg_path:
         ...     job[0].fft.modes.save_modes_animation("animation.mp4")

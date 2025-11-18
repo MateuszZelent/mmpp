@@ -166,7 +166,7 @@ class FFTAnalyzer:
         job : Pyzfn
             Pyzfn job instance
         dataset_name : str
-            Dataset name (e.g., 'm_z11')
+            Dataset name (e.g., 'm')
         comp : Union[str, int], optional
             Component to extract (x/0, y/1, z/2)
         average : tuple, optional
@@ -529,8 +529,8 @@ class FFTAnalyzer:
             examples_text = Text()
             examples_text.append("💡 Usage examples:\n", style="bold green")
             examples = [
-                "fft.compute_fft('m_z11', method=1)",
-                "fft.plot_spectrum('m_z11', log_scale=True)",
+                "fft.compute_fft('m', method=1)",
+                "fft.plot_spectrum('m', log_scale=True)",
                 "fft.find_resonant_frequencies(threshold=0.1)",
                 "fft.configure(window='hann', zero_padding_factor=4)",
             ]
@@ -593,7 +593,7 @@ MMPP FFT Analyzer:
   • compare_spectra(datasets, **kwargs) - Compare multiple spectra
   • configure(**kwargs) - Update FFT configuration
 
-💡 Example: fft.plot_spectrum('m_z11', log_scale=True, z_layer=0)
+💡 Example: fft.plot_spectrum('m', log_scale=True, z_layer=0)
 
 🎯 Mode analysis: Use .modes property for advanced mode visualization
 """

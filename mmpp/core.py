@@ -137,9 +137,13 @@ class ZarrJobResult:
         try:
             return self._z[key]
         except KeyError as exc:
-            raise NameError(f"{self.path}: The dataset `{key}` does not exist.") from exc
+            raise NameError(
+                f"{self.path}: The dataset `{key}` does not exist."
+            ) from exc
         except json.JSONDecodeError as exc:  # type: ignore[attr-defined]
-            log.error("Failed to decode metadata for '%s' in '%s': %s", key, self.path, exc)
+            log.error(
+                "Failed to decode metadata for '%s' in '%s': %s", key, self.path, exc
+            )
             raise ValueError(
                 f"{self.path}: Failed to decode zarr metadata for `{key}`. "
                 "The store may contain corrupted or non-Zarr objects."
@@ -234,7 +238,9 @@ class ZarrJobResult:
         self._ensure_zarr_loaded()
         self._z[key] = value
 
-    def __getattr__(self, name: str) -> Union[zarr.Array, zarr.Group, int, float, str, "DatasetAwareWrapper"]:
+    def __getattr__(
+        self, name: str
+    ) -> Union[zarr.Array, zarr.Group, int, float, str, "DatasetAwareWrapper"]:
         """Get zarr attribute or dataset by name."""
         if name.startswith("_") or name in ["path", "attributes"]:
             raise AttributeError(
@@ -566,7 +572,7 @@ class ZarrJobResult:
         Returns:
         --------
         str
-            Name of the largest m dataset (e.g., "m_z5-8", "m_z11-12", or fallback "m")
+            Name of the largest m dataset (e.g., "m_z5-8", "m-12", or fallback "m")
         """
         # Import here to avoid circular import
         from .plotting import _find_largest_m_dataset
@@ -587,30 +593,31 @@ def find_largest_m_dataset(zarr_path: str) -> str:
     Returns:
     --------
     str
-        Name of the largest m dataset (e.g., "m_z5-8", "m_z11-12", or fallback "m")
+        Name of the largest m dataset (e.g., "m_z5-8", "m-12", or fallback "m")
     """
     try:
         job = Pyzfn(zarr_path)
 
         # Get all available datasets that start with "m"
         m_datasets = []
-        
+
         # Access zarr file directly to get dataset keys
         import zarr
+
         try:
-            zarr_file = zarr.open(zarr_path, mode='r')
+            zarr_file = zarr.open(zarr_path, mode="r")
             available_keys = list(zarr_file.keys())
             log.debug(f"Available keys in zarr file: {available_keys}")
         except Exception as e:
             log.debug(f"Could not access zarr file directly: {e}")
             available_keys = []
-        
+
         for key in available_keys:
             if key.startswith("m") and not key.startswith("m_"):
                 # Include base "m" dataset
                 m_datasets.append(key)
             elif key.startswith("m_"):
-                # Include cropped datasets like "m_z5-8", "m_z11-12"
+                # Include cropped datasets like "m_z5-8", "m-12"
                 m_datasets.append(key)
 
         if not m_datasets:
@@ -660,6 +667,7 @@ def find_largest_m_dataset(zarr_path: str) -> str:
 # FFT availability check - moved here for DatasetSpecificFFT
 try:
     from mmpp.fft.core import FFT
+
     FFT_AVAILABLE = True
 except ImportError:
     FFT_AVAILABLE = False
@@ -667,17 +675,17 @@ except ImportError:
 
 class DatasetSpecificTransmissionInterface:
     """Wrapper for transmission interface that injects dataset_name."""
-    
+
     def __init__(self, transmission_interface, dataset_name):
         self._transmission = transmission_interface
         self._dataset_name = dataset_name
-    
+
     def __call__(self, config=None, /, **kwargs):
         """Inject dataset_name into config if not provided."""
         if config is None:
             # Add dataset_name to kwargs if not already present
-            if 'dataset_name' not in kwargs:
-                kwargs['dataset_name'] = self._dataset_name
+            if "dataset_name" not in kwargs:
+                kwargs["dataset_name"] = self._dataset_name
             return self._transmission(config, **kwargs)
         else:
             # Config object provided - check if dataset_name needs to be set
@@ -685,23 +693,24 @@ class DatasetSpecificTransmissionInterface:
                 # Create a new config with dataset_name set
                 from mmpp.fft.transmission import TransmissionConfig
                 from dataclasses import asdict, replace
+
                 config = replace(config, dataset_name=self._dataset_name)
             return self._transmission(config, **kwargs)
-    
+
     def compute(self, config=None, /, **kwargs):
         """Alias for __call__."""
         return self.__call__(config, **kwargs)
-    
+
     def plot_transmission(self, config=None, plot_config=None, **kwargs):
         """Inject dataset_name and call plot_transmission."""
-        if config is None and 'dataset_name' not in kwargs:
-            kwargs['dataset_name'] = self._dataset_name
+        if config is None and "dataset_name" not in kwargs:
+            kwargs["dataset_name"] = self._dataset_name
         return self._transmission.plot_transmission(config, plot_config, **kwargs)
-    
+
     def __repr__(self):
         """Delegate to original transmission interface."""
         return repr(self._transmission)
-    
+
     def __getattr__(self, name):
         """Delegate all other attributes to original transmission."""
         return getattr(self._transmission, name)
@@ -709,13 +718,13 @@ class DatasetSpecificTransmissionInterface:
 
 class DatasetSpecificFFT:
     """FFT wrapper with pre-set dataset"""
-    
+
     def __init__(self, job_result, dataset_name, mmpp_instance=None, slice_info=None):
         self.dataset_name = dataset_name
         self.slice_info = slice_info
         # Create regular FFT instance
         self._fft = FFT(job_result, mmpp_instance)
-        
+
     def __getattr__(self, name):
         """Delegate to FFT, injecting dataset context when appropriate."""
         attr = getattr(self._fft, name)
@@ -731,24 +740,29 @@ class DatasetSpecificFFT:
 
             sig = inspect.signature(attr)
             if "dataset_name" in sig.parameters:
+
                 def wrapper(*args, **kwargs):
                     if "dataset_name" not in kwargs:
                         kwargs["dataset_name"] = self.dataset_name
-                    if self.slice_info is not None and "slice_info" in sig.parameters and "slice_info" not in kwargs:
+                    if (
+                        self.slice_info is not None
+                        and "slice_info" in sig.parameters
+                        and "slice_info" not in kwargs
+                    ):
                         kwargs["slice_info"] = self.slice_info
                     return attr(*args, **kwargs)
 
                 return wrapper
 
         return attr
-    
+
     def __repr__(self):
         """Rich documentation display for dataset-specific FFT interface."""
         try:
             return self._rich_dataset_fft_display()
         except Exception:
             return self._basic_dataset_fft_display()
-    
+
     def _rich_dataset_fft_display(self) -> str:
         """Create rich documentation display for dataset-specific FFT."""
         try:
@@ -764,17 +778,23 @@ class DatasetSpecificFFT:
 
             # Get dataset info
             try:
-                dataset_shape = getattr(self._fft.job_result._z[self.dataset_name], 'shape', 'Unknown')
+                dataset_shape = getattr(
+                    self._fft.job_result._z[self.dataset_name], "shape", "Unknown"
+                )
             except:
-                dataset_shape = 'Unknown'
-                
+                dataset_shape = "Unknown"
+
             slice_str = f"[{self.slice_info}]" if self.slice_info else ""
             cache_size = len(self._fft._cache)
 
             # Summary panel content
             summary_text = Text()
-            summary_text.append("🎯 Dataset-Specific FFT Interface\n", style="bold cyan")
-            summary_text.append(f"📊 Dataset: {self.dataset_name}\n", style="bold green")
+            summary_text.append(
+                "🎯 Dataset-Specific FFT Interface\n", style="bold cyan"
+            )
+            summary_text.append(
+                f"📊 Dataset: {self.dataset_name}\n", style="bold green"
+            )
             summary_text.append(f"📐 Shape: {dataset_shape}{slice_str}\n", style="dim")
             if self.slice_info:
                 summary_text.append(f"✂️  Slicing: Active\n", style="yellow")
@@ -782,7 +802,9 @@ class DatasetSpecificFFT:
 
             # Core methods panel content
             core_methods_text = Text()
-            core_methods_text.append("🔧 FFT Methods (dataset pre-set):\n", style="bold yellow")
+            core_methods_text.append(
+                "🔧 FFT Methods (dataset pre-set):\n", style="bold yellow"
+            )
             methods = [
                 ("spectrum()", f"(freqs, spectrum) for {self.dataset_name}"),
                 ("frequencies()", "Frequency array"),
@@ -801,11 +823,19 @@ class DatasetSpecificFFT:
             # Dataset-specific info panel
             dataset_info_text = Text()
             dataset_info_text.append("📋 Dataset Context:\n", style="bold magenta")
-            dataset_info_text.append(f"  • Pre-selected: {self.dataset_name}\n", style="green")
-            dataset_info_text.append("  • No need to specify dataset_name\n", style="dim")
+            dataset_info_text.append(
+                f"  • Pre-selected: {self.dataset_name}\n", style="green"
+            )
+            dataset_info_text.append(
+                "  • No need to specify dataset_name\n", style="dim"
+            )
             if self.slice_info:
-                dataset_info_text.append(f"  • Sliced data: {self.slice_info}\n", style="yellow")
-                dataset_info_text.append("  • FFT operates on sliced data\n", style="dim")
+                dataset_info_text.append(
+                    f"  • Sliced data: {self.slice_info}\n", style="yellow"
+                )
+                dataset_info_text.append(
+                    "  • FFT operates on sliced data\n", style="dim"
+                )
 
             # Usage examples
             example_code = f"""# Dataset-specific FFT usage (no dataset_name needed)
@@ -881,11 +911,11 @@ sliced_dispersion = sliced_data.fft.dispersion.compute_1d()"""
 
         except ImportError:
             return self._basic_dataset_fft_display()
-    
+
     def _basic_dataset_fft_display(self) -> str:
         """Fallback display without rich formatting."""
         slice_str = f"[{self.slice_info}]" if self.slice_info else ""
-        
+
         return f"""DatasetSpecificFFT(dataset={self.dataset_name})
 
 Dataset-specific FFT Interface:
@@ -903,7 +933,7 @@ dispersion = m_layer.fft.dispersion.compute_1d()
 
 class DatasetAwareWrapper:
     """Wrapper that acts like zarr.Array but has .fft property"""
-    
+
     def __init__(self, job_result, dataset_name, zarr_array, slice_info=None):
         self.job_result = job_result
         self.dataset_name = dataset_name
@@ -924,36 +954,36 @@ class DatasetAwareWrapper:
             sliced_data = self._resolve_source()
             return getattr(sliced_data, name)
         return getattr(self.zarr_array, name)
-        
+
     def __getitem__(self, key):
         """Return new DatasetAwareWrapper with slicing info preserved"""
         # Instead of returning raw numpy array, return new wrapper with slice info
         if self.slice_info is not None:
             # Combine existing slice with new slice - simplified for now
-            combined_slice = key  
+            combined_slice = key
         else:
             combined_slice = key
-            
+
         return DatasetAwareWrapper(
             self.job_result,
             self.dataset_name,
             self.zarr_array,  # Keep original zarr reference
-            slice_info=combined_slice
+            slice_info=combined_slice,
         )
-        
+
     @property
     def fft(self):
         """Return FFT with this dataset pre-selected"""
         if self._fft is None and FFT_AVAILABLE:
             # Create DatasetSpecificFFT with slicing info
             self._fft = DatasetSpecificFFT(
-                self.job_result, 
+                self.job_result,
                 self.dataset_name,
-                getattr(self.job_result, '_mmpp_ref', None),
-                slice_info=self.slice_info
+                getattr(self.job_result, "_mmpp_ref", None),
+                slice_info=self.slice_info,
             )
         return self._fft
-        
+
     @property
     def shape(self):
         """Shape accounting for slicing"""
@@ -986,7 +1016,9 @@ class DatasetAwareWrapper:
     def as_zarr(self):
         """Return the underlying zarr.Array when no slicing is active."""
         if self.slice_info is not None:
-            raise TypeError("Sliced view has no standalone zarr representation; use numpy() instead")
+            raise TypeError(
+                "Sliced view has no standalone zarr representation; use numpy() instead"
+            )
         return self.zarr_array
 
     def __array__(self, dtype=None):
@@ -1001,10 +1033,12 @@ class DatasetAwareWrapper:
 
     def __len__(self):
         return len(self.numpy(copy=False))
-        
+
     def __repr__(self):
         slice_str = f"[{self.slice_info}]" if self.slice_info else ""
-        return f"DatasetAwareWrapper({self.dataset_name}{slice_str}, shape={self.shape})"
+        return (
+            f"DatasetAwareWrapper({self.dataset_name}{slice_str}, shape={self.shape})"
+        )
 
 
 class MMPP:
@@ -1037,7 +1071,7 @@ class MMPP:
         debug : bool, optional
             Enable debug logging (default: False)
         log_level : str or int, optional
-            Set specific log level. Can be string ("DEBUG", "INFO", "WARNING", "ERROR") 
+            Set specific log level. Can be string ("DEBUG", "INFO", "WARNING", "ERROR")
             or integer constant (logging.DEBUG, logging.INFO, etc.).
             If provided, overrides debug parameter.
             Default: None (uses debug flag - DEBUG if True, INFO if False)
@@ -1046,7 +1080,9 @@ class MMPP:
         self.max_workers: int = max_workers
         self.database_name: str = database_name
         self.debug: bool = debug
-        self.log_level: Optional[Union[str, int]] = log_level  # Store for child components
+        self.log_level: Optional[Union[str, int]] = (
+            log_level  # Store for child components
+        )
         self._lock: threading.Lock = threading.Lock()
         self._interactive_mode: bool = True  # Enable interactive mode by default
         self._single_zarr_mode: bool = False
@@ -1054,23 +1090,21 @@ class MMPP:
 
         # Configure rich logging for this instance with flexible level control
         import logging
-        
+
         # Convert string log level to integer if needed
         numeric_level = None
         if log_level is not None:
             if isinstance(log_level, str):
                 numeric_level = getattr(logging, log_level.upper(), None)
                 if numeric_level is None:
-                    raise ValueError(f"Invalid log level: {log_level}. Use DEBUG, INFO, WARNING, or ERROR")
+                    raise ValueError(
+                        f"Invalid log level: {log_level}. Use DEBUG, INFO, WARNING, or ERROR"
+                    )
             else:
                 numeric_level = log_level
 
         global log
-        log = setup_mmpp_logging(
-            debug=debug, 
-            logger_name="mmpp",
-            level=numeric_level
-        )
+        log = setup_mmpp_logging(debug=debug, logger_name="mmpp", level=numeric_level)
 
         # Check if base_path is a direct .zarr file
         if self.base_path.endswith(".zarr") and os.path.isdir(self.base_path):
