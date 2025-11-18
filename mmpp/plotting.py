@@ -25,7 +25,7 @@ def _find_largest_m_dataset(zarr_path: str) -> str:
     Returns:
     --------
     str
-        Name of the largest m dataset (e.g., "m_z5-8", "m_z11-12", or fallback "m")
+        Name of the largest m dataset (e.g., "m_z5-8", "m-12", or fallback "m")
     """
     try:
         from ..pyzfn import Pyzfn
@@ -34,23 +34,24 @@ def _find_largest_m_dataset(zarr_path: str) -> str:
 
         # Get all available datasets that start with "m"
         m_datasets = []
-        
+
         # Access zarr file directly to get dataset keys
         import zarr
+
         try:
-            zarr_file = zarr.open(zarr_path, mode='r')
+            zarr_file = zarr.open(zarr_path, mode="r")
             available_keys = list(zarr_file.keys())
             log.debug(f"Available keys in zarr file: {available_keys}")
         except Exception as e:
             log.debug(f"Could not access zarr file directly: {e}")
             available_keys = []
-        
+
         for key in available_keys:
             if key.startswith("m") and not key.startswith("m_"):
                 # Include base "m" dataset
                 m_datasets.append(key)
             elif key.startswith("m_"):
-                # Include cropped datasets like "m_z5-8", "m_z11-12"
+                # Include cropped datasets like "m_z5-8", "m-12"
                 m_datasets.append(key)
 
         if not m_datasets:
@@ -472,8 +473,8 @@ class MMPPlotter:
         examples_text = Text()
         examples_text.append("💡 Usage examples:\n", style="bold green")
         examples = [
-            "plotter.plot('t', 'm_z11', comp=2, average=(1,2,3))",
-            "plotter.plot_time_series('m_z11', comp='z')",
+            "plotter.plot('t', 'm', comp=2, average=(1,2,3))",
+            "plotter.plot_time_series('m', comp='z')",
             "plotter.configure(style='dark_background')",
             "plotter.reset_style()  # Reset to paper style",
         ]
@@ -530,7 +531,7 @@ MMPP Plotter:
   • configure(**kwargs) - Update configuration
   • reset_style() - Reset to paper style
 
-💡 Example: plotter.plot('t', 'm_z11', comp=2, average=(1,2,3))
+💡 Example: plotter.plot('t', 'm', comp=2, average=(1,2,3))
 """
 
     def configure(self, **kwargs) -> "MMPPlotter":
@@ -668,7 +669,7 @@ MMPP Plotter:
         job : Pyzfn
             The Pyzfn job instance
         dataset_name : str
-            Name of the dataset (e.g., 'm_z11')
+            Name of the dataset (e.g., 'm')
         x_series : str, optional
             Name of x-axis data (e.g., 't')
         comp : Union[str, int], optional
@@ -761,7 +762,7 @@ MMPP Plotter:
         x_series : str
             Name of x-axis data (e.g., 't' for time)
         y_series : str
-            Name of y-axis dataset (e.g., 'm_z11')
+            Name of y-axis dataset (e.g., 'm')
         comp : Union[str, int], optional
             Component to plot ('x'/'y'/'z' or 0/1/2)
         average : tuple, optional
@@ -976,7 +977,7 @@ MMPP Plotter:
         Parameters:
         -----------
         dataset : str
-            Dataset name (e.g., 'm_z11')
+            Dataset name (e.g., 'm')
         comp : Union[str, int], optional
             Component ('x'/'y'/'z' or 0/1/2, default: 'z')
         average : tuple, optional

@@ -27,8 +27,13 @@ except ImportError:
 
 # Import dispersion analysis capabilities
 try:
-    from .dispersion import SpinWaveAnalyzer, DispersionConfig, FFTDispersionInterface, find_peaks_1d
-    
+    from .dispersion import (
+        SpinWaveAnalyzer,
+        DispersionConfig,
+        FFTDispersionInterface,
+        find_peaks_1d,
+    )
+
     DISPERSION_AVAILABLE = True
 except ImportError:
     DISPERSION_AVAILABLE = False
@@ -42,7 +47,7 @@ class FFT:
     This class aggregates FFT computation and plotting capabilities
     for MMPP job results.
     """
-    
+
     # Feature availability flags
     MODES_AVAILABLE = MODES_AVAILABLE
     DISPERSION_AVAILABLE = DISPERSION_AVAILABLE
@@ -199,7 +204,9 @@ class FFT:
                 force=force,
                 save_dataset_name=save_dataset_name,
                 slice_info=slice_info,
-                slice_identifier=None if slice_identifier == "slice=None" else slice_identifier,
+                slice_identifier=(
+                    None if slice_identifier == "slice=None" else slice_identifier
+                ),
                 **kwargs,
             )
         except OSError as e:
@@ -217,7 +224,7 @@ class FFT:
 
     def spectrum(
         self,
-        dset: str = "m_z11",
+        dset: str = "m",
         z_layer: int = -1,
         method: int = 1,
         save: bool = False,
@@ -233,7 +240,7 @@ class FFT:
         Parameters:
         -----------
         dset : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: "m")
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
@@ -268,38 +275,40 @@ class FFT:
             slice_info=slice_info,
             **kwargs,
         )
-        
+
         if find_peaks is None:
             return result.frequencies, result.spectrum
-        
+
         # Find peaks in spectrum
         if find_peaks_1d is None:
-            log.warning("Peak finding requested but dispersion module not available. Install required dependencies.")
+            log.warning(
+                "Peak finding requested but dispersion module not available. Install required dependencies."
+            )
             return result.frequencies, result.spectrum
-        
+
         # Extract parameters
-        min_prominence = find_peaks.get('min_prominence', 0.0)
-        
+        min_prominence = find_peaks.get("min_prominence", 0.0)
+
         # Use absolute value of spectrum for peak detection
         spectrum_abs = np.abs(result.spectrum)
-        
+
         # Find peaks
         peak_indices = find_peaks_1d(spectrum_abs, min_prominence=min_prominence)
-        
+
         # Create peaks info dictionary
         peaks_info = {
-            'indices': peak_indices,
-            'frequencies': result.frequencies[peak_indices],
-            'amplitudes': spectrum_abs[peak_indices],
+            "indices": peak_indices,
+            "frequencies": result.frequencies[peak_indices],
+            "amplitudes": spectrum_abs[peak_indices],
         }
-        
+
         log.info(f"Found {len(peak_indices)} peaks with prominence >= {min_prominence}")
-        
+
         return result.frequencies, result.spectrum, peaks_info
 
     def frequencies(
         self,
-        dset: str = "m_z11",
+        dset: str = "m",
         z_layer: int = -1,
         method: int = 1,
         save: bool = False,
@@ -314,7 +323,7 @@ class FFT:
         Parameters:
         -----------
         dset : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: "m")
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
@@ -339,11 +348,15 @@ class FFT:
             frequencies = self._compute_frequencies_fast(
                 dset, slice_info=slice_info, **kwargs
             )
-            log.debug(f"✓ Fast frequency calculation successful (shape: {frequencies.shape})")
+            log.debug(
+                f"✓ Fast frequency calculation successful (shape: {frequencies.shape})"
+            )
             return frequencies
         except Exception as e:
             # Fallback to full FFT computation
-            log.debug(f"Fast frequency calculation failed: {e}, falling back to full FFT")
+            log.debug(
+                f"Fast frequency calculation failed: {e}, falling back to full FFT"
+            )
             result = self._compute_fft(
                 dset,
                 z_layer,
@@ -409,7 +422,9 @@ class FFT:
 
             data_shape = getattr(data_set, "shape", None)
             if not data_shape:
-                raise ValueError(f"Could not determine shape for dataset {dataset_name}")
+                raise ValueError(
+                    f"Could not determine shape for dataset {dataset_name}"
+                )
 
             n_timesteps = data_shape[0]
             n_timesteps = self._apply_time_slice_length(n_timesteps, slice_info)
@@ -465,7 +480,9 @@ class FFT:
             return frequencies
 
         except Exception as e:
-            raise RuntimeError(f"Failed to compute frequencies from metadata: {e}") from e
+            raise RuntimeError(
+                f"Failed to compute frequencies from metadata: {e}"
+            ) from e
 
     def _apply_time_slice_length(
         self, n_timesteps: int, slice_info: Optional[Any]
@@ -496,7 +513,7 @@ class FFT:
 
     def power(
         self,
-        dset: str = "m_z11",
+        dset: str = "m",
         z_layer: int = -1,
         method: int = 1,
         save: bool = False,
@@ -511,7 +528,7 @@ class FFT:
         Parameters:
         -----------
         dset : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: "m")
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
@@ -545,7 +562,7 @@ class FFT:
 
     def phase(
         self,
-        dset: str = "m_z11",
+        dset: str = "m",
         z_layer: int = -1,
         method: int = 1,
         slice_info: Optional[Any] = None,
@@ -557,7 +574,7 @@ class FFT:
         Parameters:
         -----------
         dset : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: "m")
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
@@ -570,15 +587,13 @@ class FFT:
         np.ndarray
             Phase spectrum
         """
-        result = self.spectrum(
-            dset, z_layer, method, slice_info=slice_info, **kwargs
-        )
+        result = self.spectrum(dset, z_layer, method, slice_info=slice_info, **kwargs)
         spectrum = result[1]  # Extract spectrum from tuple
         return np.angle(spectrum)
 
     def magnitude(
         self,
-        dset: str = "m_z11",
+        dset: str = "m",
         z_layer: int = -1,
         method: int = 1,
         slice_info: Optional[Any] = None,
@@ -590,7 +605,7 @@ class FFT:
         Parameters:
         -----------
         dset : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: "m")
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
@@ -605,15 +620,13 @@ class FFT:
         np.ndarray
             Magnitude spectrum (\\|FFT\\|)
         """
-        result = self.spectrum(
-            dset, z_layer, method, slice_info=slice_info, **kwargs
-        )
+        result = self.spectrum(dset, z_layer, method, slice_info=slice_info, **kwargs)
         spectrum = result[1]  # Extract spectrum from tuple
         return np.abs(spectrum)
 
     def plot_spectrum(
         self,
-        dset: str = "m_z11",
+        dset: str = "m",
         method: int = 1,
         z_layer: int = -1,
         log_scale: bool = True,
@@ -629,7 +642,7 @@ class FFT:
         Parameters:
         -----------
         dset : str, optional
-            Dataset name (default: "m_z11")
+            Dataset name (default: "m")
         method : int, optional
             FFT method (default: 1)
         z_layer : int, optional
@@ -777,7 +790,7 @@ class FFT:
                 (
                     "dset",
                     "Dataset name",
-                    "Auto-selected or explicit: 'm_z11', 'm_x11', 'm_y11'",
+                    "Auto-selected or explicit: 'm', 'm_x11', 'm_y11'",
                 ),
                 ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
                 ("method", "FFT method", "1 (default), 2"),
@@ -797,7 +810,7 @@ freqs = job[0].fft.frequencies()
 freqs_fft, spectrum = job[0].fft.spectrum(save=True, force=True)
 
 # Or specify dataset explicitly
-power = job[0].fft.power('m_z11')
+power = job[0].fft.power('m')
 
 # Plotting
 fig, ax = job[0].fft.plot_spectrum(log_scale=True)
@@ -906,7 +919,7 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
             (
                 "spectrum()",
                 "Get (freqs, complex FFT spectrum)",
-                "freqs, spectrum = job[0].fft.spectrum('m_z11', z_layer=-1)",
+                "freqs, spectrum = job[0].fft.spectrum('m', z_layer=-1)",
             ),
             ("frequencies()", "Get frequency array", "job[0].fft.frequencies()"),
             ("power()", "Get power spectrum |FFT|²", "job[0].fft.power()"),
@@ -1003,7 +1016,7 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
         output.append("⚙️  COMMON PARAMETERS:")
         output.append("─" * 50)
         params = [
-            ("dset", "Dataset name", "'m_z11', 'm_x11', 'm_y11'"),
+            ("dset", "Dataset name", "'m', 'm_x11', 'm_y11'"),
             ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
             ("method", "FFT method", "1 (default), 2"),
             ("save", "Save to zarr", "True/False"),
@@ -1022,7 +1035,7 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
         output.append("─" * 50)
         examples = [
             "# Basic FFT operations",
-            "power = job[0].fft.power('m_z11')",
+            "power = job[0].fft.power('m')",
             "freqs = job[0].fft.frequencies()",
             "freqs_fft, spectrum = job[0].fft.spectrum(save=True, force=True)",
             "",
@@ -1129,7 +1142,7 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
         return FFTModeInterface(index, self)
 
     def plot_modes(
-        self, frequency: float, dset: str = "m_z11", z_layer: int = 0, **kwargs
+        self, frequency: float, dset: str = "m", z_layer: int = 0, **kwargs
     ) -> tuple[Any, Any]:
         """
         Plot FMR modes at specific frequency.
@@ -1159,11 +1172,14 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
         debug_mode = getattr(self.mmpp, "debug", False) if self.mmpp else False
         log_level = getattr(self.mmpp, "log_level", None) if self.mmpp else None
         analyzer = FMRModeAnalyzer(
-            self.job_result.path, dataset_name=dset, debug=debug_mode, log_level=log_level
+            self.job_result.path,
+            dataset_name=dset,
+            debug=debug_mode,
+            log_level=log_level,
         )
         return analyzer.plot_modes(frequency=frequency, z_layer=z_layer, **kwargs)
 
-    def interactive_spectrum(self, dset: str = "m_z11", **kwargs) -> Any:
+    def interactive_spectrum(self, dset: str = "m", **kwargs) -> Any:
         """
         Create interactive spectrum plot with mode visualization.
 
@@ -1188,6 +1204,9 @@ help(job[0].fft.spectrum)  # Detailed documentation"""
         debug_mode = getattr(self.mmpp, "debug", False) if self.mmpp else False
         log_level = getattr(self.mmpp, "log_level", None) if self.mmpp else None
         analyzer = FMRModeAnalyzer(
-            self.job_result.path, dataset_name=dset, debug=debug_mode, log_level=log_level
+            self.job_result.path,
+            dataset_name=dset,
+            debug=debug_mode,
+            log_level=log_level,
         )
         return analyzer.interactive_spectrum(**kwargs)
