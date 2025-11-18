@@ -13,27 +13,38 @@ try:
     from .core import MMPP, ScanResult, ZarrJobResult
 
     _CORE_AVAILABLE = True
-except ImportError:
+    _CORE_IMPORT_ERROR = None
+except ImportError as e:
     _CORE_AVAILABLE = False
+    _CORE_IMPORT_ERROR = str(e)
 
     # Create dummy classes for graceful degradation
     class MMPP:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Core dependencies not available. Install with: pip install mmpp[dev]"
-            )
+            error_msg = "Core dependencies not available. "
+            if _CORE_IMPORT_ERROR:
+                error_msg += f"\nMissing dependency: {_CORE_IMPORT_ERROR}\n"
+            error_msg += "Install with: pip install mmpp[dev]\n"
+            error_msg += "Or install specific package that is missing above."
+            raise ImportError(error_msg)
 
     class ScanResult:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Core dependencies not available. Install with: pip install mmpp[dev]"
-            )
+            error_msg = "Core dependencies not available. "
+            if _CORE_IMPORT_ERROR:
+                error_msg += f"\nMissing dependency: {_CORE_IMPORT_ERROR}\n"
+            error_msg += "Install with: pip install mmpp[dev]\n"
+            error_msg += "Or install specific package that is missing above."
+            raise ImportError(error_msg)
 
     class ZarrJobResult:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Core dependencies not available. Install with: pip install mmppp[dev]"
-            )
+            error_msg = "Core dependencies not available. "
+            if _CORE_IMPORT_ERROR:
+                error_msg += f"\nMissing dependency: {_CORE_IMPORT_ERROR}\n"
+            error_msg += "Install with: pip install mmpp[dev]\n"
+            error_msg += "Or install specific package that is missing above."
+            raise ImportError(error_msg)
 
 
 # Try to import plotting classes
@@ -41,27 +52,38 @@ try:
     from .plotting import MMPPlotter, PlotConfig, PlotterProxy, fonts
 
     _PLOTTING_AVAILABLE = True
-except ImportError:
+    _PLOTTING_IMPORT_ERROR = None
+except ImportError as e:
     _PLOTTING_AVAILABLE = False
+    _PLOTTING_IMPORT_ERROR = str(e)
 
     # Create dummy classes for graceful degradation
     class MMPPlotter:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Plotting dependencies not available. Install with: pip install mmpp[plotting]"
-            )
+            error_msg = "Plotting dependencies not available. "
+            if _PLOTTING_IMPORT_ERROR:
+                error_msg += f"\nMissing dependency: {_PLOTTING_IMPORT_ERROR}\n"
+            error_msg += "Install with: pip install mmpp[plotting]\n"
+            error_msg += "Or install specific package that is missing above."
+            raise ImportError(error_msg)
 
     class PlotConfig:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Plotting dependencies not available. Install with: pip install mmpp[plotting]"
-            )
+            error_msg = "Plotting dependencies not available. "
+            if _PLOTTING_IMPORT_ERROR:
+                error_msg += f"\nMissing dependency: {_PLOTTING_IMPORT_ERROR}\n"
+            error_msg += "Install with: pip install mmpp[plotting]\n"
+            error_msg += "Or install specific package that is missing above."
+            raise ImportError(error_msg)
 
     class PlotterProxy:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Plotting dependencies not available. Install with: pip install mmpp[plotting]"
-            )
+            error_msg = "Plotting dependencies not available. "
+            if _PLOTTING_IMPORT_ERROR:
+                error_msg += f"\nMissing dependency: {_PLOTTING_IMPORT_ERROR}\n"
+            error_msg += "Install with: pip install mmpp[plotting]\n"
+            error_msg += "Or install specific package that is missing above."
+            raise ImportError(error_msg)
 
     # Create dummy font manager
     class DummyFontManager:
@@ -94,21 +116,97 @@ try:
     from .cli.swap.simulation import SimulationManager, SimulationSwapper
 
     _SIMULATION_AVAILABLE = True
-except ImportError:
+    _SIMULATION_IMPORT_ERROR = None
+except ImportError as e:
     _SIMULATION_AVAILABLE = False
+    _SIMULATION_IMPORT_ERROR = str(e)
 
     # Create dummy class for graceful degradation
     class SimulationManager:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Simulation dependencies not available. Install with: pip install mmpp[dev]"
-            )
+            error_msg = "Simulation dependencies not available. "
+            if _SIMULATION_IMPORT_ERROR:
+                error_msg += f"\nMissing dependency: {_SIMULATION_IMPORT_ERROR}\n"
+            error_msg += "Install with: pip install mmpp[dev]\n"
+            error_msg += "Or install specific package that is missing above."
+            raise ImportError(error_msg)
 
     class SimulationSwapper:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Simulation dependencies not available. Install with: pip install mmpp[dev]"
-            )
+            error_msg = "Simulation dependencies not available. "
+            if _SIMULATION_IMPORT_ERROR:
+                error_msg += f"\nMissing dependency: {_SIMULATION_IMPORT_ERROR}\n"
+            error_msg += "Install with: pip install mmpp[dev]\n"
+            error_msg += "Or install specific package that is missing above."
+            raise ImportError(error_msg)
+
+
+def check_dependencies():
+    """
+    Check which mmpp dependencies are available and which are missing.
+    
+    This function provides a detailed report of installed and missing dependencies,
+    helping users diagnose installation issues.
+    
+    Returns:
+    --------
+    dict
+        Dictionary with dependency status information
+        
+    Examples:
+    ---------
+    >>> import mmpp
+    >>> status = mmpp.check_dependencies()
+    >>> print(status)
+    """
+    status = {
+        'core': {
+            'available': _CORE_AVAILABLE,
+            'error': _CORE_IMPORT_ERROR,
+            'required_packages': ['numpy', 'pandas', 'zarr', 'rich'],
+        },
+        'plotting': {
+            'available': _PLOTTING_AVAILABLE,
+            'error': _PLOTTING_IMPORT_ERROR,
+            'required_packages': ['matplotlib'],
+        },
+        'simulation': {
+            'available': _SIMULATION_AVAILABLE,
+            'error': _SIMULATION_IMPORT_ERROR,
+            'required_packages': ['PyYAML'],
+        }
+    }
+    
+    # Print formatted report
+    print("=" * 60)
+    print("MMPP Dependency Status Report")
+    print("=" * 60)
+    
+    for module, info in status.items():
+        status_icon = "✅" if info['available'] else "❌"
+        print(f"\n{status_icon} {module.upper()}")
+        print(f"   Available: {info['available']}")
+        
+        if not info['available'] and info['error']:
+            print(f"   Error: {info['error']}")
+        
+        print(f"   Required packages: {', '.join(info['required_packages'])}")
+        
+        if not info['available']:
+            print(f"   Install with: pip install mmpp[dev]")
+    
+    print("\n" + "=" * 60)
+    print("Overall Status:")
+    all_available = all(info['available'] for info in status.values())
+    if all_available:
+        print("✅ All dependencies are available!")
+    else:
+        missing = [name for name, info in status.items() if not info['available']]
+        print(f"❌ Missing: {', '.join(missing)}")
+        print("   Run: pip install mmpp[dev]")
+    print("=" * 60)
+    
+    return status
 
 
 def open(base_path: str, **kwargs):
@@ -304,6 +402,7 @@ __all__ = [
     "open",
     "fonts",  # Font management
     "install_ffmpeg",  # FFmpeg installation
+    "check_dependencies",  # Dependency checker
 ]
 
 # Feature availability flags

@@ -16,9 +16,23 @@ import zarr
 from numpy.typing import NDArray
 from rich.console import Console
 from rich.tree import Tree
-from zarr.core.group import AsyncGroup, Group
-from zarr.core.sync import sync
-from zarr.storage import StoreLike
+
+# Handle both Zarr v2 and v3 imports
+# Check if this is Zarr v2 (has zarr.core.group) or v3
+try:
+    import zarr.core.group
+    # Zarr v2
+    ZARR_VERSION = 2
+    from zarr.core.group import AsyncGroup, Group
+    from zarr.core.sync import sync
+    from zarr.storage import StoreLike
+except (ImportError, AttributeError):
+    # Zarr v3
+    ZARR_VERSION = 3
+    from zarr import Group
+    AsyncGroup = None
+    sync = None
+    StoreLike = None
 
 from .calc_modes import inner_calc_modes
 from .ispec import inner_ispec
@@ -35,24 +49,26 @@ IndexLike = int | slice | Sequence[int] | NDArray[np.int_]
 SliceTuple = tuple[IndexLike, ...]
 
 
-class Pyzfn(Group):
-    """A custom Zarr Group subclass for structured simulation output management.
+class Pyzfn:
+    """A custom Zarr Group wrapper for structured simulation output management.
 
     Provides utility methods and properties for handling hierarchical datasets,
     including array creation, metadata access, and visual tree formatting.
+    
+    In Zarr v2, this inherits from Group. In Zarr v3, it wraps a Group object.
     """
 
     def __init__(
         self,
-        store: StoreLike,
+        store: str | Path,
         zarr_format: Literal[2, 3] = 2,
     ) -> None:
         """Initialize a Pyzfn group from a given Zarr store.
 
         Args:
-            store (StoreLike): The Zarr store to back the group. Most commonly a string
+            store (str | Path): The Zarr store to back the group. Most commonly a string
                 to a Zarr directory, i.e. "path/to/simulation.zarr".
-            zarr_format (Literal[2, 3], optional): Zarr format version. Defaults to 3.
+            zarr_format (Literal[2, 3], optional): Zarr format version. Defaults to 2.
 
         Raises:
             FileNotFoundError: If the provided path does not exist.
@@ -67,8 +83,47 @@ class Pyzfn(Group):
             if not p.is_dir():
                 msg = f"Path '{store}' is not a directory."
                 raise NotADirectoryError(msg)
-        super().__init__(sync(AsyncGroup.open(store, zarr_format=zarr_format)))
-        self.clean_path: str = self.path.replace("file://", "")
+        
+        # Open the zarr group
+        self._group = zarr.open_group(store, mode='r')
+        
+        # Store clean path
+        path_str = str(store) if isinstance(store, Path) else store
+        self.clean_path: str = path_str.replace("file://", "")
+    
+    # Delegate all zarr Group methods to self._group
+    def __getitem__(self, key):
+        return self._group[key]
+    
+    def __contains__(self, key):
+        return key in self._group
+    
+    def __iter__(self):
+        return iter(self._group)
+    
+    def __len__(self):
+        return len(self._group)
+    
+    def keys(self):
+        return self._group.keys()
+    
+    def values(self):
+        return self._group.values()
+    
+    def items(self):
+        return self._group.items()
+    
+    @property
+    def attrs(self):
+        return self._group.attrs
+    
+    @property
+    def name(self):
+        return self._group.name
+    
+    @property
+    def store(self):
+        return self._group.store
 
     calc_modes = inner_calc_modes
     ispec = inner_ispec
@@ -100,17 +155,11 @@ class Pyzfn(Group):
             str: Absolute file path with 'file://' prefix if available.
 
         """
-        return str(self.store_path or Path(tempfile.gettempdir()).absolute())
-
-    @property
-    def name(self) -> str:
-        """Extract the base name of the Zarr store (without extension).
-
-        Returns:
-            str: The name of the group derived from the file path.
-
-        """
-        return self.path.split("/")[-1].replace(".zarr", "")
+        # In Zarr v3, use metadata.store_path if available
+        if hasattr(self._group, 'metadata') and hasattr(self._group.metadata, 'store_path'):
+            return str(self._group.metadata.store_path)
+        # Fallback to clean_path
+        return self.clean_path
 
     @property
     def p(self) -> None:
