@@ -73,7 +73,7 @@ class TransmissionConfig:
     spatial_window_mode: SpatialWindowMode = "post_fft"  # "pre_fft" = sum neighbors before FFT (slower, local), "post_fft" = extract from full FFT (faster)
     average_mode: AverageMode = "mean"  # "none" = no y/z averaging
     edge_taper_power: float = 1.5
-    y_integration_mode: YIntegrationMode = "sum_fft"  # "sum_m" = sum before FFT, "sum_fft" = sum |FFT|, "none" = no y-sum
+    y_integration_mode: YIntegrationMode = "sum_fft"  # "sum_m" = sum before FFT, "sum_fft" = sum complex FFT along y (phase-preserving), "none" = no y-sum
     
     # Component selection
     component_weights: Tuple[float, float, float] = (1.0, 1.0, 0.1)
@@ -185,6 +185,8 @@ class TransmissionResult:
         mark_on_ax=None,
         find_minima: Optional[dict] = None,
         x_width: Optional[float] = None,
+        disable_averaging: bool = False,
+        verbose: bool = False,
         **kwargs
     ):
         """Plot 1D transmission cross-section at specific x position.
@@ -241,6 +243,13 @@ class TransmissionResult:
             If provided, the transmission cross-section will be averaged over the range [x - x_width/2, x + x_width/2].
             For example, x_width=500 will average ±250 nm around the specified x position.
             Default is None (no averaging, single x position).
+            IGNORED if disable_averaging=True.
+        disable_averaging : bool, optional
+            If True, forces single-point extraction (no averaging) regardless of x_width value.
+            Use this flag to guarantee exact single-point behavior. Default is False.
+        verbose : bool, optional
+            If True, prints detailed diagnostic information about x position selection,
+            averaging behavior, and data extraction. Default is False.
         **kwargs
             Additional matplotlib plot kwargs (color, linewidth, label, etc.)
 
@@ -259,22 +268,54 @@ class TransmissionResult:
             raise ImportError("matplotlib is required for plotting")
 
         from .plot import FREQ_SCALE
+        import logging
+        log = logging.getLogger(__name__)
 
         # Interpret requested x in the same units as x_positions
         if self.dx is not None:
             if x <= 1.0:
                 target_x = x * 1e9  # meters → nanometers (legacy behaviour)
+                if verbose:
+                    print(f"[VERBOSE] Input x={x} m converted to {target_x:.1f} nm")
             else:
                 target_x = x  # assume already in nanometers
+                if verbose:
+                    print(f"[VERBOSE] Input x={x} nm (no conversion)")
         else:
             target_x = x  # indices
+            if verbose:
+                print(f"[VERBOSE] Input x={x} (cell index, dx not available)")
+
+        if verbose:
+            print(f"[VERBOSE] dx = {self.dx * 1e9 if self.dx else 'N/A'} nm")
+            print(f"[VERBOSE] x_positions range: {self.x_positions.min():.1f} to {self.x_positions.max():.1f}")
+            print(f"[VERBOSE] x_positions shape: {self.x_positions.shape}")
+            print(f"[VERBOSE] transmission shape: {self.transmission.shape}")
 
         # Find closest x-position index
         x_idx = np.argmin(np.abs(self.x_positions - target_x))
         actual_x = self.x_positions[x_idx]
+        
+        if verbose:
+            print(f"[VERBOSE] Target x position: {target_x:.1f} nm")
+            print(f"[VERBOSE] Closest x_idx: {x_idx}")
+            print(f"[VERBOSE] Actual x at index: {actual_x:.1f} nm")
+            print(f"[VERBOSE] disable_averaging: {disable_averaging}")
+            print(f"[VERBOSE] x_width: {x_width}")
 
         # Get transmission slice at this x (or averaged over x_width)
-        if x_width is not None and x_width > 0:
+        if disable_averaging:
+            # FORCE single point extraction - no averaging
+            if verbose:
+                print(f"[VERBOSE] MODE: Single point (disable_averaging=True)")
+                print(f"[VERBOSE] Extracting transmission[:, {x_idx}]")
+            transmission_slice = self.transmission[:, x_idx]
+            
+        elif x_width is not None and x_width > 0:
+            # Averaging mode
+            if verbose:
+                print(f"[VERBOSE] MODE: Averaging with x_width={x_width} nm")
+            
             # Interpret x_width units (same as x interpretation logic)
             if self.dx is not None:
                 # x_width already in nanometers (or convert if needed)
@@ -288,56 +329,100 @@ class TransmissionResult:
             x_min = target_x - half_width
             x_max = target_x + half_width
             
+            if verbose:
+                print(f"[VERBOSE] Averaging range: [{x_min:.1f}, {x_max:.1f}] nm")
+            
             # Find indices within range
             mask = (self.x_positions >= x_min) & (self.x_positions <= x_max)
             num_points = np.sum(mask)
+            
+            if verbose:
+                print(f"[VERBOSE] Points in range: {num_points}")
+                if num_points > 0:
+                    indices = np.where(mask)[0]
+                    print(f"[VERBOSE] Indices to average: {indices[:10]}{'...' if len(indices) > 10 else ''}")
             
             if num_points == 0:
                 # Fallback: no points in range - use single closest point
                 # This happens when x_width is smaller than dx spacing
                 import warnings
-                warnings.warn(
+                msg = (
                     f"x_width={x_width} nm is too small (no points in range). "
                     f"Using single point at x={actual_x:.1f} nm. "
-                    f"Try x_width >= {self.dx * 1e9 if self.dx else 1:.1f} nm.",
-                    UserWarning
+                    f"Try x_width >= {self.dx * 1e9 if self.dx else 1:.1f} nm."
                 )
+                if verbose:
+                    print(f"[VERBOSE] WARNING: {msg}")
+                warnings.warn(msg, UserWarning)
                 transmission_slice = self.transmission[:, x_idx]
             elif num_points == 1:
                 # Exactly one point in range - extract it directly
+                if verbose:
+                    print(f"[VERBOSE] Exactly 1 point in range, extracting directly")
                 transmission_slice = self.transmission[:, mask].flatten()
             else:
                 # Multiple points - average transmission over all x positions in range
+                if verbose:
+                    print(f"[VERBOSE] Averaging over {num_points} points")
                 transmission_slice = self.transmission[:, mask].mean(axis=1)
                 # Update actual_x to reflect the center of the averaging range
                 actual_x = self.x_positions[mask].mean()
+                if verbose:
+                    print(f"[VERBOSE] New actual_x (center of averaged range): {actual_x:.1f} nm")
         else:
             # Single x position (no averaging)
+            if verbose:
+                print(f"[VERBOSE] MODE: Single point (x_width not specified)")
+                print(f"[VERBOSE] Extracting transmission[:, {x_idx}]")
             transmission_slice = self.transmission[:, x_idx]
+        
+        if verbose:
+            print(f"[VERBOSE] transmission_slice shape: {transmission_slice.shape}")
+            print(f"[VERBOSE] transmission_slice stats: min={transmission_slice.min():.4f}, max={transmission_slice.max():.4f}, mean={transmission_slice.mean():.4f}")
 
         # Convert frequencies to requested unit
         if freq_unit not in FREQ_SCALE:
             raise ValueError(f"Unsupported frequency unit: {freq_unit}. Use: {list(FREQ_SCALE.keys())}")
         freq_scale = FREQ_SCALE[freq_unit]
         freqs = self.frequencies * freq_scale
+        
+        if verbose:
+            print(f"[VERBOSE] Frequency unit: {freq_unit}, scale: {freq_scale}")
+            print(f"[VERBOSE] Initial freqs range: {freqs.min():.3f} to {freqs.max():.3f} {freq_unit}")
+            print(f"[VERBOSE] Initial data points: {len(freqs)}")
 
         # Apply trim_0f if specified
         trim_idx = 0
         if trim_0f is not None and trim_0f > 0:
             trim_idx = min(trim_0f, len(freqs) - 1)
+            if verbose:
+                print(f"[VERBOSE] Trimming first {trim_idx} frequency points")
             freqs = freqs[trim_idx:]
             transmission_slice = transmission_slice[trim_idx:]
+            if verbose:
+                print(f"[VERBOSE] After trim: {len(freqs)} points, freq range: {freqs.min():.3f} to {freqs.max():.3f} {freq_unit}")
 
         # Apply fmin/fmax if specified
         if fmin is not None:
             mask = freqs >= fmin
+            points_before = len(freqs)
             freqs = freqs[mask]
             transmission_slice = transmission_slice[mask]
+            if verbose:
+                print(f"[VERBOSE] Applying fmin={fmin} {freq_unit}: {points_before} -> {len(freqs)} points")
 
         if fmax is not None:
             mask = freqs <= fmax
+            points_before = len(freqs)
             freqs = freqs[mask]
             transmission_slice = transmission_slice[mask]
+            if verbose:
+                print(f"[VERBOSE] Applying fmax={fmax} {freq_unit}: {points_before} -> {len(freqs)} points")
+        
+        if verbose:
+            print(f"[VERBOSE] Final data for plotting: {len(freqs)} points")
+            print(f"[VERBOSE] Final freq range: {freqs.min():.3f} to {freqs.max():.3f} {freq_unit}")
+            print(f"[VERBOSE] Final transmission range: {transmission_slice.min():.4f} to {transmission_slice.max():.4f}")
 
 
 
@@ -1028,81 +1113,179 @@ class TransmissionCompute:
             power_map = np.zeros((n_freq, n_windows), dtype=float)
             full_spectrum = None  # Won't have single full_spectrum in this mode
             
-            # 🔑 Process each window separately
-            for win_idx, start in tqdm(enumerate(window_starts),
-                                       total=n_windows,
-                                       desc="Computing FFT per window (pre_fft mode)",
-                                       unit="win"):
-                end = min(start + window_size, n_x)
-                window_slice = slice(start, end)
-                
-                # Extract window from time-domain data: (t, z, y, window_x, comp)
-                window_data = windowed[:, :, :, window_slice, :]
-                
-                # Apply y-integration if requested (BEFORE FFT!)
-                if config.y_integration_mode == "sum_m":
-                    # Sum over y: (t, z, y, window_x, comp) → (t, z, window_x, comp)
-                    window_data = window_data.sum(axis=2)
-                elif config.y_integration_mode == "none":
-                    # Keep y dimension
-                    pass
-                # Note: "sum_fft" doesn't make sense in pre_fft mode (would need FFT first)
-                # so we treat it same as "sum_m"
-                elif config.y_integration_mode == "sum_fft":
-                    log.warning("y_integration_mode='sum_fft' with spatial_window_mode='pre_fft' → using 'sum_m' instead")
-                    window_data = window_data.sum(axis=2)
-                
-                # Sum over spatial window if window_size > 1
-                # Shape after y-sum: (t, z, window_x, comp) or (t, z, y, window_x, comp)
-                # We want to sum over the window_x axis
-                if config.y_integration_mode in ("sum_m", "sum_fft"):
-                    # (t, z, window_x, comp) → sum over window_x → (t, z, comp)
-                    window_data_summed = window_data.sum(axis=2)
-                else:
-                    # (t, z, y, window_x, comp) → sum over window_x → (t, z, y, comp)
-                    window_data_summed = window_data.sum(axis=3)
-                
-                # Compute FFT for this window
-                if use_scipy:
-                    window_spectrum = scipy_fft.rfft(window_data_summed, axis=0)
-                else:
-                    window_spectrum = np.fft.rfft(window_data_summed, axis=0)
-                
-                # Compute power from all components
-                # Shape: (freq, z, comp) or (freq, z, y, comp)
-                power_components = None
-                for comp_idx in range(n_comp):
-                    if component_weights[comp_idx] != 0:
-                        if config.y_integration_mode in ("sum_m", "sum_fft"):
-                            comp_fft = window_spectrum[..., comp_idx]  # (freq, z)
-                        else:
-                            comp_fft = window_spectrum[..., comp_idx]  # (freq, z, y)
-                        comp_power = np.abs(comp_fft) * component_weights[comp_idx]
-                        if power_components is None:
-                            power_components = comp_power
-                        else:
-                            power_components += comp_power
-                
-                # Aggregate spatially (over z, and possibly y)
-                if config.y_integration_mode in ("sum_m", "sum_fft"):
-                    # (freq, z) → aggregate over z
-                    if config.average_mode == "none":
-                        aggregated = power_components[:, 0]  # Just take z=0
-                    elif config.average_mode == "mean":
-                        aggregated = power_components.mean(axis=1)
+            # Decide whether to parallelize pre-FFT window processing
+            use_parallel_pre = _USE_JOBLIB and n_windows > 100
+
+            if use_parallel_pre:
+                log.info(
+                    "Using parallel pre_fft processing with joblib (%d windows, %d CPUs)",
+                    n_windows,
+                    -1,  # -1 = all CPUs
+                )
+
+                def process_window_pre_fft(win_idx: int, start: int):
+                    """Process single spatial window in pre_fft mode (can run in parallel)."""
+                    end = min(start + window_size, n_x)
+                    window_slice = slice(start, end)
+
+                    # Extract window from time-domain data: (t, z, y, window_x, comp)
+                    window_data = windowed[:, :, :, window_slice, :]
+
+                    # Apply y-integration if requested (BEFORE FFT!)
+                    if config.y_integration_mode == "sum_m":
+                        # Sum over y: (t, z, y, window_x, comp) → (t, z, window_x, comp)
+                        window_data_local = window_data.sum(axis=2)
+                    elif config.y_integration_mode == "none":
+                        window_data_local = window_data
+                    else:  # "sum_fft" treated as "sum_m" in pre_fft mode
+                        log.warning(
+                            "y_integration_mode='sum_fft' with spatial_window_mode='pre_fft' "
+                            "→ using 'sum_m' instead"
+                        )
+                        window_data_local = window_data.sum(axis=2)
+
+                    # Sum over spatial window if window_size > 1
+                    # Shape after y-sum: (t, z, window_x, comp) or (t, z, y, window_x, comp)
+                    if config.y_integration_mode in ("sum_m", "sum_fft"):
+                        # (t, z, window_x, comp) → sum over window_x → (t, z, comp)
+                        window_data_summed = window_data_local.sum(axis=2)
                     else:
-                        # Fallback to mean
-                        aggregated = power_components.mean(axis=1)
-                else:
-                    # (freq, z, y) → aggregate over z and y
-                    if config.average_mode == "none":
-                        aggregated = power_components[:, 0, :].mean(axis=1)  # z=0, mean over y
-                    elif config.average_mode == "mean":
-                        aggregated = power_components.mean(axis=(1, 2))
+                        # (t, z, y, window_x, comp) → sum over window_x → (t, z, y, comp)
+                        window_data_summed = window_data_local.sum(axis=3)
+
+                    # Compute FFT for this window
+                    if use_scipy:
+                        window_spectrum = scipy_fft.rfft(window_data_summed, axis=0)
                     else:
-                        aggregated = power_components.mean(axis=(1, 2))
-                
-                power_map[:, win_idx] = aggregated
+                        window_spectrum = np.fft.rfft(window_data_summed, axis=0)
+
+                    # Compute power from all components
+                    # Shape: (freq, z, comp) or (freq, z, y, comp)
+                    power_components = None
+                    for comp_idx in range(n_comp):
+                        if component_weights[comp_idx] != 0:
+                            if config.y_integration_mode in ("sum_m", "sum_fft"):
+                                comp_fft = window_spectrum[..., comp_idx]  # (freq, z)
+                            else:
+                                comp_fft = window_spectrum[..., comp_idx]  # (freq, z, y)
+                            comp_power = np.abs(comp_fft) * component_weights[comp_idx]
+                            if power_components is None:
+                                power_components = comp_power
+                            else:
+                                power_components += comp_power
+
+                    # Aggregate spatially (over z, and possibly y)
+                    if config.y_integration_mode in ("sum_m", "sum_fft"):
+                        # (freq, z) → aggregate over z
+                        if config.average_mode == "none":
+                            aggregated_local = power_components[:, 0]  # Just take z=0
+                        elif config.average_mode == "mean":
+                            aggregated_local = power_components.mean(axis=1)
+                        else:
+                            # Fallback to mean for unsupported modes in pre_fft
+                            aggregated_local = power_components.mean(axis=1)
+                    else:
+                        # (freq, z, y) → aggregate over z and y
+                        if config.average_mode == "none":
+                            aggregated_local = power_components[:, 0, :].mean(axis=1)  # z=0, mean over y
+                        elif config.average_mode == "mean":
+                            aggregated_local = power_components.mean(axis=(1, 2))
+                        else:
+                            aggregated_local = power_components.mean(axis=(1, 2))
+
+                    return win_idx, aggregated_local
+
+                # Run windows in parallel (threading backend to share memory)
+                results_pre = Parallel(n_jobs=-1, backend="threading")(
+                    delayed(process_window_pre_fft)(win_idx, start)
+                    for win_idx, start in enumerate(window_starts)
+                )
+
+                # Collect results
+                for win_idx, aggregated_local in results_pre:
+                    power_map[:, win_idx] = aggregated_local
+
+            else:
+                # 🔑 Process each window separately (serial)
+                for win_idx, start in tqdm(
+                    enumerate(window_starts),
+                    total=n_windows,
+                    desc="Computing FFT per window (pre_fft mode)",
+                    unit="win",
+                ):
+                    end = min(start + window_size, n_x)
+                    window_slice = slice(start, end)
+                    
+                    # Extract window from time-domain data: (t, z, y, window_x, comp)
+                    window_data = windowed[:, :, :, window_slice, :]
+                    
+                    # Apply y-integration if requested (BEFORE FFT!)
+                    if config.y_integration_mode == "sum_m":
+                        # Sum over y: (t, z, y, window_x, comp) → (t, z, window_x, comp)
+                        window_data = window_data.sum(axis=2)
+                    elif config.y_integration_mode == "none":
+                        # Keep y dimension
+                        pass
+                    # Note: "sum_fft" doesn't make sense in pre_fft mode (would need FFT first)
+                    # so we treat it same as "sum_m"
+                    elif config.y_integration_mode == "sum_fft":
+                        log.warning(
+                            "y_integration_mode='sum_fft' with spatial_window_mode='pre_fft' "
+                            "→ using 'sum_m' instead"
+                        )
+                        window_data = window_data.sum(axis=2)
+                    
+                    # Sum over spatial window if window_size > 1
+                    # Shape after y-sum: (t, z, window_x, comp) or (t, z, y, window_x, comp)
+                    # We want to sum over the window_x axis
+                    if config.y_integration_mode in ("sum_m", "sum_fft"):
+                        # (t, z, window_x, comp) → sum over window_x → (t, z, comp)
+                        window_data_summed = window_data.sum(axis=2)
+                    else:
+                        # (t, z, y, window_x, comp) → sum over window_x → (t, z, y, comp)
+                        window_data_summed = window_data.sum(axis=3)
+                    
+                    # Compute FFT for this window
+                    if use_scipy:
+                        window_spectrum = scipy_fft.rfft(window_data_summed, axis=0)
+                    else:
+                        window_spectrum = np.fft.rfft(window_data_summed, axis=0)
+                    
+                    # Compute power from all components
+                    # Shape: (freq, z, comp) or (freq, z, y, comp)
+                    power_components = None
+                    for comp_idx in range(n_comp):
+                        if component_weights[comp_idx] != 0:
+                            if config.y_integration_mode in ("sum_m", "sum_fft"):
+                                comp_fft = window_spectrum[..., comp_idx]  # (freq, z)
+                            else:
+                                comp_fft = window_spectrum[..., comp_idx]  # (freq, z, y)
+                            comp_power = np.abs(comp_fft) * component_weights[comp_idx]
+                            if power_components is None:
+                                power_components = comp_power
+                            else:
+                                power_components += comp_power
+                    
+                    # Aggregate spatially (over z, and possibly y)
+                    if config.y_integration_mode in ("sum_m", "sum_fft"):
+                        # (freq, z) → aggregate over z
+                        if config.average_mode == "none":
+                            aggregated = power_components[:, 0]  # Just take z=0
+                        elif config.average_mode == "mean":
+                            aggregated = power_components.mean(axis=1)
+                        else:
+                            # Fallback to mean
+                            aggregated = power_components.mean(axis=1)
+                    else:
+                        # (freq, z, y) → aggregate over z and y
+                        if config.average_mode == "none":
+                            aggregated = power_components[:, 0, :].mean(axis=1)  # z=0, mean over y
+                        elif config.average_mode == "mean":
+                            aggregated = power_components.mean(axis=(1, 2))
+                        else:
+                            aggregated = power_components.mean(axis=(1, 2))
+                    
+                    power_map[:, win_idx] = aggregated
             
             print(f"✅ PRE_FFT complete: computed {n_windows} FFTs")
             t_fft_end = time.time()
@@ -1352,52 +1535,53 @@ class TransmissionCompute:
                         # Result: (n_freq, n_z, window_x, n_comp)
                         spectrum = spectrum.sum(axis=2)
                     
-                mx_fft = spectrum[..., 0]
-                my_fft = spectrum[..., 1]
-                power_components = np.abs(mx_fft) * component_weights[0]
-                power_components += np.abs(my_fft) * component_weights[1]
-                
-                if n_comp > 2:
-                    mz_fft = spectrum[..., 2]
-                    power_components += np.abs(mz_fft) * component_weights[2]
-                
-                aggregated = _aggregate_spatial(
-                    power_components,
-                    config.average_mode,
-                    config.edge_taper_power,
-                )
-                
-                results = {'power': aggregated}
+                    # Compute component-wise power for this window
+                    mx_fft = spectrum[..., 0]
+                    my_fft = spectrum[..., 1]
+                    power_components = np.abs(mx_fft) * component_weights[0]
+                    power_components += np.abs(my_fft) * component_weights[1]
                     
-                if transverse_map is not None:
-                    results['transverse'] = _aggregate_spatial(
-                        np.abs(mx_fft) + np.abs(my_fft),
+                    if n_comp > 2:
+                        mz_fft = spectrum[..., 2]
+                        power_components += np.abs(mz_fft) * component_weights[2]
+                    
+                    aggregated = _aggregate_spatial(
+                        power_components,
                         config.average_mode,
                         config.edge_taper_power,
                     )
-                
-                if longitudinal_map is not None and n_comp > 2:
-                    results['longitudinal'] = _aggregate_spatial(
-                        np.abs(mz_fft),
-                        config.average_mode,
-                        config.edge_taper_power,
-                    )
-                
-                if config.enable_circular_components:
-                    m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
-                    m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
-                    results['power_plus'] = _aggregate_spatial(
-                        np.abs(m_plus),
-                        config.average_mode,
-                        config.edge_taper_power,
-                    )
-                    results['power_minus'] = _aggregate_spatial(
-                        np.abs(m_minus),
-                        config.average_mode,
-                        config.edge_taper_power,
-                    )
-                
-                return win_idx, results
+                    
+                    results = {'power': aggregated}
+                        
+                    if transverse_map is not None:
+                        results['transverse'] = _aggregate_spatial(
+                            np.abs(mx_fft) + np.abs(my_fft),
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+                    
+                    if longitudinal_map is not None and n_comp > 2:
+                        results['longitudinal'] = _aggregate_spatial(
+                            np.abs(mz_fft),
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+                    
+                    if config.enable_circular_components:
+                        m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
+                        m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
+                        results['power_plus'] = _aggregate_spatial(
+                            np.abs(m_plus),
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+                        results['power_minus'] = _aggregate_spatial(
+                            np.abs(m_minus),
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+                    
+                    return win_idx, results
                 
                 # Process windows in parallel
                 results_list = Parallel(n_jobs=-1, backend='threading')(
