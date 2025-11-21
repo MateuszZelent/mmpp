@@ -97,6 +97,7 @@ def overlay_transmission(
     width_tag: str = "w5",
     sim_result: Optional[TransmissionResult] = None,
     normalize_to: Optional[str] = None,
+    normalize: bool = False,
     freq_filename: str = "freq.txt",
     freq_file_unit: str = "GHz",
     target_freq_unit: Optional[str] = None,
@@ -140,6 +141,10 @@ def overlay_transmission(
         Explicit column index or label from the measurement file. Overrides ``bias_index``.
     reverse_frequency:
         Reverse the frequency axis to match typical experimental formatting.
+    normalize:
+        If True, normalizes the experimental transmission so that its maximum value is 1.
+        This normalization is applied independently after any `normalize_to` scaling.
+        Default is False.
     color, linewidth, label, plot_kwargs:
         Forwarded to :func:`matplotlib.axes.Axes.plot`.
 
@@ -208,6 +213,12 @@ def overlay_transmission(
             raise ValueError(
                 f"Unsupported normalization strategy: '{normalize_to}'. Available: 'sim_max'."
             )
+
+    # Apply independent normalization if requested
+    if normalize:
+        exp_max = np.max(amplitudes)
+        if exp_max > 0:
+            amplitudes = amplitudes / exp_max
 
     # Load frequency data, allowing pandas to auto-detect the header.
     # This is more robust if the file contains a header like 'freq (GHz)'.
