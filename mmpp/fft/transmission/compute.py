@@ -186,6 +186,7 @@ class TransmissionResult:
         find_minima: Optional[dict] = None,
         x_width: Optional[float] = None,
         disable_averaging: bool = False,
+        normalize: bool = False,
         verbose: bool = False,
         **kwargs
     ):
@@ -247,6 +248,10 @@ class TransmissionResult:
         disable_averaging : bool, optional
             If True, forces single-point extraction (no averaging) regardless of x_width value.
             Use this flag to guarantee exact single-point behavior. Default is False.
+        normalize : bool, optional
+            If True, normalizes the transmission cross-section so that the maximum value is 1.
+            This is useful for comparing transmission profiles with different amplitudes.
+            Default is False (no normalization).
         verbose : bool, optional
             If True, prints detailed diagnostic information about x position selection,
             averaging behavior, and data extraction. Default is False.
@@ -419,6 +424,17 @@ class TransmissionResult:
             if verbose:
                 print(f"[VERBOSE] Applying fmax={fmax} {freq_unit}: {points_before} -> {len(freqs)} points")
         
+        # Apply normalization if requested
+        if normalize:
+            max_val = transmission_slice.max()
+            if max_val > 0:
+                if verbose:
+                    print(f"[VERBOSE] Normalizing: dividing by max value = {max_val:.4f}")
+                transmission_slice = transmission_slice / max_val
+            else:
+                if verbose:
+                    print(f"[VERBOSE] WARNING: Cannot normalize - max value is {max_val}")
+        
         if verbose:
             print(f"[VERBOSE] Final data for plotting: {len(freqs)} points")
             print(f"[VERBOSE] Final freq range: {freqs.min():.3f} to {freqs.max():.3f} {freq_unit}")
@@ -444,11 +460,14 @@ class TransmissionResult:
         }
         plot_kwargs.update(kwargs)
 
+        # Prepare axis labels
+        transmission_label = "Normalized Transmission" if normalize else "Transmission T(f)"
+
         # Plot - choose orientation based on flip parameter
         if flip:
             # Frequency on Y-axis (vertical), Transmission on X-axis (horizontal)
             ax.plot(transmission_slice, freqs, **plot_kwargs)
-            ax.set_xlabel("Transmission T(f)", fontsize=12)
+            ax.set_xlabel(transmission_label, fontsize=12)
             ax.set_ylabel(f"Frequency ({freq_unit})", fontsize=12)
             # Apply log scale to transmission axis (X-axis when flipped)
             if log_scale:
@@ -457,7 +476,7 @@ class TransmissionResult:
             # Frequency on X-axis (horizontal), Transmission on Y-axis (vertical) - default
             ax.plot(freqs, transmission_slice, **plot_kwargs)
             ax.set_xlabel(f"Frequency ({freq_unit})", fontsize=12)
-            ax.set_ylabel("Transmission T(f)", fontsize=12)
+            ax.set_ylabel(transmission_label, fontsize=12)
             # Apply log scale to transmission axis (Y-axis when not flipped)
             if log_scale:
                 ax.set_yscale('log')
