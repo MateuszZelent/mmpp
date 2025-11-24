@@ -394,6 +394,8 @@ class BatchTransmission:
     def compute_all(
         self,
         config: Optional[TransmissionConfig] = None,
+        dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
         parallel: bool = True,
         max_workers: Optional[int] = None,
         use_cache: bool = True,
@@ -409,6 +411,10 @@ class BatchTransmission:
         ----------
         config : TransmissionConfig, optional
             Transmission configuration. If None, created from kwargs
+        dataset_name : str, optional
+            Dataset name to use (e.g., 'm_layer13'). If None, uses instance dataset_name
+        slice_info : Any, optional
+            Slice information for dataset subsetting. If None, uses instance slice_info
         parallel : bool, default=True
             Whether to use parallel processing
         max_workers : int, optional
@@ -433,6 +439,10 @@ class BatchTransmission:
             Container with all computed results and parameters
         """
         from ...fft import FFT
+        
+        # Use provided dataset_name/slice_info or fall back to instance values
+        active_dataset_name = dataset_name if dataset_name is not None else self.dataset_name
+        active_slice_info = slice_info if slice_info is not None else self.slice_info
         
         log.info(f"Starting batch transmission computation for {len(self.results)} results")
         log.info(f"Parallel: {parallel}, Use cache: {use_cache}, Save: {save}")
@@ -469,9 +479,9 @@ class BatchTransmission:
                 transmission_interface = fft_analyzer.transmission
                 
                 # Apply dataset/slice context if provided
-                if self.dataset_name is not None:
+                if active_dataset_name is not None:
                     transmission_interface = transmission_interface.clone_for_dataset(
-                        self.dataset_name, self.slice_info
+                        active_dataset_name, active_slice_info
                     )
                 
                 # Compute transmission
