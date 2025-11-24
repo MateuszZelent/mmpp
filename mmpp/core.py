@@ -1019,9 +1019,10 @@ class DatasetAwareWrapper:
         Get time step for this dataset.
         
         Algorithm:
-        1. Check if 't_sampl' exists in job_result attrs
-        2. If not, look for 't' array corresponding to this dataset
-        3. Calculate dt = t[1] - t[0]
+        1. Check if 't_sampl' exists in job_result attrs (global)
+        2. Check if 't' exists in THIS dataset's attrs and calculate dt
+        3. Look for 't' array in various locations (root, table, etc.)
+        4. Calculate dt = t[1] - t[0]
         
         Returns:
             float: Time step in seconds
@@ -1031,7 +1032,20 @@ class DatasetAwareWrapper:
             if 't_sampl' in self.job_result._z.attrs:
                 return self.job_result._z.attrs['t_sampl']
         
-        # Method 2: Look for time array for this dataset
+        # Method 2: Check THIS dataset's attrs for 't' array (MOST SPECIFIC)
+        if hasattr(self.job_result, '_z') and self.job_result._z is not None:
+            try:
+                dataset = self.job_result._z[self.dataset_name]
+                if hasattr(dataset, 'attrs') and 't' in dataset.attrs:
+                    t_attr = dataset.attrs['t']
+                    # t_attr is a list or array in attrs
+                    if hasattr(t_attr, '__len__') and len(t_attr) >= 2:
+                        dt = float(t_attr[1] - t_attr[0])
+                        return dt
+            except (KeyError, NameError, AttributeError, IndexError, TypeError):
+                pass
+        
+        # Method 3: Look for time array in various locations
         # Try common naming patterns and locations
         time_locations = [
             ('t',),  # Root level 't'
@@ -1055,7 +1069,7 @@ class DatasetAwareWrapper:
             except (KeyError, NameError, AttributeError, IndexError):
                 continue
         
-        # Method 3: Fallback - raise informative error
+        # Method 4: Fallback - raise informative error
         raise AttributeError(
             f"Cannot determine time step for dataset '{self.dataset_name}'. "
             f"Neither 't_sampl' attribute nor time array 't' found in zarr file."
