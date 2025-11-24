@@ -7,6 +7,7 @@ as parametric heatmaps.
 
 from __future__ import annotations
 
+import gc
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -525,6 +526,8 @@ class BatchTransmission:
             except Exception as e:
                 computation_time = time.time() - start_time
                 log.error(f"Failed to compute transmission for {result.path}: {e}")
+                # Cleanup after error
+                gc.collect()
                 return {
                     "success": False,
                     "result": None,
@@ -533,6 +536,9 @@ class BatchTransmission:
                     "computation_time": computation_time,
                     "error": str(e),
                 }
+            finally:
+                # Always run garbage collection after each computation
+                gc.collect()
         
         # Execute computations
         if parallel and len(self.results) > 1:
@@ -542,7 +548,6 @@ class BatchTransmission:
                 max_workers = min(len(self.results), os.cpu_count() or 8)
             
             log.info(f"Using parallel execution with {max_workers} workers")
-            print(f"🚀 Parallel batch processing with {max_workers} workers")
             
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all tasks

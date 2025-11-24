@@ -944,6 +944,8 @@ class TransmissionCompute:
         return data, dt
 
     def compute(self, config: TransmissionConfig, slice_info: Optional[Any] = None) -> TransmissionResult:
+        import gc  # Garbage collector for memory management
+        
         config.ensure_valid()
 
         dataset = config.dataset_name or self._job_result.get_largest_m_dataset()
@@ -981,12 +983,17 @@ class TransmissionCompute:
             log.warning("dx not found, x_positions will be in cell indices")
 
         # Apply filtering (optional - can be None)
+        # Use in-place operations where possible to save memory
         if config.filter_type is not None:
             if isinstance(config.filter_type, list):
                 log.debug(f"Applying sequential filters: {config.filter_type}")
             else:
                 log.debug(f"Applying filter: {config.filter_type}")
             filtered = self._fft_compute.apply_filter(data, config.filter_type)
+            # Free original data if filtered is a new array
+            if filtered is not data:
+                del data
+                gc.collect()
             log.debug(f"Filtered data: min={filtered.min():.8e}, max={filtered.max():.8e}")
         else:
             filtered = data
@@ -995,6 +1002,10 @@ class TransmissionCompute:
         # Apply windowing (optional - can be None)
         if config.window_function is not None:
             windowed = self._fft_compute.apply_window(filtered, config.window_function)
+            # Free filtered data if windowed is a new array
+            if windowed is not filtered:
+                del filtered
+                gc.collect()
             log.debug(f"Windowed data: min={windowed.min():.8e}, max={windowed.max():.8e}")
         else:
             windowed = filtered
@@ -1293,7 +1304,6 @@ class TransmissionCompute:
                     
                     power_map[:, win_idx] = aggregated
             
-            print(f"✅ PRE_FFT complete: computed {n_windows} FFTs")
             t_fft_end = time.time()
             log.info("PRE_FFT mode completed in %.3fs for %d windows", 
                      t_fft_end - t_fft_start, n_windows)
@@ -1310,61 +1320,72 @@ class TransmissionCompute:
             if config.y_integration_mode == "sum_m":
                 # Method 1: Sum magnetization data along y BEFORE FFT
                 # windowed shape: (t, z, y, x, comp) → sum over y → (t, z, x, comp)
-                log.info("Y-integration: sum_m (summing magnetization before FFT)")
+                log.debug("Y-integration: sum_m (summing magnetization before FFT)")
                 windowed_integrated = windowed.sum(axis=2)  # Sum over y (axis=2)
-                print(f"🔧 SUM_M: summed over y-axis → shape {windowed_integrated.shape}")
+                
+                # Free windowed data - no longer needed
+                del windowed
+                gc.collect()
                 
                 if use_scipy:
                     full_spectrum = scipy_fft.rfft(windowed_integrated, axis=0)
                 else:
                     full_spectrum = np.fft.rfft(windowed_integrated, axis=0)
                 
-                # 🔍 DEBUG: Verify FFT output
-                abs_spectrum = np.abs(full_spectrum)
-                print(f"✅ FFT complete: full_spectrum.shape = {full_spectrum.shape}")
-                print(f"   |FFT| min: {abs_spectrum.min():.8e}, max: {abs_spectrum.max():.8e}")
+                # Free integrated data
+                del windowed_integrated
+                gc.collect()
+                
+                log.debug(f"FFT complete: full_spectrum.shape = {full_spectrum.shape}")
             
             elif config.y_integration_mode == "sum_fft":
                 # Method 2: Compute FFT first, THEN sum complex FFT along y (preserve phase!)
-                log.info("Y-integration: sum_fft (computing FFT first, then summing complex values)")
+                log.debug("Y-integration: sum_fft (computing FFT first, then summing complex values)")
                 
                 if use_scipy:
                     full_spectrum_raw = scipy_fft.rfft(windowed, axis=0)
                 else:
                     full_spectrum_raw = np.fft.rfft(windowed, axis=0)
                 
-                print(f"✅ FFT complete (raw): shape = {full_spectrum_raw.shape}")
+                # Free windowed data immediately after FFT
+                del windowed
+                gc.collect()
+                
+                log.debug(f"FFT complete (raw): shape = {full_spectrum_raw.shape}")
                 
                 # Sum complex FFT along y-axis: (freq, z, y, x, comp) → (freq, z, x, comp)
                 # ⚠️ IMPORTANT: Sum complex values, NOT absolute values - preserves phase!
                 full_spectrum = np.sum(full_spectrum_raw, axis=2)  # Sum over y (axis=2)
-                print(f"🔧 SUM_FFT: summed complex FFT over y-axis → shape {full_spectrum.shape}")
-                abs_spectrum = np.abs(full_spectrum)
-                print(f"   |sum(complex FFT)| min: {abs_spectrum.min():.8e}, max: {abs_spectrum.max():.8e}")
+                
+                # Free raw spectrum
+                del full_spectrum_raw
+                gc.collect()
+                
+                log.debug(f"SUM_FFT: summed complex FFT over y-axis → shape {full_spectrum.shape}")
             
             else:  # "none"
                 # No y-integration: keep full 5D spectrum
-                log.info("Y-integration: none (keeping full 5D spectrum)")
+                log.debug("Y-integration: none (keeping full 5D spectrum)")
                 
                 if use_scipy:
                     full_spectrum = scipy_fft.rfft(windowed, axis=0)
                 else:
                     full_spectrum = np.fft.rfft(windowed, axis=0)
                 
-                # 🔍 DEBUG: Verify FFT output
-                abs_spectrum = np.abs(full_spectrum)
-                print(f"✅ FFT complete: full_spectrum.shape = {full_spectrum.shape}")
-                print(f"   |FFT| min: {abs_spectrum.min():.8e}, max: {abs_spectrum.max():.8e}")
+                # Free windowed data
+                del windowed
+                gc.collect()
+                
+                log.debug(f"FFT complete: full_spectrum.shape = {full_spectrum.shape}")
 
 
             t_fft_end = time.time()
-            log.info("FFT completed in %.3fs (shape: %s → %s)", 
-                     t_fft_end - t_fft_start, windowed.shape, full_spectrum.shape)
+            log.info("FFT completed in %.3fs (shape: %s)", 
+                     t_fft_end - t_fft_start, full_spectrum.shape)
 
             # 🚀 RAW FFT OUTPUT MODE: Skip all post-processing and return raw spectrum
             if config.raw_fft_output:
-                log.info("⚡ RAW FFT OUTPUT MODE: Skipping all post-processing, returning full_spectrum directly")
-                print(f"⚡ RAW FFT OUTPUT: Returning full_spectrum shape={full_spectrum.shape}")
+                log.info("RAW FFT OUTPUT MODE: Skipping all post-processing, returning full_spectrum directly")
                 
                 # Create minimal result with raw FFT spectrum
                 # Note: transmission and power_map will contain the raw complex spectrum
@@ -1427,15 +1448,11 @@ class TransmissionCompute:
                 if y_already_integrated:
                     # Y already summed: (freq, z, x, comp) → extract z=0 → (freq, x, comp)
                     relevant_spectrum = full_spectrum[:, 0, :, :]  # Extract z=0
-                    print(f"🔍 Extracted z=0: {full_spectrum.shape} → {relevant_spectrum.shape}")
                     log.debug("Y already integrated, extracted z=0: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
                 else:
                     # Y not summed yet: (freq, z, y, x, comp) → sum over y, extract z=0 → (freq, x, comp)
                     relevant_spectrum = full_spectrum[:, 0, :, :, :].sum(axis=1)  # Sum over y (axis=1)
-                    print(f"🔍 Summed over y at z=0: {full_spectrum.shape} → {relevant_spectrum.shape}")
                     log.debug("Summed spectrum over y-dimension: %s → %s", full_spectrum.shape, relevant_spectrum.shape)
-                
-                print(f"🔍 relevant_spectrum stats: min={np.abs(relevant_spectrum).min():.8e}, max={np.abs(relevant_spectrum).max():.8e}")
                 
                 # Create sliding window view - NO COPIES, just strides!
                 # sliding_window_view adds new axis at the END!
@@ -1447,7 +1464,6 @@ class TransmissionCompute:
                     axis=1  # Slide along x-axis
                 )
                 # windowed_view shape: (n_freq, n_windows, n_comp, window_size)
-                print(f"🔍 windowed_view.shape: {windowed_view.shape} (window_size={window_size})")
                 
                 # Compute power for ALL windows - iterate only over active components
                 # Initialize with zeros - shape (n_freq, n_windows, window_size)
@@ -1460,13 +1476,13 @@ class TransmissionCompute:
                         comp_fft_all = windowed_view[:, :, comp_idx, :]
                         power_all_windows += np.abs(comp_fft_all) * component_weights[comp_idx]
                 
-                print(f"🔍 power_all_windows stats BEFORE mean: min={power_all_windows.min():.8e}, max={power_all_windows.max():.8e}")
-                
                 # Mean over window_size dimension - NO LOOP!
                 # power_all_windows shape: (n_freq, n_windows, window_size)
                 power_map = power_all_windows.mean(axis=2)  # Result: (n_freq, n_windows)
                 
-                print(f"🔍 power_map stats AFTER mean: min={power_map.min():.8e}, max={power_map.max():.8e}")
+                # Clean up intermediate arrays
+                del power_all_windows, windowed_view, relevant_spectrum
+                gc.collect()
                 
                 t_process_end = time.time()
                 log.info("Sliding window vectorization: %.3fs for %d windows (%.1f µs/window)", 
