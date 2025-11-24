@@ -476,7 +476,7 @@ class BatchTransmission:
                 
                 # Compute transmission
                 trans_result = transmission_interface.compute(
-                    config=config,
+                    config,
                     use_cache=use_cache,
                     save=save,
                     force=force,
