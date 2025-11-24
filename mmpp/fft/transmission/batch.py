@@ -7,12 +7,20 @@ as parametric heatmaps.
 
 from __future__ import annotations
 
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 
 import numpy as np
+
+# Try to use joblib for parallel processing (much better for numpy/scipy CPU-bound tasks)
+try:
+    from joblib import Parallel, delayed
+    _USE_JOBLIB = True
+except ImportError:
+    _USE_JOBLIB = False
 
 from ...cli.logging_config import get_mmpp_logger
 from .compute import TransmissionConfig, TransmissionResult
@@ -528,11 +536,13 @@ class BatchTransmission:
         
         # Execute computations
         if parallel and len(self.results) > 1:
-            # Parallel execution
+            # Use ThreadPoolExecutor - numpy/scipy FFT releases GIL so this works well
             if max_workers is None:
-                max_workers = min(len(self.results), 4)  # Reasonable default
+                # Default: use all CPU cores for batch processing
+                max_workers = min(len(self.results), os.cpu_count() or 8)
             
             log.info(f"Using parallel execution with {max_workers} workers")
+            print(f"🚀 Parallel batch processing with {max_workers} workers")
             
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all tasks

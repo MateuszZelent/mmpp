@@ -980,11 +980,6 @@ class TransmissionCompute:
             dx_nm = None
             log.warning("dx not found, x_positions will be in cell indices")
 
-        # 🔍 DEBUG: Print raw data stats
-        print(f"📊 RAW data.shape: {data.shape}, min: {data.min():.8e}, max: {data.max():.8e}")
-        print(f"⚙️  config.filter_type = {config.filter_type}")
-        print(f"⚙️  config.window_function = {config.window_function}")
-
         # Apply filtering (optional - can be None)
         if config.filter_type is not None:
             if isinstance(config.filter_type, list):
@@ -992,20 +987,18 @@ class TransmissionCompute:
             else:
                 log.debug(f"Applying filter: {config.filter_type}")
             filtered = self._fft_compute.apply_filter(data, config.filter_type)
-            print(f"🔧 FILTERED data: min: {filtered.min():.8e}, max: {filtered.max():.8e}")
+            log.debug(f"Filtered data: min={filtered.min():.8e}, max={filtered.max():.8e}")
         else:
             filtered = data
             log.debug("Skipping temporal filtering (filter_type=None)")
-            print(f"⏭️  SKIPPED filtering (filter_type=None)")
         
         # Apply windowing (optional - can be None)
         if config.window_function is not None:
             windowed = self._fft_compute.apply_window(filtered, config.window_function)
-            print(f"🪟 WINDOWED data: min: {windowed.min():.8e}, max: {windowed.max():.8e}")
+            log.debug(f"Windowed data: min={windowed.min():.8e}, max={windowed.max():.8e}")
         else:
             windowed = filtered
             log.debug("Skipping temporal windowing (window_function=None)")
-            print(f"⏭️  SKIPPED windowing (window_function=None)")
 
         window_size = min(config.spatial_window, n_x)
         step = config.spatial_step
@@ -1099,11 +1092,7 @@ class TransmissionCompute:
                   n_time, n_z, n_y, n_x, n_comp)
         t_fft_start = time.time()
 
-        # 🔍 DEBUG: Verify data before FFT
-        print(f"windowed.shape: {windowed.shape}, min: {windowed.min():.8e}, max: {windowed.max():.8e}")
-        print(f"⚙️  y_integration_mode = {config.y_integration_mode}")
-        print(f"⚙️  spatial_window_mode = {config.spatial_window_mode}")
-        print(f"⚙️  engine = {config.engine}")
+        log.debug(f"y_integration_mode={config.y_integration_mode}, spatial_window_mode={config.spatial_window_mode}, engine={config.engine}")
 
         # 🔑 Determine which FFT engine to use based on config.engine parameter
         if config.engine == "scipy":
@@ -1118,15 +1107,13 @@ class TransmissionCompute:
             use_scipy = _USE_SCIPY_FFT
             engine_name = "scipy.fft" if use_scipy else "numpy.fft"
         
-        log.info(f"Using FFT engine: {engine_name}")
-        print(f"🔧 FFT engine: {engine_name}")
+        log.debug(f"Using FFT engine: {engine_name}")
 
         # 🔑 SPATIAL WINDOW MODE: Choose between pre-FFT (local, slower) or post-FFT (global, faster)
         if config.spatial_window_mode == "pre_fft":
             # 🐢 SLOW PATH: Apply spatial windows BEFORE FFT (physically correct for local transmission)
             # This computes separate FFT for each spatial window position
-            log.info("⚠️  Spatial window mode: PRE_FFT (computing separate FFT for each window - SLOW but local)")
-            print(f"⚠️  PRE_FFT mode: Will compute {n_windows} separate FFTs (slower)")
+            log.info("Spatial window mode: PRE_FFT (computing separate FFT for each window - SLOW but local)")
             
             # Pre-allocate result arrays
             power_map = np.zeros((n_freq, n_windows), dtype=float)
