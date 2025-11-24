@@ -384,22 +384,38 @@ class SpinWaveAnalyzer:
         attrs = dict(self.zarr_file.attrs)
         logger.info(f"Available zarr attributes: {list(attrs.keys())}")
         
-        # Time step
+        # Time step - Check in order of specificity:
+        # 1. Global t_sampl attribute
+        # 2. Dataset-specific 't' attribute (most accurate for per-dataset time)
+        # 3. Time array datasets
         dt_keys = ['t_sampl', 'dt', 'Dt', 'timestep', 'time_step']
         for key in dt_keys:
             if key in attrs:
                 attr_val = attrs[key]
                 if isinstance(attr_val, (int, float)):
                     self.dt = float(attr_val)
-                    logger.info(f"Extracted dt = {self.dt} s from '{key}'")
+                    logger.info(f"Extracted dt = {self.dt} s from global '{key}'")
                     break
         else:
-            # Try to infer from time axis if available
-            if 't' in self.zarr_file:
-                t = np.array(self.zarr_file['t'])
-                if len(t) > 1:
-                    self.dt = float(t[1] - t[0])
-                    logger.info(f"Inferred dt = {self.dt} s from time axis")
+            # Check dataset-specific attrs['t'] (e.g., m_layer13.attrs['t'])
+            if hasattr(self, '_M_path') and self._M_path:
+                try:
+                    dataset = self.zarr_file[self._M_path]
+                    if hasattr(dataset, 'attrs') and 't' in dataset.attrs:
+                        t_attr = dataset.attrs['t']
+                        if hasattr(t_attr, '__len__') and len(t_attr) >= 2:
+                            self.dt = float(t_attr[1] - t_attr[0])
+                            logger.info(f"Extracted dt = {self.dt} s from dataset '{self._M_path}' attrs['t']")
+                except (KeyError, AttributeError, IndexError, TypeError) as e:
+                    logger.debug(f"Could not extract dt from dataset attrs: {e}")
+            
+            # Try to infer from time array datasets if still not found
+            if self.dt <= 0:
+                if 't' in self.zarr_file:
+                    t = np.array(self.zarr_file['t'])
+                    if len(t) > 1:
+                        self.dt = float(t[1] - t[0])
+                        logger.info(f"Inferred dt = {self.dt} s from time axis 't'")
             
         if self.dt <= 0:
             logger.warning("Could not determine time step dt, using config value")
