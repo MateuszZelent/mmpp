@@ -251,17 +251,28 @@ class ZarrJobResult:
             )
 
         self._ensure_zarr_loaded()
-        if name in dir(self._z):
-            return getattr(self._z, name)
+        
+        # First check in zarr attrs (most common case for simulation parameters)
+        if name in self._z.attrs:
+            return self._z.attrs[name]
+        
+        # Then check if it's a dataset or subgroup
         try:
             zarr_item = self._get_zarr_member(name)
+            if isinstance(zarr_item, zarr.Array):
+                return DatasetAwareWrapper(self, name, zarr_item)
+            return zarr_item
         except NameError:
-            if name in self._z.attrs:
-                return self._z.attrs[name]
-            raise
-        if isinstance(zarr_item, zarr.Array):
-            return DatasetAwareWrapper(self, name, zarr_item)
-        return zarr_item
+            pass
+        
+        # Finally check if it's a method/property of the zarr Group
+        if name in dir(self._z):
+            return getattr(self._z, name)
+        
+        # Not found anywhere
+        raise AttributeError(
+            f"'{self.__class__.__name__}' object has no attribute '{name}'"
+        )
 
     def __repr__(self) -> str:
         return f"ZarrJobResult('{self.name}')"
