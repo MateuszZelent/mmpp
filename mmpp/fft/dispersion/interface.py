@@ -1994,6 +1994,11 @@ class FFTDispersionInterface:
         ax.set_xlabel(k_label)
         ax.set_ylabel(f_label)
 
+        if fmax is not None and fmax > 0:
+            y_min = float(np.min(f_axis))
+            y_max = float(np.max(f_axis))
+            ax.set_ylim(y_min, y_max)
+
         if k_xlim is not None:
             ax.set_xlim(*k_xlim)
         elif default_k_xlim is not None:
@@ -2421,6 +2426,11 @@ class FFTDispersionInterface:
         # Formatting
         ax.set_xlabel(k_label)
         ax.set_ylabel(f_label)
+
+        if fmax is not None and fmax > 0:
+            y_min = float(np.min(f_axis))
+            y_max = float(np.max(f_axis))
+            ax.set_ylim(y_min, y_max)
 
         if k_xlim is not None:
             ax.set_xlim(*k_xlim)
