@@ -441,9 +441,17 @@ class FFT:
                 except (TypeError, ValueError):
                     log.debug(f"Ignoring invalid tmax value: {tmax}")
 
-            # Get dt from dataset attrs or fall back to root attrs
+            # Get dt from dataset's smart .dt property (handles t_sampl, time arrays, etc.)
+            # Falls back to manual attrs check if wrapper not available
             dt = None
-            if hasattr(data_set, "attrs"):
+            if hasattr(data_set, 'dt'):
+                try:
+                    dt = data_set.dt
+                    log.debug(f"Using dt from data_set.dt property: {dt}")
+                except AttributeError:
+                    pass  # Fall through to manual checks
+            
+            if dt is None and hasattr(data_set, "attrs"):
                 dataset_attrs = getattr(data_set, "attrs", {})
                 for key in ("t_sampl", "dt"):
                     dt = _extract_dt(dataset_attrs.get(key))

@@ -965,7 +965,11 @@ class DatasetAwareWrapper:
         return self.zarr_array
 
     def __getattr__(self, name):
-        """Delegate to zarr_array for most attributes"""
+        """Delegate to zarr_array for most attributes (but not our own properties)"""
+        # Don't delegate properties that are defined on this class
+        if name in ('dt', 'fft', 'shape', 'data'):
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+        
         if self.slice_info is not None:
             # If sliced, get attribute from sliced data
             sliced_data = self._resolve_source()
@@ -1008,6 +1012,54 @@ class DatasetAwareWrapper:
             sliced_data = self._resolve_source()
             return sliced_data.shape
         return self.zarr_array.shape
+
+    @property
+    def dt(self):
+        """
+        Get time step for this dataset.
+        
+        Algorithm:
+        1. Check if 't_sampl' exists in job_result attrs
+        2. If not, look for 't' array corresponding to this dataset
+        3. Calculate dt = t[1] - t[0]
+        
+        Returns:
+            float: Time step in seconds
+        """
+        # Method 1: Check for t_sampl in main attributes
+        if hasattr(self.job_result, '_z') and self.job_result._z is not None:
+            if 't_sampl' in self.job_result._z.attrs:
+                return self.job_result._z.attrs['t_sampl']
+        
+        # Method 2: Look for time array for this dataset
+        # Try common naming patterns and locations
+        time_locations = [
+            ('t',),  # Root level 't'
+            ('table', 't'),  # Often in 'table' group
+            ('time',),  # Alternative name
+            (f't_{self.dataset_name}',),  # Dataset-specific time
+        ]
+        
+        for location in time_locations:
+            try:
+                if hasattr(self.job_result, '_z'):
+                    # Navigate through the location path
+                    t_array = self.job_result._z
+                    for key in location:
+                        t_array = t_array[key]
+                    
+                    # Calculate dt from first two time points
+                    if t_array.shape[0] >= 2:
+                        dt = float(t_array[1] - t_array[0])
+                        return dt
+            except (KeyError, NameError, AttributeError, IndexError):
+                continue
+        
+        # Method 3: Fallback - raise informative error
+        raise AttributeError(
+            f"Cannot determine time step for dataset '{self.dataset_name}'. "
+            f"Neither 't_sampl' attribute nor time array 't' found in zarr file."
+        )
 
     @property
     def data(self):

@@ -822,18 +822,25 @@ class FFTCompute:
         layer_select_time = time.time() - layer_select_start
         log.debug(f"Layer selection time: {layer_select_time:.3f}s")
 
-        # Get time step - use dataset-specific t_sampl, not global zarr attrs
-        # Priority: data_set.attrs > job.attrs > default fallback
-        dt = None
-        if hasattr(data_set, 'attrs') and 't_sampl' in data_set.attrs:
-            dt = data_set.attrs['t_sampl']
-            log.debug(f"Using dt from data_set.attrs['t_sampl']: {dt}")
-        elif hasattr(job, 'attrs') and 't_sampl' in job.attrs:
-            dt = job.attrs['t_sampl']
-            log.warning(f"Using dt from job.attrs['t_sampl']: {dt} (dataset-specific t_sampl not found)")
-        else:
+        # Get time step - use dataset's smart dt property that handles multiple sources
+        # This automatically tries: t_sampl attr -> time array calculation -> fallback
+        try:
+            # If data_set is wrapped by DatasetAwareWrapper, use its .dt property
+            if hasattr(data_set, 'dt'):
+                dt = data_set.dt
+                log.debug(f"Using dt from data_set.dt property: {dt}")
+            elif hasattr(data_set, 'attrs') and 't_sampl' in data_set.attrs:
+                dt = data_set.attrs['t_sampl']
+                log.debug(f"Using dt from data_set.attrs['t_sampl']: {dt}")
+            elif hasattr(job, 'attrs') and 't_sampl' in job.attrs:
+                dt = job.attrs['t_sampl']
+                log.warning(f"Using dt from job.attrs['t_sampl']: {dt} (dataset-specific t_sampl not found)")
+            else:
+                dt = 1e-12
+                log.warning(f"t_sampl not found in attrs, using default: {dt}")
+        except AttributeError as e:
+            log.warning(f"Could not determine dt: {e}, using default")
             dt = 1e-12
-            log.warning(f"t_sampl not found in attrs, using default: {dt}")
 
         # Final timing and memory measurement
         total_time = time.time() - start_time
