@@ -52,7 +52,17 @@ class BatchFFT:
     def transmission(self) -> "BatchTransmission":
         """Get batch transmission analyzer."""
         from .fft.transmission.batch import BatchTransmission
-        return BatchTransmission(self.results, self.mmpp_ref)
+        
+        # Check if dataset context was set (from BatchDatasetWrapper)
+        dataset_name = getattr(self, '_dataset_name', None)
+        slice_info = getattr(self, '_slice_info', None)
+        
+        return BatchTransmission(
+            self.results, 
+            self.mmpp_ref,
+            dataset_name=dataset_name,
+            slice_info=slice_info
+        )
 
     def compute_all(self, **kwargs) -> dict[str, Any]:
         """
@@ -354,6 +364,46 @@ class BatchModeAnalyzer:
         return summary
 
 
+class BatchDatasetWrapper:
+    """Wrapper for dataset-aware batch operations.
+    
+    Allows syntax like: job[:].m_layer13[:,...,0].fft.transmission(...)
+    """
+    
+    def __init__(self, results: list[Any], mmpp_ref: Any, dataset_name: str):
+        """Initialize dataset wrapper.
+        
+        Parameters
+        ----------
+        results : List[Any]
+            List of ZarrJobResult objects
+        mmpp_ref : Any
+            Reference to MMPP instance
+        dataset_name : str
+            Name of the dataset (e.g., 'm_layer13')
+        """
+        self.results = results
+        self.mmpp_ref = mmpp_ref
+        self.dataset_name = dataset_name
+        self.slice_info = None
+    
+    def __getitem__(self, key):
+        """Capture slice information."""
+        self.slice_info = key
+        return self
+    
+    @property
+    def fft(self) -> BatchFFT:
+        """Get batch FFT operations with dataset context."""
+        # Create a BatchFFT instance with dataset context
+        # The transmission property will use this context
+        batch_fft = BatchFFT(self.results, self.mmpp_ref)
+        # Store dataset context on the batch_fft instance
+        batch_fft._dataset_name = self.dataset_name
+        batch_fft._slice_info = self.slice_info
+        return batch_fft
+
+
 class BatchOperations:
     """
     Main batch operations class that provides access to batch FFT and mode operations.
@@ -362,6 +412,7 @@ class BatchOperations:
     It provides access to batch operations like:
     - `op[:].fft.modes.compute_modes()` (auto-selects optimal dataset)
     - `op[:].fft.compute_all()`
+    - `op[:].m_layer13[:,...,0].fft.transmission(...)` (dataset-aware)
     """
 
     def __init__(self, results: list[Any], mmpp_ref: Any):
@@ -384,6 +435,30 @@ class BatchOperations:
     def fft(self) -> BatchFFT:
         """Get batch FFT operations handler."""
         return BatchFFT(self.results, self.mmpp_ref)
+    
+    def __getattr__(self, name: str):
+        """Intercept dataset names to enable dataset-aware batch operations.
+        
+        This allows syntax like: job[:].m_layer13.fft.transmission(...)
+        
+        Parameters
+        ----------
+        name : str
+            Attribute name (potentially a dataset name)
+            
+        Returns
+        -------
+        BatchDatasetWrapper
+            Wrapper for dataset-aware operations
+        """
+        # Check if this could be a dataset name
+        # Common patterns: 'm', 'm_layer*', 'm_resonator', etc.
+        if name.startswith('m') or name in ['B_ext', 'regions', 'table']:
+            log.debug(f"Creating dataset wrapper for: {name}")
+            return BatchDatasetWrapper(self.results, self.mmpp_ref, name)
+        
+        # Default behavior for other attributes
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     def __len__(self) -> int:
         """Return number of results in batch."""
