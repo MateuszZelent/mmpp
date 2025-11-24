@@ -822,23 +822,37 @@ class FFTCompute:
         layer_select_time = time.time() - layer_select_start
         log.debug(f"Layer selection time: {layer_select_time:.3f}s")
 
-        # Get time step - use dataset's smart dt property that handles multiple sources
-        # This automatically tries: t_sampl attr -> time array calculation -> fallback
+        # Get time step - prioritize dataset-specific attrs over global
+        # Order: dataset.attrs['t'] -> dataset.attrs['t_sampl'] -> job.attrs['t_sampl'] -> default
+        dt = None
         try:
-            # If data_set is wrapped by DatasetAwareWrapper, use its .dt property
-            if hasattr(data_set, 'dt'):
+            # Method 1: Check dataset.attrs['t'] array (most specific, per-dataset time)
+            if hasattr(data_set, 'attrs') and 't' in data_set.attrs:
+                t_attr = data_set.attrs['t']
+                if hasattr(t_attr, '__len__') and len(t_attr) >= 2:
+                    dt = float(t_attr[1] - t_attr[0])
+                    log.debug(f"Using dt from data_set.attrs['t']: {dt}")
+            
+            # Method 2: Check if data_set is wrapped by DatasetAwareWrapper with .dt property
+            if dt is None and hasattr(data_set, 'dt'):
                 dt = data_set.dt
                 log.debug(f"Using dt from data_set.dt property: {dt}")
-            elif hasattr(data_set, 'attrs') and 't_sampl' in data_set.attrs:
+            
+            # Method 3: Check dataset.attrs['t_sampl']
+            if dt is None and hasattr(data_set, 'attrs') and 't_sampl' in data_set.attrs:
                 dt = data_set.attrs['t_sampl']
                 log.debug(f"Using dt from data_set.attrs['t_sampl']: {dt}")
-            elif hasattr(job, 'attrs') and 't_sampl' in job.attrs:
+            
+            # Method 4: Fallback to global job.attrs['t_sampl']
+            if dt is None and hasattr(job, 'attrs') and 't_sampl' in job.attrs:
                 dt = job.attrs['t_sampl']
-                log.warning(f"Using dt from job.attrs['t_sampl']: {dt} (dataset-specific t_sampl not found)")
-            else:
+                log.warning(f"Using dt from job.attrs['t_sampl']: {dt} (dataset-specific dt not found)")
+            
+            # Method 5: Last resort default
+            if dt is None:
                 dt = 1e-12
                 log.warning(f"t_sampl not found in attrs, using default: {dt}")
-        except AttributeError as e:
+        except (AttributeError, TypeError, IndexError) as e:
             log.warning(f"Could not determine dt: {e}, using default")
             dt = 1e-12
 
