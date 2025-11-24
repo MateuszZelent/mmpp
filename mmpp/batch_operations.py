@@ -48,6 +48,12 @@ class BatchFFT:
         """Get batch mode analyzer."""
         return BatchModeAnalyzer(self.results, self.mmpp_ref)
 
+    @property
+    def transmission(self) -> "BatchTransmission":
+        """Get batch transmission analyzer."""
+        from .fft.transmission.batch import BatchTransmission
+        return BatchTransmission(self.results, self.mmpp_ref)
+
     def compute_all(self, **kwargs) -> dict[str, Any]:
         """
         Compute FFT for all results in batch.

@@ -3,6 +3,7 @@
 from .compute import TransmissionConfig, TransmissionCompute, TransmissionResult
 from .plot import TransmissionPlotConfig, TransmissionPlotter
 from .experimental import overlay_transmission, overlay_experimental_transmission
+from .batch import BatchTransmission, BatchTransmissionResult, stack_results
 
 __all__ = [
     "TransmissionConfig",
@@ -12,4 +13,7 @@ __all__ = [
     "TransmissionPlotter",
     "overlay_transmission",
     "overlay_experimental_transmission",
+    "BatchTransmission",
+    "BatchTransmissionResult",
+    "stack_results",
 ]
