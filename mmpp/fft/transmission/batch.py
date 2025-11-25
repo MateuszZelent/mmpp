@@ -36,6 +36,7 @@ log = get_mmpp_logger("mmpp.fft.transmission.batch")
 try:
     import matplotlib.pyplot as plt
     from matplotlib.axes import Axes
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -202,6 +203,17 @@ class BatchTransmissionResult:
         figsize: tuple = (10, 6),
         dpi: int = 100,
         verbose: bool = False,
+        # Publication-quality options
+        colorbar_inset: bool = False,
+        colorbar_position: str = "upper right",
+        colorbar_width: str = "45%",
+        colorbar_height: str = "4%",
+        colorbar_bg_alpha: float = 0.5,
+        show_grid: bool = False,
+        grid_alpha: float = 0.3,
+        grid_color: str = "white",
+        grid_linestyle: str = "--",
+        grid_axis: str = "y",
         **kwargs,
     ):
         """Plot 2D heatmap of transmission cross-sections vs parameter.
@@ -504,18 +516,79 @@ class BatchTransmissionResult:
                 fontsize=14
             )
         
-        # Colorbar with appropriate label
-        cbar = plt.colorbar(img, ax=ax)
+        # Add grid if requested
+        if show_grid:
+            ax.grid(
+                True,
+                axis=grid_axis,
+                alpha=grid_alpha,
+                color=grid_color,
+                linestyle=grid_linestyle,
+                zorder=5,
+            )
+        
+        # Determine colorbar label
         if colorbar_label is not None:
-            cbar.set_label(colorbar_label, fontsize=11)
+            cbar_label = colorbar_label
         elif log_scale:
-            cbar.set_label("log₁₀(Transmission)", fontsize=11)
+            cbar_label = "log₁₀(T)"
         elif normalize_mode == "per_column":
-            cbar.set_label("Transmission (per-column normalized)", fontsize=11)
+            cbar_label = "T (norm.)"
         elif normalize_mode == "global":
-            cbar.set_label("Transmission (globally normalized)", fontsize=11)
+            cbar_label = "T (global)"
         else:
-            cbar.set_label("Transmission (raw)", fontsize=11)
+            cbar_label = "Transmission"
+        
+        # Determine vmin/vmax for colorbar labels
+        actual_vmin = vmin if vmin is not None else float(plot_data.min())
+        actual_vmax = vmax if vmax is not None else float(plot_data.max())
+        
+        # Colorbar - inset or external
+        if colorbar_inset:
+            # Create publication-quality inset colorbar
+            # Background box
+            cbbox = inset_axes(
+                ax, width=colorbar_width, height=colorbar_height, 
+                loc=colorbar_position,
+                bbox_to_anchor=(0.0, 0.92, 1, 1),
+                bbox_transform=ax.transAxes,
+                borderpad=0,
+            )
+            for spine in cbbox.spines.values():
+                spine.set_visible(False)
+            cbbox.tick_params(
+                axis='both', left=False, top=False, right=False, bottom=False,
+                labelleft=False, labeltop=False, labelright=False, labelbottom=False
+            )
+            cbbox.set_facecolor([0, 0, 0, colorbar_bg_alpha])
+            
+            # Inner colorbar
+            cbar_ax = inset_axes(cbbox, '85%', '35%', loc='upper center', borderpad=0)
+            cbar = fig.colorbar(img, cax=cbar_ax, orientation="horizontal")
+            cbar.set_ticks([])
+            cbar.ax.set_xticklabels([])
+            cbar.outline.set_visible(False)
+            
+            # Format values
+            def format_val(v):
+                if abs(v) >= 1000 or (abs(v) < 0.01 and v != 0):
+                    return f"{v:.2e}"
+                elif abs(v) < 10:
+                    return f"{v:.3f}"
+                else:
+                    return f"{v:.1f}"
+            
+            # Labels
+            cbar_ax.text(0.08, -1.2, format_val(actual_vmin), fontsize=10, ha='center', va='center',
+                        color='white', fontweight='bold', transform=cbar_ax.transAxes)
+            cbar_ax.text(0.5, -1.2, cbar_label, fontsize=11, ha='center', va='center',
+                        color='white', fontweight='bold', transform=cbar_ax.transAxes)
+            cbar_ax.text(0.92, -1.2, format_val(actual_vmax), fontsize=10, ha='center', va='center',
+                        color='white', fontweight='bold', transform=cbar_ax.transAxes)
+        else:
+            # Standard external colorbar
+            cbar = plt.colorbar(img, ax=ax)
+            cbar.set_label(cbar_label, fontsize=11)
         
         # Mark position on reference axis if provided
         if mark_on_ax is not None:

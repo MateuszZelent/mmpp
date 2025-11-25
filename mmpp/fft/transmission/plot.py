@@ -21,11 +21,111 @@ try:  # pragma: no cover - optional dependency check
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
     from matplotlib.colors import LogNorm
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
     MATPLOTLIB_AVAILABLE = True
 except ImportError:  # pragma: no cover
     MATPLOTLIB_AVAILABLE = False
     Axes = Figure = None  # type: ignore
+
+
+def _make_inset_colorbar(
+    ax: Axes,
+    image,
+    fig: Figure,
+    vmin: float,
+    vmax: float,
+    label: str = "",
+    width: str = "45%",
+    height: str = "4%",
+    position: str = "upper right",
+    bbox_to_anchor: tuple = (0.0, 0.92, 1, 1),
+    bg_alpha: float = 0.5,
+    text_color: str = "white",
+    fontsize: int = 10,
+    title_fontsize: int = 11,
+) -> None:
+    """Create publication-quality inset colorbar inside plot.
+    
+    Parameters
+    ----------
+    ax : Axes
+        Main axes to attach colorbar to
+    image : AxesImage
+        The image/mappable object for colorbar
+    fig : Figure
+        Figure object
+    vmin, vmax : float
+        Min/max values for colorbar labels
+    label : str
+        Colorbar title/label
+    width, height : str
+        Size of colorbar as percentage of axes
+    position : str
+        Location: 'upper right', 'upper left', 'lower right', 'lower left', 'upper center'
+    bbox_to_anchor : tuple
+        Fine positioning (x, y, width, height) in axes coordinates
+    bg_alpha : float
+        Background box transparency
+    text_color : str
+        Color for labels
+    fontsize : int
+        Font size for min/max labels
+    title_fontsize : int
+        Font size for title
+    """
+    # Create background box for colorbar
+    cbbox = inset_axes(
+        ax, width=width, height=height, loc=position,
+        bbox_to_anchor=bbox_to_anchor,
+        bbox_transform=ax.transAxes,
+        borderpad=0,
+    )
+    
+    # Remove borders and ticks from background box
+    for spine in cbbox.spines.values():
+        spine.set_visible(False)
+    cbbox.tick_params(
+        axis='both', left=False, top=False, right=False, bottom=False,
+        labelleft=False, labeltop=False, labelright=False, labelbottom=False
+    )
+    cbbox.set_facecolor([0, 0, 0, bg_alpha])
+    
+    # Create inner colorbar axes
+    cbar_ax = inset_axes(cbbox, '85%', '35%', loc='upper center', borderpad=0)
+    cbar = fig.colorbar(image, cax=cbar_ax, orientation="horizontal")
+    cbar.set_ticks([])
+    cbar.ax.set_xticklabels([])
+    cbar.outline.set_visible(False)
+    
+    # Format values smartly
+    def format_val(v):
+        if abs(v) >= 1000 or (abs(v) < 0.01 and v != 0):
+            return f"{v:.2e}"
+        elif abs(v) < 10:
+            return f"{v:.3f}"
+        else:
+            return f"{v:.1f}"
+    
+    # Add labels: min, title, max
+    cbar_ax.text(
+        0.08, -1.2, format_val(vmin),
+        fontsize=fontsize, ha='center', va='center',
+        color=text_color, fontweight='bold',
+        transform=cbar_ax.transAxes
+    )
+    cbar_ax.text(
+        0.5, -1.2, label,
+        fontsize=title_fontsize, ha='center', va='center',
+        color=text_color, fontweight='bold',
+        transform=cbar_ax.transAxes
+    )
+    cbar_ax.text(
+        0.92, -1.2, format_val(vmax),
+        fontsize=fontsize, ha='center', va='center',
+        color=text_color, fontweight='bold',
+        transform=cbar_ax.transAxes
+    )
 
 
 FrequencyUnit = Literal["Hz", "kHz", "MHz", "GHz"]
@@ -95,6 +195,21 @@ class TransmissionPlotConfig:
     title: Optional[str] = None
     trim_0f: Optional[int] = None  # Number of lowest frequency points to set to zero (suppress DC/low freq)
     fmax: Optional[float] = None  # Maximum frequency to display (in freq_unit units)
+    
+    # Inset colorbar options (publication-ready)
+    colorbar_inset: bool = False  # Use inset colorbar instead of external
+    colorbar_position: str = "upper right"  # Position: 'upper right', 'upper left', etc.
+    colorbar_width: str = "45%"  # Width as percentage of plot
+    colorbar_height: str = "4%"  # Height as percentage of plot
+    colorbar_label: Optional[str] = None  # Custom colorbar label
+    colorbar_bg_alpha: float = 0.5  # Background transparency
+    
+    # Grid options
+    show_grid: bool = False  # Show subtle grid lines
+    grid_alpha: float = 0.3  # Grid transparency
+    grid_color: str = "white"  # Grid color
+    grid_linestyle: str = "--"  # Grid line style
+    grid_axis: Literal["both", "x", "y"] = "y"  # Which axes to show grid
 
 
 class TransmissionPlotter:
@@ -332,8 +447,41 @@ class TransmissionPlotter:
             title = r"Transmission: $\left|\operatorname{{FFT}}_{{t}}\!\left(\sum_{{x' \in W(x)}} \sum_{{y}} m_{{z}}(t, x', y)\right)\right|$, W={}".format(spatial_window)
         ax.set_title(title)
 
+        # Add grid if requested
+        if config.show_grid:
+            ax.grid(
+                True,
+                axis=config.grid_axis,
+                alpha=config.grid_alpha,
+                color=config.grid_color,
+                linestyle=config.grid_linestyle,
+                zorder=5,
+            )
+
+        # Colorbar - inset or external
         if config.show_colorbar:
-            fig.colorbar(image, ax=ax, label=default_label)
+            # Determine actual vmin/vmax from data if not set
+            actual_vmin = vmin if vmin is not None else float(mesh_data.min())
+            actual_vmax = vmax if vmax is not None else float(mesh_data.max())
+            
+            if config.colorbar_inset:
+                # Publication-ready inset colorbar
+                cbar_label = config.colorbar_label or default_label
+                _make_inset_colorbar(
+                    ax=ax,
+                    image=image,
+                    fig=fig,
+                    vmin=actual_vmin,
+                    vmax=actual_vmax,
+                    label=cbar_label,
+                    width=config.colorbar_width,
+                    height=config.colorbar_height,
+                    position=config.colorbar_position,
+                    bg_alpha=config.colorbar_bg_alpha,
+                )
+            else:
+                # Standard external colorbar
+                fig.colorbar(image, ax=ax, label=default_label)
 
         ax.set_ylim(freq_edges[0], freq_edges[-1])
         ax.set_xlim(x_edges[0], x_edges[-1])

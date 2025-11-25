@@ -236,7 +236,14 @@ class TransmissionResult:
             - 'mark': bool, whether to mark minima on plot (default: True)
             - 'color': color for minima markers (default: 'cyan')
             - 'marker': marker style (default: 'o')
-            - 'markersize': marker size (default: 8)
+            - 'markersize': marker size (default: 12)
+            - 'markeredgewidth': edge width for markers (default: 2.0)
+            - 'markeredgecolor': edge color for markers (default: 'white')
+            - 'label_fontsize': font size for frequency labels (default: 11)
+            - 'label_fontweight': font weight for labels (default: 'bold')
+            - 'label_bbox': whether to add background box to labels (default: True)
+            - 'label_bbox_alpha': transparency of label background (default: 0.7)
+            - 'label_bbox_color': color of label background (default: 'black')
             Returns minima frequencies as third output.
             Example: {'freq_range': (1.0, 3.0), 'threshold': 0.3, 'distance': 10, 'label_rounding': 3}
         x_width : float, optional
@@ -534,9 +541,18 @@ class TransmissionResult:
                     'label_rounding': None,
                     'label_format': '{:.2f}',
                     'marker': 'o',
-                    'markersize': 8,
+                    'markersize': 12,  # Larger for publication visibility
+                    'markeredgewidth': 2.0,  # Thicker edge
+                    'markeredgecolor': 'white',  # White edge for contrast
                     'freq_range': None,  # (fmin, fmax) in freq_unit - search only in this range
                     'threshold': None,  # Only minima below this transmission value (e.g., 0.5 for T<50%)
+                    # Publication label styling
+                    'label_fontsize': 11,
+                    'label_fontweight': 'bold',
+                    'label_bbox': True,  # Add background box to labels
+                    'label_bbox_alpha': 0.7,
+                    'label_bbox_color': 'black',
+                    'label_offset': (0.02, 0.0),  # Offset from marker (in axes fraction)
                 }
                 minima_params.update(find_minima)
 
@@ -590,46 +606,66 @@ class TransmissionResult:
                 
                 # Mark minima on plot if requested
                 if minima_params['mark'] and len(minima_indices) > 0:
+                    marker_kwargs = {
+                        'marker': minima_params['marker'],
+                        'color': minima_params['color'],
+                        'markersize': minima_params['markersize'],
+                        'markeredgecolor': minima_params.get('markeredgecolor', 'white'),
+                        'markeredgewidth': minima_params.get('markeredgewidth', 2.0),
+                        'linestyle': 'none',  # No connecting line
+                        'label': f'Minima ({len(minima_indices)} found)',
+                        'zorder': 15,
+                    }
+                    
                     if flip:
                         # Frequency on Y-axis, transmission on X-axis
-                        ax.plot(
-                            minima_values, 
-                            minima_freqs,
-                            minima_params['marker'],
-                            color=minima_params['color'],
-                            markersize=minima_params['markersize'],
-                            markeredgecolor='white',
-                            markeredgewidth=1.5,
-                            label=f'Minima ({len(minima_indices)} found)',
-                            zorder=10
-                        )
+                        ax.plot(minima_values, minima_freqs, **marker_kwargs)
                     else:
                         # Frequency on X-axis, transmission on Y-axis
-                        ax.plot(
-                            minima_freqs, 
-                            minima_values,
-                            minima_params['marker'],
-                            color=minima_params['color'],
-                            markersize=minima_params['markersize'],
-                            markeredgecolor='white',
-                            markeredgewidth=1.5,
-                            label=f'Minima ({len(minima_indices)} found)',
-                            zorder=10
-                        )
+                        ax.plot(minima_freqs, minima_values, **marker_kwargs)
+                        
                     # Add text labels for each minimum if requested
                     if minima_params['label_minima']:
                         for freq, val in zip(minima_freqs, minima_values):
                             label_text = minima_params['label_format'].format(freq)
+                            
+                            # Build text kwargs
+                            text_kwargs = {
+                                'fontsize': minima_params.get('label_fontsize', 11),
+                                'fontweight': minima_params.get('label_fontweight', 'bold'),
+                                'color': minima_params['color'],
+                                'zorder': 16,
+                            }
+                            
+                            # Add background box for better visibility
+                            if minima_params.get('label_bbox', True):
+                                text_kwargs['bbox'] = dict(
+                                    boxstyle='round,pad=0.3',
+                                    facecolor=minima_params.get('label_bbox_color', 'black'),
+                                    alpha=minima_params.get('label_bbox_alpha', 0.7),
+                                    edgecolor='none',
+                                )
+                            
                             if flip:
-                                # Text to the right of the point
-                                ax.text(val, freq, f' {label_text}', 
-                                        ha='left', va='center', 
-                                        color=minima_params['color'], fontsize=9)
+                                # Text to the right of the point (horizontal layout)
+                                offset_x = minima_params.get('label_offset', (0.02, 0.0))[0]
+                                ax.text(
+                                    val + offset_x * (ax.get_xlim()[1] - ax.get_xlim()[0]), 
+                                    freq, 
+                                    f'{label_text} GHz',
+                                    ha='left', va='center',
+                                    **text_kwargs
+                                )
                             else:
-                                # Text above the point
-                                ax.text(freq, val, label_text, 
-                                        ha='center', va='bottom', 
-                                        color=minima_params['color'], fontsize=9)
+                                # Text above the point (vertical layout)
+                                offset_y = minima_params.get('label_offset', (0.0, 0.02))[1]
+                                ax.text(
+                                    freq, 
+                                    val + offset_y * (ax.get_ylim()[1] - ax.get_ylim()[0]),
+                                    f'{label_text}',
+                                    ha='center', va='bottom',
+                                    **text_kwargs
+                                )
                 
             except ImportError:
                 import warnings
