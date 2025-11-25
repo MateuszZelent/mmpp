@@ -199,6 +199,8 @@ class BatchTransmissionResult:
         param_scale: float = 1.0,
         param_label: Optional[str] = None,
         title: Optional[str] = None,
+        figsize: tuple = (10, 6),
+        dpi: int = 100,
         verbose: bool = False,
         **kwargs,
     ):
@@ -278,6 +280,10 @@ class BatchTransmissionResult:
             If None, uses swapping_parameter name.
         title : str, optional
             Custom title for the plot. If None, auto-generates.
+        figsize : tuple, default=(10, 6)
+            Figure size in inches (width, height). Only used if ax is None.
+        dpi : int, default=100
+            Figure resolution in dots per inch. Only used if ax is None.
         verbose : bool, default=False
             Print detailed information about extraction process
         **kwargs
@@ -375,13 +381,21 @@ class BatchTransmissionResult:
                 
                 if frequencies is None:
                     frequencies = freq
+                    n_freq_expected = len(freq)
                 else:
-                    # Verify frequency consistency
-                    if not np.allclose(frequencies, freq):
-                        log.warning(
-                            f"Frequency mismatch at result {i}. "
-                            "Results may have different configurations."
+                    # Check if lengths match - if not, we need to handle it
+                    if len(freq) != n_freq_expected:
+                        # Interpolate to common frequency grid
+                        from scipy.interpolate import interp1d
+                        interp_func = interp1d(
+                            freq, cross_section, 
+                            kind='linear', 
+                            bounds_error=False, 
+                            fill_value=0.0
                         )
+                        cross_section = interp_func(frequencies)
+                        if verbose and i == 1:
+                            log.info(f"Interpolating result {i} from {len(freq)} to {n_freq_expected} frequency points")
                 
                 cross_sections.append(cross_section)
                 
@@ -441,7 +455,7 @@ class BatchTransmissionResult:
         
         # Create plot
         if ax is None:
-            fig, ax = plt.subplots(figsize=(10, 6))
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
             fig = ax.figure
         
