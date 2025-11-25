@@ -118,6 +118,11 @@ class Pyzfn:
         return self._group.attrs
     
     @property
+    def attributes(self):
+        """Alias for attrs - returns dictionary of all zarr attributes."""
+        return dict(self._group.attrs)
+    
+    @property
     def name(self):
         return self._group.name
     

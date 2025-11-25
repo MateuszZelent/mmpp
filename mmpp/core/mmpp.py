@@ -84,11 +84,15 @@ class MMPP:
             from ..pyzfn import Pyzfn
 
             job = Pyzfn(self.base_path)
+            attrs = job.attributes
             # Create a minimal DataFrame
             self.df = pd.DataFrame(
-                [{"path": self.base_path, **job.attributes}]
+                [{"path": self.base_path, **attrs}]
             )
-            self.zarr_results = [job]
+            # Create ZarrJobResult, not Pyzfn
+            result = ZarrJobResult(self.base_path, attrs)
+            result._set_mmpp_ref(self)
+            self.zarr_results = [result]
             log.info(f"Loaded single zarr file: {self.base_path}")
         except Exception as e:
             log.error(f"Failed to load single zarr file: {e}")
