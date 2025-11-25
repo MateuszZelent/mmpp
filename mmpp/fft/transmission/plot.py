@@ -39,7 +39,7 @@ def _make_inset_colorbar(
     width: str = "45%",
     height: str = "4%",
     position: str = "upper right",
-    bbox_to_anchor: tuple = (0.0, 0.92, 1, 1),
+    bbox_to_anchor: Optional[tuple] = None,
     bg_alpha: float = 0.5,
     text_color: str = "white",
     fontsize: int = 10,
@@ -62,9 +62,11 @@ def _make_inset_colorbar(
     width, height : str
         Size of colorbar as percentage of axes
     position : str
-        Location: 'upper right', 'upper left', 'lower right', 'lower left', 'upper center'
-    bbox_to_anchor : tuple
-        Fine positioning (x, y, width, height) in axes coordinates
+        Location: 'upper right', 'upper left', 'lower right', 'lower left', 
+        'upper center', 'lower center', 'center right', 'center left'
+    bbox_to_anchor : tuple, optional
+        Fine positioning (x, y, width, height) in axes coordinates.
+        If None, automatically computed from position.
     bg_alpha : float
         Background box transparency
     text_color : str
@@ -74,6 +76,23 @@ def _make_inset_colorbar(
     title_fontsize : int
         Font size for title
     """
+    # Compute bbox_to_anchor based on position if not provided
+    if bbox_to_anchor is None:
+        # Map position string to (x, y, width, height) for bbox_to_anchor
+        # These values place the colorbar at the correct location
+        position_map = {
+            'upper right': (0.0, 0.92, 1, 1),
+            'upper left': (0.0, 0.92, 1, 1),
+            'upper center': (0.0, 0.92, 1, 1),
+            'lower right': (0.0, 0.02, 1, 1),
+            'lower left': (0.0, 0.02, 1, 1),
+            'lower center': (0.0, 0.02, 1, 1),
+            'center right': (0.0, 0.47, 1, 1),
+            'center left': (0.0, 0.47, 1, 1),
+            'center': (0.0, 0.47, 1, 1),
+        }
+        bbox_to_anchor = position_map.get(position, (0.0, 0.92, 1, 1))
+    
     # Create background box for colorbar
     cbbox = inset_axes(
         ax, width=width, height=height, loc=position,
@@ -210,6 +229,10 @@ class TransmissionPlotConfig:
     grid_color: str = "white"  # Grid color
     grid_linestyle: str = "--"  # Grid line style
     grid_axis: Literal["both", "x", "y"] = "y"  # Which axes to show grid
+    
+    # Axis label options
+    ylabel: Optional[str] = None  # Custom Y-axis label. Use "" to hide ylabel.
+    xlabel: Optional[str] = None  # Custom X-axis label. Use "" to hide xlabel.
 
 
 class TransmissionPlotter:
@@ -426,11 +449,19 @@ class TransmissionPlotter:
         else:
             xlabel = "x (cell index)"
         
+        # Apply custom labels if provided (empty string "" hides the label)
+        if config.ylabel is not None:
+            ylabel = config.ylabel
+        if config.xlabel is not None:
+            xlabel = config.xlabel
+        
         if debug:
             print(f"\nAxis labels:")
             print(f"  xlabel = '{xlabel}'")
             print(f"  ylabel = '{ylabel}'")
             print(f"  config.x_unit = '{config.x_unit}'")
+            print(f"  config.ylabel = {config.ylabel!r}")
+            print(f"  config.xlabel = {config.xlabel!r}")
             print(f"  Logic: x_unit={config.x_unit}, dx={self.result.dx} → xlabel={xlabel}")
         
         ax.set_ylabel(ylabel)
