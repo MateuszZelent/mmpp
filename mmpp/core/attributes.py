@@ -1,0 +1,143 @@
+from collections.abc import MutableMapping
+from typing import Any
+from uuid import uuid4
+from html import escape
+
+from .constants import RICH_AVAILABLE
+
+if RICH_AVAILABLE:
+    from rich.console import Console
+    from rich.table import Table
+
+class AttributesView(MutableMapping):
+    """Wrapper for zarr attrs with rich/Jupyter-friendly display."""
+
+    def __init__(self, attrs: Any):
+        self._attrs = attrs
+
+    # Mapping protocol
+    def __getitem__(self, key):
+        return self._attrs[key]
+
+    def __setitem__(self, key, value):
+        self._attrs[key] = value
+
+    def __delitem__(self, key):
+        del self._attrs[key]
+
+    def __iter__(self):
+        return iter(self._attrs)
+
+    def __len__(self):
+        return len(self._attrs)
+
+    def keys(self):
+        return self._attrs.keys()
+
+    def items(self):
+        return self._attrs.items()
+
+    def values(self):
+        return self._attrs.values()
+
+    def get(self, key, default=None):
+        return self._attrs.get(key, default)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return attributes as a plain dict."""
+        return dict(self._attrs)
+
+    # Displays -------------------------------------------------------------
+    def _rich_table(self):
+        if not RICH_AVAILABLE:
+            return None
+        try:
+            table = Table(
+                title="Simulation attributes",
+                show_header=True,
+                header_style="bold cyan",
+                box=None,
+            )
+            table.add_column("Key", style="magenta", no_wrap=True)
+            table.add_column("Value", style="green")
+            for key in sorted(self._attrs.keys()):
+                val = self._attrs[key]
+                table.add_row(str(key), repr(val))
+            return table
+        except Exception:
+            return None
+
+    def __repr__(self) -> str:
+        # Try rich text table for terminals
+        if RICH_AVAILABLE:
+            try:
+                console = Console(width=120, force_terminal=True, color_system="auto")
+                table = self._rich_table()
+                if table is not None:
+                    console.print(table)
+                    return console.export_text()
+            except Exception:
+                pass
+
+        # Fallback plain text
+        lines = ["Simulation attributes:"]
+        for key in sorted(self._attrs.keys()):
+            lines.append(f"- {key}: {self._attrs[key]!r}")
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def _repr_html_(self):
+        """Interactive-ish HTML table for Jupyter."""
+        try:
+            table_id = f"attrs-{uuid4().hex}"
+            header = """
+            <style>
+              table.attrs-table { border-collapse: collapse; width: 100%; }
+              table.attrs-table th, table.attrs-table td { border: 1px solid #ddd; padding: 6px; font-family: monospace; font-size: 12px; }
+              table.attrs-table th { background: #f4f4f4; cursor: pointer; text-align: left; }
+              table.attrs-table tr:nth-child(even) { background: #fafafa; }
+            </style>
+            """
+            rows = []
+            for key in sorted(self._attrs.keys()):
+                val = self._attrs[key]
+                rows.append(
+                    f"<tr><td>{escape(str(key))}</td><td><pre style='margin:0'>{escape(repr(val))}</pre></td></tr>"
+                )
+            body = "\n".join(rows)
+            html_table = f"""
+            {header}
+            <table id="{table_id}" class="attrs-table">
+              <thead>
+                <tr><th>Key</th><th>Value</th></tr>
+              </thead>
+              <tbody>
+                {body}
+              </tbody>
+            </table>
+            <script>
+              (function() {{
+                const table = document.getElementById("{table_id}");
+                const getCell = (tr, idx) => tr.children[idx].innerText || "";
+                const comparer = (idx, asc) => (a, b) => ((v1, v2) => {{
+                  const n1 = parseFloat(v1); const n2 = parseFloat(v2);
+                  if(!isNaN(n1) && !isNaN(n2)) return n1 - n2;
+                  return v1.localeCompare(v2);
+                }})(getCell(asc ? a : b, idx), getCell(asc ? b : a, idx));
+                table.querySelectorAll("th").forEach((th, idx) => {{
+                  let asc = true;
+                  th.addEventListener("click", () => {{
+                    const tbody = table.querySelector("tbody");
+                    Array.from(tbody.querySelectorAll("tr"))
+                      .sort(comparer(idx, asc = !asc))
+                      .forEach(tr => tbody.appendChild(tr));
+                  }});
+                }});
+              }})();
+            </script>
+            """
+            return html_table
+        except Exception:
+            return None

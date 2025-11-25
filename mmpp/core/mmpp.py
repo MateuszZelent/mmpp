@@ -1,0 +1,523 @@
+import os
+import glob
+import json
+import pickle
+import re
+import threading
+import warnings
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING, Any, Optional, Union
+
+from ..cli.logging_config import get_mmpp_logger
+from .job import ScanResult, ZarrJobResult
+from .constants import PLOTTING_AVAILABLE, FFT_AVAILABLE
+
+if TYPE_CHECKING:
+    from ..batch_operations import BatchOperations
+
+if PLOTTING_AVAILABLE:
+    from ..plotting import MMPPlotter, PlotterProxy
+
+if FFT_AVAILABLE:
+    from ..fft import FFT
+
+log = get_mmpp_logger("mmpp")
+
+class MMPP:
+    """
+    Multi-threaded scanner for zarr folders with pandas database creation and search functionality.
+
+    This class scans directories recursively for .zarr folders, extracts metadata using Pyzfn,
+    and creates a searchable pandas database.
+    """
+
+    def __init__(
+        self,
+        base_path: str,
+        max_workers: int = 8,
+        database_name: str = "mmpy_database",
+        debug: bool = False,
+        log_level: Optional[Union[str, int]] = None,
+    ):
+        """
+        Initialize the MMPP.
+
+        Parameters:
+        -----------
+        base_path : str
+            Base directory path to scan for zarr folders OR direct path to .zarr file
+        max_workers : int, optional
+            Number of threads for scanning (default: 8)
+        database_name : str, optional
+            Name of the pickle file to store database (default: "mmpy_database")
+        debug : bool, optional
+            Enable debug logging (default: False)
+        log_level : str or int, optional
+            Set specific logging level (overrides debug flag)
+        """
+        # Configure logging
+        if log_level is not None:
+            log.setLevel(log_level)
+        elif debug:
+            log.setLevel("DEBUG")
+
+        self.base_path = os.path.abspath(base_path)
+        self.max_workers = max_workers
+        self.database_name = database_name
+        self.df = pd.DataFrame()
+        self.zarr_results: list[ZarrJobResult] = []
+
+        # Check if base_path is a single .zarr file
+        if self.base_path.endswith(".zarr") and os.path.isdir(self.base_path):
+            self._load_single_zarr()
+        else:
+            # Try to load existing database
+            if not self._load_database():
+                self.scan()
+
+    def _load_single_zarr(self):
+        """Load a single .zarr file directly."""
+        try:
+            # Create a single ZarrJobResult
+            # We need to extract attributes manually since we're skipping the scan process
+            from ..pyzfn import Pyzfn
+
+            job = Pyzfn(self.base_path)
+            # Create a minimal DataFrame
+            self.df = pd.DataFrame(
+                [{"path": self.base_path, **job.attributes}]
+            )
+            self.zarr_results = [job]
+            log.info(f"Loaded single zarr file: {self.base_path}")
+        except Exception as e:
+            log.error(f"Failed to load single zarr file: {e}")
+            self.df = pd.DataFrame()
+            self.zarr_results = []
+
+    def __len__(self):
+        """Return number of zarr results available."""
+        return len(self.zarr_results)
+
+    def __getitem__(
+        self, index: Union[int, slice]
+    ) -> Union[ZarrJobResult, "BatchOperations"]:
+        """
+        Get zarr result by index or batch operations by slice.
+
+        Parameters:
+        -----------
+        index : Union[int, slice]
+            Index of the result to get or slice for batch operations
+
+        Returns:
+        --------
+        Union[ZarrJobResult, BatchOperations]
+            Single zarr result for integer index or batch operations for slice
+        """
+        if isinstance(index, slice):
+            # Return BatchOperations object for the slice
+            from ..batch_operations import BatchOperations
+
+            sliced_results = self.zarr_results[index]
+            return BatchOperations(sliced_results, self)
+
+        if index < 0:
+            index += len(self.zarr_results)
+        if 0 <= index < len(self.zarr_results):
+            result = self.zarr_results[index]
+            # Set reference to self for plotting
+            result._set_mmpp_ref(self)
+            return result
+        raise IndexError("Index out of range")
+
+    def __iter__(self):
+        """Make MMPP iterable."""
+        return iter(self.zarr_results)
+
+    @property
+    def mpl(self) -> "MMPPlotter":
+        """Get matplotlib plotter for all results."""
+        if not PLOTTING_AVAILABLE:
+            raise ImportError(
+                "Plotting functionality not available. Install matplotlib."
+            )
+        return MMPPlotter(self.zarr_results, self)
+
+    @property
+    def matplotlib(self) -> "MMPPlotter":
+        """Get matplotlib plotter for all results (alias for mpl)."""
+        return self.mpl
+
+    @property
+    def fft(self) -> "FFT":
+        """Get FFT analyzer for all results."""
+        if not FFT_AVAILABLE:
+            raise ImportError(
+                "FFT functionality not available. Check fft module import."
+            )
+        # For MMPP level, we pass the first job as primary but provide full list context if needed
+        # Actually FFT expects a single job usually, but let's see how it handles it.
+        # If FFT is designed for single job, this property might need adjustment or return a BatchFFT.
+        # For now, let's assume it takes the first job or we need a different approach.
+        # Looking at FFT init: def __init__(self, job_result, mmpp_instance=None):
+        if not self.zarr_results:
+             raise ValueError("No zarr results available for FFT analysis.")
+        
+        return FFT(self.zarr_results[0], self)
+
+    def _find_zarr_folders(self) -> list[str]:
+        """
+        Recursively find all .zarr folders in the base path.
+
+        Returns:
+        --------
+        List[str]
+            List of paths to zarr folders
+        """
+        zarr_folders = []
+        # Use glob for initial search (might be faster than os.walk for specific pattern)
+        # But os.walk is more robust for deep recursion
+        for root, dirs, _ in os.walk(self.base_path):
+            for d in dirs:
+                if d.endswith(".zarr"):
+                    zarr_folders.append(os.path.join(root, d))
+        return zarr_folders
+
+    def _parse_path_parameters(self, zarr_path: str) -> dict[str, Any]:
+        """
+        Parse parameters from the folder path structure, including zarr folder name.
+
+        Parameters:
+        -----------
+        zarr_path : str
+            Dictionary of parameters extracted from the path
+        """
+        params = {}
+        rel_path = os.path.relpath(zarr_path, self.base_path)
+        path_components = rel_path.split(os.sep)
+
+        for component in path_components:
+            # Skip the .zarr folder itself for parameter parsing if it's just the container
+            # But actually sometimes the zarr folder name contains info too.
+            # Let's parse everything.
+            component_params = self._parse_single_path_component(component)
+            params.update(component_params)
+
+        return params
+
+    def _parse_single_path_component(self, component: str) -> dict[str, Any]:
+        """
+        Parse parameters from a single path component.
+
+        Parameters:
+        -----------
+        component : str
+            Single path component (folder name)
+
+        Returns:
+        --------
+        Dict[str, Any]
+            Dictionary of parameters extracted from this component
+        """
+        params = {}
+        
+        # Remove .zarr extension if present
+        name = component.replace(".zarr", "")
+        
+        # Split by underscore or other delimiters
+        # Common pattern: param1_val1_param2_val2
+        # Or: param1=val1, param2=val2 (less common in folder names but possible)
+        
+        # Regex for key-value pairs like "key=value" or "key_value" where value is number
+        # This is heuristic and might need adjustment based on specific naming conventions
+        
+        # Strategy 1: Look for explicit assignments (e.g. Nx=128)
+        assignments = re.findall(r"([a-zA-Z0-9]+)=([a-zA-Z0-9\.]+)", name)
+        for key, val in assignments:
+            try:
+                # Try converting to number
+                if "." in val:
+                    params[key] = float(val)
+                else:
+                    params[key] = int(val)
+            except ValueError:
+                params[key] = val
+                
+        # Strategy 2: Look for patterns like "Nx128" or "T300"
+        # This is risky as it might match random things. 
+        # Better to rely on Pyzfn for accurate metadata from zarr attributes.
+        # Path parsing is secondary/fallback or for organizing.
+        
+        return params
+
+    def _scan_single_zarr(self, zarr_path: str) -> ScanResult:
+        """
+        Scan a single zarr folder and extract metadata using Pyzfn.
+
+        Parameters:
+        -----------
+        zarr_path : str
+            Path to the zarr folder
+
+        Returns:
+        --------
+        ScanResult
+            Result containing path, attributes, and potential error
+        """
+        try:
+            # Use Pyzfn to extract attributes
+            from ..pyzfn import Pyzfn
+
+            job = Pyzfn(zarr_path)
+            attributes = job.attributes
+
+            # Add path parameters (optional, can override or augment zarr attributes)
+            path_params = self._parse_path_parameters(zarr_path)
+            # Zarr attributes take precedence, but we can store path params if needed
+            # For now, let's merge them, with zarr attributes winning
+            full_attributes = {**path_params, **attributes}
+
+            return ScanResult(path=zarr_path, attributes=full_attributes)
+        except Exception as e:
+            log.warning(f"Error scanning {zarr_path}: {e}")
+            return ScanResult(path=zarr_path, attributes={}, error=str(e))
+
+    def _scan_all_zarr_folders(self, zarr_folders: list[str]) -> list[ScanResult]:
+        """
+        Scan all zarr folders using multiple threads.
+
+        Parameters:
+        -----------
+        zarr_folders : List[str]
+            List of zarr folder paths to scan
+
+        Returns:
+        --------
+        List[ScanResult]
+            List of scan results
+        """
+        results = []
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            future_to_path = {
+                executor.submit(self._scan_single_zarr, path): path
+                for path in zarr_folders
+            }
+
+            from rich.progress import track
+            
+            # Use rich progress bar if available, otherwise simple loop
+            try:
+                from rich.progress import Progress
+                with Progress() as progress:
+                    task = progress.add_task("[cyan]Scanning zarr folders...", total=len(zarr_folders))
+                    
+                    for future in as_completed(future_to_path):
+                        path = future_to_path[future]
+                        try:
+                            result = future.result()
+                            results.append(result)
+                        except Exception as exc:
+                            log.error(f"{path} generated an exception: {exc}")
+                        finally:
+                            progress.advance(task)
+            except ImportError:
+                # Fallback without rich
+                for future in as_completed(future_to_path):
+                    path = future_to_path[future]
+                    try:
+                        result = future.result()
+                        results.append(result)
+                    except Exception as exc:
+                        log.error(f"{path} generated an exception: {exc}")
+
+        return results
+
+    def _create_dataframe(self, scan_results: list[ScanResult]) -> pd.DataFrame:
+        """
+        Create pandas DataFrame from scan results.
+
+        Parameters:
+        -----------
+        scan_results : List[ScanResult]
+            List of scan results
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame with paths and attributes
+        """
+        data = []
+        for res in scan_results:
+            if res.error is None:
+                entry = {"path": res.path, **res.attributes}
+                data.append(entry)
+        
+        if not data:
+            return pd.DataFrame()
+            
+        return pd.DataFrame(data)
+
+    def _save_database(self) -> None:
+        """Save the current DataFrame to pickle file."""
+        if self.df.empty:
+            return
+            
+        db_path = os.path.join(self.base_path, f"{self.database_name}.pkl")
+        try:
+            with open(db_path, "wb") as f:
+                pickle.dump(self.df, f)
+            log.info(f"Database saved to {db_path}")
+        except Exception as e:
+            log.error(f"Failed to save database: {e}")
+
+    def _load_database(self) -> bool:
+        """
+        Load existing database from pickle file.
+
+        Returns:
+        --------
+        bool
+            True if database was loaded successfully, False otherwise
+        """
+        db_path = os.path.join(self.base_path, f"{self.database_name}.pkl")
+        if not os.path.exists(db_path):
+            return False
+            
+        try:
+            with open(db_path, "rb") as f:
+                self.df = pickle.load(f)
+            
+            # Reconstruct ZarrJobResult objects
+            self.zarr_results = []
+            for _, row in self.df.iterrows():
+                path = row["path"]
+                # Filter out path from attributes
+                attrs = {k: v for k, v in row.items() if k != "path"}
+                self.zarr_results.append(ZarrJobResult(path, attrs))
+                
+            log.info(f"Loaded database from {db_path} ({len(self.df)} entries)")
+            return True
+        except Exception as e:
+            log.warning(f"Failed to load database: {e}")
+            return False
+
+    def scan(self, force: bool = False) -> pd.DataFrame:
+        """
+        Scan the base directory for zarr folders and create/update the database.
+
+        Parameters:
+        -----------
+        force : bool, optional
+            If True, force rescan even if database exists (default: False)
+
+        Returns:
+        --------
+        pd.DataFrame
+            The resulting database DataFrame
+        """
+        if not force and not self.df.empty:
+            return self.df
+
+        log.info(f"Scanning {self.base_path} for .zarr folders...")
+        zarr_folders = self._find_zarr_folders()
+        log.info(f"Found {len(zarr_folders)} .zarr folders.")
+
+        scan_results = self._scan_all_zarr_folders(zarr_folders)
+        self.df = self._create_dataframe(scan_results)
+        
+        # Create ZarrJobResult objects
+        self.zarr_results = []
+        for res in scan_results:
+            if res.error is None:
+                self.zarr_results.append(ZarrJobResult(res.path, res.attributes))
+
+        self._save_database()
+        return self.df
+
+    def force_rescan(self) -> pd.DataFrame:
+        """
+        Force a complete rescan of the directory structure.
+
+        Returns:
+        --------
+        pd.DataFrame
+            The resulting database DataFrame
+        """
+        return self.scan(force=True)
+
+    def get_parsing_examples(self, zarr_path: str) -> dict[str, Any]:
+        """
+        Get examples of how a specific path would be parsed.
+        Useful for debugging path parsing.
+
+        Parameters:
+        -----------
+        zarr_path : str
+            Path to analyze
+
+        Returns:
+        --------
+        Dict[str, Any]
+            Dictionary showing parsing results for each component
+        """
+        return self._parse_path_parameters(zarr_path)
+
+    def find(self, **kwargs: Any) -> "PlotterProxy":
+        """
+        Find zarr folders that match the given criteria.
+        Now returns a PlotterProxy with plotting capabilities.
+
+        Parameters:
+        -----------
+        **kwargs : Any
+            Attribute criteria to match (e.g., PBCx=1, Nx=1296, solver=3)
+
+        Returns:
+        --------
+        PlotterProxy
+            Proxy object containing ZarrJobResult objects with plotting capabilities
+        """
+        if self.df.empty:
+            log.warning("Database is empty. Run scan() first.")
+            if PLOTTING_AVAILABLE:
+                return PlotterProxy([], self)
+            return [] # type: ignore
+
+        # Filter DataFrame
+        query_str = " & ".join([f"{k} == {repr(v)}" for k, v in kwargs.items()])
+        try:
+            filtered_df = self.df.query(query_str)
+        except Exception as e:
+            log.error(f"Query failed: {e}")
+            if PLOTTING_AVAILABLE:
+                return PlotterProxy([], self)
+            return [] # type: ignore
+
+        # Get matching ZarrJobResults
+        matching_paths = set(filtered_df["path"])
+        matching_results = [res for res in self.zarr_results if res.path in matching_paths]
+
+        if PLOTTING_AVAILABLE:
+            return PlotterProxy(matching_results, self)
+        
+        return matching_results # type: ignore
+
+    def find_paths(self, **kwargs: Any) -> list[str]:
+        """
+        Find zarr folder paths that match the given criteria.
+
+        Parameters:
+        -----------
+        **kwargs : Any
+            Attribute criteria to match (e.g., PBCx=1, Nx=1296)
+
+        Returns:
+        --------
+        List[str]
+            List of paths to zarr folders matching the criteria
+        """
+        proxy = self.find(**kwargs)
+        if hasattr(proxy, "jobs"):
+             return [job.path for job in proxy.jobs]
+        return [job.path for job in proxy] # type: ignore
