@@ -5,6 +5,7 @@ import pickle
 import re
 import shutil
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,27 @@ if TYPE_CHECKING:
 
 # Initialize rich logging - will be configured in MMPP.__init__
 log = get_mmpp_logger("mmpp")
+
+SPECIAL_ATTRS = {
+    "dx",
+    "dy",
+    "dz",
+    "Tx",
+    "Ty",
+    "Tz",
+    "dt",
+    "t_sampl",
+    "fcut",
+    "f_cut",
+    "Nx",
+    "Ny",
+    "Nz",
+    "cellsize_x",
+    "cellsize_y",
+    "cellsize_z",
+    "total_time",
+    "n_steps",
+}
 
 # Type aliases for numpy arrays
 if TYPE_CHECKING:
@@ -225,14 +247,25 @@ class ZarrJobResult:
             log.warning("No script found to display.")
 
     def __getitem__(self, item: str) -> Union[zarr.Array, zarr.Group]:
-        """Get zarr dataset or group by key."""
+        """Get zarr dataset or group by key.
+        
+        Prioritizes datasets over attributes. If a dataset with the given name
+        exists, it will be returned. Use job[i].attrs[key] for attribute access.
+        """
         self._ensure_zarr_loaded()
-        if item in dir(self._z):
-            return self._z[item]
         try:
-            return self._get_zarr_member(item)
+            member = self._get_zarr_member(item)
+            if isinstance(member, zarr.Array):
+                return DatasetAwareWrapper(self, item, member)
+            return member
         except NameError:
             if item in self._z.attrs:
+                warnings.warn(
+                    f"Accessing zarr attribute '{item}' via job[i]['{item}'] is deprecated; "
+                    f"use job[i].attrs['{item}'] instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
                 return self._z.attrs[item]
             raise
 
@@ -251,28 +284,117 @@ class ZarrJobResult:
             )
 
         self._ensure_zarr_loaded()
-        
-        # First check in zarr attrs (most common case for simulation parameters)
-        if name in self._z.attrs:
-            return self._z.attrs[name]
-        
-        # Then check if it's a dataset or subgroup
+
+        # Expose selected important attributes directly
+        if name in SPECIAL_ATTRS:
+            if name in self._z.attrs:
+                return self._z.attrs[name]
+            if name in self.attributes:
+                return self.attributes[name]
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}'"
+            )
+
+        # Try dataset or subgroup first
         try:
             zarr_item = self._get_zarr_member(name)
+        except NameError:
+            zarr_item = None
+
+        if zarr_item is not None:
             if isinstance(zarr_item, zarr.Array):
                 return DatasetAwareWrapper(self, name, zarr_item)
             return zarr_item
-        except NameError:
-            pass
-        
-        # Finally check if it's a method/property of the zarr Group
-        if name in dir(self._z):
-            return getattr(self._z, name)
-        
+
+        # Backward-compatible access to attributes (deprecated)
+        if name in self._z.attrs:
+            warnings.warn(
+                f"Accessing zarr attribute '{name}' via attribute access is deprecated; "
+                f"use job[i].attrs['{name}'] instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return self._z.attrs[name]
+
         # Not found anywhere
         raise AttributeError(
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
         )
+
+    @property
+    def attrs(self):
+        """Direct access to zarr group attributes."""
+        self._ensure_zarr_loaded()
+        return self._z.attrs
+
+    def __contains__(self, key: str) -> bool:
+        """Return True if key exists as dataset/group or attribute."""
+        self._ensure_zarr_loaded()
+        try:
+            return key in self._z or key in self._z.attrs
+        except Exception:
+            return False
+
+    @property
+    def datasets(self) -> list[str]:
+        """List top-level array datasets in this zarr group."""
+        self._ensure_zarr_loaded()
+        return sorted(list(self._z.array_keys()))
+
+    def keys(self) -> list[str]:
+        """List top-level members (datasets and groups) in this zarr group."""
+        self._ensure_zarr_loaded()
+        return list(self._z.keys())
+
+    def has_dataset(self, name: str) -> bool:
+        """Check if a dataset (zarr.Array) with given name exists.
+        
+        Parameters
+        ----------
+        name : str
+            Name of the dataset to check
+            
+        Returns
+        -------
+        bool
+            True if dataset exists, False otherwise
+            
+        Example
+        -------
+        >>> job[0].has_dataset('alpha')  # Check if 'alpha' is a dataset
+        True
+        >>> job[0].has_dataset('nonexistent')
+        False
+        """
+        self._ensure_zarr_loaded()
+        try:
+            member = self._z[name]
+            return isinstance(member, zarr.Array)
+        except KeyError:
+            return False
+
+    def has_attr(self, name: str) -> bool:
+        """Check if an attribute with given name exists in zarr attrs.
+        
+        Parameters
+        ----------
+        name : str
+            Name of the attribute to check
+            
+        Returns
+        -------
+        bool
+            True if attribute exists, False otherwise
+            
+        Example
+        -------
+        >>> job[0].has_attr('alpha')  # Check if 'alpha' is an attribute
+        True
+        >>> job[0].has_attr('dx')
+        True
+        """
+        self._ensure_zarr_loaded()
+        return name in self._z.attrs
 
     def __repr__(self) -> str:
         return f"ZarrJobResult('{self.name}')"
