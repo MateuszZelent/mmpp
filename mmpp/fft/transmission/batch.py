@@ -196,6 +196,9 @@ class BatchTransmissionResult:
         disable_averaging: bool = False,
         interpolation: str = "nearest",
         colorbar_label: Optional[str] = None,
+        param_scale: float = 1.0,
+        param_label: Optional[str] = None,
+        title: Optional[str] = None,
         verbose: bool = False,
         **kwargs,
     ):
@@ -268,6 +271,13 @@ class BatchTransmissionResult:
             Interpolation method for imshow: "nearest", "bilinear", "bicubic", etc.
         colorbar_label : str, optional
             Custom label for colorbar. If None, auto-generates based on settings.
+        param_scale : float, default=1.0
+            Scale factor for parameter values. E.g., 1000 to convert T → mT.
+        param_label : str, optional
+            Custom label for parameter axis. E.g., "Applied Field (mT)".
+            If None, uses swapping_parameter name.
+        title : str, optional
+            Custom title for the plot. If None, auto-generates.
         verbose : bool, default=False
             Print detailed information about extraction process
         **kwargs
@@ -288,6 +298,15 @@ class BatchTransmissionResult:
         >>> batch_result.plot_transmission_crosssection_heatmap(
         ...     swapping_parameter="bex",
         ...     x=24700e-9,
+        ...     fmax=50,
+        ... )
+        
+        >>> # With unit conversion (T → mT) and custom label
+        >>> batch_result.plot_transmission_crosssection_heatmap(
+        ...     swapping_parameter="bex",
+        ...     x=24700e-9,
+        ...     param_scale=1000,  # T → mT
+        ...     param_label="Applied Field (mT)",
         ...     fmax=50,
         ... )
         
@@ -377,8 +396,15 @@ class BatchTransmissionResult:
         # Stack into 2D array: (n_params, n_frequencies)
         heatmap_data = np.array(cross_sections)
         
+        # CRITICAL: Sort data by parameter values for correct imshow display
+        # param_values may not be in sorted order (depends on job order)
+        sort_indices = np.argsort(param_values)
+        param_values = param_values[sort_indices]
+        heatmap_data = heatmap_data[sort_indices, :]
+        
         if verbose:
             print(f"\n  heatmap_data shape: {heatmap_data.shape}")
+            print(f"  param_values (sorted): [{param_values[0]:.6f}, ..., {param_values[-1]:.6f}]")
             print(f"  heatmap_data range (raw): [{heatmap_data.min():.4e}, {heatmap_data.max():.4e}]")
         
         # Apply normalization based on mode
@@ -406,6 +432,13 @@ class BatchTransmissionResult:
         if verbose:
             print(f"  heatmap_data range (after norm): [{heatmap_data.min():.4e}, {heatmap_data.max():.4e}]")
         
+        # Apply parameter scaling (e.g., T → mT)
+        param_values_scaled = param_values * param_scale
+        
+        if verbose:
+            print(f"  param_scale: {param_scale}")
+            print(f"  param_values_scaled: [{param_values_scaled[0]:.6f}, ..., {param_values_scaled[-1]:.6f}]")
+        
         # Create plot
         if ax is None:
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -421,11 +454,14 @@ class BatchTransmissionResult:
             if verbose:
                 print(f"  Applied log10 scale")
         
-        # Create imshow
+        # Create imshow with SCALED parameter values
         extent = [
-            param_values.min(), param_values.max(),
+            param_values_scaled.min(), param_values_scaled.max(),
             frequencies.min(), frequencies.max()
         ]
+        
+        if verbose:
+            print(f"  extent: {extent}")
         
         img = ax.imshow(
             plot_data,
@@ -440,12 +476,19 @@ class BatchTransmissionResult:
         )
         
         # Labels and formatting
-        ax.set_xlabel(f"{swapping_parameter}", fontsize=12)
+        if param_label is not None:
+            ax.set_xlabel(param_label, fontsize=12)
+        else:
+            ax.set_xlabel(f"{swapping_parameter}", fontsize=12)
         ax.set_ylabel(f"Frequency ({freq_unit})", fontsize=12)
-        ax.set_title(
-            f"Transmission Cross-section at x={x*1e9:.1f} nm",
-            fontsize=14
-        )
+        
+        if title is not None:
+            ax.set_title(title, fontsize=14)
+        else:
+            ax.set_title(
+                f"Transmission Cross-section at x={x*1e9:.1f} nm",
+                fontsize=14
+            )
         
         # Colorbar with appropriate label
         cbar = plt.colorbar(img, ax=ax)
@@ -844,14 +887,14 @@ class BatchTransmission:
                         active_dataset_name, active_slice_info
                     )
                 
-                # Compute transmission
+                # Compute transmission - pass config only, not kwargs
+                # (kwargs were already used to create config above)
                 trans_result = transmission_interface.compute(
                     config,
                     use_cache=use_cache,
                     save=save,
                     force=force,
                     cache_path=cache_path,
-                    **kwargs,
                 )
                 
                 # Extract parameters from job attributes
