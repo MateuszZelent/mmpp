@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Tuple, Union
 import math
 import time
 import os
@@ -188,7 +188,7 @@ class TransmissionResult:
         disable_averaging: bool = False,
         normalize: bool = False,
         verbose: bool = False,
-        legend: bool = False,
+        legend: Union[bool, dict] = False,
         **kwargs
     ):
         """Plot 1D transmission cross-section at specific x position.
@@ -263,12 +263,25 @@ class TransmissionResult:
         verbose : bool, optional
             If True, prints detailed diagnostic information about x position selection,
             averaging behavior, and data extraction. Default is False.
-        legend : bool, optional
-            If True, displays a legend with the x position in µm.
-            The label is automatically generated as "x = {value} µm".
-            Default is False.
+        legend : bool or dict, optional
+            Controls legend display and styling.
+            - False (default): No legend displayed
+            - True: Display legend with automatic label "x = {value} µm"
+            - dict: Display legend with custom options. Supported keys:
+                - 'label': str - Custom label text (overrides automatic)
+                - 'loc': str - Legend location ('best', 'upper right', 'lower left', etc.)
+                - 'framealpha': float - Legend background transparency (0-1)
+                - 'fontsize': int/str - Font size for legend text
+                - 'frameon': bool - Whether to draw legend frame
+                - 'fancybox': bool - Rounded corners on frame
+                - 'shadow': bool - Draw shadow behind legend
+                - 'ncol': int - Number of columns
+                - 'title': str - Legend title
+                - 'title_fontsize': int/str - Title font size
+            Example: legend={'label': 'Sample A', 'loc': 'upper right', 'fontsize': 12}
         **kwargs
             Additional matplotlib plot kwargs (color, linewidth, label, etc.)
+            Note: If 'label' is provided in kwargs, it will be used for the legend.
 
         Returns
         -------
@@ -472,8 +485,22 @@ class TransmissionResult:
         }
         plot_kwargs.update(kwargs)
         
-        # Set automatic label for legend if legend=True and no custom label provided
-        if legend and 'label' not in plot_kwargs:
+        # Handle legend parameter - can be bool or dict
+        show_legend = False
+        legend_kwargs = {'loc': 'best', 'framealpha': 0.8}  # Default legend options
+        
+        if isinstance(legend, dict):
+            show_legend = True
+            # Extract custom label from legend dict if provided
+            if 'label' in legend:
+                plot_kwargs['label'] = legend.pop('label')
+            # Remaining legend dict entries are legend style options
+            legend_kwargs.update(legend)
+        elif legend:
+            show_legend = True
+        
+        # Set automatic label if legend enabled and no custom label provided
+        if show_legend and 'label' not in plot_kwargs:
             # Convert actual_x (in nm) to µm for display
             x_um = actual_x / 1000.0
             plot_kwargs['label'] = f"x = {x_um:.1f} µm"
@@ -683,9 +710,9 @@ class TransmissionResult:
                 warnings.warn("scipy is required for find_minima functionality. Install with: pip install scipy")
                 minima_freqs = None
 
-        # Show legend only if legend=True or if find_minima marked points
-        if legend or (find_minima is not None and minima_freqs):
-            ax.legend(loc='best', framealpha=0.8)
+        # Show legend if requested or if find_minima marked points
+        if show_legend or (find_minima is not None and minima_freqs):
+            ax.legend(**legend_kwargs)
         
         if find_minima is not None:
             return fig, ax, minima_freqs
