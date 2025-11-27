@@ -217,6 +217,7 @@ class TransmissionResult:
         disable_averaging: bool = False,
         normalize: bool = False,
         verbose: bool = False,
+        legend: Union[bool, dict] = False,
         **kwargs,
     ):
         """Plot 1D transmission cross-section at specific x position.
