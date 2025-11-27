@@ -104,6 +104,7 @@ def overlay_transmission(
     bias_index: Optional[float] = None,
     column: Union[int, str, None] = None,
     reverse_frequency: bool = True,
+    flip: bool = True,
     color: str = "tab:red",
     linewidth: float = 0.8,
     label: Optional[str] = None,
@@ -141,6 +142,11 @@ def overlay_transmission(
         Explicit column index or label from the measurement file. Overrides ``bias_index``.
     reverse_frequency:
         Reverse the frequency axis to match typical experimental formatting.
+    flip:
+        If True (default), plot frequency on the Y-axis and transmission on the X-axis
+        to match the historical overlay behaviour. Set to False to mirror the default
+        orientation of :meth:`TransmissionResult.plot_transmission_crosssection`
+        (frequency on X-axis, transmission on Y-axis).
     normalize:
         If True, normalizes the experimental transmission so that its maximum value is 1.
         This normalization is applied independently after any `normalize_to` scaling.
@@ -200,8 +206,10 @@ def overlay_transmission(
                     "Could not find a simulation line on the provided axes to normalize against."
                 )
 
-            # Get the simulation data (transmission is on the x-axis when flip=True)
-            sim_transmission_data = sim_line.get_xdata()
+            # Select simulation transmission data based on orientation
+            sim_transmission_data = (
+                sim_line.get_xdata() if flip else sim_line.get_ydata()
+            )
             sim_max = np.max(sim_transmission_data)
 
             # Scale experimental data
@@ -244,9 +252,14 @@ def overlay_transmission(
     if label is None:
         label = f"exp d={d} p={p}"
 
+    if flip:
+        plot_x, plot_y = amplitudes, frequencies
+    else:
+        plot_x, plot_y = frequencies, amplitudes
+
     line, = ax.plot(
-        amplitudes,
-        frequencies,
+        plot_x,
+        plot_y,
         color=color,
         linewidth=linewidth,
         label=label,
