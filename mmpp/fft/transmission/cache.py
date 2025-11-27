@@ -140,7 +140,7 @@ class TransmissionCache:
         write: bool = False,
     ) -> Optional[zarr.Group]:
         """Get or create the zarr group for transmission cache.
-        
+
         Parameters
         ----------
         cache_path : Optional[Path]
@@ -148,7 +148,7 @@ class TransmissionCache:
             If None, use zarr file directory (default behavior).
         write : bool
             Whether to open for writing (create if needed).
-            
+
         Returns
         -------
         Optional[zarr.Group]
@@ -216,7 +216,9 @@ class TransmissionCache:
         else:
             if write:
                 raise TypeError("Expected Zarr group at /fft/transmission in cache")
-            log.debug("Transmission cache /fft/transmission node is not a group; skipping")
+            log.debug(
+                "Transmission cache /fft/transmission node is not a group; skipping"
+            )
             return None
 
         dataset_key = self._sanitize_name(self.dataset_name or "__global__")
@@ -235,11 +237,16 @@ class TransmissionCache:
 
         return dataset_group
 
-    def generate_cache_key(self, config: TransmissionConfig, slice_info: Any = None) -> str:
+    def generate_cache_key(
+        self, config: TransmissionConfig, slice_info: Any = None
+    ) -> str:
         """Generate unique cache key from configuration and slice info."""
         from dataclasses import asdict
 
         config_dict = asdict(config)
+        # Remove non-serializable fields (like progress_callback)
+        config_dict.pop("progress_callback", None)
+
         # Add slice info to cache key
         if slice_info is not None:
             config_dict["slice_info"] = self._serialize_for_json(slice_info)
@@ -255,7 +262,7 @@ class TransmissionCache:
         cache_path: Optional[Path] = None,
     ) -> Optional[TransmissionResult]:
         """Load transmission result from cache if available.
-        
+
         Parameters
         ----------
         config : TransmissionConfig
@@ -264,14 +271,16 @@ class TransmissionCache:
             Slice information if applicable.
         cache_path : Optional[Path]
             Custom cache directory (if None, uses zarr directory).
-            
+
         Returns
         -------
         Optional[TransmissionResult]
             Cached result or None if not found.
         """
-        log.debug("Attempting to load transmission from cache (cache_path=%s)", cache_path)
-        
+        log.debug(
+            "Attempting to load transmission from cache (cache_path=%s)", cache_path
+        )
+
         cache_group = self._get_cache_group(cache_path=cache_path, write=False)
         if cache_group is None:
             log.debug("Cache group not available - cannot load from cache")
@@ -286,9 +295,13 @@ class TransmissionCache:
             log.debug("Cache entry not found: %s", entry_name)
             # List available entries for debugging
             try:
-                available = list(cache_group.keys()) if hasattr(cache_group, 'keys') else []
+                available = (
+                    list(cache_group.keys()) if hasattr(cache_group, "keys") else []
+                )
                 if available:
-                    log.debug("Available cache entries: %s", available[:5])  # Show first 5
+                    log.debug(
+                        "Available cache entries: %s", available[:5]
+                    )  # Show first 5
                 else:
                     log.debug("No cache entries found in group")
             except Exception:
@@ -311,9 +324,11 @@ class TransmissionCache:
         try:
             stored_config = TransmissionConfig(**json.loads(stored_config_json))
             # Basic validation - check key parameters match
-            if (stored_config.method != config.method or
-                stored_config.dataset_name != config.dataset_name or
-                stored_config.z_layer != config.z_layer):
+            if (
+                stored_config.method != config.method
+                or stored_config.dataset_name != config.dataset_name
+                or stored_config.z_layer != config.z_layer
+            ):
                 log.debug("Cache config mismatch for %s", entry_name)
                 return None
         except Exception as exc:
@@ -327,7 +342,16 @@ class TransmissionCache:
         power_map = self._load_group_array(entry, "power_map")
         reference_power = self._load_group_array(entry, "reference_power")
 
-        if any(arr is None for arr in [frequencies, x_positions, transmission, power_map, reference_power]):
+        if any(
+            arr is None
+            for arr in [
+                frequencies,
+                x_positions,
+                transmission,
+                power_map,
+                reference_power,
+            ]
+        ):
             log.warning("Cache entry %s missing required arrays", entry_name)
             return None
 
@@ -343,7 +367,9 @@ class TransmissionCache:
         power_minus = self._load_group_array(entry, "power_minus")
         transverse_power = self._load_group_array(entry, "transverse_power")
         longitudinal_power = self._load_group_array(entry, "longitudinal_power")
-        complex_spectra_summary = self._load_group_array(entry, "complex_spectra_summary")
+        complex_spectra_summary = self._load_group_array(
+            entry, "complex_spectra_summary"
+        )
 
         # Load metadata
         metadata_json = entry.attrs.get("metadata_json", "{}")
@@ -378,7 +404,7 @@ class TransmissionCache:
         overwrite: bool = False,
     ) -> None:
         """Save transmission result to cache.
-        
+
         Parameters
         ----------
         result : TransmissionResult
@@ -390,9 +416,12 @@ class TransmissionCache:
         overwrite : bool
             Whether to overwrite existing cache entry.
         """
-        log.debug("Attempting to save transmission to cache (cache_path=%s, overwrite=%s)", 
-                 cache_path, overwrite)
-        
+        log.debug(
+            "Attempting to save transmission to cache (cache_path=%s, overwrite=%s)",
+            cache_path,
+            overwrite,
+        )
+
         cache_group = self._get_cache_group(cache_path=cache_path, write=True)
         if cache_group is None:
             log.debug("Skipping transmission cache save; cache group unavailable")
@@ -404,7 +433,10 @@ class TransmissionCache:
 
         if entry_name in cache_group:
             if not overwrite:
-                log.info("Transmission cache %s already exists (use overwrite=True to replace)", entry_name)
+                log.info(
+                    "Transmission cache %s already exists (use overwrite=True to replace)",
+                    entry_name,
+                )
                 return
             log.debug("Overwriting existing cache entry: %s", entry_name)
             del cache_group[entry_name]
@@ -435,10 +467,13 @@ class TransmissionCache:
         if result.longitudinal_power is not None:
             self._create_dataset(entry, "longitudinal_power", result.longitudinal_power)
         if result.complex_spectra_summary is not None:
-            self._create_dataset(entry, "complex_spectra_summary", result.complex_spectra_summary)
+            self._create_dataset(
+                entry, "complex_spectra_summary", result.complex_spectra_summary
+            )
 
         # Save configuration and metadata
         from dataclasses import asdict
+
         entry.attrs["config_json"] = json.dumps(asdict(result.config))
         entry.attrs["metadata_json"] = json.dumps(result.metadata)
         entry.attrs["dataset_name"] = self.dataset_name
@@ -449,12 +484,16 @@ class TransmissionCache:
 
         store = getattr(cache_group, "store", None)
         store_desc = (
-            getattr(store, "path", None) or
-            getattr(store, "dir_path", None) or
-            getattr(store, "filename", None)
+            getattr(store, "path", None)
+            or getattr(store, "dir_path", None)
+            or getattr(store, "filename", None)
         )
         log.info(
             "Transmission result saved: entry=%s store=%s",
             entry_name,
-            store_desc or store.__class__.__name__ if store is not None else "<unknown>",
+            (
+                store_desc or store.__class__.__name__
+                if store is not None
+                else "<unknown>"
+            ),
         )

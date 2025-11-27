@@ -86,26 +86,29 @@ class FFTTransmissionInterface:
         --------
         >>> # Compute and save to default cache location (zarr directory)
         >>> result = job[0].fft.transmission(save=True)
-        
+
         >>> # Use custom cache directory
         >>> result = job[0].fft.transmission(save=True, cache_path="/tmp/fft_cache")
-        
+
         >>> # Force recomputation and update cache
         >>> result = job[0].fft.transmission(save=True, force=True)
         """
 
         if config is not None and kwargs:
-            raise ValueError("Provide either a TransmissionConfig or keyword arguments, not both")
+            raise ValueError(
+                "Provide either a TransmissionConfig or keyword arguments, not both"
+            )
 
         if config is None:
             # Inject dataset_name from interface if not provided in kwargs
-            if self.dataset_name is not None and 'dataset_name' not in kwargs:
-                kwargs['dataset_name'] = self.dataset_name
+            if self.dataset_name is not None and "dataset_name" not in kwargs:
+                kwargs["dataset_name"] = self.dataset_name
             config = TransmissionConfig(**kwargs)
         else:
             # If config provided but dataset_name is None, inject from interface
             if config.dataset_name is None and self.dataset_name is not None:
                 from dataclasses import replace
+
                 config = replace(config, dataset_name=self.dataset_name)
 
         # Convert cache_path to Path if string
@@ -114,18 +117,25 @@ class FFTTransmissionInterface:
         # Try loading from cache first (unless force is True)
         result = None
         if use_cache and not force:
-            result = self._cache.load_result(config, self.slice_info, cache_path=cache_dir)
+            result = self._cache.load_result(
+                config, self.slice_info, cache_path=cache_dir
+            )
             if result is not None:
                 log.info("Loaded transmission result from cache")
                 return result
 
         # Compute from scratch
-        log.debug("Computing transmission with configuration: %s", asdict(config))
+        # Create safe dict for logging (exclude non-serializable fields)
+        config_dict = asdict(config)
+        config_dict.pop("progress_callback", None)
+        log.debug("Computing transmission with configuration: %s", config_dict)
         result = self._compute.compute(config, slice_info=self.slice_info)
 
         # Save to cache if requested
         if save and use_cache:
-            self._cache.save_result(result, self.slice_info, cache_path=cache_dir, overwrite=force)
+            self._cache.save_result(
+                result, self.slice_info, cache_path=cache_dir, overwrite=force
+            )
 
         return result
 
@@ -140,7 +150,7 @@ class FFTTransmissionInterface:
         **kwargs,
     ) -> TransmissionResult:
         """Alias for :meth:`__call__` to mirror other interfaces.
-        
+
         Parameters
         ----------
         config:
@@ -163,7 +173,14 @@ class FFTTransmissionInterface:
             Computed or cached transmission result.
         """
 
-        return self.__call__(config, save=save, cache_path=cache_path, force=force, use_cache=use_cache, **kwargs)
+        return self.__call__(
+            config,
+            save=save,
+            cache_path=cache_path,
+            force=force,
+            use_cache=use_cache,
+            **kwargs,
+        )
 
     def plot_transmission(
         self,
@@ -176,7 +193,7 @@ class FFTTransmissionInterface:
         **kwargs,
     ):
         """Compute and immediately plot the transmission map.
-        
+
         Parameters
         ----------
         config : TransmissionConfig, optional
@@ -193,14 +210,21 @@ class FFTTransmissionInterface:
             If True, use cache for loading/saving (default: True)
         **kwargs
             Forwarded to computation config
-            
+
         Returns
         -------
         fig, ax
             Matplotlib figure and axes
         """
 
-        result = self.__call__(config, save=save, cache_path=cache_path, force=force, use_cache=use_cache, **kwargs)
+        result = self.__call__(
+            config,
+            save=save,
+            cache_path=cache_path,
+            force=force,
+            use_cache=use_cache,
+            **kwargs,
+        )
         return result.plot_transmission(plot_config=plot_config)
 
     # ------------------------------------------------------------------
@@ -217,7 +241,7 @@ class FFTTransmissionInterface:
         """Fallback basic display matching FFT core style."""
         default_cfg = TransmissionConfig()
         dataset_hint = self._job_result.get_largest_m_dataset()
-        
+
         lines = [
             "=" * 70,
             "🔊 MMPP Transmission Analysis Interface",
@@ -250,32 +274,56 @@ class FFTTransmissionInterface:
             "⚙️ CONFIGURATION PARAMETERS (with available options):",
             "─" * 50,
         ]
-        
+
         # Detailed parameter documentation with options
         param_docs = [
             ("spatial_window", "5", "int > 0 - Size of spatial analysis window"),
             ("spatial_step", "1", "int ≥ 1 - Step for sliding window"),
-            ("reference_window", "None", "(int, int) or None - Reference region [start, end]"),
+            (
+                "reference_window",
+                "None",
+                "(int, int) or None - Reference region [start, end]",
+            ),
             ("normalize", "'reference'", "'reference' | 'max' | 'none'"),
             ("method", "'power_ratio'", "'power_ratio' | 'circular' | 'cpsd'"),
-            ("window_function", "'hann'", "'hann' | 'hamming' | 'blackman' | 'bartlett' | 'kaiser' | 'tukey' | 'gaussian' | 'none'"),
-            ("filter_type", "'remove_mean'", "'remove_mean' | 'remove_static' | 'detrend_linear' | 'remove_mean_and_static' | 'none'"),
+            (
+                "window_function",
+                "'hann'",
+                "'hann' | 'hamming' | 'blackman' | 'bartlett' | 'kaiser' | 'tukey' | 'gaussian' | 'none'",
+            ),
+            (
+                "filter_type",
+                "'remove_mean'",
+                "'remove_mean' | 'remove_static' | 'detrend_linear' | 'remove_mean_and_static' | 'none'",
+            ),
             ("reference_statistic", "'mean'", "'mean' | 'median' | 'max'"),
             ("average_mode", "'mean'", "'mean' | 'median' | 'edge_taper' | 'none'"),
-            ("component_weights", "(1.0, 1.0, 0.1)", "(mx, my, mz) - Tuple[float, float, float]"),
-            ("enable_circular_components", "False", "bool - Enable m+ and m- components"),
+            (
+                "component_weights",
+                "(1.0, 1.0, 0.1)",
+                "(mx, my, mz) - Tuple[float, float, float]",
+            ),
+            (
+                "enable_circular_components",
+                "False",
+                "bool - Enable m+ and m- components",
+            ),
             ("store_component_maps", "False", "bool - Store individual component maps"),
-            ("dataset_name", "None", "str or None - Dataset name (auto-detect if None)"),
+            (
+                "dataset_name",
+                "None",
+                "str or None - Dataset name (auto-detect if None)",
+            ),
             ("z_layer", "-1", "int - Z layer index (-1 = last)"),
             ("tmax", "None", "int or None - Max time steps"),
         ]
-        
+
         for param, default, description in param_docs:
             lines.append(f"  • {param}")
             lines.append(f"    Default: {default}")
             lines.append(f"    Options: {description}")
             lines.append("")
-        
+
         lines.append("=" * 70)
         return "\n".join(lines)
 
@@ -295,13 +343,21 @@ class FFTTransmissionInterface:
 
         # Summary Panel ------------------------------------------------
         summary_table = Table.grid(expand=True)
-        summary_table.add_row("🔊", "[bold cyan]Transmission Analysis Interface[/bold cyan]")
+        summary_table.add_row(
+            "🔊", "[bold cyan]Transmission Analysis Interface[/bold cyan]"
+        )
         summary_table.add_row("📁", f"Job Dataset: [bold]{dataset_hint}[/bold]")
         summary_table.add_row("", "")
         summary_table.add_row("🔧", "[bold yellow]Core Methods:[/bold yellow]")
-        summary_table.add_row("", "  • [code]transmission()[/code] - Compute transmission")
-        summary_table.add_row("", "  • [code]compute()[/code] - Alias for transmission()")
-        summary_table.add_row("", "  • [code]plot_transmission()[/code] - Compute + plot")
+        summary_table.add_row(
+            "", "  • [code]transmission()[/code] - Compute transmission"
+        )
+        summary_table.add_row(
+            "", "  • [code]compute()[/code] - Alias for transmission()"
+        )
+        summary_table.add_row(
+            "", "  • [code]plot_transmission()[/code] - Compute + plot"
+        )
 
         summary_panel = Panel(
             summary_table,
@@ -338,7 +394,7 @@ fig, ax, m = result.plot_transmission(
         config_table.add_column("Parameter", justify="left", style="cyan")
         config_table.add_column("Default", justify="left", style="green")
         config_table.add_column("Available Options", justify="left", style="yellow")
-        
+
         # Detailed parameter documentation
         param_info = [
             ("spatial_window", "5", "int > 0"),
@@ -346,8 +402,16 @@ fig, ax, m = result.plot_transmission(
             ("reference_window", "None", "(int, int) or None"),
             ("normalize", "'reference'", "'reference' | 'max' | 'none'"),
             ("method", "'power_ratio'", "'power_ratio' | 'circular' | 'cpsd'"),
-            ("window_function", "'hann'", "'hann' | 'hamming' | 'blackman' | 'bartlett' | 'kaiser' | 'tukey' | 'gaussian' | 'none'"),
-            ("filter_type", "'remove_mean'", "'remove_mean' | 'remove_static' | 'detrend_linear' | 'remove_mean_and_static' | 'none'"),
+            (
+                "window_function",
+                "'hann'",
+                "'hann' | 'hamming' | 'blackman' | 'bartlett' | 'kaiser' | 'tukey' | 'gaussian' | 'none'",
+            ),
+            (
+                "filter_type",
+                "'remove_mean'",
+                "'remove_mean' | 'remove_static' | 'detrend_linear' | 'remove_mean_and_static' | 'none'",
+            ),
             ("reference_statistic", "'mean'", "'mean' | 'median' | 'max'"),
             ("average_mode", "'mean'", "'mean' | 'median' | 'edge_taper' | 'none'"),
             ("component_weights", "(1.0, 1.0, 0.1)", "(mx, my, mz) weights"),
@@ -357,11 +421,15 @@ fig, ax, m = result.plot_transmission(
             ("z_layer", "-1", "int (negative = from end)"),
             ("tmax", "None", "int or None"),
         ]
-        
+
         for param, default, options in param_info:
             config_table.add_row(param, default, options)
 
-        config_panel = Panel(config_table, border_style="green", title="[bold]Configuration Options[/bold]")
+        config_panel = Panel(
+            config_table,
+            border_style="green",
+            title="[bold]Configuration Options[/bold]",
+        )
 
         console.print(summary_panel)
         console.print(usage_panel)
