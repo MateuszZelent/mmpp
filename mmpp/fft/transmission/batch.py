@@ -176,6 +176,162 @@ class BatchTransmissionResult:
                 f"Available parameters: {available}"
             )
         return np.array(self.parameters[param_name])
+
+    @staticmethod
+    def _normalize_mode(normalize: Union[bool, str, None]) -> str:
+        """Convert user-facing normalize flag to canonical mode string."""
+        if normalize is True:
+            return "per_column"
+        if normalize is False or normalize is None or normalize == "none":
+            return "none"
+        if isinstance(normalize, str):
+            return normalize.lower()
+        return "per_column"
+
+    def _prepare_crosssection_heatmap_data(
+        self,
+        swapping_parameter: str,
+        x: float,
+        x_width: Optional[float],
+        freq_unit: str,
+        trim_0f: int,
+        fmin: Optional[float],
+        fmax: Optional[float],
+        normalize_mode: str,
+        flip: bool,
+        disable_averaging: bool,
+        param_scale: float,
+        verbose: bool,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Extract normalized heatmap data without plotting."""
+        param_values = self.get_parameter_values(swapping_parameter)
+
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"🔍 plot_transmission_crosssection_heatmap()")
+            print(f"{'='*60}")
+            print(f"  swapping_parameter: {swapping_parameter}")
+            print(f"  x: {x} ({x*1e9:.1f} nm)")
+            print(f"  x_width: {x_width}")
+            print(f"  normalize_mode: {normalize_mode}")
+            print(f"  freq_unit: {freq_unit}")
+            print(f"  fmin/fmax: {fmin}/{fmax}")
+            print(f"  trim_0f: {trim_0f}")
+            print(
+                f"  param_values: {param_values[:5]}"
+                f"{'...' if len(param_values) > 5 else ''}"
+            )
+            print(f"  n_results: {len(self.results)}")
+
+        cross_sections = []
+        frequencies = None
+
+        for i, result in enumerate(self.results):
+            try:
+                freq, cross_section = self._extract_crosssection(
+                    result,
+                    x,
+                    x_width,
+                    trim_0f,
+                    fmin,
+                    fmax,
+                    freq_unit,
+                    normalize=False,
+                    flip=flip,
+                    disable_averaging=disable_averaging,
+                    verbose=(verbose and i == 0),
+                )
+
+                if frequencies is None:
+                    frequencies = freq
+                    n_freq_expected = len(freq)
+                else:
+                    if len(freq) != n_freq_expected:
+                        try:
+                            from scipy.interpolate import interp1d
+
+                            interp_func = interp1d(
+                                freq,
+                                cross_section,
+                                kind="linear",
+                                bounds_error=False,
+                                fill_value=0.0,
+                            )
+                            cross_section = interp_func(frequencies)
+                        except Exception:
+                            cross_section = np.interp(
+                                frequencies, freq, cross_section, left=0.0, right=0.0
+                            )
+                        if verbose and i == 1:
+                            log.info(
+                                "Interpolating result %d from %d to %d frequency points",
+                                i,
+                                len(freq),
+                                n_freq_expected,
+                            )
+
+                cross_sections.append(cross_section)
+
+            except Exception as e:
+                log.error(f"Failed to extract cross-section from result {i}: {e}")
+                if frequencies is not None:
+                    cross_sections.append(np.full_like(frequencies, np.nan))
+                else:
+                    raise
+
+        if frequencies is None:
+            raise ValueError("No cross-sections were extracted; frequencies is None.")
+
+        heatmap_data = np.array(cross_sections)
+
+        # Sort by parameter values so imshow displays increasing parameter axis
+        sort_indices = np.argsort(param_values)
+        param_values = param_values[sort_indices]
+        heatmap_data = heatmap_data[sort_indices, :]
+
+        if verbose:
+            print(f"\n  heatmap_data shape: {heatmap_data.shape}")
+            print(
+                f"  param_values (sorted): "
+                f"[{param_values[0]:.6f}, ..., {param_values[-1]:.6f}]"
+            )
+            print(
+                f"  heatmap_data range (raw): "
+                f"[{heatmap_data.min():.4e}, {heatmap_data.max():.4e}]"
+            )
+
+        if normalize_mode == "per_column":
+            for i in range(heatmap_data.shape[0]):
+                col_max = heatmap_data[i, :].max()
+                if col_max > 0:
+                    heatmap_data[i, :] = heatmap_data[i, :] / col_max
+            if verbose:
+                print("  Applied per_column normalization: each simulation -> [0, 1]")
+        elif normalize_mode == "global":
+            global_max = heatmap_data.max()
+            if global_max > 0:
+                heatmap_data = heatmap_data / global_max
+            if verbose:
+                print("  Applied global normalization: entire heatmap -> [0, 1]")
+        elif normalize_mode == "none" and verbose:
+            print("  No normalization applied (raw values)")
+
+        if verbose:
+            print(
+                f"  heatmap_data range (after norm): "
+                f"[{heatmap_data.min():.4e}, {heatmap_data.max():.4e}]"
+            )
+
+        param_values_scaled = param_values * param_scale
+
+        if verbose:
+            print(f"  param_scale: {param_scale}")
+            print(
+                f"  param_values_scaled: "
+                f"[{param_values_scaled[0]:.6f}, ..., {param_values_scaled[-1]:.6f}]"
+            )
+
+        return frequencies, heatmap_data, param_values_scaled, param_values
     
     def plot_transmission_crosssection_heatmap(
         self,
@@ -347,123 +503,24 @@ class BatchTransmissionResult:
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib is required for plotting")
-        
-        # Normalize the normalize parameter
-        if normalize is True:
-            normalize_mode = "per_column"
-        elif normalize is False or normalize is None or normalize == "none":
-            normalize_mode = "none"
-        elif isinstance(normalize, str):
-            normalize_mode = normalize.lower()
-        else:
-            normalize_mode = "per_column"
-        
-        if verbose:
-            print(f"\n{'='*60}")
-            print(f"🔍 plot_transmission_crosssection_heatmap()")
-            print(f"{'='*60}")
-            print(f"  swapping_parameter: {swapping_parameter}")
-            print(f"  x: {x} ({x*1e9:.1f} nm)")
-            print(f"  x_width: {x_width}")
-            print(f"  normalize_mode: {normalize_mode}")
-            print(f"  freq_unit: {freq_unit}")
-            print(f"  fmin/fmax: {fmin}/{fmax}")
-            print(f"  trim_0f: {trim_0f}")
-        
-        # Get parameter values
-        param_values = self.get_parameter_values(swapping_parameter)
-        
-        if verbose:
-            print(f"  param_values: {param_values[:5]}{'...' if len(param_values) > 5 else ''}")
-            print(f"  n_results: {len(self.results)}")
-        
-        # Extract cross-sections from all results (WITHOUT per-column normalization)
-        # We'll handle normalization after collecting all data
-        cross_sections = []
-        frequencies = None
-        
-        for i, result in enumerate(self.results):
-            try:
-                # Extract cross-section using internal method (normalize=False to get raw values)
-                freq, cross_section = self._extract_crosssection(
-                    result, x, x_width, trim_0f, fmin, fmax, 
-                    freq_unit, normalize=False, flip=flip, 
-                    disable_averaging=disable_averaging, verbose=(verbose and i == 0)
-                )
-                
-                if frequencies is None:
-                    frequencies = freq
-                    n_freq_expected = len(freq)
-                else:
-                    # Check if lengths match - if not, we need to handle it
-                    if len(freq) != n_freq_expected:
-                        # Interpolate to common frequency grid
-                        from scipy.interpolate import interp1d
-                        interp_func = interp1d(
-                            freq, cross_section, 
-                            kind='linear', 
-                            bounds_error=False, 
-                            fill_value=0.0
-                        )
-                        cross_section = interp_func(frequencies)
-                        if verbose and i == 1:
-                            log.info(f"Interpolating result {i} from {len(freq)} to {n_freq_expected} frequency points")
-                
-                cross_sections.append(cross_section)
-                
-            except Exception as e:
-                log.error(f"Failed to extract cross-section from result {i}: {e}")
-                # Use NaN array as placeholder
-                if frequencies is not None:
-                    cross_sections.append(np.full_like(frequencies, np.nan))
-                else:
-                    raise
-        
-        # Stack into 2D array: (n_params, n_frequencies)
-        heatmap_data = np.array(cross_sections)
-        
-        # CRITICAL: Sort data by parameter values for correct imshow display
-        # param_values may not be in sorted order (depends on job order)
-        sort_indices = np.argsort(param_values)
-        param_values = param_values[sort_indices]
-        heatmap_data = heatmap_data[sort_indices, :]
-        
-        if verbose:
-            print(f"\n  heatmap_data shape: {heatmap_data.shape}")
-            print(f"  param_values (sorted): [{param_values[0]:.6f}, ..., {param_values[-1]:.6f}]")
-            print(f"  heatmap_data range (raw): [{heatmap_data.min():.4e}, {heatmap_data.max():.4e}]")
-        
-        # Apply normalization based on mode
-        if normalize_mode == "per_column":
-            # Normalize each column (each simulation) independently to [0, 1]
-            for i in range(heatmap_data.shape[0]):
-                col_max = heatmap_data[i, :].max()
-                if col_max > 0:
-                    heatmap_data[i, :] = heatmap_data[i, :] / col_max
-            if verbose:
-                print(f"  Applied per_column normalization: each simulation → [0, 1]")
-                
-        elif normalize_mode == "global":
-            # Normalize entire heatmap to [0, 1]
-            global_max = heatmap_data.max()
-            if global_max > 0:
-                heatmap_data = heatmap_data / global_max
-            if verbose:
-                print(f"  Applied global normalization: entire heatmap → [0, 1]")
-                
-        elif normalize_mode == "none":
-            if verbose:
-                print(f"  No normalization applied (raw values)")
-        
-        if verbose:
-            print(f"  heatmap_data range (after norm): [{heatmap_data.min():.4e}, {heatmap_data.max():.4e}]")
-        
-        # Apply parameter scaling (e.g., T → mT)
-        param_values_scaled = param_values * param_scale
-        
-        if verbose:
-            print(f"  param_scale: {param_scale}")
-            print(f"  param_values_scaled: [{param_values_scaled[0]:.6f}, ..., {param_values_scaled[-1]:.6f}]")
+        normalize_mode = self._normalize_mode(normalize)
+
+        frequencies, heatmap_data, param_values_scaled, _ = (
+            self._prepare_crosssection_heatmap_data(
+                swapping_parameter=swapping_parameter,
+                x=x,
+                x_width=x_width,
+                freq_unit=freq_unit,
+                trim_0f=trim_0f,
+                fmin=fmin,
+                fmax=fmax,
+                normalize_mode=normalize_mode,
+                flip=flip,
+                disable_averaging=disable_averaging,
+                param_scale=param_scale,
+                verbose=verbose,
+            )
+        )
         
         # Create plot
         if ax is None:
@@ -609,6 +666,192 @@ class BatchTransmissionResult:
         if verbose:
             print(f"{'='*60}\n")
         
+        return fig, ax, img
+
+    def plot_transmission_crosssection_heatmap_difference(
+        self,
+        other: "BatchTransmissionResult",
+        swapping_parameter: str,
+        x: float,
+        x_width: Optional[float] = None,
+        freq_unit: str = "GHz",
+        trim_0f: int = 0,
+        fmin: Optional[float] = None,
+        fmax: Optional[float] = None,
+        normalize: Union[bool, str] = "per_column",
+        cmap: str = "coolwarm",
+        ax: Optional[Axes] = None,
+        flip: bool = False,
+        disable_averaging: bool = False,
+        interpolation: str = "nearest",
+        param_scale: float = 1.0,
+        param_label: Optional[str] = None,
+        title: Optional[str] = None,
+        figsize: tuple = (10, 6),
+        dpi: int = 100,
+        symmetric_clim: bool = True,
+        vmin: Optional[float] = None,
+        vmax: Optional[float] = None,
+        colorbar_label: Optional[str] = None,
+        verbose: bool = False,
+        **kwargs,
+    ):
+        """Plot a difference heatmap between two batch results.
+
+        The function extracts matching transmission cross-sections from both
+        batches, applies the same normalization, aligns frequency grids when
+        needed, and plots ``self - other`` using a diverging colormap.
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            raise ImportError("Matplotlib is required for plotting")
+        if not isinstance(other, BatchTransmissionResult):
+            raise TypeError("other must be a BatchTransmissionResult")
+
+        normalize_mode = self._normalize_mode(normalize)
+
+        freq_a, heatmap_a, param_values_scaled_a, param_values_a = (
+            self._prepare_crosssection_heatmap_data(
+                swapping_parameter=swapping_parameter,
+                x=x,
+                x_width=x_width,
+                freq_unit=freq_unit,
+                trim_0f=trim_0f,
+                fmin=fmin,
+                fmax=fmax,
+                normalize_mode=normalize_mode,
+                flip=flip,
+                disable_averaging=disable_averaging,
+                param_scale=param_scale,
+                verbose=verbose,
+            )
+        )
+        freq_b, heatmap_b, _, param_values_b = (
+            other._prepare_crosssection_heatmap_data(
+                swapping_parameter=swapping_parameter,
+                x=x,
+                x_width=x_width,
+                freq_unit=freq_unit,
+                trim_0f=trim_0f,
+                fmin=fmin,
+                fmax=fmax,
+                normalize_mode=normalize_mode,
+                flip=flip,
+                disable_averaging=disable_averaging,
+                param_scale=param_scale,
+                verbose=verbose,
+            )
+        )
+
+        if len(param_values_a) != len(param_values_b) or not np.allclose(
+            param_values_a, param_values_b, rtol=1e-6, atol=1e-9
+        ):
+            raise ValueError(
+                "Batch parameter values do not align. "
+                "Ensure both batches were computed with the same swapping_parameter."
+            )
+
+        def _interp_heatmap(
+            source_freq: np.ndarray,
+            source_data: np.ndarray,
+            target_freq: np.ndarray,
+        ) -> np.ndarray:
+            """Interpolate heatmap rows onto target_freq (handles flipped axes)."""
+            source_freq_arr = np.asarray(source_freq)
+            target_freq_arr = np.asarray(target_freq)
+
+            source_desc = np.any(np.diff(source_freq_arr) < 0)
+            target_desc = np.any(np.diff(target_freq_arr) < 0)
+
+            if source_desc:
+                source_freq_arr = source_freq_arr[::-1]
+                source_data = source_data[:, ::-1]
+            if target_desc:
+                target_freq_arr = target_freq_arr[::-1]
+
+            interpolated = np.array(
+                [
+                    np.interp(
+                        target_freq_arr,
+                        source_freq_arr,
+                        row,
+                        left=0.0,
+                        right=0.0,
+                    )
+                    for row in source_data
+                ]
+            )
+
+            if target_desc:
+                interpolated = interpolated[:, ::-1]
+            return interpolated
+
+        freq_target = freq_a
+        heatmap_b_aligned = heatmap_b
+        if len(freq_a) != len(freq_b) or not np.allclose(
+            freq_a, freq_b, rtol=1e-6, atol=1e-9
+        ):
+            heatmap_b_aligned = _interp_heatmap(freq_b, heatmap_b, freq_target)
+            if verbose:
+                log.info(
+                    "Aligned second batch heatmap to %d frequency points", len(freq_target)
+                )
+
+        diff_data = heatmap_a - heatmap_b_aligned
+        plot_data = diff_data.T
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        else:
+            fig = ax.figure
+
+        extent = [
+            param_values_scaled_a.min(),
+            param_values_scaled_a.max(),
+            freq_target.min(),
+            freq_target.max(),
+        ]
+
+        if symmetric_clim and vmin is None and vmax is None:
+            abs_max = np.nanmax(np.abs(plot_data))
+            if not np.isfinite(abs_max) or abs_max == 0:
+                abs_max = 1.0
+            vmin_plot, vmax_plot = -abs_max, abs_max
+        else:
+            vmin_plot, vmax_plot = vmin, vmax
+
+        img = ax.imshow(
+            plot_data,
+            aspect="auto",
+            origin="lower",
+            extent=extent,
+            cmap=cmap,
+            vmin=vmin_plot,
+            vmax=vmax_plot,
+            interpolation=interpolation,
+            **kwargs,
+        )
+
+        ax.set_ylabel(f"Frequency ({freq_unit})", fontsize=12)
+        ax.set_xlabel(
+            param_label if param_label is not None else swapping_parameter,
+            fontsize=12,
+        )
+
+        default_title = f"Difference heatmap (batch1 - batch2) at x={x*1e9:.1f} nm"
+        ax.set_title(title or default_title, fontsize=14)
+
+        if colorbar_label is not None:
+            cbar_label = colorbar_label
+        elif normalize_mode == "per_column":
+            cbar_label = "Delta T (norm.)"
+        elif normalize_mode == "global":
+            cbar_label = "Delta T (global)"
+        else:
+            cbar_label = "Delta T"
+
+        cbar = plt.colorbar(img, ax=ax)
+        cbar.set_label(cbar_label, fontsize=11)
+
         return fig, ax, img
     
     def _extract_crosssection(
