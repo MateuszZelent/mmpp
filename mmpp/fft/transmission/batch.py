@@ -694,7 +694,7 @@ class BatchTransmissionResult:
         vmax: Optional[float] = None,
         colorbar_label: Optional[str] = None,
         verbose: bool = False,
-        align_strategy: str = "strict",
+        align_strategy: str = "auto",
         atol: float = 1e-9,
         rtol: float = 1e-6,
         **kwargs,
@@ -707,9 +707,10 @@ class BatchTransmissionResult:
 
         Parameters
         ----------
-        align_strategy : {"strict", "intersect"}, default "strict"
+        align_strategy : {"auto", "strict", "intersect"}, default "auto"
             - "strict": require identical parameter arrays (len and values).
             - "intersect": keep only matching parameter values (within atol/rtol).
+            - "auto": try strict first, then fall back to intersect.
         atol, rtol : float
             Tolerances for parameter matching when align_strategy="intersect".
         """
@@ -783,7 +784,7 @@ class BatchTransmissionResult:
         if len(param_values_a) != len(param_values_b) or not np.allclose(
             param_values_a, param_values_b, rtol=rtol, atol=atol
         ):
-            if align_strategy == "intersect":
+            if align_strategy in ("auto", "intersect"):
                 idx_a, idx_b, matched_vals = _match_params(param_values_a, param_values_b, atol, rtol)
                 if len(idx_a) == 0:
                     raise ValueError(
