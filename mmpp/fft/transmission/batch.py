@@ -694,6 +694,9 @@ class BatchTransmissionResult:
         vmax: Optional[float] = None,
         colorbar_label: Optional[str] = None,
         verbose: bool = False,
+        align_strategy: str = "strict",
+        atol: float = 1e-9,
+        rtol: float = 1e-6,
         **kwargs,
     ):
         """Plot a difference heatmap between two batch results.
@@ -701,6 +704,14 @@ class BatchTransmissionResult:
         The function extracts matching transmission cross-sections from both
         batches, applies the same normalization, aligns frequency grids when
         needed, and plots ``self - other`` using a diverging colormap.
+
+        Parameters
+        ----------
+        align_strategy : {"strict", "intersect"}, default "strict"
+            - "strict": require identical parameter arrays (len and values).
+            - "intersect": keep only matching parameter values (within atol/rtol).
+        atol, rtol : float
+            Tolerances for parameter matching when align_strategy="intersect".
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib is required for plotting")
@@ -742,13 +753,61 @@ class BatchTransmissionResult:
             )
         )
 
-        if len(param_values_a) != len(param_values_b) or not np.allclose(
-            param_values_a, param_values_b, rtol=1e-6, atol=1e-9
-        ):
-            raise ValueError(
-                "Batch parameter values do not align. "
-                "Ensure both batches were computed with the same swapping_parameter."
+        def _match_params(
+            params_a: np.ndarray,
+            params_b: np.ndarray,
+            atol_match: float,
+            rtol_match: float,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            """Match parameter values from A to B, respecting tolerances."""
+            matched_idx_a = []
+            matched_idx_b = []
+            matched_vals = []
+            used_b = set()
+            for i, val in enumerate(params_a):
+                candidates = np.where(np.isclose(val, params_b, atol=atol_match, rtol=rtol_match))[0]
+                candidates = [c for c in candidates if c not in used_b]
+                if len(candidates) == 0:
+                    continue
+                j = candidates[0]
+                used_b.add(j)
+                matched_idx_a.append(i)
+                matched_idx_b.append(j)
+                matched_vals.append(val)
+            return (
+                np.array(matched_idx_a, dtype=int),
+                np.array(matched_idx_b, dtype=int),
+                np.array(matched_vals),
             )
+
+        if len(param_values_a) != len(param_values_b) or not np.allclose(
+            param_values_a, param_values_b, rtol=rtol, atol=atol
+        ):
+            if align_strategy == "intersect":
+                idx_a, idx_b, matched_vals = _match_params(param_values_a, param_values_b, atol, rtol)
+                if len(idx_a) == 0:
+                    raise ValueError(
+                        "No overlapping parameter values between batches (after intersection). "
+                        "Provide matching batches or use a different align_strategy."
+                    )
+                if verbose:
+                    log.info(
+                        "Aligning on intersection of parameters (%d values kept out of %d/%d)",
+                        len(idx_a),
+                        len(param_values_a),
+                        len(param_values_b),
+                    )
+                param_values_a = param_values_a[idx_a]
+                param_values_b = param_values_b[idx_b]
+                param_values_scaled_a = param_values_scaled_a[idx_a]
+                heatmap_a = heatmap_a[idx_a, :]
+                heatmap_b = heatmap_b[idx_b, :]
+            else:
+                raise ValueError(
+                    "Batch parameter values do not align. "
+                    "Ensure both batches were computed with the same swapping_parameter, "
+                    "or call with align_strategy='intersect'."
+                )
 
         def _interp_heatmap(
             source_freq: np.ndarray,
