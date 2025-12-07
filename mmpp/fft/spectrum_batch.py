@@ -547,7 +547,7 @@ class BatchSpectrum:
                 spectra.append(spectrum_result)
                 
             except Exception as e:
-                log.warning(f"Failed to compute spectrum for {result}: {e}")
+                log.warning(f"Failed to compute spectrum for {getattr(result, 'path', str(result))}: {e}")
         
         return MultiSpectrumResult(spectra)
     
