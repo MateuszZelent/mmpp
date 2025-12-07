@@ -287,8 +287,33 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
                         if verbose:
                             log.warning(f"  ✗ Failed: {font_file}: {e}")
 
-        if fonts_loaded > 0 and verbose:
-            log.info(f"✓ Loaded {fonts_loaded} fonts from package")
+        if fonts_loaded > 0:
+            # Force matplotlib to rebuild font cache in memory
+            # This is needed when system font cache can't be modified
+            try:
+                # Method 1: Try private API (matplotlib >= 3.2)
+                font_manager._load_fontmanager(try_read_cache=False)
+                if verbose:
+                    log.info(f"✓ Loaded {fonts_loaded} fonts and rebuilt cache")
+            except (AttributeError, TypeError):
+                try:
+                    # Method 2: Rebuild font list manually
+                    font_manager.fontManager.ttflist.clear()
+                    font_manager.fontManager.afmlist.clear()
+                    font_manager.fontManager.ttflist.extend(font_manager.findSystemFonts())
+                    # Re-add our fonts
+                    for font_file in os.listdir(arial_fonts_dir):
+                        if font_file.lower().endswith(('.ttf', '.otf')):
+                            font_path = os.path.join(arial_fonts_dir, font_file)
+                            try:
+                                font_manager.fontManager.addfont(font_path)
+                            except Exception:
+                                pass
+                    if verbose:
+                        log.info(f"✓ Loaded {fonts_loaded} fonts (rebuilt manually)")
+                except Exception as rebuild_err:
+                    if verbose:
+                        log.warning(f"Font cache rebuild failed: {rebuild_err}, fonts may not appear")
 
         # Set font preferences - Arial first, then fallbacks
         plt.rcParams["font.family"] = "sans-serif"
