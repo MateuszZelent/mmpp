@@ -43,19 +43,62 @@ class DatasetSpecificFFT:
         if name == "transmission" and attr is not None:
             return attr.clone_for_dataset(self.dataset_name, slice_info=self.slice_info)
 
+        # For modes, we need to inject dataset context into the mode analyzer
+        if name == "modes" and attr is not None:
+            # Set dataset context on the modes interface
+            attr._dataset_context = self.dataset_name
+            attr._slice_context = self.slice_info
+            return attr
+
+        # Special handling for spectrum property (returns SpectrumHelper)
+        if name == "spectrum" and attr is not None:
+            # Wrap SpectrumHelper to inject dataset and slice_info
+            class SpectrumHelperWrapper:
+                def __init__(self, spectrum_helper, dataset_name, slice_info):
+                    self._spectrum_helper = spectrum_helper
+                    self._dataset_name = dataset_name
+                    self._slice_info = slice_info
+                
+                def __call__(self, *args, **kwargs):
+                    # Inject dataset and slice_info into kwargs
+                    if "dset" not in kwargs:
+                        kwargs["dset"] = self._dataset_name
+                    if self._slice_info is not None and "slice_info" not in kwargs:
+                        kwargs["slice_info"] = self._slice_info
+                    return self._spectrum_helper(*args, **kwargs)
+                
+                def __repr__(self):
+                    return repr(self._spectrum_helper)
+                
+                def _repr_html_(self):
+                    return getattr(self._spectrum_helper, '_repr_html_', lambda: None)()
+            
+            return SpectrumHelperWrapper(attr, self.dataset_name, self.slice_info)
+
         if callable(attr) and hasattr(attr, "__code__"):
             sig = inspect.signature(attr)
-            if "dataset_name" in sig.parameters:
+            params = sig.parameters
+            
+            # Check if method accepts dataset (via 'dset' or 'dataset_name')
+            has_dataset_param = "dset" in params or "dataset_name" in params
+            has_slice_param = "slice_info" in params
 
+            if has_dataset_param or has_slice_param:
                 def wrapper(*args, **kwargs):
-                    if "dataset_name" not in kwargs:
+                    # Inject dataset name
+                    if "dset" in params and "dset" not in kwargs:
+                        kwargs["dset"] = self.dataset_name
+                    elif "dataset_name" in params and "dataset_name" not in kwargs:
                         kwargs["dataset_name"] = self.dataset_name
+                    
+                    # Inject slice_info
                     if (
                         self.slice_info is not None
-                        and "slice_info" in sig.parameters
+                        and "slice_info" in params
                         and "slice_info" not in kwargs
                     ):
                         kwargs["slice_info"] = self.slice_info
+                    
                     return attr(*args, **kwargs)
 
                 return wrapper
@@ -77,48 +120,62 @@ class DatasetSpecificFFT:
             if not RICH_AVAILABLE:
                  return self._basic_dataset_fft_display()
 
-            console = Console(file=io.StringIO(), force_terminal=True)
+            console = Console(file=io.StringIO(), force_terminal=True, width=100)
 
             # Header
-            header = Text(f"FFT Analysis for dataset: '{self.dataset_name}'", style="bold cyan")
+            header = Text()
+            header.append("📊 FFT Analysis Interface\n", style="bold cyan")
+            header.append(f"📁 Dataset: '{self.dataset_name}'\n", style="white")
             if self.slice_info:
-                header.append(f" [slice: {self.slice_info}]", style="yellow")
-            console.print(Panel(header, border_style="blue"))
+                header.append(f"🔖 Slice: {self.slice_info}", style="yellow")
+            console.print(Panel(header, border_style="cyan"))
 
-            # Available methods
-            methods = []
+            # Available Modules table
+            modules = Text()
+            modules.append("📦 Available Modules:\n\n", style="bold yellow")
             
-            if self._fft:
-                # Get methods from FFT class
-                for name in dir(self._fft):
-                    if name.startswith("_"):
-                        continue
-                    
-                    attr = getattr(self._fft, name)
-                    if not callable(attr):
-                        continue
-                        
-                    # Check if method accepts dataset_name
-                    try:
-                        sig = inspect.signature(attr)
-                        if "dataset_name" in sig.parameters:
-                            doc = attr.__doc__ or ""
-                            first_line = doc.strip().split("\n")[0]
-                            methods.append(
-                                Panel(
-                                    Text(first_line, style="white"),
-                                    title=f".{name}()",
-                                    title_align="left",
-                                    border_style="green",
-                                )
-                            )
-                    except Exception:
-                        continue
+            module_info = [
+                ("spectrum", "Compute & plot FFT power spectrum", ".fft.spectrum()"),
+                ("modes", "Interactive FMR mode visualization", ".fft.modes"),
+                ("dispersion", "Dispersion relation analysis", ".fft.dispersion"),
+                ("transmission", "Transmission/absorption analysis", ".fft.transmission"),
+            ]
+            
+            for name, desc, usage in module_info:
+                modules.append(f"  • ", style="dim")
+                modules.append(f"{name:15}", style="bold green")
+                modules.append(f" {desc}\n", style="white")
+                modules.append(f"    └─ Usage: job[0].m[...]{usage}\n", style="dim cyan")
+            
+            console.print(modules)
 
-            if methods:
-                console.print(Columns(methods, equal=True, expand=True))
-            else:
-                console.print("No dataset-specific methods available.")
+            # Quick methods
+            quick = Text()
+            quick.append("\n⚡ Quick Methods:\n\n", style="bold magenta")
+            quick_methods = [
+                (".spectrum()", "→ SpectrumResult with .plot_spectrum(), .power, .frequencies"),
+                (".frequencies()", "→ Frequency array (Hz)"),
+                (".power()", "→ Power spectrum |FFT|²"),
+            ]
+            for method, result in quick_methods:
+                quick.append(f"  job[0].m[...].fft{method} ", style="cyan")
+                quick.append(f"{result}\n", style="dim")
+            
+            console.print(quick)
+
+            # Examples
+            example = '''# Spectrum with component selection:
+job[0].m[:200,...,1].fft.spectrum().plot_spectrum(log_scale=True)
+
+# Interactive modes:
+job[0].m[:200,...,0].fft.modes.interactive_spectrum(dpi=150)
+
+# Access modes helper:
+job[0].fft.modes  # Shows mode analysis options'''
+            
+            from rich.syntax import Syntax
+            syntax = Syntax(example, "python", theme="monokai", line_numbers=False)
+            console.print(Panel(syntax, title="[bold green]Examples", border_style="green"))
 
             return console.file.getvalue()  # type: ignore
         except Exception:

@@ -63,6 +63,40 @@ class BatchFFT:
             dataset_name=dataset_name,
             slice_info=slice_info
         )
+    
+    @property
+    def spectrum(self) -> "BatchSpectrum":
+        """Get batch spectrum analyzer.
+        
+        Returns batch spectrum processor for computing FFT spectra
+        across multiple simulation results.
+        
+        Returns
+        -------
+        BatchSpectrum
+            Batch spectrum processor
+            
+        Examples
+        --------
+        >>> # Compute batch spectrum
+        >>> batch = job[:].fft.spectrum.compute_all(
+        ...     extract_parameters=["B0", "d"],
+        ...     fmin=5e9,
+        ...     fmax=25e9,
+        ... )
+        >>> batch.plot_heatmap("B0")
+        """
+        from .fft.spectrum_batch import BatchSpectrum
+        
+        dataset_name = getattr(self, '_dataset_name', None)
+        slice_info = getattr(self, '_slice_info', None)
+        
+        return BatchSpectrum(
+            self.results,
+            self.mmpp_ref,
+            dataset_name=dataset_name,
+            slice_info=slice_info,
+        )
 
     def compute_all(self, **kwargs) -> dict[str, Any]:
         """

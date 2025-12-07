@@ -226,55 +226,93 @@ _STYLE_INITIALIZED = False
 _STYLING_SETUP_COMPLETED = False
 
 
-def setup_custom_fonts(verbose: bool = False) -> bool:
-    """Setup custom fonts including Arial."""
+def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
+    """Setup custom fonts including Arial from package fonts directory.
+    
+    Parameters
+    ----------
+    verbose : bool
+        Print debug information
+    force : bool
+        Force setup even if already initialized
+        
+    Returns
+    -------
+    bool
+        True if fonts were set up successfully
+    """
     global _FONTS_INITIALIZED
 
-    # Skip if already initialized
-    if _FONTS_INITIALIZED:
+    # Skip if already initialized (unless forced)
+    if _FONTS_INITIALIZED and not force:
         return True
 
     try:
-        # Import fonts from package directory
-        package_dir = os.path.dirname(__file__)
-        font_dirs = [
-            os.path.join(package_dir, "fonts"),  # Package fonts
-            "./fonts",  # Local fonts (development)
-            os.path.expanduser("~/.fonts"),  # User fonts
-        ]
+        import shutil
+        
+        # Clear matplotlib font cache first
+        cache_dir = font_manager.get_cachedir()
+        if cache_dir and os.path.exists(cache_dir):
+            fontlist_cache = os.path.join(cache_dir, 'fontlist-*.json')
+            import glob
+            for cache_file in glob.glob(fontlist_cache):
+                try:
+                    os.remove(cache_file)
+                    if verbose:
+                        log.info(f"🗑️ Removed font cache: {cache_file}")
+                except Exception:
+                    pass
 
-        fonts_loaded = False
-        for font_dir in font_dirs:
-            if os.path.exists(font_dir):
-                if verbose:
-                    log.debug(f"🔍 Checking font directory: {font_dir}")
-                font_files = font_manager.findSystemFonts(fontpaths=[font_dir])
-                for font_file in font_files:
+        # Primary font directory: package fonts folder
+        package_dir = os.path.dirname(__file__)
+        package_fonts_dir = os.path.join(package_dir, "fonts")
+        arial_fonts_dir = os.path.join(package_fonts_dir, "Arial")
+        
+        fonts_loaded = 0
+        
+        # Add fonts from Arial directory
+        if os.path.exists(arial_fonts_dir) and os.path.isdir(arial_fonts_dir):
+            if verbose:
+                log.info(f"🔍 Adding fonts from: {arial_fonts_dir}")
+            
+            for font_file in os.listdir(arial_fonts_dir):
+                if font_file.lower().endswith(('.ttf', '.otf')):
+                    font_path = os.path.join(arial_fonts_dir, font_file)
                     try:
-                        font_manager.fontManager.addfont(font_file)
-                        fonts_loaded = True
+                        font_manager.fontManager.addfont(font_path)
+                        fonts_loaded += 1
                         if verbose:
-                            log.debug(f"✓ Added font: {os.path.basename(font_file)}")
+                            log.debug(f"  ✓ Added: {font_file}")
                     except Exception as e:
                         if verbose:
-                            log.warning(f"Warning: Could not add font {font_file}: {e}")
+                            log.warning(f"  ✗ Failed: {font_file}: {e}")
 
-        # Rebuild font cache if fonts were loaded
-        if fonts_loaded:
-            font_manager.fontManager.findfont("Arial", rebuild_if_missing=True)
+        if fonts_loaded > 0 and verbose:
+            log.info(f"✓ Loaded {fonts_loaded} fonts from package")
 
-        # Set Arial as default font
-        plt.rcParams["font.family"] = "Arial"
-        plt.rcParams["font.sans-serif"] = ["Arial"] + plt.rcParams["font.sans-serif"]
+        # Set font preferences - Arial first, then fallbacks
+        plt.rcParams["font.family"] = "sans-serif"
+        plt.rcParams["font.sans-serif"] = ["Arial", "Arimo", "DejaVu Sans", "Helvetica", "sans-serif"]
+        
+        # Also set for mathtext
+        plt.rcParams["mathtext.fontset"] = "custom"
+        plt.rcParams["mathtext.rm"] = "Arial"
+        plt.rcParams["mathtext.it"] = "Arial:italic"
+        plt.rcParams["mathtext.bf"] = "Arial:bold"
 
         # Check if Arial is available
         available_fonts = {f.name for f in font_manager.fontManager.ttflist}
         if "Arial" in available_fonts:
             if verbose:
-                log.debug("✓ Arial font loaded successfully")
+                log.info("✓ Arial font available for plotting")
+        elif "Arimo" in available_fonts:
+            if verbose:
+                log.info("✓ Arimo font available (Arial substitute)")
         else:
             if verbose:
-                log.warning("⚠ Arial font not found, using default fonts")
+                log.warning("⚠ Arial not found, using DejaVu Sans")
+            plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Helvetica", "sans-serif"]
+            plt.rcParams["mathtext.fontset"] = "dejavusans"
 
         _FONTS_INITIALIZED = True
         return True
@@ -282,35 +320,66 @@ def setup_custom_fonts(verbose: bool = False) -> bool:
     except Exception as e:
         if verbose:
             log.warning(f"Warning: Font setup failed: {e}")
+        # Fallback to safe defaults
+        try:
+            plt.rcParams["font.family"] = "sans-serif"
+            plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "sans-serif"]
+            plt.rcParams["mathtext.fontset"] = "dejavusans"
+        except Exception:
+            pass
+        _FONTS_INITIALIZED = True
         return False
 
 
-def load_paper_style(verbose: bool = False) -> bool:
-    """Load custom paper style."""
+def load_paper_style(verbose: bool = False, force: bool = False) -> bool:
+    """Load custom paper style.
+    
+    Parameters
+    ----------
+    verbose : bool
+        Print debug information
+    force : bool
+        Force reload even if already loaded
+        
+    Returns
+    -------
+    bool
+        True if style was loaded successfully
+    """
     global _STYLE_INITIALIZED
 
-    # Skip if already initialized
-    if _STYLE_INITIALIZED:
+    # Skip if already initialized (unless forced)
+    if _STYLE_INITIALIZED and not force:
         return True
 
     try:
-        # Try to find paper.mplstyle in current directory or relative to this file
-        style_paths = [
-            "./paper.mplstyle",
-            os.path.join(os.path.dirname(__file__), "paper.mplstyle"),
-            "/mnt/storage_2/scratch/pl0095-01/zelent/mannga/bowtie/mateusz/sinc/solver_test/paper.mplstyle",
-        ]
-
-        for style_path in style_paths:
-            if os.path.exists(style_path):
-                plt.style.use(style_path)
-                if verbose:
-                    log.debug(f"✓ Loaded paper style from: {style_path}")
-                _STYLE_INITIALIZED = True
-                return True
+        # Package directory is the primary location
+        package_dir = os.path.dirname(__file__)
+        style_path = os.path.join(package_dir, "paper.mplstyle")
+        
+        if os.path.exists(style_path):
+            plt.style.use(style_path)
+            if verbose:
+                log.info(f"✓ Loaded paper style from: {style_path}")
+            _STYLE_INITIALIZED = True
+            return True
+        else:
+            # Fallback paths
+            fallback_paths = [
+                "./paper.mplstyle",
+                os.path.expanduser("~/.mmpp/paper.mplstyle"),
+            ]
+            
+            for path in fallback_paths:
+                if os.path.exists(path):
+                    plt.style.use(path)
+                    if verbose:
+                        log.info(f"✓ Loaded paper style from fallback: {path}")
+                    _STYLE_INITIALIZED = True
+                    return True
 
         if verbose:
-            log.warning("⚠ paper.mplstyle not found, using default style")
+            log.warning(f"⚠ paper.mplstyle not found at {style_path}")
         _STYLE_INITIALIZED = True
         return False
 

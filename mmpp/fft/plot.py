@@ -99,6 +99,7 @@ class FFTPlotter:
         log_scale: bool = True,
         normalize: bool = False,
         save: bool = True,
+        ax: Optional[Any] = None,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
         figsize: Optional[tuple[float, float]] = None,

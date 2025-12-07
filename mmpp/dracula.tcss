@@ -1,7 +1,0 @@
-/* Welcome Text Styling */
-.welcome-text {
-    color: #f8f8f2;
-    margin: 1;
-    padding: 1;
-    text-align: left;
-}

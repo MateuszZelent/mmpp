@@ -53,8 +53,10 @@ def setup_mmpp_logging(
 
     logger = logging.getLogger(logger_name)
 
-    # Configure root mmpp logger only once
-    if not _logging_configured and logger_name == "mmpp":
+    # Configure root mmpp logger - allow reconfiguration if level/debug specified
+    should_reconfigure = (level is not None or debug) and logger_name == "mmpp"
+    
+    if should_reconfigure or (not _logging_configured and logger_name == "mmpp"):
         # Clear any existing handlers
         root_mmpp = logging.getLogger("mmpp")
         for handler in root_mmpp.handlers[:]:

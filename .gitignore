@@ -17,6 +17,7 @@ downloads/
 eggs/
 .eggs/
 test*
+*.ipynb 
 lib/
 .mmpp/backup/*
 lib64/

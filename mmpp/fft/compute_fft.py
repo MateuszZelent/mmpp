@@ -63,10 +63,13 @@ if not PYZFN_AVAILABLE:
 
 # Type hints
 WINDOW_TYPES = Literal[
-    "none", "hann", "hamming", "blackman", "bartlett", "kaiser", "tukey", "gaussian"
+    "none", "hann", "hamming", "blackman", "bartlett", "kaiser", "tukey", "gaussian",
+    "flattop", "nuttall"
 ]
 FILTER_TYPE_OPTIONS = Literal[
-    "none", "remove_mean", "remove_static", "detrend_linear", "remove_mean_and_static"
+    "none", "remove_mean", "remove_static", "detrend_linear", "remove_mean_and_static",
+    # New filters from FMR literature:
+    "savgol_smooth", "baseline_correction", "high_pass", "band_pass", "spectral_derivative"
 ]
 FILTER_TYPES = Union[FILTER_TYPE_OPTIONS, list[FILTER_TYPE_OPTIONS]]
 FFT_ENGINES = Literal["numpy", "pyfftw", "scipy", "auto"]
@@ -250,6 +253,13 @@ class FFTCompute:
                 if SCIPY_AVAILABLE
                 else np.ones(N)
             ),
+            # New windows for FMR analysis
+            "flattop": (
+                scipy.signal.windows.flattop if SCIPY_AVAILABLE else lambda N: np.ones(N)
+            ),
+            "nuttall": (
+                scipy.signal.windows.nuttall if SCIPY_AVAILABLE else np.blackman
+            ),
         }
 
         # Available engines
@@ -380,8 +390,202 @@ class FFTCompute:
         elif filter_type == "remove_mean_and_static":
             data_filtered = data - np.mean(data, axis=0, keepdims=True)
             return data_filtered - data_filtered[0:1, ...]
+        # New filters from FMR literature
+        elif filter_type == "savgol_smooth":
+            return self._apply_savgol_smooth(data)
+        elif filter_type == "baseline_correction":
+            return self._apply_baseline_correction(data)
+        elif filter_type == "high_pass":
+            return self._apply_high_pass(data)
+        elif filter_type == "band_pass":
+            return self._apply_band_pass(data)
+        elif filter_type == "spectral_derivative":
+            return self._apply_spectral_derivative(data)
         else:
+            log.warning(f"Unknown filter type: {filter_type}, returning data unchanged")
             return data
+
+    def _apply_savgol_smooth(
+        self, data: np.ndarray, window_length: int = 11, polyorder: int = 3
+    ) -> np.ndarray:
+        """Apply Savitzky-Golay smoothing filter.
+        
+        Reduces noise while preserving signal shape and peak positions.
+        Common in spectroscopic data processing.
+        """
+        if not SCIPY_AVAILABLE:
+            log.warning("Savitzky-Golay requires scipy, returning data unchanged")
+            return data
+        
+        # Ensure window length is odd and not larger than data
+        n_time = data.shape[0]
+        window_length = min(window_length, n_time // 2 * 2 - 1)
+        if window_length < 5:
+            log.warning("Data too short for Savitzky-Golay filter")
+            return data
+        if window_length % 2 == 0:
+            window_length -= 1
+        polyorder = min(polyorder, window_length - 1)
+        
+        if data.ndim == 1:
+            return scipy.signal.savgol_filter(data, window_length, polyorder)
+        else:
+            result = np.zeros_like(data)
+            for idx in np.ndindex(data.shape[1:]):
+                result[(slice(None),) + idx] = scipy.signal.savgol_filter(
+                    data[(slice(None),) + idx], window_length, polyorder
+                )
+            return result
+
+    def _apply_baseline_correction(
+        self, data: np.ndarray, lam: float = 1e5, p: float = 0.01, niter: int = 10
+    ) -> np.ndarray:
+        """Apply asymmetric least squares baseline correction.
+        
+        Removes slowly varying baseline drift common in VNA-FMR spectra.
+        Uses iterative weighted least squares fitting.
+        
+        Parameters:
+        -----------
+        lam : float
+            Smoothness penalty (larger = smoother baseline)
+        p : float
+            Asymmetry factor (0 < p < 1, smaller = penalize positive residuals more)
+        niter : int
+            Number of iterations
+        """
+        if not SCIPY_AVAILABLE:
+            # Fallback to simple polynomial baseline
+            return data - np.mean(data, axis=0, keepdims=True)
+        
+        from scipy import sparse
+        from scipy.sparse.linalg import spsolve
+        
+        def baseline_als_1d(y, lam, p, niter):
+            """ALS baseline for 1D array."""
+            L = len(y)
+            D = sparse.diags([1, -2, 1], [0, -1, -2], shape=(L, L - 2))
+            w = np.ones(L)
+            for _ in range(niter):
+                W = sparse.spdiags(w, 0, L, L)
+                Z = W + lam * D.dot(D.T)
+                z = spsolve(Z, w * y)
+                w = p * (y > z) + (1 - p) * (y <= z)
+            return z
+        
+        if data.ndim == 1:
+            baseline = baseline_als_1d(data, lam, p, niter)
+            return data - baseline
+        else:
+            result = np.zeros_like(data)
+            for idx in np.ndindex(data.shape[1:]):
+                y = data[(slice(None),) + idx]
+                baseline = baseline_als_1d(y, lam, p, niter)
+                result[(slice(None),) + idx] = y - baseline
+            return result
+
+    def _apply_high_pass(
+        self, data: np.ndarray, cutoff_fraction: float = 0.01
+    ) -> np.ndarray:
+        """Apply high-pass filter to remove low-frequency components.
+        
+        Useful for removing DC offset and slow drifts.
+        Uses FFT-based filtering for efficiency.
+        
+        Parameters:
+        -----------
+        cutoff_fraction : float
+            Cutoff as fraction of Nyquist frequency (0-1)
+        """
+        if data.ndim == 1:
+            return self._high_pass_1d(data, cutoff_fraction)
+        else:
+            result = np.zeros_like(data)
+            for idx in np.ndindex(data.shape[1:]):
+                result[(slice(None),) + idx] = self._high_pass_1d(
+                    data[(slice(None),) + idx], cutoff_fraction
+                )
+            return result
+
+    def _high_pass_1d(self, y: np.ndarray, cutoff_fraction: float) -> np.ndarray:
+        """High-pass filter for 1D array using FFT."""
+        n = len(y)
+        fft = np.fft.rfft(y)
+        freqs = np.fft.rfftfreq(n)
+        
+        # Create smooth transition (Butterworth-like)
+        cutoff = cutoff_fraction
+        filter_shape = 1 - 1 / (1 + (freqs / max(cutoff, 1e-10)) ** 4)
+        
+        fft_filtered = fft * filter_shape
+        return np.fft.irfft(fft_filtered, n=n)
+
+    def _apply_band_pass(
+        self, data: np.ndarray, low_fraction: float = 0.01, high_fraction: float = 0.9
+    ) -> np.ndarray:
+        """Apply band-pass filter to keep frequencies in specified range.
+        
+        Useful for isolating FMR resonance frequency range.
+        
+        Parameters:
+        -----------
+        low_fraction : float
+            Low cutoff as fraction of Nyquist frequency
+        high_fraction : float
+            High cutoff as fraction of Nyquist frequency
+        """
+        if data.ndim == 1:
+            return self._band_pass_1d(data, low_fraction, high_fraction)
+        else:
+            result = np.zeros_like(data)
+            for idx in np.ndindex(data.shape[1:]):
+                result[(slice(None),) + idx] = self._band_pass_1d(
+                    data[(slice(None),) + idx], low_fraction, high_fraction
+                )
+            return result
+
+    def _band_pass_1d(
+        self, y: np.ndarray, low_fraction: float, high_fraction: float
+    ) -> np.ndarray:
+        """Band-pass filter for 1D array using FFT."""
+        n = len(y)
+        fft = np.fft.rfft(y)
+        freqs = np.fft.rfftfreq(n)
+        
+        # High-pass component
+        hp = 1 - 1 / (1 + (freqs / max(low_fraction, 1e-10)) ** 4)
+        # Low-pass component  
+        lp = 1 / (1 + (freqs / max(high_fraction, 1e-10)) ** 4)
+        
+        filter_shape = hp * lp
+        fft_filtered = fft * filter_shape
+        return np.fft.irfft(fft_filtered, n=n)
+
+    def _apply_spectral_derivative(
+        self, data: np.ndarray, order: int = 1
+    ) -> np.ndarray:
+        """Apply spectral derivative to enhance peaks and resolve overlaps.
+        
+        First derivative helps identify peak positions.
+        Second derivative enhances narrow peaks over broad backgrounds.
+        
+        Parameters:
+        -----------
+        order : int
+            Derivative order (1 or 2)
+        """
+        if data.ndim == 1:
+            return np.gradient(data) if order == 1 else np.gradient(np.gradient(data))
+        else:
+            result = np.zeros_like(data)
+            for idx in np.ndindex(data.shape[1:]):
+                if order == 1:
+                    result[(slice(None),) + idx] = np.gradient(data[(slice(None),) + idx])
+                else:
+                    result[(slice(None),) + idx] = np.gradient(
+                        np.gradient(data[(slice(None),) + idx])
+                    )
+            return result
 
     def compute_fft(
         self,
@@ -727,6 +931,16 @@ class FFTCompute:
             log.info(f"Applying slice_info: {slice_info}")
             data = data_set[slice_info]
             
+            # Fix dimension drop if component (or spatial dim) was selected via integer index
+            # This ensures that calculate_fft_methodX can correctly distinguish spatial vs component dims
+            if isinstance(slice_info, tuple) and len(slice_info) > 0:
+                if isinstance(slice_info[-1], int):
+                    # Last index was int -> dimension dropped. Restore it.
+                    # This is crucial for single-component selection: (t, x, y) -> (t, x, y, 1)
+                    # so that spatial averaging doesn't average over y.
+                    data = data[..., np.newaxis]
+                    log.debug(f"Restored dropped dimension: new shape {data.shape}")
+            
             # Check if user explicitly sliced time dimension
             # If so, DON'T apply tmax (user's slice takes priority)
             if isinstance(slice_info, tuple) and len(slice_info) > 0:
@@ -877,6 +1091,12 @@ class FFTCompute:
                 "remove_static",
                 "detrend_linear",
                 "remove_mean_and_static",
+                # New filters from FMR literature
+                "savgol_smooth",
+                "baseline_correction",
+                "high_pass",
+                "band_pass",
+                "spectral_derivative",
             ],
             "engines": list(self.AVAILABLE_ENGINES.keys()),
             "dependencies": {"scipy": SCIPY_AVAILABLE, "pyfftw": PYFFTW_AVAILABLE},
@@ -1088,6 +1308,17 @@ class FFTCompute:
                 if z_group is not None and dataset in z_group:
                     temp_data_set = z_group[dataset]
             
+            # Fallback: Try direct zarr access
+            if temp_data_set is None:
+                try:
+                    import zarr
+                    z_root = zarr.open(zarr_path, mode="r")
+                    if dataset in z_root:
+                        temp_data_set = z_root[dataset]
+                        log.debug(f"Found dataset '{dataset}' via direct zarr access")
+                except Exception:
+                    pass
+            
             if temp_data_set is not None:
                 data_shape = temp_data_set.shape
                 if len(data_shape) == 5 and z_layer == -1:  # (t, z, y, x, comp)
@@ -1099,7 +1330,7 @@ class FFTCompute:
                 else:
                     normalized_z_layer = z_layer
             else:
-                log.warning(f"Could not inspect data shape for {dataset}, using z_layer as-is")
+                log.debug(f"Dataset '{dataset}' not found for shape inspection, using z_layer as-is")
                 normalized_z_layer = z_layer
         except Exception as e:
             log.warning(f"Failed to normalize z_layer: {e}, using z_layer as-is")

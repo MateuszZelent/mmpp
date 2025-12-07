@@ -1,0 +1,197 @@
+"""Cache key generation for unified caching."""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass
+from typing import Any, Optional
+
+from .serializers import serialize_config, serialize_slice
+
+
+@dataclass(frozen=True)
+class CacheKey:
+    """Immutable cache key for post-processing results.
+    
+    Provides consistent key generation across all cache types
+    (FFT spectrum, transmission, modes, batch operations).
+    
+    Attributes
+    ----------
+    analysis_type : str
+        Type of analysis: "fft_spectrum", "transmission", "modes", etc.
+    job_path : str
+        Absolute path to source .zarr file
+    dataset_name : str
+        Dataset name (e.g., "m", "m_layer13")
+    z_layer : int
+        Z-layer index
+    method : int
+        FFT method
+    config_hash : str
+        16-char hash of configuration
+    slice_hash : str
+        16-char hash of slice_info
+    
+    Examples
+    --------
+    >>> key = CacheKey.create(
+    ...     analysis_type="fft_spectrum",
+    ...     job_path="/path/to/sim.zarr",
+    ...     dataset_name="m",
+    ...     z_layer=-1,
+    ...     config=FFTComputeConfig(),
+    ...     slice_info=(slice(0, 100), ...),
+    ... )
+    >>> key.to_entry_name()
+    'fft_spectrum_a1b2c3d4'
+    """
+    
+    analysis_type: str
+    job_path: str
+    dataset_name: str
+    z_layer: int
+    method: int
+    config_hash: str
+    slice_hash: str
+    
+    def __hash__(self) -> int:
+        """Hash for use in dictionaries."""
+        return hash(self.to_string())
+    
+    def to_string(self) -> str:
+        """Human-readable key representation for debugging."""
+        return (
+            f"{self.analysis_type}|{self.dataset_name}|z{self.z_layer}|"
+            f"m{self.method}|cfg:{self.config_hash[:8]}|sl:{self.slice_hash[:8]}"
+        )
+    
+    def to_hash(self) -> str:
+        """16-character hex hash for file/group naming.
+        
+        Includes job_path to ensure uniqueness across different jobs.
+        """
+        full = f"{self.job_path}|{self.to_string()}"
+        return hashlib.sha256(full.encode()).hexdigest()[:16]
+    
+    def to_entry_name(self) -> str:
+        """Entry name for zarr storage.
+        
+        Format: {analysis_type}_{hash}
+        Example: fft_spectrum_a1b2c3d4e5f6g7h8
+        """
+        return f"{self.analysis_type}_{self.to_hash()}"
+    
+    def to_zarr_path(self) -> str:
+        """Full zarr group path for storage.
+        
+        Format: /fft/{analysis_type}/{dataset}/{entry_name}
+        Example: /fft/spectrum/m/spectrum_a1b2c3d4
+        """
+        safe_dataset = self.dataset_name.replace("/", "_")
+        return f"fft/{self.analysis_type}/{safe_dataset}/{self.to_entry_name()}"
+    
+    @classmethod
+    def create(
+        cls,
+        analysis_type: str,
+        job_path: str,
+        dataset_name: str,
+        z_layer: int = -1,
+        method: int = 1,
+        config: Optional[Any] = None,
+        slice_info: Optional[Any] = None,
+    ) -> "CacheKey":
+        """Factory method to create cache key from parameters.
+        
+        Parameters
+        ----------
+        analysis_type : str
+            Type of analysis (e.g., "spectrum", "transmission")
+        job_path : str
+            Path to source zarr file
+        dataset_name : str
+            Dataset name
+        z_layer : int, optional
+            Z-layer index (default: -1)
+        method : int, optional
+            FFT method (default: 1)
+        config : Any, optional
+            Configuration object (dataclass, dict, etc.)
+        slice_info : Any, optional
+            Slice information
+            
+        Returns
+        -------
+        CacheKey
+            Immutable cache key
+        """
+        config_hash = serialize_config(config) if config else "none"
+        slice_hash = serialize_slice(slice_info) if slice_info else "none"
+        
+        return cls(
+            analysis_type=analysis_type,
+            job_path=str(job_path),
+            dataset_name=dataset_name,
+            z_layer=z_layer,
+            method=method,
+            config_hash=config_hash,
+            slice_hash=slice_hash,
+        )
+    
+    @classmethod
+    def for_batch(
+        cls,
+        analysis_type: str,
+        job_paths: list[str],
+        dataset_name: str,
+        config: Optional[Any] = None,
+        slice_info: Optional[Any] = None,
+        extract_parameters: Optional[list[str]] = None,
+    ) -> "CacheKey":
+        """Create cache key for batch operations.
+        
+        Uses sorted job paths and parameters list in the hash.
+        
+        Parameters
+        ----------
+        analysis_type : str
+            Type of batch analysis (e.g., "batch_spectrum", "batch_transmission")
+        job_paths : List[str]
+            List of all job paths in batch
+        dataset_name : str
+            Dataset name
+        config : Any, optional
+            Configuration object
+        slice_info : Any, optional
+            Slice information
+        extract_parameters : List[str], optional
+            Parameters to extract from jobs
+            
+        Returns
+        -------
+        CacheKey
+            Immutable cache key for batch
+        """
+        # Create composite job path from sorted paths
+        sorted_paths = sorted(str(p) for p in job_paths)
+        paths_str = "|".join(sorted_paths)
+        paths_hash = hashlib.sha256(paths_str.encode()).hexdigest()[:16]
+        
+        # Include extract_parameters in config hash
+        config_dict = {"config": serialize_config(config)}
+        if extract_parameters:
+            config_dict["extract_params"] = sorted(extract_parameters)
+        config_hash = hashlib.sha256(
+            str(config_dict).encode()
+        ).hexdigest()[:16]
+        
+        return cls(
+            analysis_type=analysis_type,
+            job_path=f"batch:{len(job_paths)}:{paths_hash}",
+            dataset_name=dataset_name,
+            z_layer=-1,  # Not used for batch
+            method=1,    # Not used for batch
+            config_hash=config_hash,
+            slice_hash=serialize_slice(slice_info) if slice_info else "none",
+        )

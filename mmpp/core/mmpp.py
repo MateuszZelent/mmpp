@@ -1,3 +1,4 @@
+import logging
 import os
 import glob
 import json
@@ -56,11 +57,22 @@ class MMPP:
         log_level : str or int, optional
             Set specific logging level (overrides debug flag)
         """
-        # Configure logging
+        # Configure logging - reconfigure if debug/level specified
+        from ..cli.logging_config import setup_mmpp_logging
+        
         if log_level is not None:
-            log.setLevel(log_level)
+            # Explicit level always reconfigures
+            level_int: int
+            if isinstance(log_level, str):
+                level_int = getattr(logging, log_level.upper(), logging.INFO)
+            else:
+                level_int = log_level
+            setup_mmpp_logging(debug=False, level=level_int)
         elif debug:
-            log.setLevel("DEBUG")
+            # Debug flag reconfigures to DEBUG level
+            setup_mmpp_logging(debug=True, level=logging.DEBUG)
+        
+        self.debug = debug  # Store for child components (FFT, etc.)
 
         self.base_path = os.path.abspath(base_path)
         self.max_workers = max_workers

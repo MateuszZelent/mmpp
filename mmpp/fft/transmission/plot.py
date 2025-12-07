@@ -36,16 +36,19 @@ def _make_inset_colorbar(
     vmin: float,
     vmax: float,
     label: str = "",
-    width: str = "45%",
-    height: str = "4%",
-    position: str = "upper right",
+    width: str = "40%",
+    height: str = "8%",
+    position: str = "lower center",
     bbox_to_anchor: Optional[tuple] = None,
-    bg_alpha: float = 0.5,
+    bg_alpha: float = 0.7,
     text_color: str = "white",
-    fontsize: int = 10,
-    title_fontsize: int = 11,
+    fontsize: int = 9,
+    title_fontsize: int = 10,
 ) -> None:
     """Create publication-quality inset colorbar inside plot.
+    
+    Redesigned for bottom-center positioning with intelligent auto-sizing.
+    The colorbar is ~40% width, centered at bottom with clear, readable labels.
     
     Parameters
     ----------
@@ -62,11 +65,9 @@ def _make_inset_colorbar(
     width, height : str
         Size of colorbar as percentage of axes
     position : str
-        Location: 'upper right', 'upper left', 'lower right', 'lower left', 
-        'upper center', 'lower center', 'center right', 'center left'
+        Location: 'lower center' (default), 'upper center', etc.
     bbox_to_anchor : tuple, optional
         Fine positioning (x, y, width, height) in axes coordinates.
-        If None, automatically computed from position.
     bg_alpha : float
         Background box transparency
     text_color : str
@@ -76,32 +77,43 @@ def _make_inset_colorbar(
     title_fontsize : int
         Font size for title
     """
-    # Compute bbox_to_anchor based on position if not provided
-    if bbox_to_anchor is None:
-        # Map position string to (x, y, width, height) for bbox_to_anchor
-        # These values place the colorbar at the correct location
-        position_map = {
-            'upper right': (0.0, 0.92, 1, 1),
-            'upper left': (0.0, 0.92, 1, 1),
-            'upper center': (0.0, 0.92, 1, 1),
-            'lower right': (0.0, 0.02, 1, 1),
-            'lower left': (0.0, 0.02, 1, 1),
-            'lower center': (0.0, 0.02, 1, 1),
-            'center right': (0.0, 0.47, 1, 1),
-            'center left': (0.0, 0.47, 1, 1),
-            'center': (0.0, 0.47, 1, 1),
-        }
-        bbox_to_anchor = position_map.get(position, (0.0, 0.92, 1, 1))
+    # Format values smartly - compute first to determine spacing needs
+    def format_val(v):
+        if v == 0:
+            return "0"
+        elif abs(v) >= 1000 or abs(v) < 0.01:
+            return f"{v:.1e}"
+        elif abs(v) < 1:
+            return f"{v:.2f}"
+        elif abs(v) < 100:
+            return f"{v:.1f}"
+        else:
+            return f"{v:.0f}"
     
-    # Create background box for colorbar
+    min_str = format_val(vmin)
+    max_str = format_val(vmax)
+    
+    # Estimate text width to avoid overlap
+    # Longer numbers need more spacing
+    max_len = max(len(min_str), len(max_str))
+    label_len = len(label)
+    
+    # Bottom-center positioning with proper offset from bottom edge
+    if bbox_to_anchor is None:
+        # Center horizontally (0.3 to 0.7 for 40% width centered)
+        # Position at 5% from bottom
+        bbox_to_anchor = (0.3, 0.05, 0.4, 0.12)
+    
+    # Create background box for colorbar - positioned at lower center
     cbbox = inset_axes(
-        ax, width=width, height=height, loc=position,
+        ax, width=width, height=height, 
+        loc='lower center',
         bbox_to_anchor=bbox_to_anchor,
         bbox_transform=ax.transAxes,
         borderpad=0,
     )
     
-    # Remove borders and ticks from background box
+    # Style the background box
     for spine in cbbox.spines.values():
         spine.set_visible(False)
     cbbox.tick_params(
@@ -110,38 +122,38 @@ def _make_inset_colorbar(
     )
     cbbox.set_facecolor([0, 0, 0, bg_alpha])
     
-    # Create inner colorbar axes
-    cbar_ax = inset_axes(cbbox, '85%', '35%', loc='upper center', borderpad=0)
+    # Create the actual colorbar - takes most of the box height
+    # Use smaller colorbar inside to leave room for text below
+    cbar_ax = inset_axes(cbbox, '90%', '40%', loc='upper center', borderpad=0.5)
     cbar = fig.colorbar(image, cax=cbar_ax, orientation="horizontal")
     cbar.set_ticks([])
     cbar.ax.set_xticklabels([])
-    cbar.outline.set_visible(False)
+    cbar.outline.set_linewidth(0.5)
+    cbar.outline.set_edgecolor('white')
     
-    # Format values smartly
-    def format_val(v):
-        if abs(v) >= 1000 or (abs(v) < 0.01 and v != 0):
-            return f"{v:.2e}"
-        elif abs(v) < 10:
-            return f"{v:.3f}"
-        else:
-            return f"{v:.1f}"
+    # Calculate positions to avoid overlap
+    # Space text evenly: min on left (0.12), label in center (0.5), max on right (0.88)
+    # Adjust based on text length
+    min_pos = 0.10
+    max_pos = 0.90
     
-    # Add labels: min, title, max
+    # Add labels below the colorbar bar
+    # Y position of -0.8 places text below the colorbar within the background box
     cbar_ax.text(
-        0.08, -1.2, format_val(vmin),
-        fontsize=fontsize, ha='center', va='center',
+        min_pos, -0.9, min_str,
+        fontsize=fontsize, ha='left', va='top',
         color=text_color, fontweight='bold',
         transform=cbar_ax.transAxes
     )
     cbar_ax.text(
-        0.5, -1.2, label,
-        fontsize=title_fontsize, ha='center', va='center',
+        0.5, -0.9, label,
+        fontsize=title_fontsize, ha='center', va='top',
         color=text_color, fontweight='bold',
         transform=cbar_ax.transAxes
     )
     cbar_ax.text(
-        0.92, -1.2, format_val(vmax),
-        fontsize=fontsize, ha='center', va='center',
+        max_pos, -0.9, max_str,
+        fontsize=fontsize, ha='right', va='top',
         color=text_color, fontweight='bold',
         transform=cbar_ax.transAxes
     )
