@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Any
 import matplotlib.pyplot as plt
 
-from .compatibility import CMCRAMERI_AVAILABLE, CMOCEAN_AVAILABLE
+from .compat import CMCRAMERI_AVAILABLE, CMOCEAN_AVAILABLE
 from ...cli.logging_config import get_mmpp_logger
 
 log = get_mmpp_logger(__name__)

@@ -103,26 +103,194 @@ except ImportError:
     AXES_GRID_AVAILABLE = False
     log.warning("mpl_toolkits.axes_grid1 not available - colorbar and scalebar enhancements disabled")
 
+# Electromagnetic analysis flag
+EM_ANALYSIS_AVAILABLE = True  # Always available in current implementation
+
+
+def check_required_dependencies():
+    """
+    Check if all required dependencies are available.
+    
+    Returns:
+    --------
+    bool
+        True if all required dependencies are available
+    """
+    required = [ZARR_AVAILABLE, MATPLOTLIB_AVAILABLE]
+    return all(required)
+
+
+def check_animation_support():
+    """
+    Check if animation features are available.
+    
+    Returns:
+    --------
+    bool
+        True if animation support is available
+    """
+    return ANIMATION_AVAILABLE
+
+
+def check_peak_detection_support():
+    """
+    Check if peak detection features are available.
+    
+    Returns:
+    --------
+    bool
+        True if SciPy is available for peak detection
+    """
+    return SCIPY_AVAILABLE
+
+
+def get_available_features():
+    """
+    Get a dictionary of available feature flags.
+    
+    Returns:
+    --------
+    dict
+        Dictionary mapping feature names to availability flags
+    """
+    return {
+        'zarr': ZARR_AVAILABLE,
+        'pyzfn': PYZFN_AVAILABLE,
+        'matplotlib': MATPLOTLIB_AVAILABLE,
+        'scipy': SCIPY_AVAILABLE,
+        'animation': ANIMATION_AVAILABLE,
+        'ffmpeg': FFMPEG_AVAILABLE,
+        'cmcrameri': CMCRAMERI_AVAILABLE,
+        'cmocean': CMOCEAN_AVAILABLE,
+        'axes_grid': AXES_GRID_AVAILABLE,
+        'em_analysis': EM_ANALYSIS_AVAILABLE
+    }
+
+
+def require_dependency(dependency_name: str, feature_description: Optional[str] = None):
+    """
+    Raise an error if a required dependency is not available.
+    
+    Parameters:
+    -----------
+    dependency_name : str
+        Name of the dependency to check
+    feature_description : str, optional
+        Description of the feature that requires this dependency
+    """
+    features = get_available_features()
+    
+    if dependency_name not in features:
+        raise ValueError(f"Unknown dependency: {dependency_name}")
+    
+    if not features[dependency_name]:
+        if feature_description:
+            raise ImportError(
+                f"{dependency_name} is required for {feature_description}. "
+                f"Please install it with: pip install {dependency_name}"
+            )
+        else:
+            raise ImportError(
+                f"{dependency_name} is not available. "
+                f"Please install it with: pip install {dependency_name}"
+            )
+
+
+def get_matplotlib_imports():
+    """Get matplotlib imports if available."""
+    if not MATPLOTLIB_AVAILABLE:
+        return None
+    
+    from matplotlib.axes import Axes
+    from matplotlib.backend_bases import MouseEvent
+    from matplotlib.figure import Figure
+    import matplotlib.colors as mcolors
+    import matplotlib.pyplot as plt
+    
+    return {
+        'Axes': Axes,
+        'MouseEvent': MouseEvent,
+        'Figure': Figure,
+        'mcolors': mcolors,
+        'plt': plt
+    }
+
+
+def get_animation_imports():
+    """Get animation imports if available."""
+    if not ANIMATION_AVAILABLE:
+        return None
+    
+    from matplotlib.animation import FuncAnimation, PillowWriter
+    imports = {
+        'FuncAnimation': FuncAnimation,
+        'PillowWriter': PillowWriter
+    }
+    
+    if FFMPEG_AVAILABLE:
+        from matplotlib.animation import FFMpegWriter
+        imports['FFMpegWriter'] = FFMpegWriter
+    
+    return imports
+
+
+def get_scipy_imports():
+    """Get SciPy imports if available."""
+    if not SCIPY_AVAILABLE:
+        return None
+    
+    from scipy.signal import find_peaks
+    return {'find_peaks': find_peaks}
+
+
+def get_colormap_imports():
+    """Get scientific colormap imports if available."""
+    imports = {}
+    
+    if CMCRAMERI_AVAILABLE:
+        import cmcrameri.cm as cmc
+        imports['cmc'] = cmc
+    
+    if CMOCEAN_AVAILABLE:
+        import cmocean
+        imports['cmocean'] = cmocean
+    
+    return imports if imports else None
+
+
 __all__ = [
+    # Modules
     "zarr",
-    "ZARR_AVAILABLE",
     "Pyzfn",
-    "PYZFN_AVAILABLE",
     "Axes",
     "MouseEvent",
     "Figure",
-    "MATPLOTLIB_AVAILABLE",
     "FuncAnimation",
     "PillowWriter",
     "FFMpegWriter",
+    "find_peaks",
+    "cmc",
+    "cmocean",
+    "AnchoredSizeBar",
+    # Flags
+    "ZARR_AVAILABLE",
+    "PYZFN_AVAILABLE",
+    "MATPLOTLIB_AVAILABLE",
     "ANIMATION_AVAILABLE",
     "FFMPEG_AVAILABLE",
-    "find_peaks",
     "SCIPY_AVAILABLE",
-    "cmc",
     "CMCRAMERI_AVAILABLE",
-    "cmocean",
     "CMOCEAN_AVAILABLE",
-    "AnchoredSizeBar",
     "AXES_GRID_AVAILABLE",
+    "EM_ANALYSIS_AVAILABLE",
+    # Helper functions
+    "check_required_dependencies",
+    "check_animation_support",
+    "check_peak_detection_support",
+    "get_available_features",
+    "require_dependency",
+    "get_matplotlib_imports",
+    "get_animation_imports",
+    "get_scipy_imports",
+    "get_colormap_imports",
 ]

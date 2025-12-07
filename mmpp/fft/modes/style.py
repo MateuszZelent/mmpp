@@ -8,7 +8,7 @@ classes for FMR mode visualization.
 import numpy as np
 from typing import Optional
 
-from .compatibility import MATPLOTLIB_AVAILABLE, require_dependency
+from .compat import MATPLOTLIB_AVAILABLE, require_dependency
 from ...cli.logging_config import get_mmpp_logger
 
 log = get_mmpp_logger(__name__)
@@ -16,6 +16,14 @@ log = get_mmpp_logger(__name__)
 if MATPLOTLIB_AVAILABLE:
     import matplotlib.colors as mcolors
     import matplotlib.pyplot as plt
+
+# Track styling availability from mmpp.plotting
+try:
+    from ...plotting import setup_custom_fonts, load_paper_style, apply_custom_colors
+    STYLING_AVAILABLE = True
+except ImportError:
+    STYLING_AVAILABLE = False
+    setup_custom_fonts = load_paper_style = apply_custom_colors = None
 
 
 class MidpointNormalize(mcolors.Normalize):
@@ -92,13 +100,6 @@ def setup_animation_styling(
     """
     require_dependency('matplotlib', 'animation styling')
     
-    try:
-        # Try to import styling functions
-        from ...plotting import setup_custom_fonts, load_paper_style, apply_custom_colors
-        STYLING_AVAILABLE = True
-    except ImportError:
-        STYLING_AVAILABLE = False
-
     if not STYLING_AVAILABLE:
         log.warning(
             "Styling functions not available - using default matplotlib styling"
@@ -313,7 +314,7 @@ def get_scientific_colormap(name: str, fallback: str = 'viridis'):
     
     # Try cmcrameri first
     try:
-        from .compatibility import CMCRAMERI_AVAILABLE
+        from .compat import CMCRAMERI_AVAILABLE
         if CMCRAMERI_AVAILABLE:
             import cmcrameri.cm as cmc
             return getattr(cmc, name.replace('cmc.', ''))
@@ -322,7 +323,7 @@ def get_scientific_colormap(name: str, fallback: str = 'viridis'):
     
     # Try cmocean
     try:
-        from .compatibility import CMOCEAN_AVAILABLE
+        from .compat import CMOCEAN_AVAILABLE
         if CMOCEAN_AVAILABLE:
             import cmocean
             return getattr(cmocean.cm, name)
