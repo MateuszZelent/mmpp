@@ -72,12 +72,11 @@ def extract_job_metadata(job: Any) -> dict[str, Any]:
                 if not key.startswith('_'):
                     metadata[key] = value
         
-        # 2. From job attributes directly
-        for attr in ['B0', 'Bext', 'Ms', 'Aex', 'alpha', 'f0', 'd', 'p', 'w', 'L']:
-            if hasattr(job, attr):
-                val = getattr(job, attr)
-                if val is not None:
-                    metadata[attr] = val
+        # 2. From job.attributes dict (NOT __getattr__ - avoids dataset access)
+        if hasattr(job, 'attributes') and isinstance(job.attributes, dict):
+            for attr in ['B0', 'Bext', 'Ms', 'Aex', 'alpha', 'f0', 'd', 'p', 'w', 'L']:
+                if attr in job.attributes and job.attributes[attr] is not None:
+                    metadata[attr] = job.attributes[attr]
         
         # 3. From path-based parameters (common in parameter sweeps)
         if hasattr(job, 'path'):
