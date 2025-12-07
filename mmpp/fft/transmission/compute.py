@@ -541,26 +541,26 @@ class TransmissionResult:
             "color": "C0",
         }
         plot_kwargs.update(kwargs)
-        
+
         # Handle legend parameter - can be bool or dict
         show_legend = False
-        legend_kwargs = {'loc': 'best', 'framealpha': 0.8}  # Default legend options
-        
+        legend_kwargs = {"loc": "best", "framealpha": 0.8}  # Default legend options
+
         if isinstance(legend, dict):
             show_legend = True
             # Extract custom label from legend dict if provided
-            if 'label' in legend:
-                plot_kwargs['label'] = legend.pop('label')
+            if "label" in legend:
+                plot_kwargs["label"] = legend.pop("label")
             # Remaining legend dict entries are legend style options
             legend_kwargs.update(legend)
         elif legend:
             show_legend = True
-        
+
         # Set automatic label if legend enabled and no custom label provided
-        if show_legend and 'label' not in plot_kwargs:
+        if show_legend and "label" not in plot_kwargs:
             # Convert actual_x (in nm) to µm for display
             x_um = actual_x / 1000.0
-            plot_kwargs['label'] = f"x = {x_um:.1f} µm"
+            plot_kwargs["label"] = f"x = {x_um:.1f} µm"
 
         # Prepare axis labels
         transmission_label = (

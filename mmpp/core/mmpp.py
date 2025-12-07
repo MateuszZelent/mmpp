@@ -48,6 +48,7 @@ class MMPP:
         -----------
         base_path : str
             Base directory path to scan for zarr folders OR direct path to .zarr file
+            Can be virtual container path - will be translated to host path if needed.
         max_workers : int, optional
             Number of threads for scanning (default: 8)
         database_name : str, optional
@@ -74,7 +75,21 @@ class MMPP:
         
         self.debug = debug  # Store for child components (FFT, etc.)
 
-        self.base_path = os.path.abspath(base_path)
+        # Translate virtual path to host path if needed
+        abs_path = os.path.abspath(base_path)
+        if not os.path.exists(abs_path):
+            translated_path = self._translate_path(base_path)
+            if translated_path != base_path and os.path.exists(translated_path):
+                log.info(f"Translated base_path: {base_path} -> {translated_path}")
+                abs_path = translated_path
+            else:
+                # Try translating the absolute path
+                translated_abs = self._translate_path(abs_path)
+                if translated_abs != abs_path and os.path.exists(translated_abs):
+                    log.info(f"Translated base_path: {abs_path} -> {translated_abs}")
+                    abs_path = translated_abs
+
+        self.base_path = abs_path
         self.max_workers = max_workers
         self.database_name = database_name
         self.df = pd.DataFrame()
@@ -387,9 +402,63 @@ class MMPP:
         except Exception as e:
             log.error(f"Failed to save database: {e}")
 
+    @staticmethod
+    def _translate_path(path: str) -> str:
+        """
+        Translate virtual container path to host filesystem path.
+        
+        Translation rules:
+        - /mnt/local/kkingstoun/{user}/pcss_storage/{rest} -> /mnt/storage_2/scratch/pl0095-01/zelent/{rest}
+        - /mnt/local/kkingstoun/{user}/{rest} -> /mnt/storage_2/scratch/pl0095-01/zelent/{rest}
+        
+        Parameters:
+        -----------
+        path : str
+            Path to translate (may be virtual or real)
+            
+        Returns:
+        --------
+        str
+            Translated path (or original if no translation needed)
+        """
+        if not path:
+            return path
+            
+        STORAGE_ROOT = "/mnt/storage_2/scratch/pl0095-01/zelent"
+        CONTAINER_PREFIX = "/mnt/local/kkingstoun"
+        
+        # Already in host format
+        if path.startswith(STORAGE_ROOT):
+            return path
+            
+        # Not a container path
+        if not path.startswith(CONTAINER_PREFIX):
+            return path
+            
+        # Handle pcss_storage case:
+        # /mnt/local/kkingstoun/{user}/pcss_storage/{rest} -> /mnt/storage_2/.../zelent/{rest}
+        pcss_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/pcss_storage/(.*)"
+        pcss_match = re.match(pcss_pattern, path)
+        if pcss_match:
+            rest_of_path = pcss_match.group(1)
+            return f"{STORAGE_ROOT}/{rest_of_path}".replace("//", "/")
+        
+        # Standard case:
+        # /mnt/local/kkingstoun/{user}/{rest} -> /mnt/storage_2/.../zelent/{rest}
+        standard_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/(.*)"
+        standard_match = re.match(standard_pattern, path)
+        if standard_match:
+            rest_of_path = standard_match.group(1)
+            return f"{STORAGE_ROOT}/{rest_of_path}".replace("//", "/")
+            
+        return path
+
     def _load_database(self) -> bool:
         """
         Load existing database from pickle file.
+        
+        Validates and translates paths during loading. If a path doesn't exist,
+        attempts to translate it from virtual to host path.
 
         Returns:
         --------
@@ -404,15 +473,44 @@ class MMPP:
             with open(db_path, "rb") as f:
                 self.df = pickle.load(f)
             
-            # Reconstruct ZarrJobResult objects
+            # Reconstruct ZarrJobResult objects with path validation and translation
             self.zarr_results = []
+            valid_paths = []
+            
             for _, row in self.df.iterrows():
                 path = row["path"]
+                
+                # Check if path exists, if not try to translate
+                if not os.path.exists(path):
+                    translated_path = self._translate_path(path)
+                    if translated_path != path:
+                        log.debug(f"Translated path: {path} -> {translated_path}")
+                        if os.path.exists(translated_path):
+                            path = translated_path
+                        else:
+                            log.warning(f"Path does not exist after translation: {translated_path}")
+                            continue  # Skip this entry
+                    else:
+                        log.warning(f"Path does not exist: {path}")
+                        continue  # Skip this entry
+                
                 # Filter out path from attributes
                 attrs = {k: v for k, v in row.items() if k != "path"}
                 self.zarr_results.append(ZarrJobResult(path, attrs))
+                valid_paths.append(path)
+            
+            # Update DataFrame with valid paths only
+            if len(valid_paths) < len(self.df):
+                log.info(f"Filtered {len(self.df) - len(valid_paths)} invalid paths from database")
+                self.df = self.df[self.df["path"].apply(lambda p: 
+                    os.path.exists(p) or os.path.exists(self._translate_path(p))
+                )]
+                # Update paths in DataFrame to translated versions
+                self.df["path"] = self.df["path"].apply(lambda p: 
+                    self._translate_path(p) if not os.path.exists(p) else p
+                )
                 
-            log.info(f"Loaded database from {db_path} ({len(self.df)} entries)")
+            log.info(f"Loaded database from {db_path} ({len(self.zarr_results)} valid entries)")
             return True
         except Exception as e:
             log.warning(f"Failed to load database: {e}")
