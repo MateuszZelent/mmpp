@@ -173,6 +173,101 @@ result.peaks_info  # If find_peaks was used'''
             return "FFT.spectrum(...) - Call with parameters to compute FFT spectrum. Use help(job[0].fft.spectrum) for details."
 
 
+# Import metadata utilities for auto-labeling
+try:
+    from ..core.metadata_diff import generate_auto_labels
+    METADATA_DIFF_AVAILABLE = True
+except ImportError:
+    METADATA_DIFF_AVAILABLE = False
+    generate_auto_labels = None
+
+
+class MultiSpectrumResult:
+    """Collection of SpectrumResult objects with overlay plotting.
+    
+    Enables plotting multiple spectra on a single figure with
+    auto-generated labels based on metadata differences.
+    """
+    
+    def __init__(self, spectra: list["SpectrumResult"]):
+        self.spectra = spectra
+        self._labels: Optional[list[str]] = None
+    
+    def __len__(self):
+        return len(self.spectra)
+    
+    def __iter__(self):
+        return iter(self.spectra)
+    
+    def __getitem__(self, index):
+        return self.spectra[index]
+    
+    def __repr__(self):
+        return f"MultiSpectrumResult({len(self.spectra)} spectra)"
+    
+    def plot(
+        self,
+        ax: Optional[Any] = None,
+        labels: Optional[list[str]] = None,
+        auto_label: bool = True,
+        freq_unit: str = "GHz",
+        log_scale: bool = True,
+        normalize: bool = False,
+        title: Optional[str] = None,
+        dpi: int = 100,
+        figsize: tuple = (10, 6),
+        colors: Optional[list] = None,
+        **kwargs,
+    ):
+        """Plot all spectra overlaid on single axes."""
+        if not MATPLOTLIB_AVAILABLE:
+            raise ImportError("Matplotlib required for plotting")
+        
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        else:
+            fig = ax.figure
+        
+        # Generate labels from metadata diff
+        if labels is None and auto_label:
+            jobs = [s._source_job for s in self.spectra if s._source_job is not None]
+            if METADATA_DIFF_AVAILABLE and len(jobs) == len(self.spectra):
+                labels = generate_auto_labels(jobs)
+            else:
+                labels = [f"Spectrum {i+1}" for i in range(len(self.spectra))]
+        elif labels is None:
+            labels = [None] * len(self.spectra)
+        
+        if colors is None:
+            colors = generate_pastel_colors(len(self.spectra))
+        
+        freq_scale = {"Hz": 1, "kHz": 1e-3, "MHz": 1e-6, "GHz": 1e-9, "THz": 1e-12}
+        scale = freq_scale.get(freq_unit, 1e-9)
+        
+        for spectrum, label, color in zip(self.spectra, labels, colors):
+            freqs = spectrum.frequencies * scale
+            power = np.abs(spectrum.spectrum) ** 2
+            if power.ndim > 1:
+                power = np.mean(power, axis=tuple(range(1, power.ndim)))
+            if normalize:
+                power = power / np.max(power) if np.max(power) > 0 else power
+            ax.plot(freqs, power, color=color, label=label, **kwargs)
+        
+        ax.set_xlabel(f"Frequency ({freq_unit})")
+        ax.set_ylabel("Power (arb. u.)" if not normalize else "Power (normalized)")
+        if log_scale:
+            ax.set_yscale("log")
+        ax.set_title(title or f"Spectrum Comparison ({len(self.spectra)} jobs)")
+        ax.legend(loc='best', fontsize=9)
+        plt.tight_layout()
+        return fig
+    
+    # Alias for consistency with SpectrumResult API
+    def plot_spectrum(self, **kwargs):
+        """Alias for plot() - for API consistency with SpectrumResult."""
+        return self.plot(**kwargs)
+
+
 class SpectrumResult:
     """Result of FFT spectrum computation with fluent plotting API.
     
@@ -194,11 +289,13 @@ class SpectrumResult:
         spectrum: np.ndarray,
         peaks_info: Optional[dict] = None,
         component_label: Optional[str] = None,
+        source_job: Optional[Any] = None,
     ):
         self.frequencies = frequencies
         self.spectrum = spectrum
         self.peaks_info = peaks_info
         self.component_label = component_label
+        self._source_job = source_job  # Reference to originating job for auto-labeling
         self._single_component = False  # Set to True if user selected specific component
     
     @property

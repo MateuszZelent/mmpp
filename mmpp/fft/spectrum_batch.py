@@ -489,6 +489,68 @@ class BatchSpectrum:
         self.dataset_name = dataset_name
         self.slice_info = slice_info
     
+    def __call__(
+        self,
+        force: bool = False,
+        filter_type: Optional[List[str]] = None,
+        find_peaks: Optional[dict] = None,
+        **kwargs,
+    ) -> "MultiSpectrumResult":
+        """Compute spectra for all jobs and return MultiSpectrumResult for overlay plotting.
+        
+        This enables the fluent API:
+            job[:].m[...,2].fft.spectrum().plot_spectrum()
+        
+        Parameters
+        ----------
+        force : bool, default False
+            Force recomputation
+        filter_type : list[str], optional
+            List of filters to apply
+        find_peaks : dict, optional
+            Peak detection parameters
+        **kwargs
+            Additional FFT parameters
+            
+        Returns
+        -------
+        MultiSpectrumResult
+            Collection of spectra with .plot() method for overlay visualization
+        """
+        from .core import SpectrumResult, MultiSpectrumResult
+        
+        spectra = []
+        
+        for result in self.results:
+            try:
+                # Get dataset-specific FFT
+                if self.dataset_name:
+                    data_wrapper = result[self.dataset_name]
+                    if self.slice_info is not None:
+                        data_wrapper = data_wrapper[self.slice_info]
+                    fft_obj = data_wrapper.fft
+                else:
+                    from .core import FFT
+                    fft_obj = FFT(result, self.mmpp_ref)
+                
+                # Compute spectrum
+                spectrum_result = fft_obj._spectrum_impl(
+                    force=force,
+                    filter_type=filter_type,
+                    find_peaks=find_peaks,
+                    **kwargs,
+                )
+                
+                # Set source job for auto-labeling
+                spectrum_result._source_job = result
+                
+                spectra.append(spectrum_result)
+                
+            except Exception as e:
+                log.warning(f"Failed to compute spectrum for {result}: {e}")
+        
+        return MultiSpectrumResult(spectra)
+    
     def compute_all(
         self,
         dataset_name: Optional[str] = None,

@@ -20,6 +20,7 @@ from .dataset import DatasetAwareWrapper, DatasetSpecificFFT
 from .job import ScanResult, ZarrJobResult
 from .mmpp import MMPP
 from .utils import open, mmpp, install_ffmpeg, check_dependencies
+from .metadata_diff import generate_auto_labels, find_differing_parameters, DiffResult
 
 from ..cli.logging_config import get_mmpp_logger
 log = get_mmpp_logger("mmpp")

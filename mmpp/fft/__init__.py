@@ -6,7 +6,7 @@ Main entry point through the FFT class.
 """
 
 from .compute_fft import FFTCompute, FFTComputeResult
-from .core import FFT
+from .core import FFT, SpectrumResult, MultiSpectrumResult
 from .transmission import (
     TransmissionConfig,
     TransmissionResult,
@@ -36,6 +36,8 @@ try:
         "FFT",
         "FFTCompute",
         "FFTComputeResult",
+        "SpectrumResult",
+        "MultiSpectrumResult",
         "FFTTransmissionInterface",
         "FMRModeAnalyzer",
         "FFTModeInterface",
