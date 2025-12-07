@@ -15,7 +15,7 @@ from .ffmpeg_utils import (
     install_ffmpeg_simple
 )
 from .style import MidpointNormalize, setup_animation_styling
-from .compatibility import (
+from .compat import (
     check_required_dependencies,
     check_animation_support,
     get_available_features

@@ -55,7 +55,7 @@ from .compat import (
     find_peaks,
     zarr,
 )
-from .styling import STYLING_AVAILABLE, MidpointNormalize, setup_animation_styling
+from .style import STYLING_AVAILABLE, MidpointNormalize, setup_animation_styling
 
 # Import refactored utilities
 from .utils.peak_detection import detect_peaks
