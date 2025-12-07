@@ -39,16 +39,16 @@ def _make_inset_colorbar(
     width: str = "40%",
     height: str = "8%",
     position: str = "lower center",
-    bbox_to_anchor: Optional[tuple] = None,
-    bg_alpha: float = 0.7,
+    loc_offset: tuple = None,
+    bg_alpha: float = 0.5,
     text_color: str = "white",
     fontsize: int = 9,
     title_fontsize: int = 10,
 ) -> None:
     """Create publication-quality inset colorbar inside plot.
     
-    Redesigned for bottom-center positioning with intelligent auto-sizing.
-    The colorbar is ~40% width, centered at bottom with clear, readable labels.
+    Supports flexible positioning and sizing via arguments.
+    Defaults allow for a bottom-centered, readable colorbar.
     
     Parameters
     ----------
@@ -65,9 +65,9 @@ def _make_inset_colorbar(
     width, height : str
         Size of colorbar as percentage of axes
     position : str
-        Location: 'lower center' (default), 'upper center', etc.
-    bbox_to_anchor : tuple, optional
-        Fine positioning (x, y, width, height) in axes coordinates.
+        Location: 'lower center', 'upper right', etc.
+    loc_offset : tuple, optional
+        (x, y) offset in axes coordinates. If None, auto-determined based on position.
     bg_alpha : float
         Background box transparency
     text_color : str
@@ -77,7 +77,7 @@ def _make_inset_colorbar(
     title_fontsize : int
         Font size for title
     """
-    # Format values smartly - compute first to determine spacing needs
+    # Format values smartly
     def format_val(v):
         if v == 0:
             return "0"
@@ -93,22 +93,20 @@ def _make_inset_colorbar(
     min_str = format_val(vmin)
     max_str = format_val(vmax)
     
-    # Estimate text width to avoid overlap
-    # Longer numbers need more spacing
-    max_len = max(len(min_str), len(max_str))
-    label_len = len(label)
-    
-    # Bottom-center positioning with proper offset from bottom edge
-    if bbox_to_anchor is None:
-        # Center horizontally (0.3 to 0.7 for 40% width centered)
-        # Position at 5% from bottom
-        bbox_to_anchor = (0.3, 0.05, 0.4, 0.12)
-    
-    # Create background box for colorbar - positioned at lower center
+    # Determine bbox_to_anchor based on position
+    # For lower center with 100% width, anchor is simply the full axes
+    if position == 'lower center':
+        bbox_anchor = (0.0, 0.02, 1.0, 1.0)
+    elif position == 'upper center':
+        bbox_anchor = (0.0, 0.0, 1.0, 0.98)
+    else:
+        bbox_anchor = (0, 0, 1, 1)
+
+    # Create background box for colorbar - 100% width of subplot
     cbbox = inset_axes(
-        ax, width=width, height=height, 
-        loc='lower center',
-        bbox_to_anchor=bbox_to_anchor,
+        ax, width="80%", height=height, 
+        loc=position,
+        bbox_to_anchor=bbox_anchor,
         bbox_transform=ax.transAxes,
         borderpad=0,
     )
@@ -122,40 +120,42 @@ def _make_inset_colorbar(
     )
     cbbox.set_facecolor([0, 0, 0, bg_alpha])
     
-    # Create the actual colorbar - takes most of the box height
-    # Use smaller colorbar inside to leave room for text below
-    cbar_ax = inset_axes(cbbox, '90%', '40%', loc='upper center', borderpad=0.5)
+    # Create the actual colorbar stripe - centered vertically and horizontally
+    # Positioned between min/max labels (top) and title (bottom)
+    cbar_ax = inset_axes(cbbox, '40%', '10%', loc='center', borderpad=0)
     cbar = fig.colorbar(image, cax=cbar_ax, orientation="horizontal")
     cbar.set_ticks([])
     cbar.ax.set_xticklabels([])
-    cbar.outline.set_linewidth(0.5)
+    cbar.outline.set_linewidth(0.8)
     cbar.outline.set_edgecolor('white')
     
-    # Calculate positions to avoid overlap
-    # Space text evenly: min on left (0.12), label in center (0.5), max on right (0.88)
-    # Adjust based on text length
-    min_pos = 0.10
-    max_pos = 0.90
+    # Layout relative to cbbox (container):
+    # - min value on left side (x=0.08)
+    # - colorbar in center (55% stripe at upper center)
+    # - max value on right side (x=0.92)
+    # - title below colorbar
+    # With 22% height, we have plenty of vertical room
     
-    # Add labels below the colorbar bar
-    # Y position of -0.8 places text below the colorbar within the background box
-    cbar_ax.text(
-        min_pos, -0.9, min_str,
-        fontsize=fontsize, ha='left', va='top',
+    label_y = 0.68  # Align with colorbar, moved up
+    title_y = 0.22  # Below colorbar, more space
+    
+    cbbox.text(
+        0.08, label_y, min_str,
+        fontsize=fontsize, ha='left', va='center',
         color=text_color, fontweight='bold',
-        transform=cbar_ax.transAxes
+        transform=cbbox.transAxes
     )
-    cbar_ax.text(
-        0.5, -0.9, label,
-        fontsize=title_fontsize, ha='center', va='top',
+    cbbox.text(
+        0.92, label_y, max_str,
+        fontsize=fontsize, ha='right', va='center',
         color=text_color, fontweight='bold',
-        transform=cbar_ax.transAxes
+        transform=cbbox.transAxes
     )
-    cbar_ax.text(
-        max_pos, -0.9, max_str,
-        fontsize=fontsize, ha='right', va='top',
+    cbbox.text(
+        0.5, title_y, label,
+        fontsize=title_fontsize, ha='center', va='center',
         color=text_color, fontweight='bold',
-        transform=cbar_ax.transAxes
+        transform=cbbox.transAxes
     )
 
 

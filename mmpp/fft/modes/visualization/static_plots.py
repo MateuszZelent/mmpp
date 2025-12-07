@@ -270,6 +270,9 @@ def add_scale_bar(
     size_vertical = height_nm * analyzer.config.scalebar_height_fraction
     label = format_scalebar_label(bar_length, units=analyzer.config.scale_units)
 
+    # Larger font size for better visibility
+    scalebar_fontsize = max(analyzer.config.scalebar_fontsize, 11)
+
     try:
         scalebar = AnchoredSizeBar(
             ax.transData,
@@ -278,10 +281,13 @@ def add_scale_bar(
             analyzer.config.scalebar_location,
             pad=analyzer.config.scalebar_pad,
             color=analyzer.config.scalebar_color,
-            frameon=analyzer.config.scalebar_frame,
+            frameon=True,  # Enable frame for background
             size_vertical=size_vertical,
-            fontproperties=fm.FontProperties(size=analyzer.config.scalebar_fontsize),
+            fontproperties=fm.FontProperties(size=scalebar_fontsize, weight='bold'),
         )
+        # Add semi-transparent black background (30% alpha)
+        scalebar.patch.set_facecolor((0, 0, 0, 0.3))
+        scalebar.patch.set_edgecolor('none')
     except Exception as exc:
         log.debug(f"Could not create scale bar: {exc}")
         return

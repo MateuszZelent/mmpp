@@ -142,10 +142,21 @@ class ModeVisualizationConfig:
     scalebar_height_fraction: float = 0.01
     scale_units: str = "nm"
 
-    colorbar_fraction: float = 0.04  # Proper colorbar width
-    colorbar_pad: float = 0.01  # Small padding for close positioning
-    colorbar_ticklabel_size: int = 9  # Larger tick labels
-    colorbar_label_size: int = 10  # Larger labels
+    # Colorbar settings
+    colorbar_fraction: float = 0.046
+    colorbar_pad: float = 0.04
+    colorbar_ticklabel_size: int = 9
+    colorbar_label_size: int = 10
+    
+    # Inset Colorbar configuration (Publication Ready)
+    colorbar_inset: bool = True
+    colorbar_inset_width: str = "80%"   # User requested 80% width
+    colorbar_inset_height: str = "22%"  # Taller for better spacing
+    colorbar_inset_position: str = "lower center"
+    colorbar_inset_bg_alpha: float = 0.7
+    colorbar_inset_fontsize: int = 11   # Larger fonts
+    colorbar_inset_title_fontsize: int = 12
+    
     colorbar_labels: dict[str, str] = field(
         default_factory=lambda: {
             "magnitude": "Magnetization |m|",

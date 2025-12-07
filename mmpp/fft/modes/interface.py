@@ -347,6 +347,8 @@ class FFTModeInterfaceNew:
             components=components,
             z_layer=z_layer,
             spectrum_result=spectrum_result,  # Inject FFT spectrum!
+            figsize=figsize,  # Explicitly pass figsize
+            dpi=dpi,  # Explicitly pass dpi
             **kwargs
         )
     

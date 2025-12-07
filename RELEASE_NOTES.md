@@ -1,3 +1,35 @@
+# MMPP Library Release v0.5.3
+
+## 🔧 Configuration and Dependency Cleanup
+
+### 🎯 What's New in v0.5.3
+
+This release focuses on cleaning up dependencies, improving configuration, and enhancing code quality.
+
+### 🔧 Configuration Improvements
+
+#### 📦 **Dependency Cleanup**
+- **Removed setuptools_scm**: Eliminated setuptools_scm dependency for simpler packaging
+- **Updated setuptools configuration**: Adjusted build configuration for better compatibility
+
+#### 📄 **License and Repository Updates**
+- **License clarification**: Updated license type to MIT for PyPI compatibility
+- **Repository references**: Changed references from MMPP2 to mmpp for consistency
+
+#### 🐍 **Code Quality Enhancements**
+- **Enhanced mypy configuration**: Improved type checking setup
+- **Simulation module updates**: Updated simulation module with better type hints
+- **Import improvements**: Better import handling and error management
+
+### 🚀 Benefits
+
+- **Simpler dependencies**: Reduced external dependencies for easier installation
+- **Better PyPI compatibility**: Improved package metadata and licensing
+- **Enhanced type safety**: Better type hints throughout the codebase
+- **Consistent branding**: Unified repository and package naming
+
+---
+
 # MMPP Library Release v0.5.2
 
 ## 🧹 GitHub Actions Cleanup and Workflow Optimization

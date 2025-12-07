@@ -1066,11 +1066,13 @@ Interactive Spectrum Controls:
     log.info(log_message)
 
     # Control figure display to avoid double showing
+    # Control figure display
     if show:
         plt.show()
-        return None  # Don't return figure to avoid Jupyter auto-display
-    else:
-        return analyzer._interactive_fig
+    
+    # Return figure and axes for user customization
+    # Returns: (fig, ax_spectrum, mode_axes)
+    return analyzer._interactive_fig, ax_spectrum, analyzer._mode_axes
 
 
 def update_mode_plots(
@@ -1258,13 +1260,12 @@ def update_mode_plots(
                     vmin=vmin,
                     vmax=vmax,
                     label=label,
-                    width="40%",
-                    height="5%",
-                    position="upper right",
-                    bg_alpha=0.6,
-                    text_color="white",
-                    fontsize=8,
-                    title_fontsize=9,
+                    width=analyzer.config.colorbar_inset_width,
+                    height=analyzer.config.colorbar_inset_height,
+                    position=analyzer.config.colorbar_inset_position,
+                    bg_alpha=analyzer.config.colorbar_inset_bg_alpha,
+                    fontsize=analyzer.config.colorbar_inset_fontsize,
+                    title_fontsize=analyzer.config.colorbar_inset_title_fontsize,
                 )
             elif AXES_GRID_AVAILABLE:
                 from mpl_toolkits.axes_grid1 import make_axes_locatable
