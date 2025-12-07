@@ -210,6 +210,7 @@ class MultiSpectrumResult:
         ax: Optional[Any] = None,
         labels: Optional[list[str]] = None,
         auto_label: bool = True,
+        legend: bool = True,  # Set to False to skip all legend/auto-label code
         freq_unit: str = "GHz",
         log_scale: bool = True,
         normalize: bool = False,
@@ -228,8 +229,8 @@ class MultiSpectrumResult:
         else:
             fig = ax.figure
         
-        # Generate labels from metadata diff
-        if labels is None and auto_label:
+        # Generate labels from metadata diff - SKIP if legend=False
+        if legend and labels is None and auto_label:
             jobs = [s._source_job for s in self.spectra if s._source_job is not None]
             if METADATA_DIFF_AVAILABLE and len(jobs) == len(self.spectra):
                 labels = generate_auto_labels(jobs)
@@ -258,7 +259,11 @@ class MultiSpectrumResult:
         if log_scale:
             ax.set_yscale("log")
         ax.set_title(title or f"Spectrum Comparison ({len(self.spectra)} jobs)")
-        ax.legend(loc='best', fontsize=9)
+        
+        # Only add legend if legend=True and we have labels
+        if legend and any(l is not None for l in labels):
+            ax.legend(loc='best', fontsize=9)
+            
         plt.tight_layout()
         return fig
     

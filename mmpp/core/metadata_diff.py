@@ -62,12 +62,15 @@ def extract_job_metadata(job: Any) -> dict[str, Any]:
     
     # Try multiple sources of metadata
     try:
-        # 1. From zarr file attributes
-        if hasattr(job, 'zarr') and job.zarr is not None:
-            if hasattr(job.zarr, 'attrs'):
-                for key, value in dict(job.zarr.attrs).items():
-                    if not key.startswith('_'):
-                        metadata[key] = value
+        # 1. From zarr file attributes (access _z directly to avoid __getattr__)
+        zarr_group = getattr(job, '_z', None)
+        if zarr_group is None and hasattr(job, 'z'):
+            zarr_group = job.z  # Some jobs use .z property
+        
+        if zarr_group is not None and hasattr(zarr_group, 'attrs'):
+            for key, value in dict(zarr_group.attrs).items():
+                if not key.startswith('_'):
+                    metadata[key] = value
         
         # 2. From job attributes directly
         for attr in ['B0', 'Bext', 'Ms', 'Aex', 'alpha', 'f0', 'd', 'p', 'w', 'L']:
