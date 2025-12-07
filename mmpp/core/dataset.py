@@ -24,11 +24,21 @@ class DatasetSpecificFFT:
     def __init__(self, job_result, dataset_name, mmpp_instance=None, slice_info=None):
         self.dataset_name = dataset_name
         self.slice_info = slice_info
+        self._job_result = job_result  # Keep reference for path access
         # Create regular FFT instance
         if FFT_AVAILABLE:
             self._fft = FFT(job_result, mmpp_instance)
         else:
             self._fft = None
+    
+    def __repr__(self):
+        """Concise repr to avoid printing zarr structure."""
+        path = getattr(self._job_result, 'path', 'unknown')
+        slice_str = f", slice={self.slice_info}" if self.slice_info else ""
+        return f"<DatasetSpecificFFT(dataset='{self.dataset_name}'{slice_str}) @ {path}>"
+    
+    def __str__(self):
+        return self.__repr__()
 
     def __getattr__(self, name):
         """Delegate to FFT, injecting dataset context when appropriate."""

@@ -270,22 +270,23 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
         
         fonts_loaded = 0
         
-        # Add fonts from Arial directory
+        # Add fonts using findSystemFonts (more reliable than manual iteration)
         if os.path.exists(arial_fonts_dir) and os.path.isdir(arial_fonts_dir):
             if verbose:
                 log.info(f"🔍 Adding fonts from: {arial_fonts_dir}")
             
-            for font_file in os.listdir(arial_fonts_dir):
-                if font_file.lower().endswith(('.ttf', '.otf')):
-                    font_path = os.path.join(arial_fonts_dir, font_file)
-                    try:
-                        font_manager.fontManager.addfont(font_path)
-                        fonts_loaded += 1
-                        if verbose:
-                            log.debug(f"  ✓ Added: {font_file}")
-                    except Exception as e:
-                        if verbose:
-                            log.warning(f"  ✗ Failed: {font_file}: {e}")
+            # Use findSystemFonts to discover fonts properly
+            font_files = font_manager.findSystemFonts(fontpaths=[arial_fonts_dir])
+            
+            for font_path in font_files:
+                try:
+                    font_manager.fontManager.addfont(font_path)
+                    fonts_loaded += 1
+                    if verbose:
+                        log.debug(f"  ✓ Added: {os.path.basename(font_path)}")
+                except Exception as e:
+                    if verbose:
+                        log.warning(f"  ✗ Failed: {os.path.basename(font_path)}: {e}")
 
         if fonts_loaded > 0:
             # Force matplotlib to rebuild font cache in memory
