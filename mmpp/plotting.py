@@ -331,6 +331,100 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
         return False
 
 
+def check_fonts(verbose: bool = True) -> dict:
+    """Comprehensive font diagnostic utility for MMPP.
+    
+    Displays detailed information about:
+    - Package installation location
+    - Fonts directory status
+    - Available font files
+    - Matplotlib font registration status
+    - Currently available fonts
+    
+    Parameters
+    ----------
+    verbose : bool, default True
+        Print detailed diagnostic information
+        
+    Returns
+    -------
+    dict
+        Diagnostic information
+        
+    Examples
+    --------
+    >>> import mmpp
+    >>> mmpp.check_fonts()
+    """
+    import os
+    from matplotlib import font_manager
+    
+    # Gather diagnostic info
+    package_dir = os.path.dirname(__file__)
+    fonts_base_dir = os.path.join(package_dir, "fonts")
+    arial_fonts_dir = os.path.join(fonts_base_dir, "Arial")
+    
+    fonts_dir_exists = os.path.exists(arial_fonts_dir)
+    
+    font_files = []
+    if fonts_dir_exists:
+        font_files = [
+            f for f in os.listdir(arial_fonts_dir) 
+            if f.lower().endswith(('.ttf', '.otf'))
+        ]
+    
+    # Check matplotlib registration
+    available_fonts = {f.name for f in font_manager.fontManager.ttflist}
+    arial_registered = "Arial" in available_fonts
+    arial_variants = sorted([f for f in available_fonts if 'arial' in f.lower()])
+    
+    # Build result dictionary
+    result = {
+        'package_dir': package_dir,
+        'fonts_dir': arial_fonts_dir,
+        'fonts_dir_exists': fonts_dir_exists,
+        'font_files': font_files,
+        'arial_registered': arial_registered,
+        'available_fonts': list(available_fonts),
+        'arial_variants': arial_variants
+    }
+    
+    if verbose:
+        print("📦 MMPP Font Diagnostic")
+        print("=" * 60)
+        print(f"📁 Package installation: {package_dir}")
+        print(f"📂 Fonts directory: {arial_fonts_dir}")
+        
+        if fonts_dir_exists:
+            print("✅ Fonts directory exists")
+        else:
+            print("❌ Fonts directory NOT FOUND")
+        
+        if font_files:
+            print(f"\n📄 Font files found ({len(font_files)}):")
+            for font_file in sorted(font_files):
+                print(f"   • {font_file}")
+        else:
+            print("\n❌ No font files found")
+        
+        print()
+        if arial_registered:
+            print("✅ Arial registered in matplotlib")
+        else:
+            print("❌ Arial NOT registered")
+            print("   Try: from mmpp.plotting import setup_custom_fonts")
+            print("        setup_custom_fonts(verbose=True, force=True)")
+        
+        if arial_variants:
+            print(f"\n📊 Arial variants ({len(arial_variants)}):")
+            for variant in arial_variants:
+                print(f"   • {variant}")
+        
+        print("=" * 60)
+    
+    return result
+
+
 def load_paper_style(verbose: bool = False, force: bool = False) -> bool:
     """Load custom paper style.
     
@@ -353,6 +447,11 @@ def load_paper_style(verbose: bool = False, force: bool = False) -> bool:
         return True
 
     try:
+        # CRITICAL: Setup custom fonts BEFORE loading style
+        # This ensures package fonts (Arial) are registered with matplotlib
+        # before the style tries to use them
+        setup_custom_fonts(verbose=verbose, force=force)
+        
         # Package directory is the primary location
         package_dir = os.path.dirname(__file__)
         style_path = os.path.join(package_dir, "paper.mplstyle")

@@ -49,7 +49,7 @@ except ImportError as e:
 
 # Try to import plotting classes
 try:
-    from .plotting import MMPPlotter, PlotConfig, PlotterProxy, fonts
+    from .plotting import MMPPlotter, PlotConfig, PlotterProxy, fonts, check_fonts
 
     _PLOTTING_AVAILABLE = True
     _PLOTTING_IMPORT_ERROR = None
@@ -401,6 +401,7 @@ __all__ = [
     "SimulationSwapper",
     "open",
     "fonts",  # Font management
+    "check_fonts",  # Font diagnostic
     "install_ffmpeg",  # FFmpeg installation
     "check_dependencies",  # Dependency checker
 ]
