@@ -60,6 +60,10 @@ def extract_job_metadata(job: Any) -> dict[str, Any]:
     """
     metadata = {}
     
+    def is_numeric(val):
+        """Check if value is numeric (int or float)."""
+        return isinstance(val, (int, float)) and not isinstance(val, bool)
+    
     # Try multiple sources of metadata
     try:
         # 1. From zarr file attributes (access _z directly to avoid __getattr__)
@@ -69,14 +73,15 @@ def extract_job_metadata(job: Any) -> dict[str, Any]:
         
         if zarr_group is not None and hasattr(zarr_group, 'attrs'):
             for key, value in dict(zarr_group.attrs).items():
-                if not key.startswith('_'):
+                if not key.startswith('_') and is_numeric(value):
                     metadata[key] = value
         
         # 2. From job.attributes dict (NOT __getattr__ - avoids dataset access)
         if hasattr(job, 'attributes') and isinstance(job.attributes, dict):
             for attr in ['B0', 'Bext', 'Ms', 'Aex', 'alpha', 'f0', 'd', 'p', 'w', 'L']:
-                if attr in job.attributes and job.attributes[attr] is not None:
-                    metadata[attr] = job.attributes[attr]
+                val = job.attributes.get(attr)
+                if val is not None and is_numeric(val):
+                    metadata[attr] = val
         
         # 3. From path-based parameters (common in parameter sweeps)
         if hasattr(job, 'path'):
@@ -178,17 +183,23 @@ def format_value_with_unit(param_name: str, value: Any, prefer_scaled: bool = Tr
     if value is None:
         return "N/A"
     
+    # Try to convert to float, return string representation if not possible
+    try:
+        float_value = float(value)
+    except (ValueError, TypeError):
+        return str(value)
+    
     config = PARAM_CONFIG.get(param_name, {})
     unit = config.get('unit', '')
     scale = config.get('scale', 1.0)
     
     # Apply base scale
-    scaled_value = float(value) * scale
+    scaled_value = float_value * scale
     
     # Try alternative units for better readability
     if prefer_scaled and 'alt_scale' in config:
         for alt_unit, alt_scale in config['alt_scale'].items():
-            alt_value = float(value) * alt_scale
+            alt_value = float_value * alt_scale
             if 0.1 <= abs(alt_value) <= 1000:
                 return f"{alt_value:.3g}{alt_unit}"
     
