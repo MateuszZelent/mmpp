@@ -225,14 +225,81 @@ class DatasetAwareWrapper:
             return getattr(sliced_data, name)
         return getattr(self.zarr_array, name)
 
+    @staticmethod
+    def _normalize_slice_to_keep_dims(key, ndim: int):
+        """
+        Convert integer indices to slice(i, i+1) to preserve array dimensions.
+        
+        This ensures that indexing like arr[:,...,0] returns shape (N, M, ..., 1)
+        instead of (N, M, ...) - preserving the number of axes.
+        
+        Parameters
+        ----------
+        key : tuple, int, slice, or other indexing object
+            The indexing key from __getitem__
+        ndim : int
+            Number of dimensions in the source array
+            
+        Returns
+        -------
+        tuple
+            Normalized indexing tuple with integers converted to single-item slices
+        """
+        # Handle single element (not tuple)
+        if not isinstance(key, tuple):
+            key = (key,)
+        
+        # Expand Ellipsis to fill missing dimensions
+        # Count non-ellipsis elements to determine how many dims ellipsis should expand to
+        n_ellipsis = sum(1 for k in key if k is Ellipsis)
+        if n_ellipsis > 1:
+            raise IndexError("an index can only have a single ellipsis ('...')")
+        
+        if n_ellipsis == 1:
+            # Find ellipsis position and expand it
+            ellipsis_idx = key.index(Ellipsis)
+            n_explicit = len(key) - 1  # excluding ellipsis
+            n_expand = max(0, ndim - n_explicit)
+            expanded = key[:ellipsis_idx] + (slice(None),) * n_expand + key[ellipsis_idx + 1:]
+            key = expanded
+        
+        # Now convert integers to single-item slices
+        result = []
+        for k in key:
+            if isinstance(k, (int, np.integer)):
+                # Convert integer index to slice to keep dimension
+                # Handle negative indices
+                result.append(slice(k, k + 1 if k != -1 else None))
+            else:
+                result.append(k)
+        
+        return tuple(result)
+
     def __getitem__(self, key):
-        """Return new DatasetAwareWrapper with slicing info preserved"""
-        # Instead of returning raw numpy array, return new wrapper with slice info
+        """Return new DatasetAwareWrapper with slicing info preserved.
+        
+        IMPORTANT: Integer indices are automatically converted to single-item
+        slices to preserve array dimensions. For example:
+        
+            arr[:, :, 0]  ->  arr[:, :, 0:1]
+        
+        This means the number of dimensions is always preserved after slicing.
+        Use .squeeze() or .numpy(squeeze=True) to remove singleton dimensions.
+        """
+        # Get source shape to properly handle ellipsis expansion
+        source_shape = self.zarr_array.shape
+        ndim = len(source_shape)
+        
+        # Normalize the slice to keep dimensions
+        normalized_key = self._normalize_slice_to_keep_dims(key, ndim)
+        
+        # Combine with existing slice if present
         if self.slice_info is not None:
-            # Combine existing slice with new slice - simplified for now
-            combined_slice = key
+            # For now, we don't support chained slicing - use the new slice directly
+            # This could be enhanced in the future to properly compose slices
+            combined_slice = normalized_key
         else:
-            combined_slice = key
+            combined_slice = normalized_key
 
         return DatasetAwareWrapper(
             self.job_result,
