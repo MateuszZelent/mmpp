@@ -407,8 +407,8 @@ class SpectrumResult:
             
         Returns
         -------
-        Tuple[Figure, Axes]
-            Matplotlib figure and axes
+        Tuple[Figure, Axes, Optional[dict]]
+            Matplotlib figure, axes, and peaks_info dict (or None if no peaks detected)
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
@@ -585,7 +585,7 @@ class SpectrumResult:
         
         fig.tight_layout()
         
-        return fig, ax
+        return fig, ax, self.peaks_info
 
 
 class FFT:
