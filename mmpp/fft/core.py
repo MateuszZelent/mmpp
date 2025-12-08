@@ -51,6 +51,36 @@ except ImportError:
     to_rgba = None  # type: ignore
 
 
+def _try_enable_widget_backend():
+    """Try to enable widget backend for interactive plots in Jupyter.
+    
+    Silently tries to switch to widget backend if running in IPython/Jupyter.
+    Does nothing if not in IPython or if widget is unavailable.
+    """
+    try:
+        from IPython import get_ipython
+        ipython = get_ipython()
+        if ipython is None:
+            return
+        
+        # Check current backend
+        current_backend = plt.get_backend().lower()
+        
+        # Already using widget/ipympl - do nothing
+        if "widget" in current_backend or "ipympl" in current_backend:
+            return
+        
+        # Try to switch to widget
+        try:
+            ipython.run_line_magic("matplotlib", "widget")
+            log.debug("Switched to matplotlib widget backend")
+        except Exception:
+            pass  # Widget not available, continue with current backend
+            
+    except Exception:
+        pass  # Not in IPython or other error
+
+
 def generate_pastel_colors(n: int):
     """Generate n pastel colors using the Accent colormap.
     
@@ -224,6 +254,9 @@ class MultiSpectrumResult:
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
         
+        # Try to enable widget backend for interactivity
+        _try_enable_widget_backend()
+        
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
@@ -379,6 +412,9 @@ class SpectrumResult:
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
+        
+        # Try to enable widget backend for interactivity
+        _try_enable_widget_backend()
         
         # Frequency scaling
         freq_scales = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}

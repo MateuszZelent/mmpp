@@ -212,6 +212,18 @@ class PlotterProxy:
         plotter = MMPPlotter(self.results, self.mmpp_instance)
         return getattr(plotter, name)
 
+    def __getitem__(self, index: int) -> Any:
+        """Get job result by index, enabling jobs[0] syntax."""
+        return self.results[index]
+    
+    def __len__(self) -> int:
+        """Return number of results."""
+        return len(self.results)
+    
+    def __iter__(self):
+        """Make PlotterProxy iterable."""
+        return iter(self.results)
+
     def __repr__(self) -> str:
         """String representation of the proxy."""
         if MATPLOTLIB_AVAILABLE:

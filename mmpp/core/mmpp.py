@@ -197,6 +197,26 @@ class MMPP:
         
         return FFT(self.zarr_results[0], self)
 
+    @property
+    def columns(self) -> list[str]:
+        """
+        List of available column names for filtering with `find()`.
+        
+        Returns
+        -------
+        list[str]
+            Column names from the database DataFrame.
+            
+        Examples
+        --------
+        >>> job.columns
+        ['path', 'Nx', 'Ny', 'Nz', 'dx', 'dy', 'dz', 'PBCx', 'PBCy', 'solver', ...]
+        
+        >>> 'Nx' in job.columns
+        True
+        """
+        return self.df.columns.tolist()
+
     def _find_zarr_folders(self) -> list[str]:
         """
         Recursively find all .zarr folders in the base path.
@@ -580,17 +600,108 @@ class MMPP:
     def find(self, **kwargs: Any) -> "PlotterProxy":
         """
         Find zarr folders that match the given criteria.
-        Now returns a PlotterProxy with plotting capabilities.
+        
+        Returns a PlotterProxy with plotting capabilities containing 
+        all matching ZarrJobResult objects.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         **kwargs : Any
-            Attribute criteria to match (e.g., PBCx=1, Nx=1296, solver=3)
+            Attribute criteria to filter by. Each keyword argument must match
+            a column name in the database (see `job.columns` property or 
+            `job.df.columns` for available columns).
 
-        Returns:
-        --------
+        Common Simulation Parameters
+        ----------------------------
+        Grid dimensions:
+            Nx, Ny, Nz : int
+                Number of cells in x, y, z directions
+            dx, dy, dz : float
+                Cell size in meters (e.g., 5e-9 for 5 nm)
+            cellsize_x, cellsize_y, cellsize_z : float
+                Alternative cell size specification
+
+        Time parameters:
+            dt : float
+                Simulation timestep in seconds
+            t_sampl : float
+                Sampling time interval
+            total_time : float
+                Total simulation time
+            n_steps : int
+                Number of simulation steps
+
+        Boundary conditions:
+            PBCx, PBCy, PBCz : int
+                Periodic boundary conditions (0=off, 1=on)
+
+        Frequency/FFT:
+            fcut, f_cut : float
+                Cutoff frequency for FFT analysis
+
+        Solver and physics:
+            solver : int
+                Solver type (e.g., 3=RK3, 4=RK4, 5=RK45)
+            alpha : float
+                Gilbert damping constant
+            Ms : float
+                Saturation magnetization
+            Bext : float
+                External magnetic field
+
+        Custom parameters:
+            Any additional parameters saved in the zarr attributes
+            will be available for filtering.
+
+        Returns
+        -------
         PlotterProxy
-            Proxy object containing ZarrJobResult objects with plotting capabilities
+            Proxy object containing matching ZarrJobResult objects.
+            Supports indexing like `result[0]`, iteration, and 
+            plotting methods like `.mpl.plot()`.
+
+        Examples
+        --------
+        Find simulations with specific grid size:
+        
+        >>> results = job.find(Nx=1296, Ny=1296)
+        >>> len(results)
+        5
+
+        Find simulations with periodic boundary conditions:
+        
+        >>> results = job.find(PBCx=1, PBCy=1)
+
+        Find simulations with specific solver:
+        
+        >>> results = job.find(solver=3)
+
+        Combine multiple criteria:
+        
+        >>> results = job.find(Nx=1024, PBCx=1, alpha=0.01)
+
+        Access matching jobs:
+        
+        >>> results = job.find(Nx=1296)
+        >>> for res in results:
+        ...     print(res.path)
+
+        Get single matching job:
+        
+        >>> result = job.find(Nx=1296)[0]
+        >>> result.m  # Access magnetization data
+
+        See Also
+        --------
+        find_paths : Returns list of paths instead of PlotterProxy
+        columns : Property showing all available column names
+        df : Direct access to pandas DataFrame for complex queries
+
+        Notes
+        -----
+        - All keyword arguments are combined with AND logic
+        - Use `job.df.query()` directly for more complex filtering
+        - Check available columns with `job.df.columns.tolist()`
         """
         if self.df.empty:
             log.warning("Database is empty. Run scan() first.")
