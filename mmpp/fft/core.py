@@ -298,7 +298,10 @@ class MultiSpectrumResult:
             ax.legend(loc='best', fontsize=9)
             
         plt.tight_layout()
-        return fig
+        
+        # Collect peaks_info from all spectra
+        peaks_list = [s.peaks_info for s in self.spectra]
+        return fig, ax, peaks_list
     
     # Alias for consistency with SpectrumResult API
     def plot_spectrum(self, **kwargs):
