@@ -54,10 +54,14 @@ def _report_progress(
     """Report progress to callback if provided."""
     if callback is not None:
         try:
-            progress = (current / total) * 100.0 if total > 0 else 0.0
+            # Defensive: ensure current and total are numeric
+            current_num = int(current) if current is not None else 0
+            total_num = int(total) if total is not None else 1
+            progress = (current_num / total_num) * 100.0 if total_num > 0 else 0.0
             callback(progress, stage)
         except Exception as e:
-            log.warning("Progress callback failed: %s", e)
+            log.debug("Progress callback failed: %s (current=%r, total=%r, stage=%r)", 
+                     e, current, total, stage)
 
 
 TransmissionMethod = Literal["power_ratio", "circular", "cpsd"]
@@ -1146,6 +1150,12 @@ class TransmissionCompute:
         )
 
         n_time, n_z, n_y, n_x, n_comp = data.shape
+        
+        # 🐛 CRITICAL DEBUG: Log dimensional interpretation
+        log.info(
+            "📊 Data dimensions: n_time=%d, n_z=%d, n_y=%d, n_x=%d, n_comp=%d",
+            n_time, n_z, n_y, n_x, n_comp
+        )
 
         # Get cell size (dx) for spatial positions
         dx_m = self._get_dx(dataset)
@@ -1199,6 +1209,12 @@ class TransmissionCompute:
         window_starts = list(range(0, max(n_x - window_size + 1, 1), step))
         if not window_starts:
             window_starts = [0]
+        
+        # 🐛 CRITICAL DEBUG: Log window calculation
+        log.info(
+            "🪟 Window calc: n_x=%d, spatial_window=%d → window_size=%d, step=%d → %d windows",
+            n_x, config.spatial_window, window_size, step, len(window_starts)
+        )
 
         # Calculate x_centers in cell indices first
         x_centers_idx = np.array(
