@@ -212,8 +212,25 @@ class PlotterProxy:
         plotter = MMPPlotter(self.results, self.mmpp_instance)
         return getattr(plotter, name)
 
-    def __getitem__(self, index: int) -> Any:
-        """Get job result by index, enabling jobs[0] syntax."""
+    def __getitem__(self, index: Union[int, slice]) -> Any:
+        """Get job result by index or batch operations by slice.
+        
+        Parameters
+        ----------
+        index : Union[int, slice]
+            Index of the result to get or slice for batch operations
+            
+        Returns
+        -------
+        Union[Any, BatchOperations]
+            Single result for integer index or batch operations for slice
+        """
+        if isinstance(index, slice):
+            # Return BatchOperations for slice
+            from .batch_operations import BatchOperations
+            sliced_results = self.results[index]
+            return BatchOperations(sliced_results, self.mmpp_instance)
+        
         return self.results[index]
     
     def __len__(self) -> int:
