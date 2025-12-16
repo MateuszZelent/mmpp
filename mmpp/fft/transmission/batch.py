@@ -1276,8 +1276,21 @@ class BatchTransmission:
 
         # Determine parameters to extract
         if extract_parameters is None:
-            # Common simulation parameters
-            extract_parameters = ["B0", "d", "p", "thickness", "period", "bias_field"]
+            # Common simulation parameters - extended list for various naming conventions
+            extract_parameters = [
+                # Magnetic field
+                "B0", "Bext", "bex", "bias_field", "applied_field",
+                # Geometry
+                "d", "diameter", "thickness", "t",
+                "p", "period", "latticeconst", "a",
+                "w", "width", "L", "length",
+                # Material
+                "Ms", "alpha", "A_ex", "K_u",
+                # Excitation
+                "f_exc", "freq", "frequency",
+                # Other
+                "frozen", "vort", "vorticity",
+            ]
 
         # Build config from kwargs if not provided
         if config is None:
