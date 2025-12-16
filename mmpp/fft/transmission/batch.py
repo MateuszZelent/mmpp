@@ -1111,27 +1111,33 @@ class BatchTransmissionResult:
         # Get the corresponding result
         result = self.results[param_index]
 
-        # Delegate to TransmissionResult.plot_transmission_crosssection
-        return result.plot_transmission_crosssection(
-            x=x,
-            freq_unit=freq_unit,
-            trim_0f=trim_0f,
-            fmin=fmin,
-            fmax=fmax,
-            flip=flip,
-            log_scale=log_scale,
-            ax=ax,
-            mark_on_ax=mark_on_ax,
-            find_minima=find_minima,
-            x_width=x_width,
-            disable_averaging=disable_averaging,
-            normalize=normalize,
-            verbose=verbose,
-            legend=legend,
-            figsize=figsize,
-            dpi=dpi,
+        # Build kwargs for delegation - only include figsize/dpi if ax is None
+        call_kwargs = {
+            "x": x,
+            "freq_unit": freq_unit,
+            "trim_0f": trim_0f,
+            "fmin": fmin,
+            "fmax": fmax,
+            "flip": flip,
+            "log_scale": log_scale,
+            "ax": ax,
+            "mark_on_ax": mark_on_ax,
+            "find_minima": find_minima,
+            "x_width": x_width,
+            "disable_averaging": disable_averaging,
+            "normalize": normalize,
+            "verbose": verbose,
+            "legend": legend,
             **kwargs,
-        )
+        }
+        
+        # Only pass figsize/dpi when creating new figure
+        if ax is None:
+            call_kwargs["figsize"] = figsize
+            call_kwargs["dpi"] = dpi
+
+        # Delegate to TransmissionResult.plot_transmission_crosssection
+        return result.plot_transmission_crosssection(**call_kwargs)
 
     def _extract_crosssection(
         self,
