@@ -202,7 +202,19 @@ class PlotterProxy:
         self.mmpp_instance = mmpp_instance
 
     def __getattr__(self, name: str) -> Any:
-        """Delegate attribute access to MMPPlotter."""
+        """Delegate attribute access to MMPPlotter or handle dataset names.
+        
+        This allows both:
+        - job.find(...).m_layer13[...].fft.transmission() - dataset access
+        - job.find(...).mpl.plot() - plotting methods
+        """
+        # Check if this could be a dataset name (like in BatchOperations)
+        if name.startswith('m') or name in ['B_ext', 'regions', 'table']:
+            from .batch_operations import BatchDatasetWrapper
+            log.debug(f"PlotterProxy: Creating dataset wrapper for: {name}")
+            return BatchDatasetWrapper(self.results, self.mmpp_instance, name)
+        
+        # Default: delegate to MMPPlotter for plotting methods
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError(
                 "Plotting functionality not available. Install matplotlib to use plotting features."

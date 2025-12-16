@@ -1165,6 +1165,27 @@ class BatchTransmission:
         self.mmpp_ref = mmpp_ref
         self.dataset_name = dataset_name
         self.slice_info = slice_info
+    
+    def __call__(self, **kwargs) -> BatchTransmissionResult:
+        """Allow calling BatchTransmission directly as a function.
+        
+        This enables the syntax:
+            job[:].m_layer13[...].fft.transmission(...)
+        
+        Instead of requiring:
+            job[:].m_layer13[...].fft.transmission.compute_all(...)
+        
+        Parameters
+        ----------
+        **kwargs
+            All arguments are forwarded to compute_all()
+            
+        Returns
+        -------
+        BatchTransmissionResult
+            Computed batch transmission results
+        """
+        return self.compute_all(**kwargs)
 
     def compute_all(
         self,
