@@ -207,6 +207,29 @@ class BatchTransmissionResult:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Extract normalized heatmap data without plotting."""
         param_values = self.get_parameter_values(swapping_parameter)
+        
+        # Validate parameter values
+        if len(param_values) == 0:
+            raise ValueError(
+                f"No valid values found for parameter '{swapping_parameter}'. "
+                f"Available parameters with data: {list(self.parameters.keys())}"
+            )
+        
+        if len(param_values) == 1:
+            raise ValueError(
+                f"Only 1 simulation found for parameter '{swapping_parameter}'. "
+                f"Heatmap requires at least 2 different parameter values. "
+                f"Current value: {param_values[0]}"
+            )
+        
+        # Check if all values are the same
+        unique_values = np.unique(param_values)
+        if len(unique_values) == 1:
+            raise ValueError(
+                f"All simulations have the same value for '{swapping_parameter}' = {unique_values[0]}. "
+                f"Heatmap requires varying parameter values. "
+                f"Consider using a different swapping_parameter."
+            )
 
         if verbose:
             print(f"\n{'='*60}")
