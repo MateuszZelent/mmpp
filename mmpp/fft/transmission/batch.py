@@ -977,6 +977,162 @@ class BatchTransmissionResult:
 
         return fig, ax, img
 
+    def plot_batch_crosssection(
+        self,
+        swapping_parameter: str,
+        param_value: float,
+        x: float,
+        x_width: Optional[float] = None,
+        freq_unit: str = "GHz",
+        trim_0f: int = 0,
+        fmin: Optional[float] = None,
+        fmax: Optional[float] = None,
+        normalize: bool = False,
+        flip: bool = False,
+        log_scale: bool = False,
+        ax: Optional[Axes] = None,
+        mark_on_ax: Optional[Axes] = None,
+        disable_averaging: bool = False,
+        find_minima: Optional[dict] = None,
+        legend: Union[bool, dict] = False,
+        figsize: tuple = (10, 6),
+        dpi: int = 100,
+        verbose: bool = False,
+        param_tolerance: float = 1e-9,
+        **kwargs,
+    ):
+        """Plot 1D transmission cross-section for a specific parameter value.
+
+        Extracts the transmission vs frequency profile for a single simulation
+        identified by its swapping_parameter value.
+
+        Parameters
+        ----------
+        swapping_parameter : str
+            Name of the parameter to select by (e.g., "latticeconst", "bex")
+        param_value : float
+            Target value of the swapping parameter. The closest matching
+            simulation will be selected.
+        x : float
+            X position for cross-section extraction (meters if > 1e-6, else index)
+        x_width : float, optional
+            Width for spatial averaging around x position
+        freq_unit : str, default="GHz"
+            Frequency unit: "Hz", "kHz", "MHz", "GHz", "THz"
+        trim_0f : int, default=0
+            Number of lowest frequency points to remove
+        fmin : float, optional
+            Minimum frequency to display (in freq_unit)
+        fmax : float, optional
+            Maximum frequency to display (in freq_unit)
+        normalize : bool, default=False
+            Normalize transmission to [0, 1]
+        flip : bool, default=False
+            If True, frequency on Y-axis, transmission on X-axis
+        log_scale : bool, default=False
+            Use logarithmic scale for transmission axis
+        ax : Axes, optional
+            Matplotlib axes to plot on. If None, creates new figure.
+        mark_on_ax : Axes, optional
+            Additional axes to mark the x position on
+        disable_averaging : bool, default=False
+            Force single-point extraction even if x_width specified
+        find_minima : dict, optional
+            Find and mark local minima. See TransmissionResult.plot_transmission_crosssection
+            for supported options.
+        legend : bool or dict, default=False
+            Controls legend display. True for auto-label, dict for custom options.
+        figsize : tuple, default=(10, 6)
+            Figure size (only if ax is None)
+        dpi : int, default=100
+            Figure DPI (only if ax is None)
+        verbose : bool, default=False
+            Print diagnostic information
+        param_tolerance : float, default=1e-9
+            Relative tolerance for matching param_value to available values
+        **kwargs
+            Additional matplotlib plot kwargs (color, linewidth, label, etc.)
+
+        Returns
+        -------
+        fig : Figure
+            Matplotlib figure
+        ax : Axes
+            Matplotlib axes
+        minima_freqs : list or None
+            Frequencies of detected minima if find_minima is provided
+
+        Examples
+        --------
+        >>> # Plot cross-section for latticeconst=400e-9
+        >>> batch_result.plot_batch_crosssection(
+        ...     swapping_parameter="latticeconst",
+        ...     param_value=400e-9,
+        ...     x=22500e-9,
+        ...     freq_unit="GHz",
+        ...     fmax=3.0,
+        ...     flip=True,
+        ...     normalize=True,
+        ... )
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            raise ImportError("Matplotlib is required for plotting")
+
+        # Get parameter values and find closest match
+        param_values = self.get_parameter_values(swapping_parameter)
+        
+        if len(param_values) == 0:
+            raise ValueError(
+                f"No values found for parameter '{swapping_parameter}'. "
+                f"Available parameters: {list(self.parameters.keys())}"
+            )
+
+        # Find closest matching parameter value
+        param_index = np.argmin(np.abs(param_values - param_value))
+        actual_param_value = param_values[param_index]
+        
+        # Check if match is within tolerance
+        if abs(actual_param_value - param_value) / (abs(param_value) + 1e-15) > param_tolerance:
+            if verbose:
+                print(
+                    f"  Note: Requested {swapping_parameter}={param_value}, "
+                    f"using closest available: {actual_param_value}"
+                )
+
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"🔍 plot_batch_crosssection()")
+            print(f"{'='*60}")
+            print(f"  swapping_parameter: {swapping_parameter}")
+            print(f"  param_value requested: {param_value}")
+            print(f"  param_value found: {actual_param_value} (index {param_index})")
+            print(f"  x position: {x}")
+
+        # Get the corresponding result
+        result = self.results[param_index]
+
+        # Delegate to TransmissionResult.plot_transmission_crosssection
+        return result.plot_transmission_crosssection(
+            x=x,
+            freq_unit=freq_unit,
+            trim_0f=trim_0f,
+            fmin=fmin,
+            fmax=fmax,
+            flip=flip,
+            log_scale=log_scale,
+            ax=ax,
+            mark_on_ax=mark_on_ax,
+            find_minima=find_minima,
+            x_width=x_width,
+            disable_averaging=disable_averaging,
+            normalize=normalize,
+            verbose=verbose,
+            legend=legend,
+            figsize=figsize,
+            dpi=dpi,
+            **kwargs,
+        )
+
     def _extract_crosssection(
         self,
         result: TransmissionResult,
