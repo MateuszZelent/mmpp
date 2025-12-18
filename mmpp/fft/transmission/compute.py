@@ -1447,7 +1447,8 @@ class TransmissionCompute:
                     return win_idx, aggregated_local
 
                 # Run windows in parallel (threading backend to share memory)
-                results_pre = Parallel(n_jobs=-1, backend="threading")(
+                # Use joblib's verbose parameter for progress indication
+                results_pre = Parallel(n_jobs=-1, backend="threading", verbose=10)(
                     delayed(process_window_pre_fft)(win_idx, start)
                     for win_idx, start in enumerate(window_starts)
                 )
@@ -1932,7 +1933,8 @@ class TransmissionCompute:
                     return win_idx, results
 
                 # Process windows in parallel
-                results_list = Parallel(n_jobs=-1, backend="threading")(
+                # Use joblib's verbose parameter for progress indication
+                results_list = Parallel(n_jobs=-1, backend="threading", verbose=10)(
                     delayed(process_window)(win_idx, start)
                     for win_idx, start in enumerate(window_starts)
                 )
