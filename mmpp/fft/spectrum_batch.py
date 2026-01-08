@@ -14,7 +14,7 @@ import os
 import pickle
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -135,14 +135,46 @@ class BatchSpectrumResult:
         Z-layer used for computation
     """
     
-    frequencies: np.ndarray
-    spectra: List[np.ndarray]
-    powers: List[np.ndarray]
-    parameters: Dict[str, List[Any]]
-    job_paths: List[str]
-    config_dict: Dict[str, Any] = field(default_factory=dict)
-    dataset_name: str = "m"
-    z_layer: int = -1
+    def __init__(
+        self,
+        frequencies: np.ndarray,
+        spectra: List[np.ndarray],
+        powers: List[np.ndarray],
+        parameters: Dict[str, List[Any]],
+        job_paths: List[str],
+        config_dict: Optional[Dict[str, Any]] = None,
+        dataset_name: str = "m",
+        z_layer: int = -1,
+    ):
+        """Initialize batch spectrum result.
+        
+        Parameters
+        ----------
+        frequencies : np.ndarray
+            Shared frequency array
+        spectra : List[np.ndarray]
+            List of complex FFT spectra
+        powers : List[np.ndarray]
+            List of power spectra
+        parameters : Dict[str, List[Any]]
+            Extracted job parameters
+        job_paths : List[str]
+            Paths to source zarr files
+        config_dict : Dict[str, Any], optional
+            FFT configuration used
+        dataset_name : str, default="m"
+            Dataset name used
+        z_layer : int, default=-1
+            Z-layer used
+        """
+        self.frequencies = frequencies
+        self.spectra = spectra
+        self.powers = powers
+        self.parameters = parameters
+        self.job_paths = job_paths
+        self.config_dict = config_dict if config_dict is not None else {}
+        self.dataset_name = dataset_name
+        self.z_layer = z_layer
     
     def __len__(self) -> int:
         """Return number of results in batch."""
@@ -217,6 +249,64 @@ class BatchSpectrumResult:
             )
         return np.array(self.parameters[param_name])
     
+    def show_parameters(self) -> None:
+        """Print summary of all extracted parameters.
+        
+        Shows which parameters vary across the batch and their ranges.
+        Useful for determining which parameter to use for heatmap plotting.
+        """
+        print(f"📊 Batch Spectrum Parameters Summary")
+        print(f"{'='*60}")
+        print(f"Total spectra: {len(self)}")
+        print(f"Frequencies: {len(self.frequencies)} points")
+        print(f"\nExtracted parameters:")
+        
+        if not self.parameters:
+            print("  (no parameters extracted)")
+            return
+        
+        varying = []
+        constant = []
+        
+        for param_name, values in self.parameters.items():
+            non_none_values = [v for v in values if v is not None]
+            if not non_none_values:
+                continue
+                
+            unique_values = np.unique(non_none_values)
+            if len(unique_values) > 1:
+                arr = np.array(non_none_values)
+                varying.append({
+                    'name': param_name,
+                    'n_unique': len(unique_values),
+                    'min': arr.min(),
+                    'max': arr.max(),
+                })
+            else:
+                constant.append({
+                    'name': param_name,
+                    'value': unique_values[0],
+                })
+        
+        if varying:
+            print(f"\n  ✓ Varying parameters (good for heatmap):")
+            for p in sorted(varying, key=lambda x: x['n_unique'], reverse=True):
+                print(f"    • {p['name']}: {p['n_unique']} unique values "
+                      f"[{p['min']:.3g} to {p['max']:.3g}]")
+        
+        if constant:
+            print(f"\n  ○ Constant parameters:")
+            for p in constant:
+                print(f"    • {p['name']}: {p['value']:.3g}")
+        
+        print(f"\n💡 Usage:")
+        if varying:
+            print(f"   result.plot_heatmap()  # Auto-selects '{varying[0]['name']}'")
+            print(f"   result.plot_heatmap(parameter='{varying[0]['name']}')  # Explicit")
+        else:
+            print(f"   (No varying parameters - cannot create heatmap)")
+        print(f"{'='*60}\n")
+    
     def to_stacked_array(self, field: str = "power") -> np.ndarray:
         """Stack all spectra into 2D array.
         
@@ -259,24 +349,52 @@ class BatchSpectrumResult:
     
     def _save_zarr(self, path: Path) -> None:
         """Save to zarr format."""
-        z = zarr.open(str(path), mode="w")
+        import zarr
         
-        z.create_dataset("frequencies", data=self.frequencies)
-        z.create_dataset("spectra", data=np.stack(self.spectra, axis=0))
-        z.create_dataset("powers", data=np.stack(self.powers, axis=0))
+        # Detect zarr version
+        zarr_major = int(zarr.__version__.split('.')[0])
         
-        z.attrs["job_paths"] = self.job_paths
-        z.attrs["dataset_name"] = self.dataset_name
-        z.attrs["z_layer"] = self.z_layer
-        z.attrs["config_dict"] = json.dumps(self.config_dict, default=str)
-        
-        # Save parameters
-        params_group = z.create_group("parameters")
-        for name, values in self.parameters.items():
-            try:
-                params_group.create_dataset(name, data=np.array(values))
-            except Exception:
-                params_group.attrs[name] = json.dumps(values, default=str)
+        if zarr_major >= 3:
+            # Zarr v3 API
+            store = zarr.DirectoryStore(str(path))
+            root = zarr.open_group(store=store, mode="w")
+            
+            root.create_dataset("frequencies", data=self.frequencies, chunks=None)
+            root.create_dataset("spectra", data=np.stack(self.spectra, axis=0), chunks=None)
+            root.create_dataset("powers", data=np.stack(self.powers, axis=0), chunks=None)
+            
+            root.attrs["job_paths"] = self.job_paths
+            root.attrs["dataset_name"] = self.dataset_name
+            root.attrs["z_layer"] = self.z_layer
+            root.attrs["config_dict"] = json.dumps(self.config_dict, default=str)
+            
+            # Save parameters
+            params_group = root.create_group("parameters")
+            for name, values in self.parameters.items():
+                try:
+                    params_group.create_dataset(name, data=np.array(values), chunks=None)
+                except Exception:
+                    params_group.attrs[name] = json.dumps(values, default=str)
+        else:
+            # Zarr v2 API
+            z = zarr.open(str(path), mode="w")
+            
+            z.create_dataset("frequencies", data=self.frequencies)
+            z.create_dataset("spectra", data=np.stack(self.spectra, axis=0))
+            z.create_dataset("powers", data=np.stack(self.powers, axis=0))
+            
+            z.attrs["job_paths"] = self.job_paths
+            z.attrs["dataset_name"] = self.dataset_name
+            z.attrs["z_layer"] = self.z_layer
+            z.attrs["config_dict"] = json.dumps(self.config_dict, default=str)
+            
+            # Save parameters
+            params_group = z.create_group("parameters")
+            for name, values in self.parameters.items():
+                try:
+                    params_group.create_dataset(name, data=np.array(values))
+                except Exception:
+                    params_group.attrs[name] = json.dumps(values, default=str)
     
     @classmethod
     def load(cls, path: Union[str, Path]) -> "BatchSpectrumResult":
@@ -303,39 +421,78 @@ class BatchSpectrumResult:
     @classmethod
     def _load_zarr(cls, path: Path) -> "BatchSpectrumResult":
         """Load from zarr format."""
-        z = zarr.open(str(path), mode="r")
+        import zarr
         
-        frequencies = np.array(z["frequencies"])
-        spectra_stacked = np.array(z["spectra"])
-        powers_stacked = np.array(z["powers"])
+        # Detect zarr version
+        zarr_major = int(zarr.__version__.split('.')[0])
         
-        # Unstack to lists
-        spectra = [spectra_stacked[i] for i in range(spectra_stacked.shape[0])]
-        powers = [powers_stacked[i] for i in range(powers_stacked.shape[0])]
-        
-        # Load parameters
-        parameters = {}
-        if "parameters" in z:
-            params_group = z["parameters"]
-            for name in params_group.keys():
-                parameters[name] = np.array(params_group[name]).tolist()
-            for name, value in params_group.attrs.items():
-                parameters[name] = json.loads(value)
-        
-        return cls(
-            frequencies=frequencies,
-            spectra=spectra,
-            powers=powers,
-            parameters=parameters,
-            job_paths=z.attrs.get("job_paths", []),
-            dataset_name=z.attrs.get("dataset_name", "m"),
-            z_layer=z.attrs.get("z_layer", -1),
-            config_dict=json.loads(z.attrs.get("config_dict", "{}")),
-        )
+        if zarr_major >= 3:
+            # Zarr v3 API
+            store = zarr.DirectoryStore(str(path))
+            root = zarr.open_group(store=store, mode="r")
+            
+            frequencies = np.array(root["frequencies"][:])
+            spectra_stacked = np.array(root["spectra"][:])
+            powers_stacked = np.array(root["powers"][:])
+            
+            # Unstack to lists
+            spectra = [spectra_stacked[i] for i in range(spectra_stacked.shape[0])]
+            powers = [powers_stacked[i] for i in range(powers_stacked.shape[0])]
+            
+            # Load parameters
+            parameters = {}
+            if "parameters" in root:
+                params_group = root["parameters"]
+                for name in params_group.keys():
+                    parameters[name] = np.array(params_group[name][:]).tolist()
+                for name, value in params_group.attrs.items():
+                    parameters[name] = json.loads(value)
+            
+            return cls(
+                frequencies=frequencies,
+                spectra=spectra,
+                powers=powers,
+                parameters=parameters,
+                job_paths=root.attrs.get("job_paths", []),
+                dataset_name=root.attrs.get("dataset_name", "m"),
+                z_layer=root.attrs.get("z_layer", -1),
+                config_dict=json.loads(root.attrs.get("config_dict", "{}")),
+            )
+        else:
+            # Zarr v2 API
+            z = zarr.open(str(path), mode="r")
+            
+            frequencies = np.array(z["frequencies"])
+            spectra_stacked = np.array(z["spectra"])
+            powers_stacked = np.array(z["powers"])
+            
+            # Unstack to lists
+            spectra = [spectra_stacked[i] for i in range(spectra_stacked.shape[0])]
+            powers = [powers_stacked[i] for i in range(powers_stacked.shape[0])]
+            
+            # Load parameters
+            parameters = {}
+            if "parameters" in z:
+                params_group = z["parameters"]
+                for name in params_group.keys():
+                    parameters[name] = np.array(params_group[name]).tolist()
+                for name, value in params_group.attrs.items():
+                    parameters[name] = json.loads(value)
+            
+            return cls(
+                frequencies=frequencies,
+                spectra=spectra,
+                powers=powers,
+                parameters=parameters,
+                job_paths=z.attrs.get("job_paths", []),
+                dataset_name=z.attrs.get("dataset_name", "m"),
+                z_layer=z.attrs.get("z_layer", -1),
+                config_dict=json.loads(z.attrs.get("config_dict", "{}")),
+            )
     
     def plot_heatmap(
         self,
-        parameter: str,
+        parameter: Optional[str] = None,
         ax: Optional[Any] = None,
         freq_unit: str = "GHz",
         fmin: Optional[float] = None,
@@ -351,8 +508,9 @@ class BatchSpectrumResult:
         
         Parameters
         ----------
-        parameter : str
-            Parameter name for Y-axis
+        parameter : str, optional
+            Parameter name for Y-axis. If None, automatically detects
+            the first parameter with varying values
         ax : matplotlib.axes.Axes, optional
             Existing axes to plot on
         freq_unit : str
@@ -378,6 +536,36 @@ class BatchSpectrumResult:
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
         
+        # Auto-detect parameter if not provided
+        if parameter is None:
+            # Find parameters with varying values
+            varying_params = []
+            for param_name, values in self.parameters.items():
+                unique_values = np.unique([v for v in values if v is not None])
+                if len(unique_values) > 1:
+                    varying_params.append((param_name, len(unique_values)))
+            
+            if not varying_params:
+                raise ValueError(
+                    "No varying parameters found! All extracted parameters have constant values.\n"
+                    f"Available parameters: {list(self.parameters.keys())}\n"
+                    "Hint: Check if parameters were correctly extracted during compute_all()"
+                )
+            
+            # Use the parameter with most unique values (most likely the swapping parameter)
+            varying_params.sort(key=lambda x: x[1], reverse=True)
+            parameter = varying_params[0][0]
+            
+            # Print available parameters
+            print(f"🔍 Auto-detected swapping parameter: '{parameter}'")
+            print(f"\n📊 Available varying parameters:")
+            for param_name, n_unique in varying_params:
+                values = self.get_parameter_values(param_name)
+                print(f"   - {param_name}: {n_unique} unique values "
+                      f"(range: {values.min():.3g} to {values.max():.3g})")
+            print(f"\nUsing '{parameter}' for heatmap Y-axis.")
+            print(f"To use a different parameter, call: result.plot_heatmap(parameter='...')\n")
+        
         # Get frequency scaling
         freq_scales = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
         freq_scale = freq_scales.get(freq_unit, 1e9)
@@ -400,10 +588,20 @@ class BatchSpectrumResult:
         data_matrix = []
         for idx in sort_idx:
             power = self.powers[idx][freq_mask]
+            # Ensure power is 1D
+            if power.ndim > 1:
+                power = power.squeeze()
             data_matrix.append(power)
         
         data_matrix = np.array(data_matrix)
         param_sorted = param_values[sort_idx]
+        
+        # Ensure data_matrix is 2D (n_params, n_freqs)
+        if data_matrix.ndim != 2:
+            raise ValueError(
+                f"Expected 2D data matrix, got shape {data_matrix.shape}. "
+                f"Power spectra should be 1D arrays."
+            )
         
         # Normalize
         if normalize == "per_row":
@@ -425,14 +623,16 @@ class BatchSpectrumResult:
         else:
             fig = ax.figure
         
-        # Plot heatmap
+        # Plot heatmap with parameter on X-axis, frequency on Y-axis
+        # data_matrix shape is (n_params, n_freqs)
+        # We want: X = parameter, Y = frequency
         extent = [
-            frequencies_display[0], frequencies_display[-1],
-            param_sorted[0], param_sorted[-1]
+            param_sorted[0], param_sorted[-1],  # X-axis: parameter
+            frequencies_display[0], frequencies_display[-1]  # Y-axis: frequency
         ]
         
         im = ax.imshow(
-            data_matrix,
+            data_matrix.T,  # Transpose so params are on X, freqs on Y
             aspect="auto",
             origin="lower",
             extent=extent,
@@ -440,8 +640,8 @@ class BatchSpectrumResult:
             **kwargs,
         )
         
-        ax.set_xlabel(f"Frequency ({freq_unit})")
-        ax.set_ylabel(parameter)
+        ax.set_xlabel(parameter)
+        ax.set_ylabel(f"Frequency ({freq_unit})")
         
         if title:
             ax.set_title(title)
@@ -703,7 +903,14 @@ class BatchSpectrum:
         
         # Default parameters to extract
         if extract_parameters is None:
-            extract_parameters = ["B0", "d", "p", "thickness", "period", "bias_field", "bex"]
+            extract_parameters = [
+                # Magnetic field
+                "B0", "Bext", "bex", "bias_field", "applied_field",
+                # Geometry
+                "d", "p", "thickness", "period", "latticeconst",
+                # Angles
+                "phi", "theta", "angle",
+            ]
         
         # Build complete config dictionary for cache key
         config_for_cache = {
@@ -742,7 +949,7 @@ class BatchSpectrum:
         else:
             batch_cache_dir = Path(batch_cache_dir)
         
-        batch_cache_file = batch_cache_dir / f"{batch_key.to_entry_name()}.zarr"
+        batch_cache_file = batch_cache_dir / f"{batch_key.to_entry_name()}.pkl"
         
         # Try to load from cache
         if not force and save_batch and batch_cache_file.exists():
