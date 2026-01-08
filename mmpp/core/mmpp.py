@@ -40,6 +40,7 @@ class MMPP:
         database_name: str = "mmpy_database",
         debug: bool = False,
         log_level: Optional[Union[str, int]] = None,
+        force_rescan: bool = False,
     ):
         """
         Initialize the MMPP.
@@ -57,6 +58,8 @@ class MMPP:
             Enable debug logging (default: False)
         log_level : str or int, optional
             Set specific logging level (overrides debug flag)
+        force_rescan : bool, optional
+            Force rescan of directory even if cache exists (default: False)
         """
         # Configure logging - reconfigure if debug/level specified
         from ..cli.logging_config import setup_mmpp_logging
@@ -99,8 +102,11 @@ class MMPP:
         if self.base_path.endswith(".zarr") and os.path.isdir(self.base_path):
             self._load_single_zarr()
         else:
-            # Try to load existing database
-            if not self._load_database():
+            # Try to load existing database (skip if force_rescan)
+            if force_rescan:
+                log.info("force_rescan=True: Skipping cache and rescanning directory")
+                self.scan(force=True)
+            elif not self._load_database():
                 self.scan()
 
     def _load_single_zarr(self):
