@@ -307,6 +307,68 @@ class BatchSpectrumResult:
             print(f"   (No varying parameters - cannot create heatmap)")
         print(f"{'='*60}\n")
     
+    def _apply_folding(
+        self, 
+        param_values: np.ndarray, 
+        sort_idx: np.ndarray, 
+        folding_period: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Apply folding to angular parameter values.
+        
+        This method replicates data to fill a complete angular period.
+        For example, if data covers 0-90°, it can be folded to 0-360°
+        by exploiting symmetry.
+        
+        Parameters
+        ----------
+        param_values : np.ndarray
+            Original parameter values (e.g., phi values)
+        sort_idx : np.ndarray
+            Sorting indices for param_values
+        folding_period : float
+            Period for folding (e.g., 360 for degrees, 2π for radians)
+            
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            Folded parameter values and corresponding indices
+        """
+        # Normalize values to [0, folding_period)
+        param_normalized = param_values % folding_period
+        
+        # Get unique normalized values and their indices
+        unique_vals = np.unique(param_normalized)
+        n_unique = len(unique_vals)
+        
+        # Calculate range coverage
+        param_range = unique_vals.max() - unique_vals.min()
+        
+        # If already covers full period, no folding needed
+        if param_range >= 0.95 * folding_period:
+            return param_values, sort_idx
+        
+        # Determine number of replications needed
+        n_replications = int(np.ceil(folding_period / param_range))
+        
+        # Create folded parameter values
+        folded_params = []
+        folded_indices = []
+        
+        for i in range(n_replications):
+            offset = i * param_range
+            for val, idx in zip(param_normalized, sort_idx):
+                new_val = (val + offset) % folding_period
+                if new_val < folding_period:
+                    folded_params.append(new_val)
+                    folded_indices.append(idx)
+        
+        # Sort by folded parameter values
+        folded_params = np.array(folded_params)
+        folded_indices = np.array(folded_indices)
+        new_sort_idx = np.argsort(folded_params)
+        
+        return folded_params[new_sort_idx], folded_indices[new_sort_idx]
+    
     def to_stacked_array(self, field: str = "power") -> np.ndarray:
         """Stack all spectra into 2D array.
         
@@ -502,6 +564,7 @@ class BatchSpectrumResult:
         cmap: str = "viridis",
         colorbar: bool = True,
         title: Optional[str] = None,
+        folding: Optional[Union[float, str]] = None,
         **kwargs,
     ) -> Tuple[Any, Any]:
         """Plot 2D heatmap of power spectrum vs parameter.
@@ -527,11 +590,23 @@ class BatchSpectrumResult:
             Show colorbar
         title : str, optional
             Plot title
+        folding : float or "auto", optional
+            For angular parameters (phi, theta, angle), fold/replicate data
+            to cover full range. E.g., folding=360 for degrees, folding=2*np.pi for radians.
+            If "auto", automatically detects units and applies appropriate folding.
             
         Returns
         -------
         Tuple[Figure, Axes]
             Matplotlib figure and axes
+            
+        Examples
+        --------
+        >>> # Auto-fold phi from 0-90° to 0-360°
+        >>> result.plot_heatmap(folding=360)
+        
+        >>> # Auto-detect folding based on units  
+        >>> result.plot_heatmap(folding="auto")
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
@@ -583,6 +658,41 @@ class BatchSpectrumResult:
         # Get parameter values and sort
         param_values = self.get_parameter_values(parameter)
         sort_idx = np.argsort(param_values)
+        
+        # Handle angular folding
+        param_unit = ""
+        angular_params = ["phi", "theta", "angle", "psi", "alpha", "beta", "gamma"]
+        is_angular = parameter.lower() in angular_params
+        
+        if folding is not None and is_angular:
+            # Auto-detect units if folding="auto"
+            if isinstance(folding, str) and folding.lower() == "auto":
+                max_val = param_values.max()
+                if max_val <= 7:  # Likely radians (2π ≈ 6.28)
+                    folding_period = 2 * np.pi
+                    param_unit = " (rad)"
+                else:  # Likely degrees
+                    folding_period = 360.0
+                    param_unit = " (°)"
+            else:
+                folding_period = float(folding)
+                # Detect units from folding value
+                if folding_period <= 7:
+                    param_unit = " (rad)"
+                else:
+                    param_unit = " (°)"
+            
+            # Apply folding
+            param_values, sort_idx = self._apply_folding(
+                param_values, sort_idx, folding_period
+            )
+        elif is_angular:
+            # Just add unit label even without folding
+            max_val = param_values.max()
+            if max_val <= 7:
+                param_unit = " (rad)"
+            else:
+                param_unit = " (°)"
         
         # Build 2D data matrix
         data_matrix = []
@@ -640,7 +750,7 @@ class BatchSpectrumResult:
             **kwargs,
         )
         
-        ax.set_xlabel(parameter)
+        ax.set_xlabel(f"{parameter}{param_unit}")
         ax.set_ylabel(f"Frequency ({freq_unit})")
         
         if title:
