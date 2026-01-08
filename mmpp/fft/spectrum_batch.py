@@ -489,7 +489,46 @@ class BatchSpectrum:
         self.dataset_name = dataset_name
         self.slice_info = slice_info
     
-    def __call__(
+    def __call__(self, **kwargs) -> BatchSpectrumResult:
+        """Compute spectrum for all results in batch.
+        
+        This enables the fluent API (analogous to batch transmission):
+            result = jobs[:].m_layer13[:, ..., 0:1].fft.spectrum(
+                filter_type=["remove_mean", "remove_static"],
+                window_function="hann",
+                component_weights=(1, 0, 0),
+                use_cache=True,
+                save=True,
+                ...
+            )
+        
+        Parameters
+        ----------
+        **kwargs
+            All arguments are forwarded to compute_all()
+            
+        Returns
+        -------
+        BatchSpectrumResult
+            Batch spectrum result container with heatmap plotting capabilities
+            
+        Examples
+        --------
+        >>> # Compute batch spectrum with caching
+        >>> result = jobs[:].m_layer13[:, ..., 0:1].fft.spectrum(
+        ...     filter_type=["remove_mean", "remove_static"],
+        ...     window_function="hann",
+        ...     component_weights=(1, 0, 0),
+        ...     use_cache=True,
+        ...     save=True,
+        ...     extract_parameters=["B0", "d"],
+        ... )
+        >>> # Plot heatmap
+        >>> result.plot_heatmap("B0", fmax=50)
+        """
+        return self.compute_all(**kwargs)
+    
+    def overlay(
         self,
         force: bool = False,
         filter_type: Optional[List[str]] = None,
@@ -498,8 +537,8 @@ class BatchSpectrum:
     ) -> "MultiSpectrumResult":
         """Compute spectra for all jobs and return MultiSpectrumResult for overlay plotting.
         
-        This enables the fluent API:
-            job[:].m[...,2].fft.spectrum().plot_spectrum()
+        This method is useful when you want to plot multiple spectra overlaid
+        on a single figure with auto-generated labels.
         
         Parameters
         ----------
@@ -516,6 +555,12 @@ class BatchSpectrum:
         -------
         MultiSpectrumResult
             Collection of spectra with .plot() method for overlay visualization
+            
+        Examples
+        --------
+        >>> # Compute and plot overlaid spectra
+        >>> multi = jobs[:10].m[..., 2].fft.spectrum.overlay()
+        >>> multi.plot(freq_unit="GHz", log_scale=True)
         """
         from .core import SpectrumResult, MultiSpectrumResult
         
@@ -557,6 +602,20 @@ class BatchSpectrum:
         z_layer: int = -1,
         method: int = 1,
         slice_info: Optional[Any] = None,
+        # FFT configuration options
+        filter_type: Optional[List[str]] = None,
+        window_function: str = "none",
+        component_weights: tuple = (1, 0, 0),
+        normalize: str = "none",
+        engine: str = "auto",
+        # Peak detection
+        find_peaks: Optional[dict] = None,
+        # Time/frequency filtering
+        tmin: Optional[int] = None,
+        tmax: Optional[int] = None,
+        fmin: Optional[float] = None,
+        fmax: Optional[float] = None,
+        # Batch execution control
         parallel: bool = True,
         max_workers: Optional[int] = None,
         use_cache: bool = True,
@@ -572,37 +631,69 @@ class BatchSpectrum:
         Parameters
         ----------
         dataset_name : str, optional
-            Dataset name to use
-        z_layer : int
-            Z-layer index (default: -1)
-        method : int
-            FFT method (default: 1)
+            Dataset name to use (e.g., 'm_layer13')
+        z_layer : int, default=-1
+            Z-layer index
+        method : int, default=1
+            FFT method
         slice_info : Any, optional
             Slice information for data subsetting
-        parallel : bool
-            Use parallel processing (default: True)
+        filter_type : list[str], optional
+            Filters to apply before FFT (e.g., ["remove_mean", "remove_static"])
+        window_function : str, default="none"
+            Temporal window function: "none", "hann", "hamming", "blackman", etc.
+        component_weights : tuple, default=(1, 0, 0)
+            Component weights for magnetization (mx, my, mz)
+        normalize : str, default="none"
+            Normalization mode
+        engine : str, default="auto"
+            FFT engine: "auto", "numpy", "scipy"
+        find_peaks : dict, optional
+            Peak detection parameters (e.g., {'height': 0.1, 'prominence': 0.05})
+        tmin, tmax : int, optional
+            Time range limits in indices (for temporal slicing)
+        fmin, fmax : float, optional
+            Frequency range limits in Hz (for post-FFT filtering)
+        parallel : bool, default=True
+            Use parallel processing
         max_workers : int, optional
-            Max worker threads (None for auto)
-        use_cache : bool
-            Use individual result caching (default: True)
-        save : bool
-            Save individual results to cache (default: True)
-        force : bool
-            Force recomputation (default: False)
+            Max worker threads (None for auto-detect)
+        use_cache : bool, default=True
+            Use individual result caching
+        save : bool, default=True
+            Save individual results to cache
+        force : bool, default=False
+            Force recomputation (ignore cache)
         extract_parameters : List[str], optional
-            Parameters to extract from job attributes
-        save_batch : bool
-            Save entire batch result (default: True)
+            Parameter names to extract from job attributes for plotting
+        save_batch : bool, default=True
+            Save entire batch result for future loading
         batch_cache_dir : str or Path, optional
             Directory for batch cache files
         **kwargs
-            Additional FFT configuration options
+            Additional FFT configuration options passed to FFT.spectrum()
             
         Returns
         -------
         BatchSpectrumResult
             Container with all computed results and parameters,
             accessible via batch[0], batch[1], etc.
+            
+        Examples
+        --------
+        >>> # Compute batch spectrum with full configuration
+        >>> result = jobs[:].m_layer13[:, ..., 0:1].fft.spectrum.compute_all(
+        ...     filter_type=["remove_mean", "remove_static"],
+        ...     window_function="hann",
+        ...     component_weights=(1, 0, 0),
+        ...     extract_parameters=["B0", "d"],
+        ...     fmin=5e9,
+        ...     fmax=25e9,
+        ...     use_cache=True,
+        ...     save=True,
+        ... )
+        >>> # Plot heatmap
+        >>> result.plot_heatmap("B0", fmax=50)
         """
         from ..fft import FFT
         
@@ -614,12 +705,29 @@ class BatchSpectrum:
         if extract_parameters is None:
             extract_parameters = ["B0", "d", "p", "thickness", "period", "bias_field", "bex"]
         
+        # Build complete config dictionary for cache key
+        config_for_cache = {
+            "filter_type": filter_type,
+            "window_function": window_function,
+            "component_weights": component_weights,
+            "normalize": normalize,
+            "engine": engine,
+            "find_peaks": find_peaks,
+            "tmin": tmin,
+            "tmax": tmax,
+            "fmin": fmin,
+            "fmax": fmax,
+            "z_layer": z_layer,
+            "method": method,
+            **kwargs,
+        }
+        
         # Generate batch cache key
         batch_key = CacheKey.for_batch(
             analysis_type="batch_spectrum",
             job_paths=[r.path for r in self.results],
             dataset_name=active_dataset or "m",
-            config=kwargs,
+            config=config_for_cache,
             slice_info=active_slice,
             extract_parameters=extract_parameters,
         )
@@ -674,7 +782,7 @@ class BatchSpectrum:
                 
                 fft_analyzer = FFT(result, self.mmpp_ref)
                 
-                # Compute spectrum
+                # Compute spectrum with all parameters
                 freqs, spectrum = fft_analyzer.spectrum(
                     dset=active_dataset,
                     z_layer=z_layer,
@@ -682,6 +790,16 @@ class BatchSpectrum:
                     slice_info=active_slice,
                     save=save,
                     force=force,
+                    filter_type=filter_type,
+                    window_function=window_function,
+                    component_weights=component_weights,
+                    normalize=normalize,
+                    engine=engine,
+                    find_peaks=find_peaks,
+                    tmin=tmin,
+                    tmax=tmax,
+                    fmin=fmin,
+                    fmax=fmax,
                     **kwargs,
                 )
                 
@@ -824,7 +942,7 @@ class BatchSpectrum:
             powers=computed_powers,
             parameters=parameters,
             job_paths=job_paths,
-            config_dict=kwargs,
+            config_dict=config_for_cache,
             dataset_name=active_dataset or "m",
             z_layer=z_layer,
         )
@@ -843,4 +961,5 @@ class BatchSpectrum:
 __all__ = [
     "BatchSpectrum",
     "BatchSpectrumResult",
+    "SpectrumEntry",
 ]
