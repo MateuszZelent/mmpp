@@ -795,6 +795,7 @@ class BatchSpectrumResult:
         marker: str = 'o',
         color: str = 'cyan',
         s: float = 36,
+        alpha: float = 1.0,
         error_color: Optional[str] = None,
         error_linewidth: float = 1.5,
         label: str = 'Experimental',
@@ -829,6 +830,9 @@ class BatchSpectrumResult:
             Marker face color, default 'cyan'
         s : float
             Marker size (area in points^2), default 36
+        alpha : float
+            Transparency of markers and error bars (0.0-1.0), default 1.0
+            0.0 = fully transparent, 1.0 = fully opaque
         error_color : str, optional
             Error bar color. If None, uses same as marker color
         error_linewidth : float
@@ -945,6 +949,7 @@ class BatchSpectrumResult:
             angles, fres, yerr=fres_err,
             fmt=marker, color=color, markersize=markersize,
             markeredgecolor='black', markeredgewidth=0.5,
+            alpha=alpha,
             ecolor=error_color, elinewidth=error_linewidth, capsize=3,
             label=label + field_info, zorder=10
         )
