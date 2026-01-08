@@ -172,6 +172,96 @@ class MMPP:
         """Make MMPP iterable."""
         return iter(self.zarr_results)
 
+    def __repr__(self) -> str:
+        """Return concise text representation for console."""
+        n_results = len(self.zarr_results)
+        path_display = self.base_path
+        if len(path_display) > 60:
+            path_display = "..." + path_display[-57:]
+        
+        if n_results == 0:
+            return f"<MMPP: {path_display} (empty)>"
+        
+        return f"<MMPP: {path_display} | {n_results} result{'s' if n_results != 1 else ''}>"
+
+    def _repr_html_(self) -> str:
+        """Return rich HTML representation for Jupyter notebooks."""
+        n_results = len(self.zarr_results)
+        
+        # Base info
+        html = '<div style="font-family: Arial, sans-serif; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; margin: 10px 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">'
+        html += '<h3 style="margin: 0 0 10px 0; color: white;">📊 MMPP Job Manager</h3>'
+        html += f'<div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; margin-bottom: 10px;">'
+        html += f'<b>Path:</b> <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">{self.base_path}</code><br>'
+        html += f'<b>Results:</b> {n_results} zarr file{"s" if n_results != 1 else ""}'
+        html += '</div>'
+        
+        if n_results == 0:
+            html += '<div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">'
+            html += '⚠️ No simulation results found. Check path or run scan.'
+            html += '</div></div>'
+            return html
+        
+        # Get parameter statistics
+        param_stats = self._get_parameter_stats()
+        
+        if param_stats:
+            html += '<div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; margin-bottom: 10px;">'
+            html += '<b>📋 Parameters:</b><br>'
+            html += '<table style="width: 100%; margin-top: 5px; border-collapse: collapse;">'
+            html += '<tr style="background: rgba(255,255,255,0.1);"><th style="text-align:left; padding: 5px;">Parameter</th><th style="text-align:left; padding: 5px;">Unique Values</th><th style="text-align:left; padding: 5px;">Range</th></tr>'
+            
+            for param, info in list(param_stats.items())[:10]:  # Show max 10 parameters
+                unique_count = info['unique']
+                if unique_count > 1:
+                    range_str = f"{info['min']:.4g} → {info['max']:.4g}"
+                else:
+                    range_str = f"{info['min']:.4g} (constant)"
+                html += f'<tr><td style="padding: 3px 5px;"><code>{param}</code></td><td style="padding: 3px 5px;">{unique_count}</td><td style="padding: 3px 5px;">{range_str}</td></tr>'
+            
+            if len(param_stats) > 10:
+                html += f'<tr><td colspan="3" style="padding: 5px; font-style: italic;">... and {len(param_stats) - 10} more parameters</td></tr>'
+            
+            html += '</table></div>'
+        
+        # Available methods
+        html += '<div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">'
+        html += '<b>🔧 Quick Start:</b><br>'
+        html += '<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; display: inline-block; margin: 3px;">job.find(param=value)</code> '
+        html += '<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; display: inline-block; margin: 3px;">job.columns</code> '
+        html += '<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; display: inline-block; margin: 3px;">job[0].m</code> '
+        html += '<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; display: inline-block; margin: 3px;">job[:].m.mpl</code><br>'
+        html += '<small>Use <code>job.columns</code> to see all available parameters for filtering</small>'
+        html += '</div></div>'
+        
+        return html
+
+    def _get_parameter_stats(self) -> dict:
+        """Get statistics about parameter values across all results."""
+        if self.df.empty:
+            return {}
+        
+        stats = {}
+        # Focus on numeric columns that vary
+        numeric_cols = self.df.select_dtypes(include=['number']).columns
+        
+        for col in numeric_cols:
+            if col == 'path':
+                continue
+            try:
+                values = self.df[col].dropna()
+                if len(values) > 0:
+                    stats[col] = {
+                        'unique': values.nunique(),
+                        'min': values.min(),
+                        'max': values.max()
+                    }
+            except:
+                continue
+        
+        # Sort by number of unique values (descending) - varying parameters first
+        return dict(sorted(stats.items(), key=lambda x: x[1]['unique'], reverse=True))
+
     @property
     def mpl(self) -> "MMPPlotter":
         """Get matplotlib plotter for all results."""
