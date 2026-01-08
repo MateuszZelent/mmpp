@@ -6,6 +6,7 @@ import pickle
 import re
 import threading
 import warnings
+import uuid
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -188,12 +189,12 @@ class MMPP:
         """Return rich HTML representation for Jupyter notebooks."""
         n_results = len(self.zarr_results)
         
-        # Base info
-        html = '<div style="font-family: Arial, sans-serif; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; margin: 10px 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">'
-        html += '<h3 style="margin: 0 0 10px 0; color: white;">📊 MMPP Job Manager</h3>'
-        html += f'<div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; margin-bottom: 10px;">'
-        html += f'<b>Path:</b> <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">{self.base_path}</code><br>'
-        html += f'<b>Results:</b> {n_results} zarr file{"s" if n_results != 1 else ""}'
+        # Elegant dark navy-charcoal gradient theme
+        html = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 18px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 25px rgba(0,0,0,0.3), 0 0 0 1px rgba(148,163,184,0.1) inset;">'
+        html += '<h3 style="margin: 0 0 12px 0; color: #f1f5f9; font-weight: 600; letter-spacing: 0.5px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">📊 MMPP Job Manager</h3>'
+        html += f'<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
+        html += f'<b style="color: #94a3b8;">Path:</b> <code style="background: rgba(15,23,42,0.6); padding: 4px 10px; border-radius: 5px; font-family: \'Courier New\', monospace; font-size: 0.9em; color: #cbd5e1; border: 1px solid rgba(71,85,105,0.3);">{self.base_path}</code><br>'
+        html += f'<b style="color: #94a3b8;">Results:</b> <span style="color: #60a5fa; font-weight: 600;">{n_results}</span> <span style="color: #cbd5e1;">zarr file{"s" if n_results != 1 else ""}</span>'
         html += '</div>'
         
         if n_results == 0:
@@ -206,32 +207,49 @@ class MMPP:
         param_stats = self._get_parameter_stats()
         
         if param_stats:
-            html += '<div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; margin-bottom: 10px;">'
-            html += '<b>📋 Parameters:</b><br>'
-            html += '<table style="width: 100%; margin-top: 5px; border-collapse: collapse;">'
-            html += '<tr style="background: rgba(255,255,255,0.1);"><th style="text-align:left; padding: 5px;">Parameter</th><th style="text-align:left; padding: 5px;">Unique Values</th><th style="text-align:left; padding: 5px;">Range</th></tr>'
+            import uuid
+            unique_id = str(uuid.uuid4())[:8]
             
-            for param, info in list(param_stats.items())[:10]:  # Show max 10 parameters
+            html += '<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
+            html += '<b style="color: #94a3b8;">📋 Parameters:</b><br>'
+            html += '<table style="width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 0.9em;">'
+            html += '<tr style="background: linear-gradient(135deg, rgba(71,85,105,0.3) 0%, rgba(51,65,85,0.3) 100%); border-bottom: 2px solid rgba(148,163,184,0.2);"><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Parameter</th><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Unique Values</th><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Range</th></tr>'
+            
+            # Show first 8 parameters
+            for param, info in list(param_stats.items())[:8]:
                 unique_count = info['unique']
                 if unique_count > 1:
                     range_str = f"{info['min']:.4g} → {info['max']:.4g}"
                 else:
                     range_str = f"{info['min']:.4g} (constant)"
-                html += f'<tr><td style="padding: 3px 5px;"><code>{param}</code></td><td style="padding: 3px 5px;">{unique_count}</td><td style="padding: 3px 5px;">{range_str}</td></tr>'
+                html += f'<tr style="border-bottom: 1px solid rgba(71,85,105,0.3);"><td style="padding: 6px 8px;"><code style="background: rgba(15,23,42,0.6); padding: 3px 8px; border-radius: 4px; color: #60a5fa; border: 1px solid rgba(71,85,105,0.3); font-weight: 500;">{param}</code></td><td style="padding: 6px 8px; text-align: center; color: #a5b4fc; font-weight: 600;">{unique_count}</td><td style="padding: 6px 8px; font-family: monospace; color: #cbd5e1;">{range_str}</td></tr>'
             
-            if len(param_stats) > 10:
-                html += f'<tr><td colspan="3" style="padding: 5px; font-style: italic;">... and {len(param_stats) - 10} more parameters</td></tr>'
+            # Add collapsible section for remaining parameters
+            if len(param_stats) > 8:
+                html += f'<tr id="more-params-{unique_id}" style="display: none;">'
+                for param, info in list(param_stats.items())[8:]:
+                    unique_count = info['unique']
+                    if unique_count > 1:
+                        range_str = f"{info['min']:.4g} → {info['max']:.4g}"
+                    else:
+                        range_str = f"{info['min']:.4g} (constant)"
+                    html += f'</tr><tr id="more-params-{unique_id}" style="display: none; border-bottom: 1px solid rgba(71,85,105,0.3);"><td style="padding: 6px 8px;"><code style="background: rgba(15,23,42,0.6); padding: 3px 8px; border-radius: 4px; color: #60a5fa; border: 1px solid rgba(71,85,105,0.3); font-weight: 500;">{param}</code></td><td style="padding: 6px 8px; text-align: center; color: #a5b4fc; font-weight: 600;">{unique_count}</td><td style="padding: 6px 8px; font-family: monospace; color: #cbd5e1;">{range_str}</td></tr>'
+                
+                html += '</table>'
+                html += f'<button onclick="var elems = document.querySelectorAll(\'#more-params-{unique_id}\'); elems.forEach(e => e.style.display = e.style.display === \'none\' ? \'table-row\' : \'none\'); this.textContent = this.textContent.includes(\'Show\') ? \'▲ Hide {len(param_stats) - 8} more parameters\' : \'▼ Show {len(param_stats) - 8} more parameters\';" style="margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, rgba(96,165,250,0.2) 0%, rgba(79,70,229,0.2) 100%); border: 1px solid rgba(96,165,250,0.3); border-radius: 6px; color: #93c5fd; cursor: pointer; font-size: 0.85em; font-weight: 600; transition: all 0.2s; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">▼ Show {len(param_stats) - 8} more parameters</button>'
+            else:
+                html += '</table>'
             
-            html += '</table></div>'
+            html += '</div>'
         
         # Available methods
-        html += '<div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">'
-        html += '<b>🔧 Quick Start:</b><br>'
-        html += '<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; display: inline-block; margin: 3px;">job.find(param=value)</code> '
-        html += '<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; display: inline-block; margin: 3px;">job.columns</code> '
-        html += '<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; display: inline-block; margin: 3px;">job[0].m</code> '
-        html += '<code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; display: inline-block; margin: 3px;">job[:].m.mpl</code><br>'
-        html += '<small>Use <code>job.columns</code> to see all available parameters for filtering</small>'
+        html += '<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
+        html += '<b style="color: #94a3b8;">🔧 Quick Start:</b><br>'
+        html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job.find(param=value)</code> '
+        html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job.columns</code> '
+        html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job[0].m</code> '
+        html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job[:].m.mpl</code><br>'
+        html += '<small style="color: #94a3b8; margin-top: 6px; display: inline-block;">Use <code style="background: rgba(15,23,42,0.6); padding: 2px 6px; border-radius: 3px; color: #93c5fd; border: 1px solid rgba(71,85,105,0.3);">job.columns</code> to see all available parameters for filtering</small>'
         html += '</div></div>'
         
         return html
@@ -380,21 +398,30 @@ class MMPP:
         # This is heuristic and might need adjustment based on specific naming conventions
         
         # Strategy 1: Look for explicit assignments (e.g. Nx=128)
-        assignments = re.findall(r"([a-zA-Z0-9]+)=([a-zA-Z0-9\.]+)", name)
+        assignments = re.findall(r"([a-zA-Z0-9]+)=([a-zA-Z0-9\.\-+eE]+)", name)
         for key, val in assignments:
             try:
                 # Try converting to number
-                if "." in val:
+                if "." in val or "e" in val.lower():
                     params[key] = float(val)
                 else:
                     params[key] = int(val)
             except ValueError:
                 params[key] = val
-                
-        # Strategy 2: Look for patterns like "Nx128" or "T300"
-        # This is risky as it might match random things. 
-        # Better to rely on Pyzfn for accurate metadata from zarr attributes.
-        # Path parsing is secondary/fallback or for organizing.
+        
+        # Strategy 2: Look for underscore-separated key_value patterns (e.g., kc2_60000.0, phi_0.5)
+        # Match pattern: letters followed by underscore and numeric value (including scientific notation)
+        underscore_patterns = re.findall(r"([a-zA-Z][a-zA-Z0-9]*)_([\-+]?[0-9]*\.?[0-9]+(?:[eE][\-+]?[0-9]+)?)", name)
+        for key, val in underscore_patterns:
+            if key not in params:  # Don't override = assignments
+                try:
+                    # Try converting to number
+                    if "." in val or "e" in val.lower():
+                        params[key] = float(val)
+                    else:
+                        params[key] = int(val)
+                except ValueError:
+                    params[key] = val
         
         return params
 
