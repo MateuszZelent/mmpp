@@ -313,11 +313,14 @@ class BatchSpectrumResult:
         sort_idx: np.ndarray, 
         folding_period: float
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Apply folding to angular parameter values.
+        """Apply folding to angular parameter values with mirroring.
         
-        This method replicates data to fill a complete angular period.
-        For example, if data covers 0-90°, it can be folded to 0-360°
-        by exploiting symmetry.
+        This method replicates and mirrors data to fill a complete angular period.
+        For example, if data covers 0-90°, it can be folded to 0-360° by:
+        - 0→90°: original data
+        - 90→180°: mirrored (90←0)
+        - 180→270°: original again
+        - 270→360°: mirrored again
         
         Parameters
         ----------
@@ -333,15 +336,13 @@ class BatchSpectrumResult:
         tuple[np.ndarray, np.ndarray]
             Folded parameter values and corresponding indices
         """
-        # Normalize values to [0, folding_period)
-        param_normalized = param_values % folding_period
-        
-        # Get unique normalized values and their indices
-        unique_vals = np.unique(param_normalized)
-        n_unique = len(unique_vals)
+        # Sort parameter values
+        sorted_params = param_values[sort_idx]
         
         # Calculate range coverage
-        param_range = unique_vals.max() - unique_vals.min()
+        param_min = sorted_params.min()
+        param_max = sorted_params.max()
+        param_range = param_max - param_min
         
         # If already covers full period, no folding needed
         if param_range >= 0.95 * folding_period:
@@ -350,17 +351,27 @@ class BatchSpectrumResult:
         # Determine number of replications needed
         n_replications = int(np.ceil(folding_period / param_range))
         
-        # Create folded parameter values
+        # Create folded parameter values with mirroring
         folded_params = []
         folded_indices = []
         
         for i in range(n_replications):
-            offset = i * param_range
-            for val, idx in zip(param_normalized, sort_idx):
-                new_val = (val + offset) % folding_period
-                if new_val < folding_period:
-                    folded_params.append(new_val)
-                    folded_indices.append(idx)
+            if i % 2 == 0:
+                # Even replication: forward (original order)
+                offset = i * param_range
+                for val, idx in zip(sorted_params, sort_idx):
+                    new_val = val - param_min + offset
+                    if new_val < folding_period:
+                        folded_params.append(new_val)
+                        folded_indices.append(idx)
+            else:
+                # Odd replication: backward (mirrored)
+                offset = (i + 1) * param_range
+                for val, idx in zip(sorted_params[::-1], sort_idx[::-1]):
+                    new_val = offset - (val - param_min)
+                    if new_val < folding_period:
+                        folded_params.append(new_val)
+                        folded_indices.append(idx)
         
         # Sort by folded parameter values
         folded_params = np.array(folded_params)
