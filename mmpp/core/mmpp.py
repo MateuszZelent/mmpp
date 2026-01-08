@@ -446,11 +446,11 @@ class MMPP:
             job = Pyzfn(zarr_path)
             attributes = job.attributes
 
-            # Add path parameters (optional, can override or augment zarr attributes)
+            # Add path parameters - these take precedence as they're explicit in folder structure
             path_params = self._parse_path_parameters(zarr_path)
-            # Zarr attributes take precedence, but we can store path params if needed
-            # For now, let's merge them, with zarr attributes winning
-            full_attributes = {**path_params, **attributes}
+            # Path parameters override zarr attributes (folder structure is explicit metadata)
+            # This ensures parameters like kc2_60000.0 from folder names are preserved
+            full_attributes = {**attributes, **path_params}
 
             return ScanResult(path=zarr_path, attributes=full_attributes)
         except Exception as e:
