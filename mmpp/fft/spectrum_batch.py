@@ -577,6 +577,8 @@ class BatchSpectrumResult:
         title: Optional[str] = None,
         folding: Optional[Union[float, str]] = None,
         verbose: bool = False,
+        dpi: Optional[int] = None,
+        figsize: Optional[Tuple[float, float]] = None,
         **kwargs,
     ) -> Tuple[Any, Any]:
         """Plot 2D heatmap of power spectrum vs parameter.
@@ -608,6 +610,14 @@ class BatchSpectrumResult:
             If "auto", automatically detects units and applies appropriate folding.
         verbose : bool
             Print parameter detection info (default: False)
+        dpi : int, optional
+            DPI (dots per inch) for the figure. Only used when creating new figure (ax=None).
+            Default is matplotlib's default (~100)
+        figsize : tuple of float, optional
+            Figure size (width, height) in inches. Only used when ax=None.
+            Default is (10, 6)
+        **kwargs
+            Additional keyword arguments passed to imshow() (e.g., vmin, vmax, interpolation)
             
         Returns
         -------
@@ -745,9 +755,17 @@ class BatchSpectrumResult:
         if log_scale:
             data_matrix = np.log10(data_matrix + 1e-10)
         
-        # Create figure
+        # Create figure with specified parameters
         if ax is None:
-            fig, ax = plt.subplots(figsize=(10, 6))
+            fig_kwargs = {}
+            if figsize is not None:
+                fig_kwargs['figsize'] = figsize
+            else:
+                fig_kwargs['figsize'] = (10, 6)
+            if dpi is not None:
+                fig_kwargs['dpi'] = dpi
+            
+            fig, ax = plt.subplots(**fig_kwargs)
         else:
             fig = ax.figure
         
