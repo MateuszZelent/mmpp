@@ -211,29 +211,62 @@ class MMPP:
             unique_id = str(uuid.uuid4())[:8]
             
             html += '<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
-            html += '<b style="color: #94a3b8;">📋 Parameters:</b><br>'
+            html += '<b style="color: #94a3b8;">📋 Parameters:</b> <small style="color: #64748b; margin-left: 8px;">(click to see values)</small><br>'
             html += '<table style="width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 0.9em;">'
             html += '<tr style="background: linear-gradient(135deg, rgba(71,85,105,0.3) 0%, rgba(51,65,85,0.3) 100%); border-bottom: 2px solid rgba(148,163,184,0.2);"><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Parameter</th><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Unique Values</th><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Range</th></tr>'
             
             # Show first 8 parameters
-            for param, info in list(param_stats.items())[:8]:
+            for idx, (param, info) in enumerate(list(param_stats.items())[:8]):
                 unique_count = info['unique']
                 if unique_count > 1:
                     range_str = f"{info['min']:.4g} → {info['max']:.4g}"
                 else:
                     range_str = f"{info['min']:.4g} (constant)"
-                html += f'<tr style="border-bottom: 1px solid rgba(71,85,105,0.3);"><td style="padding: 6px 8px;"><code style="background: rgba(15,23,42,0.6); padding: 3px 8px; border-radius: 4px; color: #60a5fa; border: 1px solid rgba(71,85,105,0.3); font-weight: 500;">{param}</code></td><td style="padding: 6px 8px; text-align: center; color: #a5b4fc; font-weight: 600;">{unique_count}</td><td style="padding: 6px 8px; font-family: monospace; color: #cbd5e1;">{range_str}</td></tr>'
+                
+                # Get all unique values for this parameter
+                values_list = sorted(self.df[param].dropna().unique())
+                values_str = ', '.join([f"{v:.6g}" if isinstance(v, (int, float)) else str(v) for v in values_list])
+                param_detail_id = f"param-detail-{unique_id}-{idx}"
+                
+                html += f'<tr style="border-bottom: 1px solid rgba(71,85,105,0.3); cursor: pointer;" onclick="var elem = document.getElementById(\'{param_detail_id}\'); elem.style.display = elem.style.display === \'none\' ? \'table-row\' : \'none\';">'
+                html += f'<td style="padding: 6px 8px;"><code style="background: rgba(15,23,42,0.6); padding: 3px 8px; border-radius: 4px; color: #60a5fa; border: 1px solid rgba(71,85,105,0.3); font-weight: 500;">{param}</code></td>'
+                html += f'<td style="padding: 6px 8px; text-align: center; color: #a5b4fc; font-weight: 600;">{unique_count}</td>'
+                html += f'<td style="padding: 6px 8px; font-family: monospace; color: #cbd5e1;">{range_str}</td>'
+                html += '</tr>'
+                
+                # Hidden row with values
+                html += f'<tr id="{param_detail_id}" style="display: none; background: rgba(15,23,42,0.4);">'
+                html += f'<td colspan="3" style="padding: 8px 12px;">'
+                html += f'<div style="color: #94a3b8; font-size: 0.85em; margin-bottom: 4px;">💡 Copy for find():</div>'
+                html += f'<code style="display: block; background: rgba(15,23,42,0.8); padding: 8px; border-radius: 4px; color: #10b981; font-size: 0.85em; border: 1px solid rgba(71,85,105,0.4); overflow-x: auto; white-space: nowrap;">{param}=[{values_str}]</code>'
+                html += '</td></tr>'
             
             # Add collapsible section for remaining parameters
             if len(param_stats) > 8:
                 html += f'<tr id="more-params-{unique_id}" style="display: none;">'
-                for param, info in list(param_stats.items())[8:]:
+                for idx, (param, info) in enumerate(list(param_stats.items())[8:], start=8):
                     unique_count = info['unique']
                     if unique_count > 1:
                         range_str = f"{info['min']:.4g} → {info['max']:.4g}"
                     else:
                         range_str = f"{info['min']:.4g} (constant)"
-                    html += f'</tr><tr id="more-params-{unique_id}" style="display: none; border-bottom: 1px solid rgba(71,85,105,0.3);"><td style="padding: 6px 8px;"><code style="background: rgba(15,23,42,0.6); padding: 3px 8px; border-radius: 4px; color: #60a5fa; border: 1px solid rgba(71,85,105,0.3); font-weight: 500;">{param}</code></td><td style="padding: 6px 8px; text-align: center; color: #a5b4fc; font-weight: 600;">{unique_count}</td><td style="padding: 6px 8px; font-family: monospace; color: #cbd5e1;">{range_str}</td></tr>'
+                    
+                    # Get all unique values for this parameter
+                    values_list = sorted(self.df[param].dropna().unique())
+                    values_str = ', '.join([f"{v:.6g}" if isinstance(v, (int, float)) else str(v) for v in values_list])
+                    param_detail_id = f"param-detail-{unique_id}-{idx}"
+                    
+                    html += f'</tr><tr id="more-params-{unique_id}" style="display: none; border-bottom: 1px solid rgba(71,85,105,0.3); cursor: pointer;" onclick="var elem = document.getElementById(\'{param_detail_id}\'); elem.style.display = elem.style.display === \'none\' ? \'table-row\' : \'none\';">'
+                    html += f'<td style="padding: 6px 8px;"><code style="background: rgba(15,23,42,0.6); padding: 3px 8px; border-radius: 4px; color: #60a5fa; border: 1px solid rgba(71,85,105,0.3); font-weight: 500;">{param}</code></td>'
+                    html += f'<td style="padding: 6px 8px; text-align: center; color: #a5b4fc; font-weight: 600;">{unique_count}</td>'
+                    html += f'<td style="padding: 6px 8px; font-family: monospace; color: #cbd5e1;">{range_str}</td></tr>'
+                    
+                    # Hidden row with values
+                    html += f'<tr id="{param_detail_id}" style="display: none; background: rgba(15,23,42,0.4);">'
+                    html += f'<td colspan="3" style="padding: 8px 12px;">'
+                    html += f'<div style="color: #94a3b8; font-size: 0.85em; margin-bottom: 4px;">💡 Copy for find():</div>'
+                    html += f'<code style="display: block; background: rgba(15,23,42,0.8); padding: 8px; border-radius: 4px; color: #10b981; font-size: 0.85em; border: 1px solid rgba(71,85,105,0.4); overflow-x: auto; white-space: nowrap;">{param}=[{values_str}]</code>'
+                    html += '</td></tr>'
                 
                 html += '</table>'
                 html += f'<button onclick="var elems = document.querySelectorAll(\'#more-params-{unique_id}\'); elems.forEach(e => e.style.display = e.style.display === \'none\' ? \'table-row\' : \'none\'); this.textContent = this.textContent.includes(\'Show\') ? \'▲ Hide {len(param_stats) - 8} more parameters\' : \'▼ Show {len(param_stats) - 8} more parameters\';" style="margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, rgba(96,165,250,0.2) 0%, rgba(79,70,229,0.2) 100%); border: 1px solid rgba(96,165,250,0.3); border-radius: 6px; color: #93c5fd; cursor: pointer; font-size: 0.85em; font-weight: 600; transition: all 0.2s; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">▼ Show {len(param_stats) - 8} more parameters</button>'
@@ -249,7 +282,7 @@ class MMPP:
         html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job.columns</code> '
         html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job[0].m</code> '
         html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job[:].m.mpl</code><br>'
-        html += '<small style="color: #94a3b8; margin-top: 6px; display: inline-block;">Use <code style="background: rgba(15,23,42,0.6); padding: 2px 6px; border-radius: 3px; color: #93c5fd; border: 1px solid rgba(71,85,105,0.3);">job.columns</code> to see all available parameters for filtering</small>'
+        html += '<small style="color: #94a3b8; margin-top: 6px; display: inline-block;">💡 Tip: Click on any parameter above to see all values and copy for <code style="background: rgba(15,23,42,0.6); padding: 2px 6px; border-radius: 3px; color: #93c5fd; border: 1px solid rgba(71,85,105,0.3);">find()</code></small>'
         html += '</div></div>'
         
         return html
