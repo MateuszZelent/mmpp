@@ -80,7 +80,7 @@ hist.bins: 10
 #
  
 font.family: sans-serif
-font.sans-serif: Arial  # Główna czcionka sans-serif
+font.sans-serif: Arial, DejaVu Sans, Helvetica, sans-serif  # Lista z fallbackami
 font.style: normal
 font.variant: normal
 font.weight: normal

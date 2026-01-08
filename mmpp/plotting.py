@@ -361,25 +361,31 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
         plt.rcParams["font.family"] = "sans-serif"
         plt.rcParams["font.sans-serif"] = ["Arial", "Arimo", "DejaVu Sans", "Helvetica", "sans-serif"]
         
-        # Also set for mathtext
-        plt.rcParams["mathtext.fontset"] = "custom"
-        plt.rcParams["mathtext.rm"] = "Arial"
-        plt.rcParams["mathtext.it"] = "Arial:italic"
-        plt.rcParams["mathtext.bf"] = "Arial:bold"
-
         # Check if Arial is available
         available_fonts = {f.name for f in font_manager.fontManager.ttflist}
+        
         if "Arial" in available_fonts:
+            # Arial available - use custom mathtext with Arial
+            plt.rcParams["mathtext.fontset"] = "custom"
+            plt.rcParams["mathtext.rm"] = "Arial"
+            plt.rcParams["mathtext.it"] = "Arial:italic"
+            plt.rcParams["mathtext.bf"] = "Arial:bold"
             if verbose:
                 log.info("✓ Arial font available for plotting")
         elif "Arimo" in available_fonts:
+            # Arimo available (Arial substitute)
+            plt.rcParams["mathtext.fontset"] = "custom"
+            plt.rcParams["mathtext.rm"] = "Arimo"
+            plt.rcParams["mathtext.it"] = "Arimo:italic"
+            plt.rcParams["mathtext.bf"] = "Arimo:bold"
             if verbose:
                 log.info("✓ Arimo font available (Arial substitute)")
         else:
-            if verbose:
-                log.warning("⚠ Arial not found, using DejaVu Sans")
+            # Fallback to DejaVu Sans (always available in matplotlib)
             plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Helvetica", "sans-serif"]
             plt.rcParams["mathtext.fontset"] = "dejavusans"
+            if verbose:
+                log.info("ℹ Using DejaVu Sans (safe fallback)")
 
         _FONTS_INITIALIZED = True
         return True
@@ -1964,3 +1970,11 @@ class FontUtils:
 
 # Create a fonts instance for backward compatibility
 fonts = FontUtils()
+
+# Auto-initialize custom fonts when module is imported
+# This ensures Arial fonts from mmpp/fonts/ are available immediately
+try:
+    setup_custom_fonts(verbose=False, force=False)
+except Exception:
+    # Silently fail if font setup fails - matplotlib will use defaults
+    pass

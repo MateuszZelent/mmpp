@@ -576,6 +576,7 @@ class BatchSpectrumResult:
         colorbar: bool = True,
         title: Optional[str] = None,
         folding: Optional[Union[float, str]] = None,
+        verbose: bool = False,
         **kwargs,
     ) -> Tuple[Any, Any]:
         """Plot 2D heatmap of power spectrum vs parameter.
@@ -605,6 +606,8 @@ class BatchSpectrumResult:
             For angular parameters (phi, theta, angle), fold/replicate data
             to cover full range. E.g., folding=360 for degrees, folding=2*np.pi for radians.
             If "auto", automatically detects units and applies appropriate folding.
+        verbose : bool
+            Print parameter detection info (default: False)
             
         Returns
         -------
@@ -642,15 +645,16 @@ class BatchSpectrumResult:
             varying_params.sort(key=lambda x: x[1], reverse=True)
             parameter = varying_params[0][0]
             
-            # Print available parameters
-            print(f"🔍 Auto-detected swapping parameter: '{parameter}'")
-            print(f"\n📊 Available varying parameters:")
-            for param_name, n_unique in varying_params:
-                values = self.get_parameter_values(param_name)
-                print(f"   - {param_name}: {n_unique} unique values "
-                      f"(range: {values.min():.3g} to {values.max():.3g})")
-            print(f"\nUsing '{parameter}' for heatmap Y-axis.")
-            print(f"To use a different parameter, call: result.plot_heatmap(parameter='...')\n")
+            # Print available parameters only if verbose
+            if verbose:
+                print(f"🔍 Auto-detected swapping parameter: '{parameter}'")
+                print(f"\n📊 Available varying parameters:")
+                for param_name, n_unique in varying_params:
+                    values = self.get_parameter_values(param_name)
+                    print(f"   - {param_name}: {n_unique} unique values "
+                          f"(range: {values.min():.3g} to {values.max():.3g})")
+                print(f"\nUsing '{parameter}' for heatmap Y-axis.")
+                print(f"To use a different parameter, call: result.plot_heatmap(parameter='...')\n")
         
         # Get frequency scaling
         freq_scales = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
@@ -715,7 +719,10 @@ class BatchSpectrumResult:
             data_matrix.append(power)
         
         data_matrix = np.array(data_matrix)
-        param_sorted = param_values[sort_idx]
+        # After folding, param_values are already sorted folded values
+        # sort_idx contains indices to self.powers (for building data_matrix)
+        # So we just use param_values directly (they're already sorted if folding was applied)
+        param_sorted = param_values if folding is not None and is_angular else param_values[sort_idx]
         
         # Ensure data_matrix is 2D (n_params, n_freqs)
         if data_matrix.ndim != 2:
@@ -766,14 +773,347 @@ class BatchSpectrumResult:
         
         if title:
             ax.set_title(title)
-        else:
-            ax.set_title(f"Power Spectrum vs {parameter}")
+        # Else: no default title (removed auto-generated title)
         
         if colorbar:
             label = "log₁₀(Power)" if log_scale else "Power"
             if normalize != "none":
                 label += f" ({normalize})"
-            fig.colorbar(im, ax=ax, label=label)
+            cbar = fig.colorbar(im, ax=ax, label=label)
+            # Remove outline/frame from colorbar
+            cbar.outline.set_visible(False)
+        
+        return fig, ax
+    
+    def plot_experimental_data(
+        self,
+        peaks: str,
+        errors: str,
+        shift: float = 0.0,
+        target_field: Optional[float] = None,
+        field_tolerance: float = 0.01,
+        marker: str = 'o',
+        color: str = 'cyan',
+        s: float = 36,
+        error_color: Optional[str] = None,
+        error_linewidth: float = 1.5,
+        label: str = 'Experimental',
+        ax: Optional[Any] = None,
+        **heatmap_kwargs
+    ) -> Tuple[Any, Any]:
+        """Plot heatmap with experimental peak positions overlaid.
+        
+        Loads experimental FMR peak data from CSV files and overlays as scatter
+        points with error bars on simulation heatmap. Automatically handles
+        folding replication to match simulation data.
+        
+        Parameters
+        ----------
+        peaks : str
+            Path to CSV file with peak positions. Must contain columns:
+            'Angle (°)', 'Field (T)', 'fres (GHz)', 'FWHM (GHz)', 'phi (rad)'
+        errors : str
+            Path to CSV file with errors. Same structure as peaks file,
+            'fres (GHz)' column contains frequency errors
+        shift : float
+            Angular shift to apply to experimental angles (in radians).
+            Use to align experimental and simulation coordinate systems.
+            Default 0.0 (no shift). Common values: np.pi, np.pi/2
+        target_field : float, optional
+            If provided, only show experimental points for this field value (Tesla)
+        field_tolerance : float
+            Tolerance for field matching (Tesla), default 0.01
+        marker : str
+            Matplotlib marker style, default 'o'
+        color : str
+            Marker face color, default 'cyan'
+        s : float
+            Marker size (area in points^2), default 36
+        error_color : str, optional
+            Error bar color. If None, uses same as marker color
+        error_linewidth : float
+            Error bar line width, default 1.5
+        label : str
+            Legend label for experimental points, default 'Experimental'
+        ax : matplotlib.axes.Axes, optional
+            Existing axes to plot on. If None, creates new figure
+        **heatmap_kwargs
+            Additional arguments passed to plot_heatmap()
+            (e.g., folding, cmap, normalize, fmin, fmax)
+            
+        Returns
+        -------
+        Tuple[Figure, Axes]
+            Matplotlib figure and axes
+            
+        Examples
+        --------
+        >>> result.plot_experimental_data(
+        ...     peaks="peaks.csv",
+        ...     errors="errors.csv",
+        ...     shift=np.pi,
+        ...     target_field=0.2,
+        ...     color='cyan',
+        ...     s=64,
+        ...     folding=2*np.pi,
+        ...     cmap='hot'
+        ... )
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            raise ImportError("Matplotlib required for plotting")
+        
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("Pandas required for loading experimental data")
+        
+        # Load experimental data
+        peaks_df = pd.read_csv(peaks)
+        errors_df = pd.read_csv(errors)
+        
+        exp_data = {
+            'angles_deg': peaks_df['Angle (°)'].values,
+            'angles_rad': peaks_df['phi (rad)'].values,
+            'fields': peaks_df['Field (T)'].values,
+            'fres': peaks_df['fres (GHz)'].values,
+            'fres_err': errors_df['fres (GHz)'].values,
+            'fwhm': peaks_df['FWHM (GHz)'].values
+        }
+        
+        # Create heatmap only if ax not provided
+        if ax is None:
+            fig, ax = self.plot_heatmap(**heatmap_kwargs)
+        else:
+            # Use existing axes - only overlay experimental data
+            fig = ax.figure
+            # Extract folding from kwargs if present (needed for replication)
+            # Don't create new heatmap
+        
+        # Filter by field if requested
+        if target_field is not None:
+            mask = np.abs(exp_data['fields'] - target_field) < field_tolerance
+            angles_deg = exp_data['angles_deg'][mask]
+            fres = exp_data['fres'][mask]
+            fres_err = exp_data['fres_err'][mask]
+            field_info = f" @ {target_field} T"
+        else:
+            angles_deg = exp_data['angles_deg']
+            fres = exp_data['fres']
+            fres_err = exp_data['fres_err']
+            field_info = ""
+        
+        # Convert angles: shift negative to positive (e.g., -180..180 → 0..360), then to radians
+        # Step 1: Shift negative angles (e.g., -180° becomes 0°, -90° becomes 90°, etc.)
+        angles_deg_shifted = np.where(angles_deg < 0, angles_deg + 360, angles_deg)
+        
+        # Step 2: Convert to radians
+        angles_rad = np.deg2rad(angles_deg_shifted)
+        
+        # Step 3: Apply user's shift
+        angles = angles_rad + shift
+        
+        # Handle folding - replicate points to match simulation
+        if 'folding' in heatmap_kwargs:
+            folding = heatmap_kwargs['folding']
+            if folding == 'auto':
+                # Auto-detect units
+                varying_param = self.varying_parameters[0] if self.varying_parameters else None
+                if varying_param and varying_param['name'] in ['phi', 'theta', 'angle']:
+                    values = varying_param['values']
+                    if np.max(values) > 10:
+                        folding = 360
+                    else:
+                        folding = 2 * np.pi
+            
+            if isinstance(folding, (int, float)):
+                # Normalize angles to [0, folding]
+                angles = angles % folding
+                # Replicate with mirroring
+                angles, fres, fres_err = self._replicate_experimental_points(
+                    angles, fres, fres_err, folding
+                )
+        
+        # Set error color
+        if error_color is None:
+            error_color = color
+        
+        # Calculate marker size (convert area to radius for errorbar)
+        markersize = np.sqrt(s / np.pi)
+        
+        # Overlay scatter points with error bars
+        ax.errorbar(
+            angles, fres, yerr=fres_err,
+            fmt=marker, color=color, markersize=markersize,
+            markeredgecolor='black', markeredgewidth=0.5,
+            ecolor=error_color, elinewidth=error_linewidth, capsize=3,
+            label=label + field_info, zorder=10
+        )
+        
+        # Update legend
+        ax.legend(loc='best', framealpha=0.9)
+        
+        return fig, ax
+    
+    def _replicate_experimental_points(
+        self,
+        angles: np.ndarray,
+        fres: np.ndarray,
+        fres_err: np.ndarray,
+        folding: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Replicate experimental points to fill folding period with mirroring.
+        
+        Parameters
+        ----------
+        angles : np.ndarray
+            Angle values
+        fres : np.ndarray
+            Resonance frequencies
+        fres_err : np.ndarray
+            Frequency errors
+        folding : float
+            Folding period
+            
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray, np.ndarray]
+            Replicated angles, frequencies, and errors
+        """
+        angle_min = angles.min()
+        angle_max = angles.max()
+        original_span = angle_max - angle_min
+        
+        # Determine number of replications needed
+        n_copies = int(np.ceil(folding / original_span))
+        
+        # Collect replicated data
+        angles_list = []
+        fres_list = []
+        fres_err_list = []
+        
+        for i in range(n_copies):
+            if i % 2 == 0:
+                # Forward copy
+                new_angles = angles + i * original_span
+            else:
+                # Mirrored copy (backward)
+                new_angles = 2 * (i * original_span + angle_min) - angles + original_span
+            
+            # Only keep points within [0, folding]
+            mask = (new_angles >= 0) & (new_angles < folding)
+            if np.any(mask):
+                angles_list.append(new_angles[mask])
+                fres_list.append(fres[mask])
+                fres_err_list.append(fres_err[mask])
+        
+        # Concatenate all copies
+        if len(angles_list) > 0:
+            angles_rep = np.concatenate(angles_list)
+            fres_rep = np.concatenate(fres_list)
+            fres_err_rep = np.concatenate(fres_err_list)
+        else:
+            angles_rep = angles
+            fres_rep = fres
+            fres_err_rep = fres_err
+        
+        return angles_rep, fres_rep, fres_err_rep
+    
+    def overlay_experimental(
+        self,
+        exp_frequencies: np.ndarray,
+        exp_data: np.ndarray,
+        parameter_value: Optional[float] = None,
+        ax: Optional[Any] = None,
+        label: str = "Experimental",
+        color: str = "red",
+        **plot_kwargs
+    ) -> Tuple[Any, Any]:
+        """Overlay experimental data on spectrum plot.
+        
+        Parameters
+        ----------
+        exp_frequencies : np.ndarray
+            Experimental frequency values (in Hz or same unit as simulation)
+        exp_data : np.ndarray
+            Experimental power/intensity data
+        parameter_value : float, optional
+            Parameter value (e.g., field, angle) for which to plot simulation data.
+            If None, uses first spectrum.
+        ax : matplotlib.axes.Axes, optional
+            Axes to plot on. If None, creates new figure.
+        label : str
+            Label for experimental data in legend
+        color : str
+            Color for experimental data
+        **plot_kwargs : dict
+            Additional kwargs for experimental data plot (linewidth, marker, etc.)
+            
+        Returns
+        -------
+        Tuple[Figure, Axes]
+            Matplotlib figure and axes
+            
+        Examples
+        --------
+        >>> # Load experimental data
+        >>> exp_freq = np.array([...])  # in Hz
+        >>> exp_power = np.array([...])
+        >>> 
+        >>> # Overlay on simulation at specific angle
+        >>> result.overlay_experimental(exp_freq, exp_power, 
+        ...                            parameter_value=0.785,  # phi = 45°
+        ...                            label="Experiment",
+        ...                            color="red")
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            raise ImportError("Matplotlib required for plotting")
+        
+        # Create figure if not provided
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(10, 6))
+        else:
+            fig = ax.figure
+        
+        # Find closest simulation spectrum to parameter_value
+        if parameter_value is not None and self.parameters:
+            # Get first varying parameter
+            param_name = None
+            for name, values in self.parameters.items():
+                if len(np.unique(values)) > 1:
+                    param_name = name
+                    break
+            
+            if param_name:
+                param_values = self.get_parameter_values(param_name)
+                idx = np.argmin(np.abs(param_values - parameter_value))
+            else:
+                idx = 0
+        else:
+            idx = 0
+        
+        # Plot simulation data
+        sim_freq = self.frequencies / 1e9  # Convert to GHz
+        sim_power = self.powers[idx]
+        if sim_power.ndim > 1:
+            sim_power = sim_power.squeeze()
+        
+        ax.plot(sim_freq, sim_power, label="Simulation", color="blue", linewidth=2)
+        
+        # Plot experimental data
+        exp_freq_ghz = exp_frequencies / 1e9  # Convert to GHz if needed
+        default_kwargs = {"linewidth": 1.5, "linestyle": "--", "alpha": 0.8}
+        default_kwargs.update(plot_kwargs)
+        
+        ax.plot(exp_freq_ghz, exp_data, label=label, color=color, **default_kwargs)
+        
+        # Styling
+        ax.set_xlabel("Frequency (GHz)")
+        ax.set_ylabel("Power (a.u.)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        if parameter_value is not None and param_name:
+            ax.set_title(f"{param_name} = {parameter_value:.3f}")
         
         return fig, ax
 
