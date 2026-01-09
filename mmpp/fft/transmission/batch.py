@@ -728,6 +728,522 @@ class BatchTransmissionResult:
 
         return fig, ax, img
 
+    def plot_experimental_data(
+        self,
+        peaks: str,
+        errors: str,
+        shift: float = 0.0,
+        target_field: Optional[float] = None,
+        field_tolerance: float = 0.01,
+        marker: str = 'o',
+        color: str = 'cyan',
+        s: float = 36,
+        error_color: Optional[str] = None,
+        error_linewidth: float = 1.5,
+        label: str = 'Experimental',
+        ax: Optional[Axes] = None,
+        **heatmap_kwargs
+    ) -> tuple:
+        """Plot heatmap with experimental peak positions overlaid.
+        
+        Loads experimental transmission peak data from CSV files and overlays as scatter
+        points with error bars on simulation heatmap. Automatically handles
+        folding replication to match simulation data.
+        
+        Parameters
+        ----------
+        peaks : str
+            Path to CSV file with peak positions. Must contain columns:
+            'Position', 'Field (T)', 'fres (GHz)', 'FWHM (GHz)', 'angle (rad)'
+            (Column names may vary - will auto-detect common formats)
+        errors : str
+            Path to CSV file with errors. Same structure as peaks file,
+            'fres (GHz)' column contains frequency errors
+        shift : float
+            Angular/position shift to apply to experimental data (in radians/meters).
+            Use to align experimental and simulation coordinate systems.
+            Default 0.0 (no shift).
+        target_field : float, optional
+            If provided, only show experimental points for this field value (Tesla)
+        field_tolerance : float
+            Tolerance for field matching (Tesla), default 0.01
+        marker : str
+            Matplotlib marker style, default 'o'
+        color : str
+            Marker face color, default 'cyan'
+        s : float
+            Marker size (area in points^2), default 36
+        error_color : str, optional
+            Error bar color. If None, uses same as marker color
+        error_linewidth : float
+            Error bar line width, default 1.5
+        label : str
+            Legend label for experimental points, default 'Experimental'
+        ax : matplotlib.axes.Axes, optional
+            Existing axes to plot on. If None, creates new figure
+        **heatmap_kwargs
+            Additional arguments passed to plot_transmission_crosssection_heatmap()
+            (e.g., swapping_parameter, x, x_width, cmap, normalize, fmin, fmax)
+            
+        Returns
+        -------
+        tuple
+            (fig, ax, img) - Matplotlib figure, axes, and image object
+            
+        Examples
+        --------
+        >>> # Plot with experimental data overlay
+        >>> fig, ax = result.plot_experimental_data(
+        ...     peaks="peaks.csv",
+        ...     errors="errors.csv",
+        ...     shift=-2.0*np.pi/180,  # Shift by -2 degrees
+        ...     target_field=0.2,
+        ...     color='cyan',
+        ...     s=64,
+        ...     swapping_parameter='bex',
+        ...     x=24700e-9,
+        ...     cmap='hot'
+        ... )
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            raise ImportError("Matplotlib required for plotting")
+        
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("Pandas required for loading experimental data")
+        
+        # Load experimental data
+        peaks_df = pd.read_csv(peaks)
+        errors_df = pd.read_csv(errors)
+        
+        # Auto-detect column names (support various formats)
+        position_col = None
+        for col in ['Position', 'position', 'angle', 'Angle (°)', 'phi (rad)']:
+            if col in peaks_df.columns:
+                position_col = col
+                break
+        if position_col is None:
+            raise ValueError(
+                f"Could not find position column in peaks CSV. "
+                f"Available columns: {list(peaks_df.columns)}"
+            )
+        
+        field_col = None
+        for col in ['Field (T)', 'field', 'Field', 'B0']:
+            if col in peaks_df.columns:
+                field_col = col
+                break
+        
+        freq_col = None
+        for col in ['fres (GHz)', 'fres', 'freq (GHz)', 'frequency']:
+            if col in peaks_df.columns:
+                freq_col = col
+                break
+        if freq_col is None:
+            raise ValueError(
+                f"Could not find frequency column in peaks CSV. "
+                f"Available columns: {list(peaks_df.columns)}"
+            )
+        
+        exp_data = {
+            'positions': peaks_df[position_col].values,
+            'fields': peaks_df[field_col].values if field_col else None,
+            'fres': peaks_df[freq_col].values,
+            'fres_err': errors_df[freq_col].values,
+        }
+        
+        # Create heatmap only if ax not provided
+        if ax is None:
+            fig, ax, img = self.plot_transmission_crosssection_heatmap(**heatmap_kwargs)
+        else:
+            # Use existing axes - only overlay experimental data
+            fig = ax.figure
+            img = None  # No new image created
+        
+        # Filter by field if requested
+        if target_field is not None and exp_data['fields'] is not None:
+            mask = np.abs(exp_data['fields'] - target_field) < field_tolerance
+            positions = exp_data['positions'][mask]
+            fres = exp_data['fres'][mask]
+            fres_err = exp_data['fres_err'][mask]
+            field_info = f" @ {target_field} T"
+        else:
+            positions = exp_data['positions']
+            fres = exp_data['fres']
+            fres_err = exp_data['fres_err']
+            field_info = ""
+        
+        # Apply user's shift
+        positions = positions + shift
+        
+        # Handle folding - replicate points to match simulation
+        # Extract swapping_parameter from heatmap_kwargs to determine if angular data
+        swapping_param = heatmap_kwargs.get('swapping_parameter', '')
+        is_angular = any(substr in swapping_param.lower() for substr in ['angle', 'phi', 'theta'])
+        
+        # Auto-detect folding from position range
+        pos_range = positions.max() - positions.min()
+        if is_angular:
+            # Angular data - check if degrees or radians
+            if pos_range > 10:  # Likely degrees
+                folding = 360.0
+                positions = np.deg2rad(positions)  # Convert to radians
+                folding = 2 * np.pi
+            else:  # Already radians
+                folding = 2 * np.pi
+            
+            # Normalize to [0, folding]
+            positions = positions % folding
+            
+            # Replicate with mirroring
+            positions, fres, fres_err = self._replicate_experimental_points(
+                positions, fres, fres_err, folding
+            )
+        
+        # Set error color
+        if error_color is None:
+            error_color = color
+        
+        # Calculate marker size (convert area to radius for errorbar)
+        markersize = np.sqrt(s / np.pi)
+        
+        # Overlay scatter points with error bars
+        ax.errorbar(
+            positions, fres, yerr=fres_err,
+            fmt=marker, color=color, markersize=markersize,
+            markeredgecolor='black', markeredgewidth=0.5,
+            ecolor=error_color, elinewidth=error_linewidth, capsize=3,
+            label=label + field_info, zorder=10
+        )
+        
+        # Update legend
+        ax.legend(loc='best', framealpha=0.9)
+        
+        return fig, ax, img if img is not None else ax.images[0] if ax.images else None
+    
+    def _replicate_experimental_points(
+        self,
+        positions: np.ndarray,
+        fres: np.ndarray,
+        fres_err: np.ndarray,
+        folding: float
+    ) -> tuple:
+        """Replicate experimental points to fill folding period with mirroring.
+        
+        Parameters
+        ----------
+        positions : np.ndarray
+            Position values (angles or spatial)
+        fres : np.ndarray
+            Resonance frequencies
+        fres_err : np.ndarray
+            Frequency errors
+        folding : float
+            Folding period
+            
+        Returns
+        -------
+        tuple
+            (positions_rep, fres_rep, fres_err_rep) - Replicated arrays
+        """
+        pos_min = positions.min()
+        pos_max = positions.max()
+        original_span = pos_max - pos_min
+        
+        # Determine number of replications needed
+        n_copies = int(np.ceil(folding / original_span))
+        
+        # Collect replicated data
+        pos_list = []
+        fres_list = []
+        fres_err_list = []
+        
+        for i in range(n_copies):
+            if i % 2 == 0:
+                # Forward copy
+                new_pos = positions + i * original_span
+            else:
+                # Mirrored copy (backward)
+                new_pos = 2 * (i * original_span + pos_min) - positions + original_span
+            
+            # Only keep points within [0, folding]
+            mask = (new_pos >= 0) & (new_pos < folding)
+            if np.any(mask):
+                pos_list.append(new_pos[mask])
+                fres_list.append(fres[mask])
+                fres_err_list.append(fres_err[mask])
+        
+        # Concatenate all copies
+        if len(pos_list) > 0:
+            positions_rep = np.concatenate(pos_list)
+            fres_rep = np.concatenate(fres_list)
+            fres_err_rep = np.concatenate(fres_err_list)
+        else:
+            positions_rep = positions
+            fres_rep = fres
+            fres_err_rep = fres_err
+        
+        return positions_rep, fres_rep, fres_err_rep
+
+    def plot_experimental_data(
+        self,
+        peaks: str,
+        errors: str,
+        shift: float = 0.0,
+        target_field: Optional[float] = None,
+        field_tolerance: float = 0.01,
+        marker: str = 'o',
+        color: str = 'cyan',
+        s: float = 36,
+        error_color: Optional[str] = None,
+        error_linewidth: float = 1.5,
+        label: str = 'Experimental',
+        ax: Optional[Axes] = None,
+        **heatmap_kwargs
+    ) -> tuple:
+        """Plot heatmap with experimental peak positions overlaid.
+        
+        Loads experimental transmission peak data from CSV files and overlays as scatter
+        points with error bars on simulation heatmap. Automatically handles
+        folding replication to match simulation data.
+        
+        Parameters
+        ----------
+        peaks : str
+            Path to CSV file with peak positions. Must contain columns:
+            'Position', 'Field (T)', 'fres (GHz)', 'FWHM (GHz)', 'angle (rad)'
+            (Column names may vary - will auto-detect common formats)
+        errors : str
+            Path to CSV file with errors. Same structure as peaks file,
+            'fres (GHz)' column contains frequency errors
+        shift : float
+            Angular/position shift to apply to experimental data (in radians/meters).
+            Use to align experimental and simulation coordinate systems.
+            Default 0.0 (no shift).
+        target_field : float, optional
+            If provided, only show experimental points for this field value (Tesla)
+        field_tolerance : float
+            Tolerance for field matching (Tesla), default 0.01
+        marker : str
+            Matplotlib marker style, default 'o'
+        color : str
+            Marker face color, default 'cyan'
+        s : float
+            Marker size (area in points^2), default 36
+        error_color : str, optional
+            Error bar color. If None, uses same as marker color
+        error_linewidth : float
+            Error bar line width, default 1.5
+        label : str
+            Legend label for experimental points, default 'Experimental'
+        ax : matplotlib.axes.Axes, optional
+            Existing axes to plot on. If None, creates new figure
+        **heatmap_kwargs
+            Additional arguments passed to plot_transmission_crosssection_heatmap()
+            (e.g., swapping_parameter, x, x_width, cmap, normalize, fmin, fmax)
+            
+        Returns
+        -------
+        tuple
+            (fig, ax, img) - Matplotlib figure, axes, and image object
+            
+        Examples
+        --------
+        >>> # Plot with experimental data overlay
+        >>> fig, ax = result.plot_experimental_data(
+        ...     peaks="peaks.csv",
+        ...     errors="errors.csv",
+        ...     shift=-2.0*np.pi/180,  # Shift by -2 degrees
+        ...     target_field=0.2,
+        ...     color='cyan',
+        ...     s=64,
+        ...     swapping_parameter='bex',
+        ...     x=24700e-9,
+        ...     cmap='hot'
+        ... )
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            raise ImportError("Matplotlib required for plotting")
+        
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("Pandas required for loading experimental data")
+        
+        # Load experimental data
+        peaks_df = pd.read_csv(peaks)
+        errors_df = pd.read_csv(errors)
+        
+        # Auto-detect column names (support various formats)
+        position_col = None
+        for col in ['Position', 'position', 'angle', 'Angle (°)', 'phi (rad)']:
+            if col in peaks_df.columns:
+                position_col = col
+                break
+        if position_col is None:
+            raise ValueError(
+                f"Could not find position column in peaks CSV. "
+                f"Available columns: {list(peaks_df.columns)}"
+            )
+        
+        field_col = None
+        for col in ['Field (T)', 'field', 'Field', 'B0']:
+            if col in peaks_df.columns:
+                field_col = col
+                break
+        
+        freq_col = None
+        for col in ['fres (GHz)', 'fres', 'freq (GHz)', 'frequency']:
+            if col in peaks_df.columns:
+                freq_col = col
+                break
+        if freq_col is None:
+            raise ValueError(
+                f"Could not find frequency column in peaks CSV. "
+                f"Available columns: {list(peaks_df.columns)}"
+            )
+        
+        exp_data = {
+            'positions': peaks_df[position_col].values,
+            'fields': peaks_df[field_col].values if field_col else None,
+            'fres': peaks_df[freq_col].values,
+            'fres_err': errors_df[freq_col].values,
+        }
+        
+        # Create heatmap only if ax not provided
+        if ax is None:
+            fig, ax, img = self.plot_transmission_crosssection_heatmap(**heatmap_kwargs)
+        else:
+            # Use existing axes - only overlay experimental data
+            fig = ax.figure
+            img = None  # No new image created
+        
+        # Filter by field if requested
+        if target_field is not None and exp_data['fields'] is not None:
+            mask = np.abs(exp_data['fields'] - target_field) < field_tolerance
+            positions = exp_data['positions'][mask]
+            fres = exp_data['fres'][mask]
+            fres_err = exp_data['fres_err'][mask]
+            field_info = f" @ {target_field} T"
+        else:
+            positions = exp_data['positions']
+            fres = exp_data['fres']
+            fres_err = exp_data['fres_err']
+            field_info = ""
+        
+        # Apply user's shift
+        positions = positions + shift
+        
+        # Handle folding - replicate points to match simulation
+        # Extract swapping_parameter from heatmap_kwargs to determine if angular data
+        swapping_param = heatmap_kwargs.get('swapping_parameter', '')
+        is_angular = any(substr in swapping_param.lower() for substr in ['angle', 'phi', 'theta'])
+        
+        # Auto-detect folding from position range
+        pos_range = positions.max() - positions.min()
+        if is_angular:
+            # Angular data - check if degrees or radians
+            if pos_range > 10:  # Likely degrees
+                folding = 360.0
+                positions = np.deg2rad(positions)  # Convert to radians
+                folding = 2 * np.pi
+            else:  # Already radians
+                folding = 2 * np.pi
+            
+            # Normalize to [0, folding]
+            positions = positions % folding
+            
+            # Replicate with mirroring
+            positions, fres, fres_err = self._replicate_experimental_points(
+                positions, fres, fres_err, folding
+            )
+        
+        # Set error color
+        if error_color is None:
+            error_color = color
+        
+        # Calculate marker size (convert area to radius for errorbar)
+        markersize = np.sqrt(s / np.pi)
+        
+        # Overlay scatter points with error bars
+        ax.errorbar(
+            positions, fres, yerr=fres_err,
+            fmt=marker, color=color, markersize=markersize,
+            markeredgecolor='black', markeredgewidth=0.5,
+            ecolor=error_color, elinewidth=error_linewidth, capsize=3,
+            label=label + field_info, zorder=10
+        )
+        
+        # Update legend
+        ax.legend(loc='best', framealpha=0.9)
+        
+        return fig, ax, img if img is not None else ax.images[0] if ax.images else None
+    
+    def _replicate_experimental_points(
+        self,
+        positions: np.ndarray,
+        fres: np.ndarray,
+        fres_err: np.ndarray,
+        folding: float
+    ) -> tuple:
+        """Replicate experimental points to fill folding period with mirroring.
+        
+        Parameters
+        ----------
+        positions : np.ndarray
+            Position values (angles or spatial)
+        fres : np.ndarray
+            Resonance frequencies
+        fres_err : np.ndarray
+            Frequency errors
+        folding : float
+            Folding period
+            
+        Returns
+        -------
+        tuple
+            (positions_rep, fres_rep, fres_err_rep) - Replicated arrays
+        """
+        pos_min = positions.min()
+        pos_max = positions.max()
+        original_span = pos_max - pos_min
+        
+        # Determine number of replications needed
+        n_copies = int(np.ceil(folding / original_span))
+        
+        # Collect replicated data
+        pos_list = []
+        fres_list = []
+        fres_err_list = []
+        
+        for i in range(n_copies):
+            if i % 2 == 0:
+                # Forward copy
+                new_pos = positions + i * original_span
+            else:
+                # Mirrored copy (backward)
+                new_pos = 2 * (i * original_span + pos_min) - positions + original_span
+            
+            # Only keep points within [0, folding]
+            mask = (new_pos >= 0) & (new_pos < folding)
+            if np.any(mask):
+                pos_list.append(new_pos[mask])
+                fres_list.append(fres[mask])
+                fres_err_list.append(fres_err[mask])
+        
+        # Concatenate all copies
+        if len(pos_list) > 0:
+            positions_rep = np.concatenate(pos_list)
+            fres_rep = np.concatenate(fres_list)
+            fres_err_rep = np.concatenate(fres_err_list)
+        else:
+            positions_rep = positions
+            fres_rep = fres
+            fres_err_rep = fres_err
+        
+        return positions_rep, fres_rep, fres_err_rep
+
     def plot_transmission_crosssection_heatmap_difference(
         self,
         other: "BatchTransmissionResult",
