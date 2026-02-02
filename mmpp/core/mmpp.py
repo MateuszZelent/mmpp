@@ -7,6 +7,7 @@ import re
 import threading
 import warnings
 import uuid
+import numpy as np
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -901,16 +902,40 @@ class MMPP:
                 return PlotterProxy([], self)
             return [] # type: ignore
 
-        # Filter DataFrame
-        query_str = " & ".join([f"{k} == {repr(v)}" for k, v in kwargs.items()])
-        try:
-            filtered_df = self.df.query(query_str)
-        except Exception as e:
-            log.error(f"Query failed: {e}")
-            if PLOTTING_AVAILABLE:
-                return PlotterProxy([], self)
-            return [] # type: ignore
-
+        # Filter DataFrame - use nearest match for numeric values
+        filtered_df = self.df.copy()
+        
+        for key, target_value in kwargs.items():
+            if key not in filtered_df.columns:
+                log.error(f"Column '{key}' not found in database. Available columns: {list(filtered_df.columns)}")
+                if PLOTTING_AVAILABLE:
+                    return PlotterProxy([], self)
+                return [] # type: ignore
+            
+            # Check if column is numeric
+            if pd.api.types.is_numeric_dtype(filtered_df[key]):
+                # Find nearest value for numeric columns
+                column_values = filtered_df[key].values
+                
+                # Handle NaN values
+                valid_mask = ~pd.isna(column_values)
+                if not valid_mask.any():
+                    log.warning(f"All values in column '{key}' are NaN")
+                    filtered_df = filtered_df.iloc[0:0]  # Empty DataFrame
+                    break
+                
+                valid_values = column_values[valid_mask]
+                differences = np.abs(valid_values - target_value)
+                nearest_value = valid_values[np.argmin(differences)]
+                
+                log.info(f"find({key}={target_value}): Using nearest value {nearest_value}")
+                
+                # Filter to rows with nearest value
+                filtered_df = filtered_df[filtered_df[key] == nearest_value]
+            else:
+                # Exact match for non-numeric columns
+                filtered_df = filtered_df[filtered_df[key] == target_value]
+        
         # Get matching ZarrJobResults
         matching_paths = set(filtered_df["path"])
         matching_results = [res for res in self.zarr_results if res.path in matching_paths]
