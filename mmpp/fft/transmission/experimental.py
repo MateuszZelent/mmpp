@@ -350,7 +350,7 @@ def _extract_bias_values_from_columns(columns: list[str]) -> list[tuple[str, Opt
             # Try to convert column name to float
             header_val = float(col)
             # Reverse the formula: if header = 2*B - 1, then B = (header + 1) / 2
-            bias_val = (header_val + 1) / 2
+            bias_val = (header_val) / 2
             bias_values.append((col, bias_val))
         except (ValueError, TypeError):
             # Column header is not numeric
