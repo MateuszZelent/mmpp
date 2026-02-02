@@ -128,7 +128,19 @@ def _make_inset_colorbar(
     # Create the actual colorbar stripe - centered vertically and horizontally
     # Positioned between min/max labels (top) and title (bottom)
     cbar_ax = inset_axes(cbbox, '40%', '10%', loc='center', borderpad=0)
-    cbar = fig.colorbar(image, cax=cbar_ax, orientation="horizontal")
+    
+    # CRITICAL FIX: Create independent mappable without alpha from image
+    # This ensures colorbar is always opaque even when heatmap has alpha=0
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    
+    sm = ScalarMappable(
+        cmap=image.get_cmap(),
+        norm=Normalize(vmin=vmin, vmax=vmax)
+    )
+    sm.set_array([])  # Required for ScalarMappable
+    
+    cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
     cbar.set_ticks([])
     cbar.ax.set_xticklabels([])
     cbar.outline.set_linewidth(0.8)

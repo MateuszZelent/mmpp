@@ -851,29 +851,28 @@ def overlay_transmission_heatmaps(
     ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
     ax.set_title(f"Overlay: Experiment (d={d}, p={p}) + Simulation")
     
-    # Create colorbars
+    # Create colorbars - now independent of alpha values
     if show_colorbars:
         if inset_colorbar:
-            # Experimental colorbar - only show if alpha > 0
-            if exp_alpha > 0.0:
-                _make_inset_colorbar(
-                    ax=ax,
-                    image=im_exp,
-                    fig=fig,
-                    vmin=exp_vmin,
-                    vmax=exp_vmax,
-                    label="Experiment",
-                    width=colorbar_width,
-                    height=colorbar_height,
-                    position=colorbar_position,
-                    bg_alpha=colorbar_bg_alpha,
-                    text_color="white",
-                    fontsize=11,
-                    title_fontsize=12,
-                )
+            # Experimental colorbar - always show (data always loaded)
+            _make_inset_colorbar(
+                ax=ax,
+                image=im_exp,
+                fig=fig,
+                vmin=exp_vmin,
+                vmax=exp_vmax,
+                label="Experiment",
+                width=colorbar_width,
+                height=colorbar_height,
+                position=colorbar_position,
+                bg_alpha=colorbar_bg_alpha,
+                text_color="white",
+                fontsize=11,
+                title_fontsize=12,
+            )
             
-            # Simulation colorbar (if exists) - place in upper corner, only show if alpha > 0
-            if im_sim is not None and sim_data is not None and sim_alpha > 0.0:
+            # Simulation colorbar - only if simulation data exists
+            if im_sim is not None and sim_data is not None:
                 _make_inset_colorbar(
                     ax=ax,
                     image=im_sim,
