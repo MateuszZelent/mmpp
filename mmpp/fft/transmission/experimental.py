@@ -775,10 +775,23 @@ def overlay_transmission_heatmaps(
     try:
         import matplotlib.pyplot as plt
         from matplotlib.colors import Normalize
+        from matplotlib.cm import ScalarMappable
     except ImportError:  # pragma: no cover
         raise RuntimeError("Matplotlib is required for plotting.")
     
     from .plot import _make_inset_colorbar
+    
+    def _to_rgba_uniform_alpha(data: np.ndarray, cmap_name: str, vmin: float, vmax: float, alpha: float) -> np.ndarray:
+        """Convert 2D data to RGBA array with uniform alpha for all pixels."""
+        cmap = plt.get_cmap(cmap_name)
+        # Normalize data to [0, 1]
+        norm = Normalize(vmin=vmin, vmax=vmax)
+        normalized = norm(data)
+        # Convert to RGBA
+        rgba = cmap(normalized)  # (height, width, 4)
+        # Set uniform alpha
+        rgba[..., 3] = alpha
+        return rgba
     
     # Load mmpp style if requested
     if apply_style:
@@ -830,31 +843,29 @@ def overlay_transmission_heatmaps(
         if sim_extent is None:
             sim_extent = exp_extent  # Assume same extent
         
-        # Plot simulation with uniform alpha
+        # Convert to RGBA with uniform alpha (key for proper blending!)
+        sim_rgba = _to_rgba_uniform_alpha(plot_data_sim, sim_cmap, sim_vmin, sim_vmax, sim_alpha)
+        
+        # Plot simulation as RGBA array
         im_sim = ax.imshow(
-            plot_data_sim,
+            sim_rgba,
             aspect="auto",
             origin="lower",
             extent=sim_extent,
-            cmap=sim_cmap,
-            alpha=sim_alpha,  # Uniform alpha for all pixels
             interpolation="bilinear",
-            vmin=sim_vmin,
-            vmax=sim_vmax,
             **imshow_kwargs,
         )
     
-    # Overlay experimental data on top with uniform alpha
+    # Convert experimental data to RGBA with uniform alpha
+    exp_rgba = _to_rgba_uniform_alpha(plot_data_exp, exp_cmap, exp_vmin, exp_vmax, exp_alpha)
+    
+    # Overlay experimental data on top as RGBA array
     im_exp = ax.imshow(
-        plot_data_exp,
+        exp_rgba,
         aspect="auto",
         origin="lower",
         extent=exp_extent,
-        cmap=exp_cmap,
-        alpha=exp_alpha,  # Uniform alpha for all pixels
         interpolation="bilinear",
-        vmin=exp_vmin,
-        vmax=exp_vmax,
         **imshow_kwargs,
     )
     
@@ -863,12 +874,7 @@ def overlay_transmission_heatmaps(
     ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
     ax.set_title(f"Overlay: Experiment (d={d}, p={p}) + Simulation")
     
-    # Create colorbars using ScalarMappable (since images are now RGBA arrays)
-    # This ensures colorbars show the colormap correctly without alpha
-    from matplotlib.cm import ScalarMappable
-    from matplotlib.colors import Normalize
-    
-    # Create ScalarMappables for colorbars (always opaque, using cmap names)
+    # Create ScalarMappables for colorbars (always opaque, independent of image alpha)
     sm_exp = ScalarMappable(
         cmap=plt.get_cmap(exp_cmap),
         norm=Normalize(vmin=exp_vmin, vmax=exp_vmax)
