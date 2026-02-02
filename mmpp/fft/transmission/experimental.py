@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -22,6 +23,66 @@ _FREQUENCY_UNITS = {
     "MHz": 1e6,
     "GHz": 1e9,
 }
+
+_STYLE_LOADED = False
+
+
+def _load_mmpp_style(verbose: bool = False) -> bool:
+    """Load mmpp paper.mplstyle if available.
+    
+    Parameters
+    ----------
+    verbose : bool
+        Whether to print informational messages.
+    
+    Returns
+    -------
+    bool
+        True if style was successfully loaded, False otherwise.
+    """
+    global _STYLE_LOADED
+    
+    if _STYLE_LOADED:
+        return True
+    
+    try:
+        import matplotlib.pyplot as plt
+        
+        # Try to load from package directory
+        package_dir = os.path.dirname(os.path.dirname(__file__))
+        style_path = os.path.join(package_dir, "paper.mplstyle")
+        
+        if os.path.exists(style_path):
+            plt.style.use(style_path)
+            if verbose:
+                print(f"✓ Loaded mmpp paper style from: {style_path}")
+            _STYLE_LOADED = True
+            return True
+        else:
+            # Fallback paths
+            fallback_paths = [
+                "./paper.mplstyle",
+                os.path.expanduser("~/.mmpp/paper.mplstyle"),
+            ]
+            
+            for path in fallback_paths:
+                if os.path.exists(path):
+                    plt.style.use(path)
+                    if verbose:
+                        print(f"✓ Loaded mmpp paper style from: {path}")
+                    _STYLE_LOADED = True
+                    return True
+        
+        if verbose:
+            print(f"⚠ paper.mplstyle not found, using default matplotlib style")
+        _STYLE_LOADED = True
+        return False
+        
+    except Exception as e:
+        if verbose:
+            print(f"Warning: Could not load paper style: {e}")
+        _STYLE_LOADED = True
+        return False
 
 
 def _resolve_frequency_unit(unit: str) -> float:
@@ -420,6 +481,9 @@ def plot_experimental_transmission_heatmap(
     normalize: bool = False,
     cmap: str = "viridis",
     ax: Optional[Axes] = None,
+    inset_colorbar: bool = False,
+    colorbar_kwargs: Optional[dict] = None,
+    apply_style: bool = True,
     **imshow_kwargs: Any,
 ) -> tuple[Axes, Any]:
     """Plot experimental transmission data as a 2D heatmap over frequency and magnetic field.
@@ -446,6 +510,12 @@ def plot_experimental_transmission_heatmap(
         Colormap name for the heatmap (default "viridis").
     ax:
         Matplotlib axes to plot on. If None, creates a new figure.
+    inset_colorbar:
+        If True, places the colorbar inside the plot area (default False).
+    colorbar_kwargs:
+        Additional keyword arguments for colorbar creation.
+    apply_style:
+        If True, automatically loads mmpp paper.mplstyle (default True).
     imshow_kwargs:
         Additional keyword arguments forwarded to imshow.
     
@@ -457,8 +527,13 @@ def plot_experimental_transmission_heatmap(
     """
     try:
         import matplotlib.pyplot as plt
+        from mpl_toolkits.axes_grid1.inset_locator import inset_axes
     except ImportError:  # pragma: no cover
         raise RuntimeError("Matplotlib is required for plotting.")
+    
+    # Load mmpp style if requested
+    if apply_style:
+        _load_mmpp_style(verbose=False)
     
     # Load experimental data
     frequencies, transmission_data, bias_vals = load_experimental_transmission_data(
@@ -480,8 +555,9 @@ def plot_experimental_transmission_heatmap(
             plot_data = plot_data / data_max
     
     # Create axes if not provided
+    creating_new_figure = ax is None
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
     else:
         fig = ax.get_figure()
     
@@ -504,11 +580,26 @@ def plot_experimental_transmission_heatmap(
     ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
     ax.set_title(f"Experimental Transmission Heatmap (d={d}, p={p})")
     
-    # Colorbar
-    cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label("Transmission" + (" (normalized)" if normalize else ""))
+    # Prepare colorbar kwargs
+    if colorbar_kwargs is None:
+        colorbar_kwargs = {}
     
-    fig.tight_layout()
+    # Create colorbar (inset or standard)
+    if inset_colorbar:
+        # Create inset axes for colorbar inside the plot
+        cax = inset_axes(
+            ax,
+            width="3%",
+            height="40%",
+            loc="upper right",
+            borderpad=2.0,
+        )
+        cbar = plt.colorbar(im, cax=cax, **colorbar_kwargs)
+    else:
+        # Standard colorbar outside the plot
+        cbar = plt.colorbar(im, ax=ax, **colorbar_kwargs)
+    
+    cbar.set_label("Transmission" + (" (normalized)" if normalize else ""))
     
     return ax, im
 
