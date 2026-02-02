@@ -131,7 +131,7 @@ def _resolve_data_column(
         return column
 
     if bias_index is not None:
-        label = f"{int(2 * bias_index) + 1}"
+        label = f"{int(2 * bias_index) - 2}"
         if label in dataframe.columns:
             return label
         # Fall back to string without decimal even for integer-like floats
