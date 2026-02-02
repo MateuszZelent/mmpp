@@ -649,6 +649,253 @@ def plot_experimental_transmission_heatmap(
     return ax, im
 
 
+def overlay_transmission_heatmaps(
+    *,
+    ax: Axes,
+    # Experimental data parameters
+    d: Union[int, str],
+    p: Union[int, str],
+    base_path: Union[str, Path] = "experiment",
+    width_tag: str = "w5",
+    freq_filename: str = "freq.txt",
+    freq_file_unit: str = "GHz",
+    target_freq_unit: Optional[str] = None,
+    reverse_frequency: bool = True,
+    exp_normalize: bool = False,
+    # Simulation data (optional - will use what's already on axes)
+    sim_data: Optional[np.ndarray] = None,
+    sim_extent: Optional[tuple] = None,
+    sim_normalize: bool = False,
+    # Overlay control
+    exp_alpha: float = 0.7,
+    sim_alpha: float = 0.5,
+    exp_cmap: str = "Reds",
+    sim_cmap: str = "Blues",
+    blend_mode: str = "overlay",  # 'overlay', 'multiply', 'screen'
+    # Colorbar settings
+    show_colorbars: bool = True,
+    inset_colorbar: bool = True,
+    colorbar_position: str = "lower center",
+    colorbar_width: str = "80%",
+    colorbar_height: str = "22%",
+    colorbar_bg_alpha: float = 0.7,
+    # Other
+    vmin_exp: Optional[float] = None,
+    vmax_exp: Optional[float] = None,
+    vmin_sim: Optional[float] = None,
+    vmax_sim: Optional[float] = None,
+    apply_style: bool = True,
+    **imshow_kwargs: Any,
+) -> tuple[Axes, Any, Any]:
+    """Overlay experimental and simulation transmission heatmaps with alpha blending.
+    
+    Creates a composite visualization by overlaying experimental data on top of
+    simulation data (or vice versa) with controllable transparency for each layer.
+    
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axes to plot on.
+    d, p:
+        Thickness and period values to locate the experimental file.
+    base_path:
+        Directory containing the experimental spectra.
+    width_tag:
+        Suffix that distinguishes measurement geometry (default "w5").
+    freq_filename:
+        File with the experimental frequency vector.
+    freq_file_unit:
+        Unit stored in freq_filename.
+    target_freq_unit:
+        Desired unit for plotting.
+    reverse_frequency:
+        Whether to reverse the frequency axis (default True).
+    exp_normalize:
+        If True, normalizes experimental data to [0, 1].
+    sim_data:
+        Optional simulation data array. If None, uses what's plotted on axes.
+    sim_extent:
+        Optional extent [left, right, bottom, top] for simulation data.
+    sim_normalize:
+        If True, normalizes simulation data to [0, 1].
+    exp_alpha:
+        Transparency for experimental data layer (0-1, default 0.7).
+    sim_alpha:
+        Transparency for simulation data layer (0-1, default 0.5).
+    exp_cmap:
+        Colormap for experimental data (default "Reds").
+    sim_cmap:
+        Colormap for simulation data (default "Blues").
+    blend_mode:
+        Blending mode: 'overlay' (layers), 'multiply', 'screen'.
+    show_colorbars:
+        Whether to show colorbars for both layers.
+    inset_colorbar:
+        Use inset colorbars (default True).
+    colorbar_position, colorbar_width, colorbar_height, colorbar_bg_alpha:
+        Colorbar styling parameters.
+    vmin_exp, vmax_exp:
+        Optional color scale limits for experimental data.
+    vmin_sim, vmax_sim:
+        Optional color scale limits for simulation data.
+    apply_style:
+        If True, loads mmpp paper.mplstyle.
+    imshow_kwargs:
+        Additional arguments forwarded to imshow.
+    
+    Returns
+    -------
+    tuple[Axes, Any, Any]
+        - ax: The matplotlib axes object
+        - im_sim: The simulation image object (or None)
+        - im_exp: The experimental image object
+    
+    Examples
+    --------
+    >>> ax, im_sim, im_exp = overlay_transmission_heatmaps(
+    ...     ax=ax,
+    ...     d=180, p=470,
+    ...     base_path="/path/to/experiment",
+    ...     exp_alpha=0.6,
+    ...     sim_alpha=0.4,
+    ...     exp_cmap="Reds",
+    ...     sim_cmap="Blues",
+    ... )
+    """
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import Normalize
+    except ImportError:  # pragma: no cover
+        raise RuntimeError("Matplotlib is required for plotting.")
+    
+    from .plot import _make_inset_colorbar
+    
+    # Load mmpp style if requested
+    if apply_style:
+        _load_mmpp_style(verbose=False)
+    
+    fig = ax.get_figure()
+    
+    # Load experimental data
+    frequencies, transmission_exp, bias_vals = load_experimental_transmission_data(
+        d=d,
+        p=p,
+        base_path=base_path,
+        width_tag=width_tag,
+        freq_filename=freq_filename,
+        freq_file_unit=freq_file_unit,
+        target_freq_unit=target_freq_unit,
+        reverse_frequency=reverse_frequency,
+    )
+    
+    # Process experimental data
+    plot_data_exp = transmission_exp.copy()
+    if exp_normalize:
+        data_max = np.max(np.abs(plot_data_exp))
+        if data_max > 0:
+            plot_data_exp = plot_data_exp / data_max
+    
+    # Determine experimental extent (reversed Y for correct orientation)
+    exp_extent = [bias_vals[0], bias_vals[-1], frequencies[-1], frequencies[0]]
+    
+    # Determine vmin/vmax for experimental data
+    exp_vmin = vmin_exp if vmin_exp is not None else float(np.min(plot_data_exp))
+    exp_vmax = vmax_exp if vmax_exp is not None else float(np.max(plot_data_exp))
+    
+    # Plot simulation data first (if provided or clear axes)
+    im_sim = None
+    if sim_data is not None:
+        # Process simulation data
+        plot_data_sim = sim_data.copy()
+        if sim_normalize:
+            data_max = np.max(np.abs(plot_data_sim))
+            if data_max > 0:
+                plot_data_sim = plot_data_sim / data_max
+        
+        sim_vmin = vmin_sim if vmin_sim is not None else float(np.min(plot_data_sim))
+        sim_vmax = vmax_sim if vmax_sim is not None else float(np.max(plot_data_sim))
+        
+        # Use provided extent or default
+        if sim_extent is None:
+            sim_extent = exp_extent  # Assume same extent
+        
+        im_sim = ax.imshow(
+            plot_data_sim,
+            aspect="auto",
+            origin="lower",
+            extent=sim_extent,
+            cmap=sim_cmap,
+            alpha=sim_alpha,
+            interpolation="bilinear",
+            vmin=sim_vmin,
+            vmax=sim_vmax,
+            **imshow_kwargs,
+        )
+    
+    # Overlay experimental data on top
+    im_exp = ax.imshow(
+        plot_data_exp,
+        aspect="auto",
+        origin="lower",
+        extent=exp_extent,
+        cmap=exp_cmap,
+        alpha=exp_alpha,
+        interpolation="bilinear",
+        vmin=exp_vmin,
+        vmax=exp_vmax,
+        **imshow_kwargs,
+    )
+    
+    # Labels
+    ax.set_xlabel("Magnetic Field B (arbitrary units)")
+    ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
+    ax.set_title(f"Overlay: Experiment (d={d}, p={p}) + Simulation")
+    
+    # Create colorbars
+    if show_colorbars:
+        if inset_colorbar:
+            # Experimental colorbar
+            _make_inset_colorbar(
+                ax=ax,
+                image=im_exp,
+                fig=fig,
+                vmin=exp_vmin,
+                vmax=exp_vmax,
+                label="Experiment",
+                width=colorbar_width,
+                height=colorbar_height,
+                position=colorbar_position,
+                bg_alpha=colorbar_bg_alpha,
+                text_color="white",
+                fontsize=11,
+                title_fontsize=12,
+            )
+            
+            # Simulation colorbar (if exists) - place in upper corner
+            if im_sim is not None and sim_data is not None:
+                _make_inset_colorbar(
+                    ax=ax,
+                    image=im_sim,
+                    fig=fig,
+                    vmin=sim_vmin if sim_data is not None else 0,
+                    vmax=sim_vmax if sim_data is not None else 1,
+                    label="Simulation",
+                    width="40%",
+                    height="15%",
+                    position="upper right",
+                    bg_alpha=colorbar_bg_alpha,
+                    text_color="white",
+                    fontsize=9,
+                    title_fontsize=10,
+                )
+        else:
+            # Standard colorbars (this gets messy, not recommended)
+            if im_exp is not None:
+                cbar_exp = plt.colorbar(im_exp, ax=ax, label="Experiment")
+    
+    return ax, im_sim, im_exp
+
+
 # Alias for backward compatibility
 overlay_experimental_transmission = overlay_transmission
 
@@ -657,5 +904,6 @@ __all__ = [
     "overlay_experimental_transmission",
     "load_experimental_transmission_data",
     "plot_experimental_transmission_heatmap",
+    "overlay_transmission_heatmaps",
     "_extract_bias_values_from_columns",
 ]
