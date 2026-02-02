@@ -854,25 +854,26 @@ def overlay_transmission_heatmaps(
     # Create colorbars
     if show_colorbars:
         if inset_colorbar:
-            # Experimental colorbar
-            _make_inset_colorbar(
-                ax=ax,
-                image=im_exp,
-                fig=fig,
-                vmin=exp_vmin,
-                vmax=exp_vmax,
-                label="Experiment",
-                width=colorbar_width,
-                height=colorbar_height,
-                position=colorbar_position,
-                bg_alpha=colorbar_bg_alpha,
-                text_color="white",
-                fontsize=11,
-                title_fontsize=12,
-            )
+            # Experimental colorbar - only show if alpha > 0
+            if exp_alpha > 0.0:
+                _make_inset_colorbar(
+                    ax=ax,
+                    image=im_exp,
+                    fig=fig,
+                    vmin=exp_vmin,
+                    vmax=exp_vmax,
+                    label="Experiment",
+                    width=colorbar_width,
+                    height=colorbar_height,
+                    position=colorbar_position,
+                    bg_alpha=colorbar_bg_alpha,
+                    text_color="white",
+                    fontsize=11,
+                    title_fontsize=12,
+                )
             
-            # Simulation colorbar (if exists) - place in upper corner
-            if im_sim is not None and sim_data is not None:
+            # Simulation colorbar (if exists) - place in upper corner, only show if alpha > 0
+            if im_sim is not None and sim_data is not None and sim_alpha > 0.0:
                 _make_inset_colorbar(
                     ax=ax,
                     image=im_sim,
