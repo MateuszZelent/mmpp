@@ -812,8 +812,49 @@ def overlay_transmission_heatmaps(
     exp_vmin = vmin_exp if vmin_exp is not None else float(np.min(plot_data_exp))
     exp_vmax = vmax_exp if vmax_exp is not None else float(np.max(plot_data_exp))
     
+    # Helper function to convert data to RGBA with data-proportional alpha
+    def data_to_rgba(data: np.ndarray, cmap_name: str, vmin: float, vmax: float, 
+                     alpha_scale: float) -> np.ndarray:
+        """Convert 2D data to RGBA array with alpha proportional to data values.
+        
+        Parameters
+        ----------
+        data : np.ndarray
+            2D data array
+        cmap_name : str
+            Name of the colormap
+        vmin, vmax : float
+            Min/max for normalization
+        alpha_scale : float
+            Maximum alpha value (0-1). Alpha channel = normalized_data * alpha_scale
+        
+        Returns
+        -------
+        np.ndarray
+            RGBA array with shape (height, width, 4)
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import Normalize
+        
+        # Get colormap
+        cmap = plt.get_cmap(cmap_name)
+        
+        # Normalize data to [0, 1]
+        norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
+        data_normalized = norm(data)
+        
+        # Get RGB from colormap (returns RGBA but we'll replace alpha)
+        rgba = cmap(data_normalized)  # Shape: (height, width, 4)
+        
+        # Set alpha channel proportional to data value * alpha_scale
+        # Higher data values → more opaque
+        rgba[..., 3] = data_normalized * alpha_scale
+        
+        return rgba
+    
     # Plot simulation data first (if provided or clear axes)
     im_sim = None
+    sim_vmin, sim_vmax = 0, 1  # defaults
     if sim_data is not None:
         # Process simulation data
         plot_data_sim = sim_data.copy()
@@ -829,30 +870,28 @@ def overlay_transmission_heatmaps(
         if sim_extent is None:
             sim_extent = exp_extent  # Assume same extent
         
+        # Convert simulation data to RGBA with data-proportional alpha
+        sim_rgba = data_to_rgba(plot_data_sim, sim_cmap, sim_vmin, sim_vmax, sim_alpha)
+        
         im_sim = ax.imshow(
-            plot_data_sim,
+            sim_rgba,
             aspect="auto",
             origin="lower",
             extent=sim_extent,
-            cmap=sim_cmap,
-            alpha=sim_alpha,
             interpolation="bilinear",
-            vmin=sim_vmin,
-            vmax=sim_vmax,
             **imshow_kwargs,
         )
     
+    # Convert experimental data to RGBA with data-proportional alpha
+    exp_rgba = data_to_rgba(plot_data_exp, exp_cmap, exp_vmin, exp_vmax, exp_alpha)
+    
     # Overlay experimental data on top
     im_exp = ax.imshow(
-        plot_data_exp,
+        exp_rgba,
         aspect="auto",
         origin="lower",
         extent=exp_extent,
-        cmap=exp_cmap,
-        alpha=exp_alpha,
         interpolation="bilinear",
-        vmin=exp_vmin,
-        vmax=exp_vmax,
         **imshow_kwargs,
     )
     
@@ -861,13 +900,32 @@ def overlay_transmission_heatmaps(
     ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
     ax.set_title(f"Overlay: Experiment (d={d}, p={p}) + Simulation")
     
-    # Create colorbars - now independent of alpha values
+    # Create colorbars using ScalarMappable (since images are now RGBA arrays)
+    # This ensures colorbars show the colormap correctly without alpha
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    
+    # Create ScalarMappables for colorbars (always opaque, using cmap names)
+    sm_exp = ScalarMappable(
+        cmap=plt.get_cmap(exp_cmap),
+        norm=Normalize(vmin=exp_vmin, vmax=exp_vmax)
+    )
+    sm_exp.set_array([])
+    
+    sm_sim = None
+    if sim_data is not None:
+        sm_sim = ScalarMappable(
+            cmap=plt.get_cmap(sim_cmap),
+            norm=Normalize(vmin=sim_vmin, vmax=sim_vmax)
+        )
+        sm_sim.set_array([])
+    
     if show_colorbars:
         if inset_colorbar:
-            # Experimental colorbar - always show (data always loaded)
+            # Experimental colorbar
             _make_inset_colorbar(
                 ax=ax,
-                image=im_exp,
+                image=sm_exp,
                 fig=fig,
                 vmin=exp_vmin,
                 vmax=exp_vmax,
@@ -882,13 +940,13 @@ def overlay_transmission_heatmaps(
             )
             
             # Simulation colorbar - only if simulation data exists
-            if im_sim is not None and sim_data is not None:
+            if sm_sim is not None:
                 _make_inset_colorbar(
                     ax=ax,
-                    image=im_sim,
+                    image=sm_sim,
                     fig=fig,
-                    vmin=sim_vmin if sim_data is not None else 0,
-                    vmax=sim_vmax if sim_data is not None else 1,
+                    vmin=sim_vmin,
+                    vmax=sim_vmax,
                     label="Simulation",
                     width="40%",
                     height="15%",
@@ -899,30 +957,11 @@ def overlay_transmission_heatmaps(
                     title_fontsize=10,
                 )
         else:
-            # Standard matplotlib colorbars (side-by-side or stacked)
-            # Use ScalarMappable to avoid alpha inheritance
-            from matplotlib.cm import ScalarMappable
-            from matplotlib.colors import Normalize
-            
-            # Create independent ScalarMappables for each layer
-            sm_exp = ScalarMappable(
-                cmap=im_exp.get_cmap(),
-                norm=Normalize(vmin=exp_vmin, vmax=exp_vmax)
-            )
-            sm_exp.set_array([])
-            
+            # Standard matplotlib colorbars (side-by-side)
             cbar_exp = plt.colorbar(sm_exp, ax=ax, label="Experiment", pad=0.02)
             
             # Simulation colorbar if data exists
-            if im_sim is not None and sim_data is not None:
-                sm_sim = ScalarMappable(
-                    cmap=im_sim.get_cmap(),
-                    norm=Normalize(vmin=sim_vmin, vmax=sim_vmax)
-                )
-                sm_sim.set_array([])
-                
-                # Create second colorbar (this will be on the right side)
-                # Note: This might overlap, which is why inset_colorbar=True is recommended
+            if sm_sim is not None:
                 cbar_sim = plt.colorbar(sm_sim, ax=ax, label="Simulation", pad=0.1)
     
     return ax, im_sim, im_exp

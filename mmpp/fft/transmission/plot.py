@@ -129,16 +129,19 @@ def _make_inset_colorbar(
     # Positioned between min/max labels (top) and title (bottom)
     cbar_ax = inset_axes(cbbox, '40%', '10%', loc='center', borderpad=0)
     
-    # CRITICAL FIX: Create independent mappable without alpha from image
-    # This ensures colorbar is always opaque even when heatmap has alpha=0
+    # Always create fresh ScalarMappable for colorbar
+    # This ensures colorbar is always opaque, independent of any alpha in the image
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
     
+    # Get colormap from the passed object (works for both AxesImage and ScalarMappable)
+    cmap = image.get_cmap()
+    
     sm = ScalarMappable(
-        cmap=image.get_cmap(),
+        cmap=cmap,
         norm=Normalize(vmin=vmin, vmax=vmax)
     )
-    sm.set_array([])  # Required for ScalarMappable
+    sm.set_array([])
     
     cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
     cbar.set_ticks([])
