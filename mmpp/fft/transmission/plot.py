@@ -44,6 +44,7 @@ def _make_inset_colorbar(
     text_color: str = "white",
     fontsize: int = 9,
     title_fontsize: int = 10,
+    decimal_places: int = None,
 ) -> None:
     """Create publication-quality inset colorbar inside plot.
     
@@ -76,9 +77,13 @@ def _make_inset_colorbar(
         Font size for min/max labels
     title_fontsize : int
         Font size for title
+    decimal_places : int, optional
+        Number of decimal places for value formatting. If None, uses smart formatting.
     """
     # Format values smartly
     def format_val(v):
+        if decimal_places is not None:
+            return f"{v:.{decimal_places}f}"
         if v == 0:
             return "0"
         elif abs(v) >= 1000 or abs(v) < 0.01:

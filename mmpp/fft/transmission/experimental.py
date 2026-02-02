@@ -481,8 +481,18 @@ def plot_experimental_transmission_heatmap(
     normalize: bool = False,
     cmap: str = "viridis",
     ax: Optional[Axes] = None,
-    inset_colorbar: bool = False,
-    colorbar_kwargs: Optional[dict] = None,
+    inset_colorbar: bool = True,
+    colorbar_label: Optional[str] = None,
+    colorbar_position: str = "lower center",
+    colorbar_width: str = "80%",
+    colorbar_height: str = "22%",
+    colorbar_bg_alpha: float = 0.7,
+    colorbar_text_color: str = "white",
+    colorbar_fontsize: int = 11,
+    colorbar_title_fontsize: int = 12,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    decimal_places: Optional[int] = None,
     apply_style: bool = True,
     **imshow_kwargs: Any,
 ) -> tuple[Axes, Any]:
@@ -511,9 +521,27 @@ def plot_experimental_transmission_heatmap(
     ax:
         Matplotlib axes to plot on. If None, creates a new figure.
     inset_colorbar:
-        If True, places the colorbar inside the plot area (default False).
-    colorbar_kwargs:
-        Additional keyword arguments for colorbar creation.
+        If True, places a professional inset colorbar inside the plot (default True).
+    colorbar_label:
+        Custom label for the colorbar. If None, uses "Transmission" (or "normalized").
+    colorbar_position:
+        Position of inset colorbar: 'lower center', 'upper center', 'upper right', etc.
+    colorbar_width:
+        Width of inset colorbar as percentage of axes (default "80%").
+    colorbar_height:
+        Height of inset colorbar as percentage of axes (default "22%").
+    colorbar_bg_alpha:
+        Background transparency for inset colorbar (0-1, default 0.7).
+    colorbar_text_color:
+        Text color for colorbar labels (default "white").
+    colorbar_fontsize:
+        Font size for min/max value labels (default 11).
+    colorbar_title_fontsize:
+        Font size for colorbar title (default 12).
+    vmin, vmax:
+        Optional explicit min/max values for color scaling.
+    decimal_places:
+        Optional number of decimal places for colorbar value labels.
     apply_style:
         If True, automatically loads mmpp paper.mplstyle (default True).
     imshow_kwargs:
@@ -530,6 +558,9 @@ def plot_experimental_transmission_heatmap(
         from mpl_toolkits.axes_grid1.inset_locator import inset_axes
     except ImportError:  # pragma: no cover
         raise RuntimeError("Matplotlib is required for plotting.")
+    
+    # Import professional inset colorbar from plot.py
+    from .plot import _make_inset_colorbar
     
     # Load mmpp style if requested
     if apply_style:
@@ -554,8 +585,11 @@ def plot_experimental_transmission_heatmap(
         if data_max > 0:
             plot_data = plot_data / data_max
     
+    # Determine vmin/vmax
+    data_vmin = vmin if vmin is not None else float(np.min(plot_data))
+    data_vmax = vmax if vmax is not None else float(np.max(plot_data))
+    
     # Create axes if not provided
-    creating_new_figure = ax is None
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
     else:
@@ -563,15 +597,19 @@ def plot_experimental_transmission_heatmap(
     
     # Create heatmap
     # extent: [left, right, bottom, top] in data coordinates
-    extent = [bias_vals[0], bias_vals[-1], frequencies[0], frequencies[-1]]
+    # For correct frequency orientation (0 at bottom), we need to reverse the Y extent
+    # because reverse_frequency inverts the data array but we want low freq at bottom
+    extent = [bias_vals[0], bias_vals[-1], frequencies[-1], frequencies[0]]
     
     im = ax.imshow(
         plot_data,
         aspect="auto",
-        origin="lower",
+        origin="lower",  # First row at bottom
         extent=extent,
         cmap=cmap,
         interpolation="bilinear",
+        vmin=data_vmin,
+        vmax=data_vmax,
         **imshow_kwargs,
     )
     
@@ -580,26 +618,33 @@ def plot_experimental_transmission_heatmap(
     ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
     ax.set_title(f"Experimental Transmission Heatmap (d={d}, p={p})")
     
-    # Prepare colorbar kwargs
-    if colorbar_kwargs is None:
-        colorbar_kwargs = {}
+    # Determine colorbar label
+    if colorbar_label is None:
+        colorbar_label = "Transmission" + (" (normalized)" if normalize else "")
     
     # Create colorbar (inset or standard)
     if inset_colorbar:
-        # Create inset axes for colorbar inside the plot
-        cax = inset_axes(
-            ax,
-            width="3%",
-            height="40%",
-            loc="upper right",
-            borderpad=2.0,
+        # Use professional publication-quality inset colorbar
+        _make_inset_colorbar(
+            ax=ax,
+            image=im,
+            fig=fig,
+            vmin=data_vmin,
+            vmax=data_vmax,
+            label=colorbar_label,
+            width=colorbar_width,
+            height=colorbar_height,
+            position=colorbar_position,
+            bg_alpha=colorbar_bg_alpha,
+            text_color=colorbar_text_color,
+            fontsize=colorbar_fontsize,
+            title_fontsize=colorbar_title_fontsize,
+            decimal_places=decimal_places,
         )
-        cbar = plt.colorbar(im, cax=cax, **colorbar_kwargs)
     else:
         # Standard colorbar outside the plot
-        cbar = plt.colorbar(im, ax=ax, **colorbar_kwargs)
-    
-    cbar.set_label("Transmission" + (" (normalized)" if normalize else ""))
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label(colorbar_label)
     
     return ax, im
 
