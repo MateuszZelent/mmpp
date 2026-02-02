@@ -268,10 +268,258 @@ def overlay_transmission(
     return line
 
 
+def _extract_bias_values_from_columns(columns: list[str]) -> list[tuple[str, Optional[float]]]:
+    """Extract bias values from numeric column headers.
+    
+    Parameters
+    ----------
+    columns : list[str]
+        Column names from the experimental data.
+    
+    Returns
+    -------
+    list[tuple[str, Optional[float]]]
+        List of tuples (column_name, bias_value). Bias value is None if the column
+        header is not numeric or cannot be converted using the formula.
+        The formula used is: bias_value = (header_value + 1) / 2 (inverse of 2*B - 1)
+    """
+    bias_values = []
+    for col in columns:
+        try:
+            # Try to convert column name to float
+            header_val = float(col)
+            # Reverse the formula: if header = 2*B - 1, then B = (header + 1) / 2
+            bias_val = (header_val + 1) / 2
+            bias_values.append((col, bias_val))
+        except (ValueError, TypeError):
+            # Column header is not numeric
+            bias_values.append((col, None))
+    
+    return bias_values
+
+
+def load_experimental_transmission_data(
+    *,
+    d: Union[int, str],
+    p: Union[int, str],
+    base_path: Union[str, Path] = "experiment",
+    width_tag: str = "w5",
+    freq_filename: str = "freq.txt",
+    freq_file_unit: str = "GHz",
+    target_freq_unit: Optional[str] = None,
+    reverse_frequency: bool = True,
+) -> tuple[np.ndarray, np.ndarray, list[float]]:
+    """Load experimental transmission data and frequency information.
+    
+    Parameters
+    ----------
+    d, p:
+        Thickness and period values to locate the experimental file.
+    base_path:
+        Directory containing the experimental spectra.
+    width_tag:
+        Suffix that distinguishes measurement geometry (default "w5").
+    freq_filename:
+        File with the experimental frequency vector (default "freq.txt").
+    freq_file_unit:
+        Unit stored in freq_filename ("Hz", "kHz", "MHz" or "GHz").
+    target_freq_unit:
+        Desired unit for plotting. When None, the original unit is used.
+    reverse_frequency:
+        Whether to reverse the frequency axis.
+    
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, list[float]]
+        - frequencies: 1D array of frequency values (MHz, GHz, etc.)
+        - transmission_data: 2D array of shape (n_frequencies, n_bias_points)
+        - bias_values: 1D list of magnetic field values for each column
+    """
+    if target_freq_unit is None:
+        target_freq_unit = freq_file_unit
+    
+    base_path = Path(base_path)
+    
+    # Construct spectra file path
+    if d == 0 and p == 0:
+        spectra_path = base_path / "ref.txt"
+    else:
+        spectra_path = base_path / f"d{d}p{p}_{width_tag}.txt"
+    
+    freq_path = base_path / freq_filename
+    
+    if not spectra_path.exists():
+        raise FileNotFoundError(f"Experimental spectrum '{spectra_path}' not found.")
+    if not freq_path.exists():
+        raise FileNotFoundError(f"Experimental frequency file '{freq_path}' not found.")
+    
+    # Load spectrum data
+    spectrum_df = pd.read_csv(spectra_path, sep="\t")
+    
+    # Extract bias values from column headers
+    col_bias_pairs = _extract_bias_values_from_columns(spectrum_df.columns.tolist())
+    
+    # Separate numeric columns and their corresponding bias values
+    numeric_cols = []
+    bias_vals = []
+    for col, bias in col_bias_pairs:
+        if bias is not None:
+            numeric_cols.append(col)
+            bias_vals.append(bias)
+    
+    if not numeric_cols:
+        raise ValueError(
+            f"No numeric columns found in experimental data. Available columns: {list(spectrum_df.columns)!r}"
+        )
+    
+    # Sort by bias value for consistent ordering
+    sorted_pairs = sorted(zip(numeric_cols, bias_vals), key=lambda x: x[1])
+    numeric_cols, bias_vals = zip(*sorted_pairs)
+    numeric_cols = list(numeric_cols)
+    bias_vals = list(bias_vals)
+    
+    # Extract transmission data (all numeric columns as 2D array)
+    transmission_data = spectrum_df[numeric_cols].to_numpy(dtype=float)
+    
+    # Load frequency data
+    freq_df = pd.read_csv(freq_path)
+    if freq_df.shape[1] != 1:
+        raise ValueError(f"Frequency file '{freq_path}' should contain exactly one column.")
+    frequencies = freq_df.iloc[:, 0].to_numpy(dtype=float)
+    
+    # Apply frequency reversal if requested
+    if reverse_frequency:
+        frequencies = frequencies[::-1]
+        transmission_data = transmission_data[::-1, :]
+    
+    # Convert frequency units
+    from_scale = _resolve_frequency_unit(freq_file_unit)
+    to_scale = _resolve_frequency_unit(target_freq_unit)
+    frequencies = frequencies * from_scale / to_scale
+    
+    # Validate array dimensions
+    if transmission_data.shape[0] != frequencies.shape[0]:
+        raise ValueError(
+            f"Transmission and frequency arrays have different lengths: "
+            f"{transmission_data.shape[0]} vs {frequencies.shape[0]}."
+        )
+    
+    return frequencies, transmission_data, bias_vals
+
+
+def plot_experimental_transmission_heatmap(
+    *,
+    d: Union[int, str],
+    p: Union[int, str],
+    base_path: Union[str, Path] = "experiment",
+    width_tag: str = "w5",
+    freq_filename: str = "freq.txt",
+    freq_file_unit: str = "GHz",
+    target_freq_unit: Optional[str] = None,
+    reverse_frequency: bool = True,
+    normalize: bool = False,
+    cmap: str = "viridis",
+    ax: Optional[Axes] = None,
+    **imshow_kwargs: Any,
+) -> tuple[Axes, Any]:
+    """Plot experimental transmission data as a 2D heatmap over frequency and magnetic field.
+    
+    Parameters
+    ----------
+    d, p:
+        Thickness and period values to locate the experimental file.
+    base_path:
+        Directory containing the experimental spectra (default "experiment").
+    width_tag:
+        Suffix that distinguishes measurement geometry (default "w5").
+    freq_filename:
+        File with the experimental frequency vector (default "freq.txt").
+    freq_file_unit:
+        Unit stored in freq_filename ("Hz", "kHz", "MHz" or "GHz").
+    target_freq_unit:
+        Desired unit for plotting. When None, the original unit is used.
+    reverse_frequency:
+        Whether to reverse the frequency axis (default True).
+    normalize:
+        If True, normalizes the transmission data to [0, 1] range.
+    cmap:
+        Colormap name for the heatmap (default "viridis").
+    ax:
+        Matplotlib axes to plot on. If None, creates a new figure.
+    imshow_kwargs:
+        Additional keyword arguments forwarded to imshow.
+    
+    Returns
+    -------
+    tuple[Axes, Any]
+        - ax: The matplotlib axes object
+        - im: The AxesImage object from imshow
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:  # pragma: no cover
+        raise RuntimeError("Matplotlib is required for plotting.")
+    
+    # Load experimental data
+    frequencies, transmission_data, bias_vals = load_experimental_transmission_data(
+        d=d,
+        p=p,
+        base_path=base_path,
+        width_tag=width_tag,
+        freq_filename=freq_filename,
+        freq_file_unit=freq_file_unit,
+        target_freq_unit=target_freq_unit,
+        reverse_frequency=reverse_frequency,
+    )
+    
+    # Apply normalization if requested
+    plot_data = transmission_data.copy()
+    if normalize:
+        data_max = np.max(np.abs(plot_data))
+        if data_max > 0:
+            plot_data = plot_data / data_max
+    
+    # Create axes if not provided
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+    else:
+        fig = ax.get_figure()
+    
+    # Create heatmap
+    # extent: [left, right, bottom, top] in data coordinates
+    extent = [bias_vals[0], bias_vals[-1], frequencies[0], frequencies[-1]]
+    
+    im = ax.imshow(
+        plot_data,
+        aspect="auto",
+        origin="lower",
+        extent=extent,
+        cmap=cmap,
+        interpolation="bilinear",
+        **imshow_kwargs,
+    )
+    
+    # Labels
+    ax.set_xlabel("Magnetic Field B (arbitrary units)")
+    ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
+    ax.set_title(f"Experimental Transmission Heatmap (d={d}, p={p})")
+    
+    # Colorbar
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label("Transmission" + (" (normalized)" if normalize else ""))
+    
+    fig.tight_layout()
+    
+    return ax, im
+
+
 # Alias for backward compatibility
 overlay_experimental_transmission = overlay_transmission
 
 __all__ = [
     "overlay_transmission",
     "overlay_experimental_transmission",
+    "load_experimental_transmission_data",
+    "plot_experimental_transmission_heatmap",
+    "_extract_bias_values_from_columns",
 ]

@@ -583,9 +583,12 @@ class MMPP:
         """
         Translate virtual container path to host filesystem path.
         
-        Translation rules:
-        - /mnt/local/kkingstoun/{user}/pcss_storage/{rest} -> /mnt/storage_2/scratch/pl0095-01/zelent/{rest}
-        - /mnt/local/kkingstoun/{user}/{rest} -> /mnt/storage_2/scratch/pl0095-01/zelent/{rest}
+        Translation rules (NEW microlab structure):
+        - /mnt/local/kkingstoun/{user}/pcss_storage/{project}/{rest} -> {STORAGE_ROOT}/projects/{project}/{rest}
+        - /mnt/local/kkingstoun/{user}/projects/{project}/{rest} -> {STORAGE_ROOT}/projects/{project}/{rest}
+        - /mnt/local/kkingstoun/{user}/{project}/{rest} -> {STORAGE_ROOT}/projects/{project}/{rest}
+        
+        Also supports legacy storage for backward compatibility.
         
         Parameters:
         -----------
@@ -599,33 +602,66 @@ class MMPP:
         """
         if not path:
             return path
-            
-        STORAGE_ROOT = "/mnt/storage_2/scratch/pl0095-01/zelent"
+        
+        # NEW unified microlab storage structure
+        STORAGE_ROOT = "/mnt/storage_6/project_data/pl0095-01/mateuszz/microlab"
+        # Legacy storage (for backward compatibility)
+        LEGACY_STORAGE_ROOT = "/mnt/storage_2/scratch/pl0095-01/zelent"
         CONTAINER_PREFIX = "/mnt/local/kkingstoun"
         
-        # Already in host format
+        # Already in new host format
         if path.startswith(STORAGE_ROOT):
             return path
-            
+        
+        # Already in legacy host format - check if should be migrated
+        if path.startswith(LEGACY_STORAGE_ROOT):
+            return path  # Keep using legacy path if it exists
+        
         # Not a container path
         if not path.startswith(CONTAINER_PREFIX):
             return path
-            
-        # Handle pcss_storage case:
-        # /mnt/local/kkingstoun/{user}/pcss_storage/{rest} -> /mnt/storage_2/.../zelent/{rest}
-        pcss_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/pcss_storage/(.*)"
+        
+        # Pattern 1: pcss_storage paths (legacy)
+        # /mnt/local/kkingstoun/{user}/pcss_storage/{project}/{rest}
+        pcss_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/pcss_storage/([^/]+)(/.*)?"
         pcss_match = re.match(pcss_pattern, path)
         if pcss_match:
-            rest_of_path = pcss_match.group(1)
-            return f"{STORAGE_ROOT}/{rest_of_path}".replace("//", "/")
+            project = pcss_match.group(1)
+            rest = pcss_match.group(2) or ""
+            new_path = f"{STORAGE_ROOT}/projects/{project}{rest}".replace("//", "/")
+            # Fallback to legacy if new path doesn't exist
+            if not os.path.exists(new_path):
+                legacy_path = f"{LEGACY_STORAGE_ROOT}/{project}{rest}".replace("//", "/")
+                if os.path.exists(legacy_path):
+                    return legacy_path
+            return new_path
         
-        # Standard case:
-        # /mnt/local/kkingstoun/{user}/{rest} -> /mnt/storage_2/.../zelent/{rest}
-        standard_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/(.*)"
+        # Pattern 2: /projects/ paths in container
+        # /mnt/local/kkingstoun/{user}/projects/{project}/{rest}
+        projects_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/projects/([^/]+)(/.*)?"
+        projects_match = re.match(projects_pattern, path)
+        if projects_match:
+            project = projects_match.group(1)
+            rest = projects_match.group(2) or ""
+            return f"{STORAGE_ROOT}/projects/{project}{rest}".replace("//", "/")
+        
+        # Pattern 3: Direct project paths (fallback)
+        # /mnt/local/kkingstoun/{user}/{project}/{rest}
+        standard_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/([^/]+)(/.*)?"
         standard_match = re.match(standard_pattern, path)
         if standard_match:
-            rest_of_path = standard_match.group(1)
-            return f"{STORAGE_ROOT}/{rest_of_path}".replace("//", "/")
+            project_or_subdir = standard_match.group(1)
+            rest = standard_match.group(2) or ""
+            # Skip special directories that are not projects
+            if project_or_subdir in ("pcss_storage", "projects", ".config", ".local", ".cache"):
+                return path  # Don't translate special dirs
+            new_path = f"{STORAGE_ROOT}/projects/{project_or_subdir}{rest}".replace("//", "/")
+            # Fallback to legacy
+            if not os.path.exists(new_path):
+                legacy_path = f"{LEGACY_STORAGE_ROOT}/{project_or_subdir}{rest}".replace("//", "/")
+                if os.path.exists(legacy_path):
+                    return legacy_path
+            return new_path
             
         return path
 
