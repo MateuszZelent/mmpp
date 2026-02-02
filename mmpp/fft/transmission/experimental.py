@@ -812,47 +812,7 @@ def overlay_transmission_heatmaps(
     exp_vmin = vmin_exp if vmin_exp is not None else float(np.min(plot_data_exp))
     exp_vmax = vmax_exp if vmax_exp is not None else float(np.max(plot_data_exp))
     
-    # Helper function to convert data to RGBA with data-proportional alpha
-    def data_to_rgba(data: np.ndarray, cmap_name: str, vmin: float, vmax: float, 
-                     alpha_scale: float) -> np.ndarray:
-        """Convert 2D data to RGBA array with alpha proportional to data values.
-        
-        Parameters
-        ----------
-        data : np.ndarray
-            2D data array
-        cmap_name : str
-            Name of the colormap
-        vmin, vmax : float
-            Min/max for normalization
-        alpha_scale : float
-            Maximum alpha value (0-1). Alpha channel = normalized_data * alpha_scale
-        
-        Returns
-        -------
-        np.ndarray
-            RGBA array with shape (height, width, 4)
-        """
-        import matplotlib.pyplot as plt
-        from matplotlib.colors import Normalize
-        
-        # Get colormap
-        cmap = plt.get_cmap(cmap_name)
-        
-        # Normalize data to [0, 1]
-        norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
-        data_normalized = norm(data)
-        
-        # Get RGB from colormap (returns RGBA but we'll replace alpha)
-        rgba = cmap(data_normalized)  # Shape: (height, width, 4)
-        
-        # Set alpha channel proportional to data value * alpha_scale
-        # Higher data values → more opaque
-        rgba[..., 3] = data_normalized * alpha_scale
-        
-        return rgba
-    
-    # Plot simulation data first (if provided or clear axes)
+    # Plot simulation data first (if provided)
     im_sim = None
     sim_vmin, sim_vmax = 0, 1  # defaults
     if sim_data is not None:
@@ -870,28 +830,31 @@ def overlay_transmission_heatmaps(
         if sim_extent is None:
             sim_extent = exp_extent  # Assume same extent
         
-        # Convert simulation data to RGBA with data-proportional alpha
-        sim_rgba = data_to_rgba(plot_data_sim, sim_cmap, sim_vmin, sim_vmax, sim_alpha)
-        
+        # Plot simulation with uniform alpha
         im_sim = ax.imshow(
-            sim_rgba,
+            plot_data_sim,
             aspect="auto",
             origin="lower",
             extent=sim_extent,
+            cmap=sim_cmap,
+            alpha=sim_alpha,  # Uniform alpha for all pixels
             interpolation="bilinear",
+            vmin=sim_vmin,
+            vmax=sim_vmax,
             **imshow_kwargs,
         )
     
-    # Convert experimental data to RGBA with data-proportional alpha
-    exp_rgba = data_to_rgba(plot_data_exp, exp_cmap, exp_vmin, exp_vmax, exp_alpha)
-    
-    # Overlay experimental data on top
+    # Overlay experimental data on top with uniform alpha
     im_exp = ax.imshow(
-        exp_rgba,
+        plot_data_exp,
         aspect="auto",
         origin="lower",
         extent=exp_extent,
+        cmap=exp_cmap,
+        alpha=exp_alpha,  # Uniform alpha for all pixels
         interpolation="bilinear",
+        vmin=exp_vmin,
+        vmax=exp_vmax,
         **imshow_kwargs,
     )
     
