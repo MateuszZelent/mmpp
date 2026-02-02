@@ -643,7 +643,17 @@ def plot_experimental_transmission_heatmap(
         )
     else:
         # Standard colorbar outside the plot
-        cbar = plt.colorbar(im, ax=ax)
+        # Use ScalarMappable to avoid alpha inheritance
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import Normalize
+        
+        sm = ScalarMappable(
+            cmap=im.get_cmap(),
+            norm=Normalize(vmin=data_vmin, vmax=data_vmax)
+        )
+        sm.set_array([])
+        
+        cbar = plt.colorbar(sm, ax=ax)
         cbar.set_label(colorbar_label)
     
     return ax, im
@@ -889,9 +899,31 @@ def overlay_transmission_heatmaps(
                     title_fontsize=10,
                 )
         else:
-            # Standard colorbars (this gets messy, not recommended)
-            if im_exp is not None:
-                cbar_exp = plt.colorbar(im_exp, ax=ax, label="Experiment")
+            # Standard matplotlib colorbars (side-by-side or stacked)
+            # Use ScalarMappable to avoid alpha inheritance
+            from matplotlib.cm import ScalarMappable
+            from matplotlib.colors import Normalize
+            
+            # Create independent ScalarMappables for each layer
+            sm_exp = ScalarMappable(
+                cmap=im_exp.get_cmap(),
+                norm=Normalize(vmin=exp_vmin, vmax=exp_vmax)
+            )
+            sm_exp.set_array([])
+            
+            cbar_exp = plt.colorbar(sm_exp, ax=ax, label="Experiment", pad=0.02)
+            
+            # Simulation colorbar if data exists
+            if im_sim is not None and sim_data is not None:
+                sm_sim = ScalarMappable(
+                    cmap=im_sim.get_cmap(),
+                    norm=Normalize(vmin=sim_vmin, vmax=sim_vmax)
+                )
+                sm_sim.set_array([])
+                
+                # Create second colorbar (this will be on the right side)
+                # Note: This might overlap, which is why inset_colorbar=True is recommended
+                cbar_sim = plt.colorbar(sm_sim, ax=ax, label="Simulation", pad=0.1)
     
     return ax, im_sim, im_exp
 
