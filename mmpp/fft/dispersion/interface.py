@@ -2079,7 +2079,10 @@ class FFTDispersionInterface:
                 ax.scatter(k_points, f_points, label="COMSOL", **scatter_kwargs)
                 
 
-        plt.tight_layout()
+        try:
+            fig.tight_layout()
+        except Exception:
+            pass  # Skip tight_layout if it conflicts with existing colorbar
 
         # Save if requested
         save_path = None
@@ -2163,7 +2166,10 @@ class FFTDispersionInterface:
         ax2.grid(True, alpha=0.3)
         ax2.axhline(0, color='black', linestyle='--', alpha=0.5)
         
-        plt.tight_layout()
+        try:
+            fig.tight_layout()
+        except Exception:
+            pass  # Skip tight_layout if it conflicts with existing elements
         
         if save:
             plt.savefig(save, dpi=300, bbox_inches='tight')
@@ -2496,7 +2502,10 @@ class FFTDispersionInterface:
 
                 ax.scatter(k_points[::-1], f_points, label="COMSOL", **scatter_kwargs)
 
-        plt.tight_layout()
+        try:
+            fig.tight_layout()
+        except Exception:
+            pass  # Skip tight_layout if it conflicts with existing colorbar
 
         # Save if requested
         save_path = None
