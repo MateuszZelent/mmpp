@@ -86,22 +86,34 @@ class BrillouinZoneDetector:
         
         The idea: if the dispersion has periodicity in k-space (due to BZ folding),
         the autocorrelation will show peaks at multiples of 2π/a.
+        
+        For magnonic crystals:
+        - Typical lattice constants: 100nm - 2000nm
+        - Corresponding BZ widths: 6.3e7 - 3.1e6 rad/m
+        - We want to find the LARGEST significant periodicity (not fine structure)
         """
         S = result.S
         k_axis = result.k_axis
         f_axis = result.f_axis
         
-        # Apply frequency filter if specified
+        # Apply frequency filter - focus on positive frequencies with signal
         if f_range is not None:
             f_mask = (f_axis >= f_range[0]) & (f_axis <= f_range[1])
-            S = S[:, f_mask]
+        else:
+            # Auto select: positive frequencies, above noise floor
+            f_mask = f_axis > 0
+        S = S[:, f_mask]
         
-        # Average over frequency to get k-profile
-        # Weight by intensity to emphasize strong features
-        S_mean = np.sum(S, axis=1)
+        # Get k-profile weighted by log intensity to reduce dynamic range
+        S_positive = np.maximum(S, 1e-20)
+        S_log = np.log10(S_positive)
+        S_mean = np.mean(S_log, axis=1)
+        
+        # Remove DC / mean to focus on periodic structure
+        S_mean = S_mean - np.mean(S_mean)
         
         # Normalize
-        S_mean = S_mean / (np.max(S_mean) + 1e-20)
+        S_mean = S_mean / (np.max(np.abs(S_mean)) + 1e-20)
         
         # Compute autocorrelation
         autocorr = np.correlate(S_mean, S_mean, mode='full')
@@ -110,36 +122,67 @@ class BrillouinZoneDetector:
         # Normalize autocorrelation
         autocorr = autocorr / (autocorr[0] + 1e-20)
         
-        # Find first significant peak after zero
-        # Skip the first few points (zero-lag region)
-        min_lag = max(3, len(autocorr) // 20)
+        dk = k_axis[1] - k_axis[0] if len(k_axis) > 1 else 1.0
         
-        peaks = self._find_peaks_simple(autocorr[min_lag:], threshold=0.1)
+        # Define physical constraints for magnonic crystals
+        # Minimum lattice constant: 50nm → max period_k = 2π/50nm = 1.26e8 rad/m
+        # Maximum lattice constant: 5μm → min period_k = 2π/5μm = 1.26e6 rad/m
+        min_a = 50e-9
+        max_a = 5e-6
+        min_period_k = 2 * np.pi / max_a  # rad/m
+        max_period_k = 2 * np.pi / min_a  # rad/m
         
-        if len(peaks) > 0:
-            # First significant peak
-            peak_lag = peaks[0] + min_lag
-            
-            # Convert lag to k-space distance
-            dk = k_axis[1] - k_axis[0] if len(k_axis) > 1 else 1.0
-            period_k = peak_lag * dk
-            
-            # period_k = 2π/a → a = 2π/period_k
-            a = 2 * np.pi / period_k
-            
-            logger.info(
-                "Autocorr detection: peak at lag %d (Δk=%.3e rad/m) → a=%.1f nm",
-                peak_lag, period_k, a * 1e9
+        # Convert to lag indices
+        min_lag_physical = max(5, int(min_period_k / dk))
+        max_lag_physical = min(len(autocorr) - 1, int(max_period_k / dk))
+        
+        # Ensure valid range  
+        if min_lag_physical >= max_lag_physical:
+            min_lag_physical = 5
+            max_lag_physical = len(autocorr) // 2
+        
+        # Find ALL peaks in physical range
+        peaks_in_range = []
+        for lag in range(min_lag_physical, max_lag_physical):
+            if (autocorr[lag] > autocorr[lag-1] and 
+                autocorr[lag] > autocorr[lag+1] and
+                autocorr[lag] > 0.05):  # Must be positive correlation
+                period_k = lag * dk
+                a = 2 * np.pi / period_k
+                peaks_in_range.append({
+                    'lag': lag,
+                    'value': autocorr[lag],
+                    'period_k': period_k,
+                    'a': a,
+                })
+        
+        if peaks_in_range:
+            # Prefer the most prominent peak (highest correlation value)
+            # But weight toward larger periods (larger a) as they are more likely BZ
+            best_peak = max(
+                peaks_in_range,
+                key=lambda p: p['value'] * (1 + 0.1 * np.log10(p['a'] * 1e9))
             )
             
-            return a
+            a = best_peak['a']
+            
+            # Sanity check: reasonable for magnonic crystals
+            if 50e-9 < a < 5e-6:
+                logger.info(
+                    "Autocorr detection: peak at lag %d (corr=%.2f, Δk=%.3e rad/m) → a=%.1f nm",
+                    best_peak['lag'], best_peak['value'], best_peak['period_k'], a * 1e9
+                )
+                return a
         
-        # Fallback: use k-range as rough estimate
+        # Fallback: estimate from k-range assuming ~2 BZ visible
         k_range = k_axis[-1] - k_axis[0]
-        a_fallback = 2 * np.pi / k_range * 2  # Assume ~2 BZ visible
+        a_fallback = 2 * np.pi / k_range * 2
+        
+        # Clamp to physical limits
+        a_fallback = np.clip(a_fallback, 100e-9, 2000e-9)
         
         logger.warning(
-            "Autocorr detection failed, using fallback: a=%.1f nm",
+            "Autocorr detection weak, using fallback: a=%.1f nm",
             a_fallback * 1e9
         )
         
@@ -154,6 +197,7 @@ class BrillouinZoneDetector:
         Detect lattice constant via FFT of the k-profile.
         
         Takes FFT of S(k) integrated over f to find spatial frequency peaks.
+        Looking for periodicity in k-space that corresponds to BZ folding.
         """
         S = result.S
         k_axis = result.k_axis
@@ -161,10 +205,18 @@ class BrillouinZoneDetector:
         
         if f_range is not None:
             f_mask = (f_axis >= f_range[0]) & (f_axis <= f_range[1])
-            S = S[:, f_mask]
+        else:
+            f_mask = f_axis > 0
+        S = S[:, f_mask]
         
-        # Get k-profile
-        S_k = np.sum(S, axis=1)
+        # Get k-profile using log to reduce dynamic range
+        S_positive = np.maximum(S, 1e-20)
+        S_k = np.mean(np.log10(S_positive), axis=1)
+        S_k = S_k - np.mean(S_k)  # Remove DC
+        
+        # Apply window to reduce spectral leakage
+        window = np.hanning(len(S_k))
+        S_k = S_k * window
         
         # FFT of k-profile
         fft_result = np.fft.fft(S_k)
@@ -180,19 +232,29 @@ class BrillouinZoneDetector:
         fft_freq = fft_freq[pos_mask]
         fft_mag = fft_mag[pos_mask]
         
-        # Find dominant frequency (excluding DC)
-        if len(fft_mag) > 0:
-            peak_idx = np.argmax(fft_mag)
-            dominant_freq = fft_freq[peak_idx]  # cycles per rad/m
+        # Physical constraints for magnonic crystals: 50nm < a < 5μm
+        # period_k = 2π/a, so freq = 1/period_k = a/(2π)
+        min_a, max_a = 50e-9, 5e-6
+        min_freq = min_a / (2 * np.pi)  # cycles per rad/m
+        max_freq = max_a / (2 * np.pi)
+        
+        freq_mask = (fft_freq >= min_freq) & (fft_freq <= max_freq)
+        
+        if np.any(freq_mask):
+            fft_freq_valid = fft_freq[freq_mask]
+            fft_mag_valid = fft_mag[freq_mask]
             
-            # Convert to period in k-space
+            # Find peak in valid range
+            peak_idx = np.argmax(fft_mag_valid)
+            dominant_freq = fft_freq_valid[peak_idx]
+            
             if dominant_freq > 0:
-                period_k = 1.0 / dominant_freq  # rad/m per cycle
-                # period_k = 2π/a → a = 2π/period_k
-                a = 2 * np.pi / period_k
+                # freq = a/(2π) → a = 2π * freq
+                # Actually: period_k = 1/freq, a = 2π/period_k = 2π * freq
+                a = 2 * np.pi * dominant_freq
                 
                 logger.info(
-                    "FFT detection: dominant freq=%.3e → a=%.1f nm",
+                    "FFT detection: dominant freq=%.3e cycles/rad → a=%.1f nm",
                     dominant_freq, a * 1e9
                 )
                 

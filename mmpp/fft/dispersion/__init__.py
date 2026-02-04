@@ -56,6 +56,9 @@ from .modes import (
     BrillouinZoneFolding,
     BrillouinZoneDetector,
     InteractiveDispersionModes,
+    # Animation
+    SpinWaveModeAnimator,
+    extract_amplitude_phase,
 )
 
 __all__ = [
@@ -83,4 +86,7 @@ __all__ = [
     "BrillouinZoneFolding",
     "BrillouinZoneDetector",
     "InteractiveDispersionModes",
+    # Animation
+    "SpinWaveModeAnimator",
+    "extract_amplitude_phase",
 ]
