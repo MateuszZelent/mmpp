@@ -863,6 +863,89 @@ class InteractiveDispersionModes:
     # Non-interactive methods
     # =========================================================================
 
+    def mode(
+        self,
+        k: float,
+        f: float,
+        lattice_constant_nm: float | None = None,
+        n_bz: int = 3,
+        k_direction: str = "both",
+    ) -> dict:
+        """
+        Programmatically extract 2D spatial mode profile m(x, y).
+        
+        Simple interface for getting mode data outside of interactive widget.
+        
+        Parameters
+        ----------
+        k : float
+            Wave vector in rad/μm
+        f : float
+            Frequency in GHz
+        lattice_constant_nm : float, optional
+            Lattice constant in nm. If None, uses default from widget (470 nm).
+        n_bz : int, default=3
+            Number of Brillouin zones to include in mask (±n_bz around k_0).
+        k_direction : str, default='both'
+            Direction filter: 'both' (±k), 'positive' (+k only), 'negative' (-k only).
+            
+        Returns
+        -------
+        dict with keys:
+            - 'x': x-axis in meters (ndarray)
+            - 'y': y-axis in meters (ndarray)
+            - 'm_xy': 2D spatial mode profile m(x, y) (real part, ndarray)
+            - 'k': Selected k in m^-1
+            - 'f': Selected f in Hz
+            - 'info': Dict with additional info
+            
+        Examples
+        --------
+        >>> modes = job[0].m_layer13[...].fft.dispersion.dispersion_modes(save=True)
+        >>> mode_data = modes.mode(k=2.30, f=1.12)
+        >>> plt.imshow(mode_data['m_xy'], extent=[...])
+        """
+        if self.result is None:
+            raise ValueError(
+                "No dispersion result available. "
+                "Run dispersion_modes() with save=True first."
+            )
+            
+        # Convert to SI units
+        k_si = k * 1e6  # rad/μm → rad/m
+        f_si = f * 1e9  # GHz → Hz
+        
+        # Get lattice constant
+        if lattice_constant_nm is None:
+            lattice_constant_nm = self._default_params.get("lattice_nm", 470.0)
+        a = lattice_constant_nm * 1e-9  # nm → m
+        
+        # Extract mode using internal method
+        x_axis, y_axis, mode_2d = self._extract_mode_2d_custom(
+            k_0=k_si,
+            f_0=f_si,
+            lattice_constant=a,
+            n_bz=n_bz,
+            k_direction=k_direction,
+        )
+        
+        # Return structured dict
+        return {
+            'x': x_axis,
+            'y': y_axis,
+            'm_xy': mode_2d,
+            'k': k_si,
+            'f': f_si,
+            'info': {
+                'k_rad_um': k,
+                'f_GHz': f,
+                'lattice_constant_nm': lattice_constant_nm,
+                'n_bz': n_bz,
+                'k_direction': k_direction,
+                'shape': mode_2d.shape,
+            }
+        }
+
     def extract_mode_profile(
         self,
         k: float,
