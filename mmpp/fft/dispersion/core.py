@@ -706,19 +706,31 @@ class SpinWaveAnalyzer:
         f_axis = np.fft.fftshift(np.fft.fftfreq(T_len, self.dt))
         Sk_full = np.fft.fft(sig_k, axis=0)
         Sk_shift = np.fft.fftshift(Sk_full, axes=0)
+        
+        # Store complex spectrum BEFORE taking abs (needed for mode reconstruction)
+        # Shape: (Nk, Nf) or (Nk, Northogonal, Nf) depending on keep_orthogonal_dimension
+        S_complex_raw = np.moveaxis(Sk_shift, 0, -1)  # Move freq to last axis
+        
+        # Compute power spectrum for visualization
         power = np.abs(Sk_shift) ** 2
         power = np.moveaxis(power, 0, -1)  # -> (..., Nf)
 
         if not keep_orthogonal_dimension:
             S = power.astype(np.float64, copy=False)
+            S_complex = S_complex_raw.astype(np.complex128, copy=False)
         else:
             if axis == "x":
                 orthogonal_spectra = power.astype(np.float64, copy=False)
+                S_complex_orth = S_complex_raw.astype(np.complex128, copy=False)
             else:
                 orthogonal_spectra = np.moveaxis(power, 1, 0).astype(np.float64, copy=False)
+                S_complex_orth = np.moveaxis(S_complex_raw, 1, 0).astype(np.complex128, copy=False)
 
             if store_local_spectra:
                 S_local = orthogonal_spectra
+                S_complex = S_complex_orth
+            else:
+                S_complex = None
             S = self._collapse_orthogonal_spectra(orthogonal_spectra, orthogonal_avg_mode)
         
         # Apply flipx to correct NumPy FFT convention (swap +/- wave vectors)
@@ -727,6 +739,11 @@ class SpinWaveAnalyzer:
             k_axis = k_axis[::-1]
             if S_local is not None:
                 S_local = S_local[:, ::-1, :]
+            if S_complex is not None:
+                if S_complex.ndim == 3:  # (N_orth, Nk, Nf)
+                    S_complex = S_complex[:, ::-1, :]
+                else:  # (Nk, Nf)
+                    S_complex = S_complex[::-1, :]
 
         logger.info(
             "Computed dispersion: S.shape=%s, k_range=[%.2e, %.2e], f_range=[%.1f, %.1f] Hz",
@@ -758,6 +775,7 @@ class SpinWaveAnalyzer:
             flipx=flipx,
             notes=notes,
             S_local=S_local,
+            S_complex=S_complex,
             orth_axis=orth_axis_values,
             orth_axis_label=orth_axis_label,
         )

@@ -64,6 +64,9 @@ class DispersionResult1D:
     orth_axis: Optional[np.ndarray] = None  # Coordinate values along orthogonal axis
     orth_axis_label: Optional[str] = None  # Name of orthogonal axis ('x' or 'y')
     
+    # Complex FFT data for mode reconstruction (avoids re-computing FFT)
+    S_complex: Optional[np.ndarray] = None  # Complex spectrum (Nk, Nf) or (N_orth, Nk, Nf)
+    
     # Metadata
     dt: float = 0.0
     dx: float = 0.0

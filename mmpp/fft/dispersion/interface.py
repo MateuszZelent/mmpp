@@ -123,6 +123,7 @@ class FFTDispersionInterface:
         self._memory_cache: dict[str, DispersionResult1D] = {}
         self._filters_config: Optional[dict[str, bool]] = None
         self._last_plot_result: Optional[DispersionResult1D] = None
+        self._cache_dir: Optional[str] = None  # External cache directory
 
     def clone_for_dataset(
         self,
@@ -139,6 +140,7 @@ class FFTDispersionInterface:
         clone._tmax = self._tmax
         clone._memory_cache = self._memory_cache
         clone._filters_config = copy.deepcopy(self._filters_config)
+        clone._cache_dir = self._cache_dir  # Preserve cache dir
         if (self.dataset_name == dataset_name) and (self.slice_info == slice_info):
             clone._analyzer = self._analyzer
         else:
@@ -173,38 +175,101 @@ class FFTDispersionInterface:
         """
         return self._last_plot_result
 
-    @property
-    def dispersion_modes(self) -> "InteractiveDispersionModes":
+    def dispersion_modes(
+        self,
+        result: Optional["DispersionResult1D"] = None,
+        lattice_constant_nm: float = 470.0,
+        save: bool = False,
+        cache: Optional[str] = None,
+        force: bool = False,
+        **compute_kwargs,
+    ) -> "InteractiveDispersionModes":
         """
         Access the interactive Brillouin zone folding and mode analysis.
+        
+        Pre-computes or loads cached dispersion result to avoid re-computation
+        when refreshing the interactive plot.
         
         Provides tools for:
         - Folding dispersion to first Brillouin zone
         - Auto-detecting lattice constant
-        - Interactive Jupyter widget visualization
+        - Interactive Jupyter widget visualization with spatial mode reconstruction m(x,y)
+        
+        **Spatial Mode Reconstruction Algorithm (following Rychły et al.):**
+        1. User selects (k, f) on dispersion plot
+        2. Creates BZ mask for k_0 ± n·G (all periodic copies)
+        3. FFT of raw M(t,x,y,z) data → M̃(f, k, orthogonal)
+        4. Filter at f_0 with k-mask
+        5. IFFT over k → propagation axis  
+        6. Result: Spatial mode profile m(x, y)
+        
+        Parameters
+        ----------
+        result : DispersionResult1D, optional
+            Pre-computed dispersion result. If None, computes automatically.
+        lattice_constant_nm : float
+            Initial lattice constant in nanometers (default 470).
+        save : bool
+            If True, save dispersion result to cache for future use.
+        cache : str, optional
+            Path to external cache directory (e.g., "/tmp/"). If provided, cache will be
+            stored in <cache>/mmpp_cache_<hash>/ instead of job zarr file.
+        force : bool
+            If True, force recomputation even if cached result exists.
+        **compute_kwargs
+            Additional arguments passed to compute_1d() (axis, component, etc.).
         
         Usage
         -----
-        >>> # Interactive widget in Jupyter
-        >>> job[0].fft.dispersion.dispersion_modes.plot_interactive()
-        
-        >>> # Non-interactive folding
-        >>> folded = job[0].fft.dispersion.dispersion_modes.fold(lattice_constant=470e-9)
-        
-        >>> # Static plot with customization
-        >>> fig, ax, folded = job[0].fft.dispersion.dispersion_modes.plot_static(
-        ...     lattice_constant=470e-9, n_periods=3
+        >>> # Interactive widget in Jupyter with caching
+        >>> modes = job[0].m_layer13[...].fft.dispersion.dispersion_modes(
+        ...     save=True, cache="/tmp/"
         ... )
+        >>> modes.plot_interactive()
+        
+        >>> # Pre-compute and reuse
+        >>> modes = job[0].m_layer13[...].fft.dispersion.dispersion_modes(
+        ...     lattice_constant_nm=470, save=True
+        ... )
+        >>> modes.plot_interactive(dpi=100)
+        >>> modes.plot_interactive(dpi=150)  # No recomputation!
         
         Returns
         -------
         InteractiveDispersionModes
-            Interface for BZ folding and mode analysis
+            Interface for BZ folding and mode analysis with pre-loaded result
         """
-        if not hasattr(self, '_dispersion_modes') or self._dispersion_modes is None:
-            from .modes import InteractiveDispersionModes
-            self._dispersion_modes = InteractiveDispersionModes(self)
-        return self._dispersion_modes
+        from .modes import InteractiveDispersionModes
+        
+        # Create new instance each time to avoid stale state
+        modes = InteractiveDispersionModes(self)
+        modes._default_params["lattice_nm"] = lattice_constant_nm
+        
+        # If result not provided, compute with caching support
+        if result is None:
+            # Set external cache directory if provided
+            if cache is not None:
+                self._cache_dir = cache
+                logger.info("Using external cache directory: %s", cache)
+            
+            # Build compute kwargs with caching
+            final_compute_kwargs = dict(compute_kwargs)
+            final_compute_kwargs["save"] = save
+            final_compute_kwargs["force"] = force
+            final_compute_kwargs["disk_cache"] = True  # Enable disk caching
+            
+            # Compute dispersion with all settings
+            # Note: Mode visualization uses raw M_data from analyzer, not S_local
+            result = self.compute_1d(**final_compute_kwargs)
+            
+            # Reset cache dir after computation to avoid affecting other operations
+            if cache is not None:
+                self._cache_dir = None
+        
+        # Store result in modes instance for reuse
+        modes.result = result
+        
+        return modes
 
     def _determine_tmax(self, default: int = 100) -> Optional[int]:
         """
@@ -463,7 +528,97 @@ class FFTDispersionInterface:
         thread.start()
         thread.join()
 
+    def _get_cache_hash(self) -> str:
+        """Generate unique hash for external cache based on job path + dataset + slice."""
+        components = [
+            str(self.parent_fft.job_result.path),
+            str(self.dataset_name or "__global__"),
+            str(self.slice_info or "__full__"),
+        ]
+        combined = "|".join(components)
+        return hashlib.md5(combined.encode()).hexdigest()[:12]
+
+    def _get_external_cache_group(self, write: bool = False) -> Optional[zarr.Group]:
+        """
+        Get zarr group for external cache directory.
+        
+        Creates structure: <cache_dir>/mmpp_cache_<hash>/fft/dispersion/<dataset>
+        """
+        if self._cache_dir is None:
+            return None
+        
+        cache_base = Path(self._cache_dir)
+        if not cache_base.exists():
+            if not write:
+                return None
+            cache_base.mkdir(parents=True, exist_ok=True)
+        
+        # Create unique cache directory
+        cache_hash = self._get_cache_hash()
+        cache_path = cache_base / f"mmpp_cache_{cache_hash}"
+        
+        mode = "a" if write else "r"
+        try:
+            root = zarr.open(str(cache_path), mode=mode)
+        except (OSError, PermissionError, FileNotFoundError) as exc:
+            if write:
+                logger.warning("Cannot create external cache at %s: %s", cache_path, exc)
+                return None
+            logger.debug("External cache not available at %s: %s", cache_path, exc)
+            return None
+        
+        if not hasattr(root, "get"):
+            logger.debug("External cache root is not a group")
+            return None
+        
+        root_group = cast(Any, root)
+        
+        # Create /fft/dispersion/<dataset> structure
+        fft_node = root_group.get("fft")
+        if fft_node is None:
+            if not write:
+                return None
+            fft_group = root_group.create_group("fft")
+        elif hasattr(fft_node, "get"):
+            fft_group = fft_node
+        else:
+            return None
+        
+        dispersion_node = fft_group.get("dispersion")
+        if dispersion_node is None:
+            if not write:
+                return None
+            dispersion_group = fft_group.create_group("dispersion")
+        elif hasattr(dispersion_node, "get"):
+            dispersion_group = dispersion_node
+        else:
+            return None
+        
+        dataset_key = self._sanitize_name(self.dataset_name or "__global__")
+        dataset_node = dispersion_group.get(dataset_key)
+        if dataset_node is None:
+            if not write:
+                return None
+            dataset_group = dispersion_group.create_group(dataset_key)
+            # Store metadata about source
+            dataset_group.attrs["source_job"] = str(self.parent_fft.job_result.path)
+            dataset_group.attrs["dataset_name"] = self.dataset_name or "__global__"
+            dataset_group.attrs["created"] = datetime.utcnow().isoformat()
+            logger.info("Created external cache at %s", cache_path)
+        elif hasattr(dataset_node, "get"):
+            dataset_group = dataset_node
+        else:
+            return None
+        
+        return dataset_group
+
     def _get_dispersion_dataset_group(self, write: bool = False) -> Optional[zarr.Group]:
+        """Get dispersion cache group - uses external cache if _cache_dir is set."""
+        # Priority: external cache > job zarr cache
+        if self._cache_dir is not None:
+            return self._get_external_cache_group(write=write)
+        
+        # Default: use cache in job zarr
         mode = "a" if write else "r"
         try:
             root = zarr.open(self.parent_fft.job_result.path, mode=mode)
@@ -618,6 +773,7 @@ class FFTDispersionInterface:
             k_folded=self._load_group_array(entry, "k_folded"),
             fold_period=float(fold_period) if fold_period is not None else None,
             S_local=self._load_group_array(entry, "S_local"),
+            S_complex=self._load_group_array(entry, "S_complex"),
             orth_axis=self._load_group_array(entry, "orth_axis"),
             orth_axis_label=orth_axis_label,
             dt=self._ensure_float(entry.attrs.get("dt")) or 0.0,
@@ -725,6 +881,8 @@ class FFTDispersionInterface:
 
         if result.S_local is not None:
             self._create_dataset(entry, "S_local", result.S_local)
+        if result.S_complex is not None:
+            self._create_dataset(entry, "S_complex", result.S_complex)
         if result.orth_axis is not None:
             self._create_dataset(entry, "orth_axis", result.orth_axis)
         if result.S_folded is not None:
