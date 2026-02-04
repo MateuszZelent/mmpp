@@ -1,6 +1,7 @@
 import zarr
 import numpy as np
 import inspect
+from html import escape as _html_escape
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from .constants import ArraySlice, FFT_AVAILABLE, RICH_AVAILABLE
@@ -122,6 +123,13 @@ class DatasetSpecificFFT:
         except Exception:
             return self._basic_dataset_fft_display()
 
+    def _repr_html_(self) -> str:
+        """HTML representation for Jupyter notebooks."""
+        try:
+            return self._html_dataset_fft_display()
+        except Exception:
+            return ""
+
     def _rich_dataset_fft_display(self) -> str:
         """Create rich documentation display for dataset-specific FFT."""
         try:
@@ -195,6 +203,109 @@ job[0].fft.modes  # Shows mode analysis options'''
         """Basic text representation."""
         slice_str = f" [slice: {self.slice_info}]" if self.slice_info else ""
         return f"<DatasetSpecificFFT(dataset='{self.dataset_name}'{slice_str})>"
+
+    def _format_slice_display(self) -> str:
+        if self.slice_info is None:
+            return ""
+
+        def _fmt(item: Any) -> str:
+            if item is Ellipsis:
+                return "..."
+            if isinstance(item, slice):
+                start = "" if item.start is None else item.start
+                stop = "" if item.stop is None else item.stop
+                step = "" if item.step is None else item.step
+                if step == "":
+                    return f"{start}:{stop}"
+                return f"{start}:{stop}:{step}"
+            return str(item)
+
+        if isinstance(self.slice_info, tuple):
+            inner = ", ".join(_fmt(part) for part in self.slice_info)
+        else:
+            inner = _fmt(self.slice_info)
+        return f"[{inner}]"
+
+    def _html_dataset_fft_display(self) -> str:
+        job_result = self._job_result
+        job_name = getattr(job_result, "name", "unknown")
+        job_path = getattr(job_result, "path", "")
+        slice_label = self._format_slice_display()
+        dataset_access = self.dataset_name if isinstance(self.dataset_name, str) else str(self.dataset_name)
+        if isinstance(self.dataset_name, str) and self.dataset_name.isidentifier():
+            prefix = f"job[0].{self.dataset_name}{slice_label}.fft"
+        else:
+            prefix = f"job[0][{self.dataset_name!r}]{slice_label}.fft"
+
+        methods = [
+            ("spectrum(dset=None, **opts)", "Compute FFT spectrum (dataset pre-selected)"),
+            ("frequencies(dset=None, **opts)", "Frequency axis in Hz"),
+            ("power(dset=None, **opts)", "Power spectrum |FFT|^2"),
+            ("phase(dset=None, **opts)", "Phase spectrum (radians)"),
+            ("magnitude(dset=None, **opts)", "Magnitude spectrum"),
+            ("plot_spectrum(dset=None, **opts)", "Plot FFT power spectrum"),
+            ("dispersion", "Dispersion analysis interface"),
+            ("modes", "Mode analysis interface"),
+            ("transmission", "Transmission analysis interface"),
+            ("plot_modes(**opts)", "Plot mode map from modes interface"),
+            ("interactive_spectrum(**opts)", "Interactive mode spectrum viewer"),
+        ]
+
+        method_rows = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px; font-family:monospace; color:#93c5fd;'>{_html_escape(name)}</td>"
+            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
+            "</tr>"
+            for name, desc in methods
+        )
+
+        example_code = "\n".join(
+            [
+                f"fft = {prefix}",
+                "spec = fft.spectrum()",
+                "spec.plot_spectrum(log_scale=True)",
+                "fft.dispersion.plot_dispersion(axis='x')",
+                "fft.transmission.plot_transmission()",
+            ]
+        )
+
+        html = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
+          <div style="margin-bottom: 12px;">
+            <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">Dataset FFT Interface</div>
+            <div style="color: #94a3b8; margin-top: 4px;">Job: {_html_escape(job_name)}</div>
+            <div style="color: #94a3b8; margin-top: 2px;">Path: <code style="color:#cbd5e1;">{_html_escape(job_path)}</code></div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
+              <div><span style="color:#94a3b8;">Dataset:</span> <span style="color:#cbd5e1;">{_html_escape(dataset_access)}</span></div>
+              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or 'full')}</span></div>
+            </div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Available Methods</div>
+            <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
+              <thead>
+                <tr style="text-align:left; background: rgba(51,65,85,0.6);">
+                  <th style="padding:6px 8px; color:#e2e8f0;">Method</th>
+                  <th style="padding:6px 8px; color:#e2e8f0;">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {method_rows}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
+            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto;"><code>{_html_escape(example_code)}</code></pre>
+          </div>
+        </div>
+        """
+        return html
 
 
 class DatasetAwareWrapper:

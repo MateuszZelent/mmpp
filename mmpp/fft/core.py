@@ -5,6 +5,7 @@ Main FFT class providing unified interface for FFT analysis.
 """
 
 from typing import Any, Optional
+from html import escape as _html_escape
 
 import numpy as np
 
@@ -1337,6 +1338,95 @@ class FFT:
             return self._rich_fft_display()
         except Exception:
             return self._basic_fft_display()
+
+    def _repr_html_(self) -> str:
+        """HTML representation for Jupyter notebooks."""
+        try:
+            return self._html_fft_display()
+        except Exception:
+            return ""
+
+    def _html_fft_display(self) -> str:
+        job_result = self.job_result
+        job_name = getattr(job_result, "name", "unknown")
+        job_path = getattr(job_result, "path", "")
+        cache_size = len(self._cache)
+
+        methods = [
+            ("spectrum(dset='m', z_layer=-1, **opts)", "Compute FFT spectrum (returns SpectrumResult)"),
+            ("frequencies(dset='m', **opts)", "Frequency axis in Hz"),
+            ("power(dset='m', **opts)", "Power spectrum |FFT|^2"),
+            ("phase(dset='m', **opts)", "Phase spectrum (radians)"),
+            ("magnitude(dset='m', **opts)", "Magnitude spectrum"),
+            ("plot_spectrum(dset='m', **opts)", "Plot FFT power spectrum"),
+            ("dispersion", "Dispersion analysis interface"),
+            ("modes", "Mode analysis interface"),
+            ("transmission", "Transmission analysis interface"),
+            ("plot_modes(**opts)", "Plot mode map from modes interface"),
+            ("interactive_spectrum(**opts)", "Interactive mode spectrum viewer"),
+            ("plotter", "Low-level FFTPlotter instance"),
+            ("clear_cache()", "Clear in-memory FFT cache"),
+        ]
+
+        method_rows = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px; font-family:monospace; color:#93c5fd;'>{_html_escape(name)}</td>"
+            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
+            "</tr>"
+            for name, desc in methods
+        )
+
+        example_code = "\n".join(
+            [
+                "fft = job[0].fft",
+                "spec = fft.spectrum(dset='m', z_layer=-1)",
+                "spec.plot_spectrum(log_scale=True)",
+                "freqs = fft.frequencies(dset='m')",
+                "power = fft.power(dset='m')",
+                "fft.dispersion.plot_dispersion(axis='x')",
+                "fft.modes.interactive_spectrum(dpi=150)",
+                "fft.transmission.plot_transmission()",
+            ]
+        )
+
+        html = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
+          <div style="margin-bottom: 12px;">
+            <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">FFT Analysis Interface</div>
+            <div style="color: #94a3b8; margin-top: 4px;">Job: {_html_escape(job_name)}</div>
+            <div style="color: #94a3b8; margin-top: 2px;">Path: <code style="color:#cbd5e1;">{_html_escape(job_path)}</code></div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
+              <div><span style="color:#94a3b8;">Cache entries:</span> <span style="color:#cbd5e1;">{cache_size}</span></div>
+              <div><span style="color:#94a3b8;">Modes:</span> <span style="color:#cbd5e1;">{_html_escape('available' if MODES_AVAILABLE else 'unavailable')}</span></div>
+              <div><span style="color:#94a3b8;">Dispersion:</span> <span style="color:#cbd5e1;">{_html_escape('available' if DISPERSION_AVAILABLE else 'unavailable')}</span></div>
+            </div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Available Methods</div>
+            <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
+              <thead>
+                <tr style="text-align:left; background: rgba(51,65,85,0.6);">
+                  <th style="padding:6px 8px; color:#e2e8f0;">Method</th>
+                  <th style="padding:6px 8px; color:#e2e8f0;">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {method_rows}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
+            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto;"><code>{_html_escape(example_code)}</code></pre>
+          </div>
+        </div>
+        """
+        return html
 
     def _rich_fft_display(self) -> str:
         """Create rich documentation display with panels and proper styling."""

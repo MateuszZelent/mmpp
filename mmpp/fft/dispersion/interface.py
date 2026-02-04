@@ -17,6 +17,7 @@ import threading
 import warnings
 from dataclasses import asdict
 from datetime import datetime
+from html import escape as _html_escape
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, Union, cast
 
@@ -36,6 +37,63 @@ from .core import SpinWaveAnalyzer, DispersionConfig
 from .models import DispersionResult1D, DispersionResult2D, DispersionBranch
 
 logger = logging.getLogger(__name__)
+
+
+def _format_slice_for_display(slice_info: Optional[Any]) -> str:
+    if slice_info is None:
+        return ""
+
+    def _fmt(item: Any) -> str:
+        if item is Ellipsis:
+            return "..."
+        if isinstance(item, slice):
+            start = "" if item.start is None else item.start
+            stop = "" if item.stop is None else item.stop
+            step = "" if item.step is None else item.step
+            if step == "":
+                return f"{start}:{stop}"
+            return f"{start}:{stop}:{step}"
+        return str(item)
+
+    if isinstance(slice_info, tuple):
+        inner = ", ".join(_fmt(part) for part in slice_info)
+    else:
+        inner = _fmt(slice_info)
+    return f"[{inner}]"
+
+
+def _format_dataset_accessor(dataset_name: str) -> str:
+    if isinstance(dataset_name, str) and dataset_name.isidentifier():
+        return f".{dataset_name}"
+    return f"[{dataset_name!r}]"
+
+
+class _DispersionMethodHelper:
+    """Callable helper that provides rich HTML help for dispersion methods."""
+
+    def __init__(self, interface: "FFTDispersionInterface", method, label: str, kind: str):
+        self._interface = interface
+        self._method = method
+        self._label = label
+        self._kind = kind
+        self.__doc__ = getattr(method, "__doc__", None)
+        try:
+            self.__signature__ = inspect.signature(method)
+        except Exception:
+            pass
+
+    def __call__(self, *args, **kwargs):
+        return self._method(*args, **kwargs)
+
+    def __repr__(self) -> str:
+        return f"<FFTDispersionInterface.{self._label} helper>"
+
+    def _repr_html_(self) -> str:
+        if self._kind == "plot_result":
+            return self._interface._html_plot_result_help()
+        if self._kind == "filters":
+            return self._interface._html_filters_help()
+        return ""
 
 
 class FFTDispersionInterface:
@@ -753,7 +811,12 @@ class FFTDispersionInterface:
 
         return self
 
-    def filters(
+    @property
+    def filters(self) -> _DispersionMethodHelper:
+        """Return callable helper for configuring preprocessing filters."""
+        return _DispersionMethodHelper(self, self._filters_impl, "filters", "filters")
+
+    def _filters_impl(
         self,
         *,
         remove_static: bool = False,
@@ -2176,7 +2239,12 @@ class FFTDispersionInterface:
             
         return fig, (ax1, ax2)
     
-    def plot_result(
+    @property
+    def plot_result(self) -> _DispersionMethodHelper:
+        """Return callable helper for plotting pre-computed dispersion results."""
+        return _DispersionMethodHelper(self, self._plot_result_impl, "plot_result", "plot_result")
+
+    def _plot_result_impl(
         self,
         result: DispersionResult1D,
         ax: Optional[plt.Axes] = None,
@@ -2537,6 +2605,13 @@ class FFTDispersionInterface:
         except Exception:
             return self._basic_dispersion_display()
 
+    def _repr_html_(self) -> str:
+        """HTML representation for Jupyter notebooks."""
+        try:
+            return self._html_dispersion_display()
+        except Exception:
+            return ""
+
     def _rich_dispersion_display(self) -> str:
         """Render contextual dispersion help using rich panels."""
         import io
@@ -2582,10 +2657,15 @@ class FFTDispersionInterface:
                 "Heatmap + auto compute (opts forwarded to compute_1d)",
             ),
             (
+                "plot_result(result, lognorm=False, kscale='meter', **opts)",
+                "Plot pre-computed dispersion result",
+            ),
+            (
                 "filters(remove_static=False, average=False, window=None)",
                 "Clone interface with preprocessing filters (Hann/time averages)",
             ),
             ("track_branch(result, k_path, f_seed, **opts)", "Follow dispersion branch"),
+            ("plot_branch(branch, **opts)", "Plot branch with group velocity"),
             ("find_peaks(result, min_prominence=0.0, **opts)", "Detect spectral peaks"),
             ("configure(dt=..., dx=..., dy=..., component='perp', **opts)", "Set defaults once"),
         ]
@@ -2686,7 +2766,10 @@ class FFTDispersionInterface:
         plot_table.add_row("title", "None", "Custom plot title")
         plot_table.add_row("**kwargs", "", "Forwarded to compute_1d (supports kmax, force, save_result, ...)")
 
-        obj_name = "job[0].m_layer.fft" if dataset else "job[0].fft"
+        if dataset:
+            obj_name = f"job[0]{_format_dataset_accessor(dataset)}{_format_slice_for_display(self.slice_info)}.fft"
+        else:
+            obj_name = "job[0].fft"
         example_lines = [
             "# Quick start",
             f"disp = {obj_name}.dispersion",
@@ -2770,6 +2853,10 @@ class FFTDispersionInterface:
             f"Slice: {self.slice_info}\n" if self.slice_info is not None else ""
         )
         config_state = "custom" if self._config else "default"
+        if self.dataset_name:
+            disp_prefix = f"job[0]{_format_dataset_accessor(self.dataset_name)}{_format_slice_for_display(self.slice_info)}.fft"
+        else:
+            disp_prefix = "job[0].fft"
 
         return (
             "FFTDispersionInterface\n"
@@ -2779,8 +2866,10 @@ class FFTDispersionInterface:
             "  • compute_1d(axis='x'|'y', component=None, kmax=None, **opts)\n"
             "  • compute_2d()\n"
             "  • plot_dispersion(axis='x', lognorm=False, kscale='meter', **opts)\n"
+            "  • plot_result(result, lognorm=False, kscale='meter', **opts)\n"
             "  • filters(remove_static=False, average=False, window=None)\n"
             "  • track_branch(result, k_path, f_seed)\n"
+            "  • plot_branch(branch, **opts)\n"
             "  • find_peaks(result, min_prominence=0.1)\n"
             "  • configure(dt=..., dx=..., dy=..., component='perp')\n"
             "compute_1d opts: avg_over_orthogonal, time_window, space_window, detrend, fold_period, fold_agg\n"
@@ -2788,8 +2877,266 @@ class FFTDispersionInterface:
             "filters opts: remove_static, average (time mean), window=('time'|'space'/'2d'|'both') Hann\n"
             "Extra kwargs forward to compute_1d (supports kmax, window controls, folding, etc.)\n"
             "Examples:\n"
-            f"  disp = {('job[0].m_layer.fft' if self.dataset_name else 'job[0].fft')}.dispersion\n"
+            f"  disp = {disp_prefix}.dispersion\n"
             "  result = disp.compute_1d(axis='x', avg_over_orthogonal=False)\n"
             "  branch = disp.track_branch(result, k_path, f_seed=5e9)\n"
             "  disp.plot_branch(branch)\n"
         )
+
+    def _usage_prefix(self) -> str:
+        base = "job[0]"
+        if self.dataset_name:
+            base += _format_dataset_accessor(self.dataset_name)
+            if self.slice_info is not None:
+                base += _format_slice_for_display(self.slice_info)
+        base += ".fft.dispersion"
+        return base
+
+    def _html_dispersion_display(self) -> str:
+        job_result = self.parent_fft.job_result
+        job_name = getattr(job_result, "name", "unknown")
+        job_path = getattr(job_result, "path", "")
+        dataset_label = self.dataset_name or "auto"
+        slice_label = _format_slice_for_display(self.slice_info)
+        config_state = "custom" if self._config else "default"
+        filters_label = ", ".join(self._describe_filter_flags()) if self._filters_config else "none"
+        last_plot = "yes" if self._last_plot_result is not None else "no"
+        usage_prefix = self._usage_prefix()
+
+        methods = [
+            ("compute_1d(axis='x', component=None, **opts)", "Compute 1D dispersion S(k,f)"),
+            ("compute_2d(component=None, **opts)", "Compute 2D dispersion S(kx, ky, f)"),
+            ("plot_dispersion(axis='x', **opts)", "Compute + plot dispersion"),
+            ("plot_result(result, **opts)", "Plot pre-computed dispersion result"),
+            ("filters(remove_static=False, average=False, window=None)", "Clone interface with preprocessing filters"),
+            ("track_branch(result, k_path, f_seed, **opts)", "Track dispersion branch"),
+            ("plot_branch(branch, **opts)", "Plot branch and group velocity"),
+            ("find_peaks(result, min_prominence=0.0, **opts)", "Find spectral peaks"),
+            ("configure(dt=..., dx=..., dy=..., **opts)", "Set defaults once"),
+            ("analyzer", "SpinWaveAnalyzer instance (lazy)"),
+            ("last_plot_result", "Last DispersionResult1D plotted"),
+            ("interactive_analysis()", "Reserved (not implemented yet)"),
+        ]
+
+        method_rows = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px; font-family:monospace; color:#93c5fd;'>{_html_escape(name)}</td>"
+            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
+            "</tr>"
+            for name, desc in methods
+        )
+
+        example_code = "\n".join(
+            [
+                "# Quick start",
+                f"disp = {usage_prefix}",
+                "result = disp.compute_1d(axis='x', avg_over_orthogonal=False)",
+                "disp.plot_dispersion(result=result)",
+                "disp.plot_result(result, lognorm=True, vmax=0.01)",
+                "",
+                "# Filters",
+                "disp.filters(remove_static=True, window='both').plot_dispersion(axis='x')",
+                "",
+                "# Branch tracking",
+                "import numpy as np",
+                "k_path = np.linspace(-1e7, 1e7, 41)",
+                "branch = disp.track_branch(result, k_path, f_seed=5e9)",
+                "disp.plot_branch(branch)",
+            ]
+        )
+
+        html = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
+          <div style="margin-bottom: 12px;">
+            <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">FFT Dispersion Interface</div>
+            <div style="color: #94a3b8; margin-top: 4px;">Job: {_html_escape(job_name)}</div>
+            <div style="color: #94a3b8; margin-top: 2px;">Path: <code style="color:#cbd5e1;">{_html_escape(job_path)}</code></div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
+              <div><span style="color:#94a3b8;">Dataset:</span> <span style="color:#cbd5e1;">{_html_escape(dataset_label)}</span></div>
+              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or 'full')}</span></div>
+              <div><span style="color:#94a3b8;">Config:</span> <span style="color:#cbd5e1;">{_html_escape(config_state)}</span></div>
+              <div><span style="color:#94a3b8;">Filters:</span> <span style="color:#cbd5e1;">{_html_escape(filters_label)}</span></div>
+              <div><span style="color:#94a3b8;">Last Plot:</span> <span style="color:#cbd5e1;">{_html_escape(last_plot)}</span></div>
+            </div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Available Methods</div>
+            <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
+              <thead>
+                <tr style="text-align:left; background: rgba(51,65,85,0.6);">
+                  <th style="padding:6px 8px; color:#e2e8f0;">Method</th>
+                  <th style="padding:6px 8px; color:#e2e8f0;">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {method_rows}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
+            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto;"><code>{_html_escape(example_code)}</code></pre>
+          </div>
+        </div>
+        """
+        return html
+
+    def _html_plot_result_help(self) -> str:
+        usage_prefix = self._usage_prefix()
+        dataset_label = self.dataset_name or "auto"
+        slice_label = _format_slice_for_display(self.slice_info)
+        params = [
+            ("result", "required", "DispersionResult1D to visualize"),
+            ("ax", "None", "Matplotlib axes to draw on"),
+            ("figsize", "(12, 8)", "Figure size when ax is None"),
+            ("cmap", "cmc.davos", "Colormap for heatmap"),
+            ("kscale", "rad_um", "Wave-vector units: rad_um | rad | meter"),
+            ("f_units", "GHz", "Frequency axis units"),
+            ("title", "None", "Custom plot title"),
+            ("save", "None", "Path or True for auto-name"),
+            ("orth_index", "None", "Select local slice (if S_local available)"),
+            ("dpi", "None", "Figure DPI override"),
+            ("k_xlim", "None", "Manual k-axis limits"),
+            ("lognorm", "False", "Legacy log normalization"),
+            ("k0_normalization", "0", "k~0 suppression intensity"),
+            ("k0_normalization_width", "1", "Bins around k~0 to compress"),
+            ("compression_mode", "adaptive", "Compression strategy"),
+            ("add_comsol_points", "None", "Path to COMSOL overlay data"),
+            ("comsol_k_col", "0", "COMSOL k column index"),
+            ("comsol_f_col", "1", "COMSOL f column index"),
+            ("comsol_extra_cols", "None", "Extra COMSOL columns"),
+            ("comsol_style", "None", "Scatter style for COMSOL overlay"),
+            ("vmin", "None", "Manual color scale min"),
+            ("vmax", "None", "Manual color scale max"),
+            ("trim_0f", "None", "Trim lowest frequencies"),
+            ("fmax", "None", "Maximum frequency to display"),
+            ("colornorm", "None", "Advanced normalization selection"),
+            ("colornorm_kwargs", "None", "Extra kwargs for normalization"),
+        ]
+
+        param_rows = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px; font-family:monospace; color:#93c5fd;'>{_html_escape(name)}</td>"
+            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(default)}</td>"
+            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
+            "</tr>"
+            for name, default, desc in params
+        )
+
+        example_code = "\n".join(
+            [
+                "disp = {prefix}".format(prefix=usage_prefix),
+                "result = disp.compute_1d(axis='x', save_result=True)",
+                "disp.plot_result(result, lognorm=True, vmax=0.01)",
+                "disp.plot_result(result, k0_normalization=8, compression_mode='gentle')",
+            ]
+        )
+
+        html = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
+          <div style="margin-bottom: 12px;">
+            <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">plot_result</div>
+            <div style="color: #94a3b8; margin-top: 4px;">Plot a pre-computed dispersion result without recomputing.</div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
+              <div><span style="color:#94a3b8;">Dataset:</span> <span style="color:#cbd5e1;">{_html_escape(dataset_label)}</span></div>
+              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or 'full')}</span></div>
+            </div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Parameters</div>
+            <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
+              <thead>
+                <tr style="text-align:left; background: rgba(51,65,85,0.6);">
+                  <th style="padding:6px 8px; color:#e2e8f0;">Arg</th>
+                  <th style="padding:6px 8px; color:#e2e8f0;">Default</th>
+                  <th style="padding:6px 8px; color:#e2e8f0;">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {param_rows}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
+            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto;"><code>{_html_escape(example_code)}</code></pre>
+          </div>
+        </div>
+        """
+        return html
+
+    def _html_filters_help(self) -> str:
+        usage_prefix = self._usage_prefix()
+        dataset_label = self.dataset_name or "auto"
+        slice_label = _format_slice_for_display(self.slice_info)
+
+        params = [
+            ("remove_static", "False", "Subtract first time frame from all samples"),
+            ("average", "False", "Remove temporal mean per spatial point"),
+            ("window", "None", "Hann windows: 'time', 'space'/'2d', 'both'/'hann'"),
+        ]
+
+        param_rows = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px; font-family:monospace; color:#93c5fd;'>{_html_escape(name)}</td>"
+            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(default)}</td>"
+            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
+            "</tr>"
+            for name, default, desc in params
+        )
+
+        example_code = "\n".join(
+            [
+                "disp = {prefix}".format(prefix=usage_prefix),
+                "disp_f = disp.filters(remove_static=True, window='both')",
+                "disp_f.plot_dispersion(axis='x')",
+            ]
+        )
+
+        html = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
+          <div style="margin-bottom: 12px;">
+            <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">filters</div>
+            <div style="color: #94a3b8; margin-top: 4px;">Clone the interface with preprocessing filters applied to the raw data.</div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
+              <div><span style="color:#94a3b8;">Dataset:</span> <span style="color:#cbd5e1;">{_html_escape(dataset_label)}</span></div>
+              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or 'full')}</span></div>
+            </div>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Parameters</div>
+            <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
+              <thead>
+                <tr style="text-align:left; background: rgba(51,65,85,0.6);">
+                  <th style="padding:6px 8px; color:#e2e8f0;">Arg</th>
+                  <th style="padding:6px 8px; color:#e2e8f0;">Default</th>
+                  <th style="padding:6px 8px; color:#e2e8f0;">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {param_rows}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
+            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
+            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto;"><code>{_html_escape(example_code)}</code></pre>
+          </div>
+        </div>
+        """
+        return html
