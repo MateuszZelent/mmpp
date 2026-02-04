@@ -11,6 +11,7 @@ Main Features:
 - Brillouin zone folding and analysis
 - Peak detection and group velocity calculation
 - Integration with MMPP job results and visualization
+- Interactive BZ-folded dispersion exploration
 
 Usage Examples:
 --------------
@@ -22,6 +23,10 @@ Usage Examples:
 >>> analyzer = job[0].fft.dispersion.analyzer
 >>> result = analyzer.compute_dispersion_1d(axis="x")
 >>> branch = analyzer.track_branch(result, k_path, f_seed=5e9)
+
+# Interactive BZ-folded dispersion
+>>> job[0].fft.dispersion.dispersion_modes.plot_interactive()
+>>> folded = job[0].fft.dispersion.dispersion_modes.fold(lattice_constant=470e-9)
 """
 
 
@@ -43,19 +48,39 @@ from .utils import (
 )
 from .comsol import read_data_from_comsol, ComsolDispersionData
 
+# BZ folding and mode analysis module
+from .modes import (
+    BrillouinZoneConfig,
+    DispersionMode,
+    FoldedDispersionResult,
+    BrillouinZoneFolding,
+    BrillouinZoneDetector,
+    InteractiveDispersionModes,
+)
+
 __all__ = [
-    "ComsolDispersionData",
-    "read_data_from_comsol",
+    # Core
     "SpinWaveAnalyzer",
     "FFTDispersionInterface",
     "DispersionConfig",
     "DispersionResult1D",
     "DispersionResult2D",
     "DispersionBranch",
+    # Utils
     "fftfreq_axis",
     "fold_k_to_bz",
     "fold_spectrum_1d",
     "k_axis_from_grid",
     "find_peaks_1d",
     "group_velocity_1d",
+    # COMSOL
+    "ComsolDispersionData",
+    "read_data_from_comsol",
+    # BZ Folding & Modes
+    "BrillouinZoneConfig",
+    "DispersionMode",
+    "FoldedDispersionResult",
+    "BrillouinZoneFolding",
+    "BrillouinZoneDetector",
+    "InteractiveDispersionModes",
 ]

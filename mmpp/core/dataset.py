@@ -32,15 +32,6 @@ class DatasetSpecificFFT:
         else:
             self._fft = None
     
-    def __repr__(self):
-        """Concise repr to avoid printing zarr structure."""
-        path = getattr(self._job_result, 'path', 'unknown')
-        slice_str = f", slice={self.slice_info}" if self.slice_info else ""
-        return f"<DatasetSpecificFFT(dataset='{self.dataset_name}'{slice_str}) @ {path}>"
-    
-    def __str__(self):
-        return self.__repr__()
-
     def __getattr__(self, name):
         """Delegate to FFT, injecting dataset context when appropriate."""
         if self._fft is None:
@@ -117,11 +108,13 @@ class DatasetSpecificFFT:
         return attr
 
     def __repr__(self):
-        """Rich documentation display for dataset-specific FFT interface."""
-        try:
-            return self._rich_dataset_fft_display()
-        except Exception:
-            return self._basic_dataset_fft_display()
+        """Concise text representation."""
+        dataset = self.dataset_name
+        slice_label = self._format_slice_display() or "[full]"
+        return f"<DatasetFFT: {dataset}{slice_label}>"
+
+    def __str__(self):
+        return self.__repr__()
 
     def _repr_html_(self) -> str:
         """HTML representation for Jupyter notebooks."""
@@ -129,6 +122,14 @@ class DatasetSpecificFFT:
             return self._html_dataset_fft_display()
         except Exception:
             return ""
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        """Prefer HTML card in notebook frontends with plain-text fallback."""
+        html = self._repr_html_()
+        text = self.__repr__()
+        if html:
+            return {"text/html": html, "text/plain": text}
+        return {"text/plain": text}
 
     def _rich_dataset_fft_display(self) -> str:
         """Create rich documentation display for dataset-specific FFT."""

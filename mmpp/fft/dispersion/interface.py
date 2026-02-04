@@ -19,7 +19,7 @@ from dataclasses import asdict
 from datetime import datetime
 from html import escape as _html_escape
 from pathlib import Path
-from typing import Any, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Optional, Sequence, Tuple, TYPE_CHECKING, Union, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,6 +35,9 @@ except ImportError:
 
 from .core import SpinWaveAnalyzer, DispersionConfig
 from .models import DispersionResult1D, DispersionResult2D, DispersionBranch
+
+if TYPE_CHECKING:
+    from .modes import InteractiveDispersionModes
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +172,39 @@ class FFTDispersionInterface:
             The dispersion result from the last plot, or None if no plot has been made yet.
         """
         return self._last_plot_result
+
+    @property
+    def dispersion_modes(self) -> "InteractiveDispersionModes":
+        """
+        Access the interactive Brillouin zone folding and mode analysis.
+        
+        Provides tools for:
+        - Folding dispersion to first Brillouin zone
+        - Auto-detecting lattice constant
+        - Interactive Jupyter widget visualization
+        
+        Usage
+        -----
+        >>> # Interactive widget in Jupyter
+        >>> job[0].fft.dispersion.dispersion_modes.plot_interactive()
+        
+        >>> # Non-interactive folding
+        >>> folded = job[0].fft.dispersion.dispersion_modes.fold(lattice_constant=470e-9)
+        
+        >>> # Static plot with customization
+        >>> fig, ax, folded = job[0].fft.dispersion.dispersion_modes.plot_static(
+        ...     lattice_constant=470e-9, n_periods=3
+        ... )
+        
+        Returns
+        -------
+        InteractiveDispersionModes
+            Interface for BZ folding and mode analysis
+        """
+        if not hasattr(self, '_dispersion_modes') or self._dispersion_modes is None:
+            from .modes import InteractiveDispersionModes
+            self._dispersion_modes = InteractiveDispersionModes(self)
+        return self._dispersion_modes
 
     def _determine_tmax(self, default: int = 100) -> Optional[int]:
         """
