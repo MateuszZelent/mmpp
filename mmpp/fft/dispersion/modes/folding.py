@@ -362,11 +362,29 @@ class BrillouinZoneFolding:
         """
         Create a mask in Fourier space for extracting a specific mode.
         
-        The mask identifies all periodic copies of the mode at k_0 + n·G
-        where G = 2π/a is the reciprocal lattice vector.
+        **Physical Theory: Periodic Lattice and Brillouin Zone Folding**
         
-        Maska(f, k_y) = 1 if |f - f_0| < Δf AND |k_y - (k_0 + n·G)| < Δk
-                       0 otherwise
+        For a periodic lattice with lattice constant a, the translational symmetry
+        m(x + a) = m(x) leads to equivalence of wave vectors in reciprocal space:
+        
+            k ≡ k + n·G    where G = 2π/a, n = 0, ±1, ±2, ...
+        
+        The same physical wave can be represented in different Brillouin zones.
+        To properly reconstruct the spatial mode profile, we must sum ALL periodic 
+        copies:
+        
+            M_physical(f₀, y) = Σₙ M̃_FFT(f₀, k₀ + n·G) exp(i(k₀ + n·G)y)
+        
+        This is equivalent to applying a mask that selects all k₀ ± n·G positions
+        and then performing IFFT:
+        
+            M_physical(f₀, y) = IFFT_k { Σₙ δ(k - (k₀ + n·G)) · M̃_FFT(f₀, k) }
+        
+        **Algorithm:**
+        The mask identifies all periodic copies at k = k₀ + n·G:
+        
+            Mask(f, k) = 1  if |f - f₀| < Δf AND |k - (k₀ + n·G)| < Δk for any n
+                       = 0  otherwise
         
         Parameters
         ----------
@@ -383,13 +401,17 @@ class BrillouinZoneFolding:
         delta_f : float, optional
             Half-width in frequency [Hz]. Default: 0.5 GHz
         include_all_copies : bool
-            If True, include all periodic copies (k_0 + n·G)
-            If False, only the mode at k_0
+            If True, include all periodic copies (k_0 + n·G) - PHYSICALLY CORRECT
+            If False, only the mode at k_0 - may lose amplitude and distort phase
             
         Returns
         -------
         mask : np.ndarray
             2D boolean mask of shape (len(k_axis), len(f_axis))
+            
+        References
+        ----------
+        Rychły et al. (2015) - Mode reconstruction in magnonic crystals
         """
         G = 2 * np.pi / self.a
         
@@ -478,40 +500,89 @@ class BrillouinZoneFolding:
         """
         Extract the spatial profile of a specific mode using inverse FFT.
         
-        Algorithm (Rychły et al. 2015):
-        1. Apply mask in Fourier space to select mode and its periodic copies
-        2. Perform inverse FFT to get real-space amplitude
-        3. Return the mode envelope in position space
+        **Physical Theory: Full Mode Reconstruction with Periodic Copies**
+        
+        For a periodic lattice (period a), wave vectors differing by reciprocal
+        lattice vector G = 2π/a represent the same physical wave:
+        
+            k ≡ k + n·G    for any integer n
+        
+        The FFT dispersion spectrum M̃(f, k) contains information folded across
+        multiple Brillouin zones. To reconstruct the TRUE physical mode, we MUST
+        sum all periodic copies:
+        
+            M_physical(f₀, y) = Σₙ M̃(f₀, k₀ + n·G) exp(i(k₀ + n·G)y)
+        
+        **Why is this necessary?**
+        1. **Coherent addition**: Different BZ copies add constructively, 
+           increasing the mode amplitude to its true physical value
+        2. **Phase preservation**: Each copy carries phase information that
+           affects the spatial structure
+        3. **Spatial periodicity**: The sum automatically enforces m(y + a) = m(y)
+        
+        **Algorithm:**
+        1. Create mask selecting all k₀ + n·G positions in the FFT data
+        2. Apply mask to COMPLEX spectrum M̃(f, k) (preserves phase!)
+        3. Perform IFFT: spatial reconstruction automatically sums all copies
+        4. Result: M(y) = physically correct mode profile
+        
+        **Important**: Uses S_complex (phase-preserving) when available. If only
+        S (power spectrum) is available, assumes zero phase → symmetric profile
+        (less accurate).
         
         Parameters
         ----------
         result : DispersionResult1D
-            Original dispersion result containing S(k, f) spectrum
+            Dispersion result containing S_complex (preferred) or S spectrum
         k_0 : float
             Mode wave vector in FBZ [rad/m]
         f_0 : float
             Mode frequency [Hz]
         delta_k : float, optional
-            Filter half-width in k [rad/m]
+            Filter half-width in k [rad/m]. Default: 0.1 * G
         delta_f : float, optional
-            Filter half-width in frequency [Hz]
+            Filter half-width in frequency [Hz]. Default: 0.5 GHz
         return_complex : bool
-            If True, return complex field; if False, return real part
+            If True, return complex M(y); if False, return Re[M(y)]
             
         Returns
         -------
         y_axis : np.ndarray
             Position axis [m] (reconstructed from k_axis)
         mode_profile : np.ndarray
-            Mode amplitude profile Re[IFFT{M̃_filtered}] or complex
+            Mode spatial profile: Re[M(y)] or complex M(y)
         mask_info : dict
-            Information about the applied mask
+            Information about the applied mask (k_0, f_0, number of points, etc.)
+            
+        References
+        ----------
+        Rychły et al. (2015) - Magnonic crystal mode reconstruction
+        
+        See Also
+        --------
+        create_mode_mask : Creates the BZ-folding mask
         """
-        S = result.S.copy()
+        # Use complex spectrum for proper phase reconstruction
+        # If S_complex is not available, fall back to S (amplitude only)
+        if hasattr(result, 'S_complex') and result.S_complex is not None:
+            S_data = result.S_complex.copy()
+            logger.debug("Using S_complex for phase-preserving mode reconstruction")
+        else:
+            S_data = result.S.copy()
+            logger.warning(
+                "S_complex not available, using amplitude-only spectrum S. "
+                "Mode reconstruction will assume zero phase (symmetric profile)."
+            )
+        
         k_axis = result.k_axis.copy()
         f_axis = result.f_axis.copy()
         
-        # Create mask
+        # =========================================================================
+        # STEP 1: Create BZ-folding mask
+        # =========================================================================
+        # This mask selects ALL periodic copies: k₀, k₀±G, k₀±2G, ...
+        # where G = 2π/a is the reciprocal lattice vector.
+        # This is ESSENTIAL for physically correct mode reconstruction!
         mask = self.create_mode_mask(
             k_axis=k_axis,
             f_axis=f_axis,
@@ -519,22 +590,22 @@ class BrillouinZoneFolding:
             f_0=f_0,
             delta_k=delta_k,
             delta_f=delta_f,
-            include_all_copies=True,
+            include_all_copies=True,  # ← CRITICAL: Include all BZ copies!
         )
         
-        # Apply mask to spectrum
-        # S has shape (N_k, N_f)
-        S_filtered = S * mask.astype(float)
+        # =========================================================================
+        # STEP 2: Apply mask to complex spectrum
+        # =========================================================================
+        # Masking in k-space: M̃_filtered(k) = M̃(k) · Mask(k)
+        # This selects all Brillouin zone copies while preserving phase
+        S_filtered = S_data * mask.astype(S_data.dtype)
         
         # Find frequency index closest to f_0
         i_f0 = np.argmin(np.abs(f_axis - f_0))
         
         # Extract 1D spectrum at this frequency
+        # S_at_f0 now contains contributions from k₀ + nG for all n
         S_at_f0 = S_filtered[:, i_f0]
-        
-        # Also create complex representation for proper IFFT
-        # We need to include phase information if available
-        # For amplitude-only data, we assume phase = 0 which gives symmetric profile
         
         # Reconstruct position axis from k_axis
         # Δk = 2π/L → L = 2π/Δk
@@ -546,8 +617,18 @@ class BrillouinZoneFolding:
         else:
             y_axis = np.array([0])
         
-        # Perform inverse FFT
-        # Need to handle fftshift: if k_axis is centered, undo shift first
+        # =========================================================================
+        # STEP 3: Inverse FFT - Automatic summation of periodic copies
+        # =========================================================================
+        # The IFFT performs the sum over all masked k-points:
+        #   M(y) = Σₙ M̃(k₀ + nG) exp(i(k₀ + nG)y)
+        # This is the PHYSICALLY CORRECT reconstruction that includes ALL
+        # periodic copies, leading to:
+        # - Correct amplitude (coherent addition)
+        # - Correct phase structure
+        # - Automatic enforcement of spatial periodicity m(y + a) = m(y)
+        
+        # Handle fftshift: if k_axis is centered, undo shift first
         k_center = (k_axis[0] + k_axis[-1]) / 2
         is_shifted = np.abs(k_center) < 0.1 * np.abs(k_axis).max()
         
@@ -557,6 +638,7 @@ class BrillouinZoneFolding:
             S_for_ifft = S_at_f0
         
         # Inverse FFT: k → y
+        # This is where the summation Σₙ M̃(k₀ + nG) exp(i·k·y) happens!
         mode_profile_complex = np.fft.ifft(S_for_ifft)
         
         if return_complex:

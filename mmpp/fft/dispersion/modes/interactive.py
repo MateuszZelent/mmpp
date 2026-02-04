@@ -24,8 +24,10 @@ Performance: Mode visualization is INSTANT because S_complex is pre-computed and
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -76,6 +78,86 @@ class InteractiveDispersionModes:
     - Option for +k/-k direction selection
     """
 
+    def _base_default_params(self) -> dict[str, object]:
+        """Canonical defaults used by fresh and hot-reloaded instances."""
+        return {
+            "lattice_nm": 470.0,
+            "n_bz_mask": 3,
+            "k_margin_bins": 0,
+            "f_margin_bins": 0,
+            "neighbor_reduce": "mean",
+            "f_min_ghz": 0.0,
+            "f_max_ghz": 10.0,
+            "k_direction": "both",
+            "cmap_disp": "viridis",
+            "cmap_mode": "RdBu_r",
+            # Live post-filter defaults
+            "live_snr_enabled": False,
+            "live_snr_threshold": 3.0,
+            "live_gaussian_enabled": False,
+            "live_sigma_f": 1.0,
+            "live_sigma_k": 1.0,
+            "live_gaussian_threshold_std": 1.5,
+            "live_wiener_enabled": False,
+            "live_wiener_window": 5,
+            "live_bandpass_enabled": False,
+            "live_kmin_rad_um": -10.0,
+            "live_kmax_rad_um": 10.0,
+            # Compute-stage recompute filter defaults
+            "pre_remove_static": False,
+            "pre_remove_average": False,
+            "pre_hann_time": False,
+            "pre_hann_space": False,
+            "pre_envelope_enabled": False,
+            "pre_envelope_threshold_std": 2.0,
+            "pre_envelope_margin": 10,
+            "pre_wavelet_enabled": False,
+            "pre_wavelet_level": 3,
+            "pre_equalize_enabled": False,
+            "pre_compression_enabled": False,
+            "pre_compression_alpha": 10.0,
+            "pre_welch_enabled": False,
+            "pre_welch_segments": 4,
+            "pre_welch_overlap": 0.5,
+            # Enhancement filters (non-destructive, applied on display)
+            "live_log_enabled": False,
+            "live_log_method": "log1p",
+            "live_gamma_enabled": False,
+            "live_gamma_value": 0.5,
+            "live_clahe_enabled": False,
+            "live_clahe_clip": 0.03,
+            "live_clahe_tile": 16,
+            "live_lcn_enabled": False,
+            "live_lcn_sigma": 10.0,
+            "live_unsharp_enabled": False,
+            "live_unsharp_sigma": 2.0,
+            "live_unsharp_alpha": 1.5,
+            "live_percentile_enabled": False,
+            "live_percentile_low": 2.0,
+            "live_percentile_high": 99.0,
+            "live_soft_threshold_enabled": False,
+            "live_soft_percentile": 50.0,
+            "live_soft_smoothness": 5.0,
+        }
+
+
+    def _ensure_runtime_state(self):
+        """Backfill attributes for stale/autoreloaded notebook instances."""
+        if not hasattr(self, "_animation"):
+            self._animation = None
+        if not hasattr(self, "_is_animating"):
+            self._is_animating = False
+        if not hasattr(self, "_last_compute_kwargs"):
+            self._last_compute_kwargs = {}
+        if not hasattr(self, "_default_params") or not isinstance(self._default_params, dict):
+            self._default_params = {}
+        if not hasattr(self, "_presets_dir"):
+            self._presets_dir = None
+
+        base = self._base_default_params()
+        for key, value in base.items():
+            self._default_params.setdefault(key, value)
+
     def __init__(self, dispersion_interface: FFTDispersionInterface):
         """Initialize the interactive modes analysis."""
         self.interface = dispersion_interface
@@ -103,22 +185,17 @@ class InteractiveDispersionModes:
         # Animation state
         self._animation = None  # FuncAnimation object
         self._is_animating = False
+        self._last_compute_kwargs: dict[str, object] = {}
 
         # Default parameters
-        self._default_params = {
-            "lattice_nm": 470.0,
-            "n_bz_mask": 3,  # Number of BZ to include in mask
-            "f_min_ghz": 0.0,
-            "f_max_ghz": 10.0,
-            "threshold": 0.01,
-            "k_direction": "both",  # 'both', 'positive', 'negative'
-            "cmap_disp": "viridis",
-            "cmap_mode": "RdBu_r",
-        }
+        self._default_params = self._base_default_params()
 
         # Figure settings
         self._dpi = 150
         self._figsize = (10, 10)
+        
+        # Preset management
+        self._presets_dir = None  # Will be set when needed
 
     @property
     def detector(self) -> BrillouinZoneDetector:
@@ -134,6 +211,340 @@ class InteractiveDispersionModes:
         from .folding import BrillouinZoneFolding
 
         return BrillouinZoneFolding(lattice_constant, n_periods)
+    
+    # =========================================================================
+    # Preset Management
+    # =========================================================================
+    
+    def _get_presets_dir(self) -> Path:
+        """Get or create directory for storing presets.
+        
+        Presety są zapisywane w podfolderze '.mmpp_presets' w bieżącym
+        katalogu roboczym (cwd), co pozwala na osobne presety dla każdego projektu.
+        """
+        if self._presets_dir is None:
+            # Store in current working directory under .mmpp_presets
+            import os
+            cwd = Path(os.getcwd())
+            self._presets_dir = cwd / ".mmpp_presets"
+            self._presets_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Preset directory: {self._presets_dir}")
+        return self._presets_dir
+    
+    def _get_current_params(self) -> dict:
+        """Extract current parameter values from widgets."""
+        if not self._widgets_created:
+            return self._default_params.copy()
+        
+        params = {
+            # Basic parameters
+            "lattice_nm": float(self.w_lattice.value),
+            "n_bz_mask": int(self.w_n_bz_mask.value),
+            "k_margin_bins": int(self.w_k_margin.value),
+            "f_margin_bins": int(self.w_f_margin.value),
+            "neighbor_reduce": str(self.w_neighbor_reduce.value),
+            "f_min_ghz": float(self.w_fmin.value),
+            "f_max_ghz": float(self.w_fmax.value),
+            "k_direction": str(self.w_k_direction.value),
+            "cmap_disp": str(self.w_cmap_disp.value),
+            "cmap_mode": str(self.w_cmap_mode.value),
+            # Live post-filters
+            "live_snr_enabled": bool(self.w_live_snr_enabled.value),
+            "live_snr_threshold": float(self.w_live_snr_threshold.value),
+            "live_gaussian_enabled": bool(self.w_live_gaussian_enabled.value),
+            "live_sigma_f": float(self.w_live_sigma_f.value),
+            "live_sigma_k": float(self.w_live_sigma_k.value),
+            "live_gaussian_threshold_std": float(self.w_live_gaussian_threshold_std.value),
+            "live_wiener_enabled": bool(self.w_live_wiener_enabled.value),
+            "live_wiener_window": int(self.w_live_wiener_window.value),
+            "live_bandpass_enabled": bool(self.w_live_bandpass_enabled.value),
+            "live_kmin_rad_um": float(self.w_live_kmin.value),
+            "live_kmax_rad_um": float(self.w_live_kmax.value),
+            # Compute-stage filters
+            "pre_remove_static": bool(self.w_pre_remove_static.value),
+            "pre_remove_average": bool(self.w_pre_remove_average.value),
+            "pre_hann_time": bool(self.w_pre_hann_time.value),
+            "pre_hann_space": bool(self.w_pre_hann_space.value),
+            "pre_envelope_enabled": bool(self.w_pre_envelope_enabled.value),
+            "pre_envelope_threshold_std": float(self.w_pre_envelope_threshold_std.value),
+            "pre_envelope_margin": int(self.w_pre_envelope_margin.value),
+            "pre_wavelet_enabled": bool(self.w_pre_wavelet_enabled.value),
+            "pre_wavelet_level": int(self.w_pre_wavelet_level.value),
+            "pre_equalize_enabled": bool(self.w_pre_equalize_enabled.value),
+            "pre_compression_enabled": bool(self.w_pre_compression_enabled.value),
+            "pre_compression_alpha": float(self.w_pre_compression_alpha.value),
+            "pre_welch_enabled": bool(self.w_pre_welch_enabled.value),
+            "pre_welch_segments": int(self.w_pre_welch_segments.value),
+            "pre_welch_overlap": float(self.w_pre_welch_overlap.value),
+            # Enhancement filters
+            "live_log_enabled": bool(self.w_live_log_enabled.value),
+            "live_log_method": str(self.w_live_log_method.value),
+            "live_gamma_enabled": bool(self.w_live_gamma_enabled.value),
+            "live_gamma_value": float(self.w_live_gamma_value.value),
+            "live_clahe_enabled": bool(self.w_live_clahe_enabled.value),
+            "live_clahe_clip": float(self.w_live_clahe_clip.value),
+            "live_clahe_tile": int(self.w_live_clahe_tile.value),
+            "live_lcn_enabled": bool(self.w_live_lcn_enabled.value),
+            "live_lcn_sigma": float(self.w_live_lcn_sigma.value),
+            "live_unsharp_enabled": bool(self.w_live_unsharp_enabled.value),
+            "live_unsharp_sigma": float(self.w_live_unsharp_sigma.value),
+            "live_unsharp_alpha": float(self.w_live_unsharp_alpha.value),
+            "live_percentile_enabled": bool(self.w_live_percentile_enabled.value),
+            "live_percentile_low": float(self.w_live_percentile_low.value),
+            "live_percentile_high": float(self.w_live_percentile_high.value),
+            "live_soft_threshold_enabled": bool(self.w_live_soft_threshold_enabled.value),
+            "live_soft_percentile": float(self.w_live_soft_percentile.value),
+            "live_soft_smoothness": float(self.w_live_soft_smoothness.value),
+        }
+        return params
+    
+    def _apply_params(self, params: dict):
+        """Apply parameter values to widgets."""
+        if not self._widgets_created:
+            self._default_params.update(params)
+            return
+        
+        # Update widgets with new values
+        # Basic parameters
+        if "lattice_nm" in params:
+            self.w_lattice.value = float(params["lattice_nm"])
+        if "n_bz_mask" in params:
+            self.w_n_bz_mask.value = int(params["n_bz_mask"])
+        if "k_margin_bins" in params:
+            self.w_k_margin.value = int(params["k_margin_bins"])
+        if "f_margin_bins" in params:
+            self.w_f_margin.value = int(params["f_margin_bins"])
+        if "neighbor_reduce" in params:
+            self.w_neighbor_reduce.value = str(params["neighbor_reduce"])
+        if "f_min_ghz" in params:
+            self.w_fmin.value = float(params["f_min_ghz"])
+        if "f_max_ghz" in params:
+            self.w_fmax.value = float(params["f_max_ghz"])
+        if "k_direction" in params:
+            self.w_k_direction.value = str(params["k_direction"])
+        if "cmap_disp" in params:
+            self.w_cmap_disp.value = str(params["cmap_disp"])
+        if "cmap_mode" in params:
+            self.w_cmap_mode.value = str(params["cmap_mode"])
+        
+        # Live post-filters
+        if "live_snr_enabled" in params:
+            self.w_live_snr_enabled.value = bool(params["live_snr_enabled"])
+        if "live_snr_threshold" in params:
+            self.w_live_snr_threshold.value = float(params["live_snr_threshold"])
+        if "live_gaussian_enabled" in params:
+            self.w_live_gaussian_enabled.value = bool(params["live_gaussian_enabled"])
+        if "live_sigma_f" in params:
+            self.w_live_sigma_f.value = float(params["live_sigma_f"])
+        if "live_sigma_k" in params:
+            self.w_live_sigma_k.value = float(params["live_sigma_k"])
+        if "live_gaussian_threshold_std" in params:
+            self.w_live_gaussian_threshold_std.value = float(params["live_gaussian_threshold_std"])
+        if "live_wiener_enabled" in params:
+            self.w_live_wiener_enabled.value = bool(params["live_wiener_enabled"])
+        if "live_wiener_window" in params:
+            self.w_live_wiener_window.value = int(params["live_wiener_window"])
+        if "live_bandpass_enabled" in params:
+            self.w_live_bandpass_enabled.value = bool(params["live_bandpass_enabled"])
+        if "live_kmin_rad_um" in params:
+            self.w_live_kmin.value = float(params["live_kmin_rad_um"])
+        if "live_kmax_rad_um" in params:
+            self.w_live_kmax.value = float(params["live_kmax_rad_um"])
+        
+        # Compute-stage filters
+        if "pre_remove_static" in params:
+            self.w_pre_remove_static.value = bool(params["pre_remove_static"])
+        if "pre_remove_average" in params:
+            self.w_pre_remove_average.value = bool(params["pre_remove_average"])
+        if "pre_hann_time" in params:
+            self.w_pre_hann_time.value = bool(params["pre_hann_time"])
+        if "pre_hann_space" in params:
+            self.w_pre_hann_space.value = bool(params["pre_hann_space"])
+        if "pre_envelope_enabled" in params:
+            self.w_pre_envelope_enabled.value = bool(params["pre_envelope_enabled"])
+        if "pre_envelope_threshold_std" in params:
+            self.w_pre_envelope_threshold_std.value = float(params["pre_envelope_threshold_std"])
+        if "pre_envelope_margin" in params:
+            self.w_pre_envelope_margin.value = int(params["pre_envelope_margin"])
+        if "pre_wavelet_enabled" in params:
+            self.w_pre_wavelet_enabled.value = bool(params["pre_wavelet_enabled"])
+        if "pre_wavelet_level" in params:
+            self.w_pre_wavelet_level.value = int(params["pre_wavelet_level"])
+        if "pre_equalize_enabled" in params:
+            self.w_pre_equalize_enabled.value = bool(params["pre_equalize_enabled"])
+        if "pre_compression_enabled" in params:
+            self.w_pre_compression_enabled.value = bool(params["pre_compression_enabled"])
+        if "pre_compression_alpha" in params:
+            self.w_pre_compression_alpha.value = float(params["pre_compression_alpha"])
+        if "pre_welch_enabled" in params:
+            self.w_pre_welch_enabled.value = bool(params["pre_welch_enabled"])
+        if "pre_welch_segments" in params:
+            self.w_pre_welch_segments.value = int(params["pre_welch_segments"])
+        if "pre_welch_overlap" in params:
+            self.w_pre_welch_overlap.value = float(params["pre_welch_overlap"])
+        
+        # Enhancement filters
+        if "live_log_enabled" in params:
+            self.w_live_log_enabled.value = bool(params["live_log_enabled"])
+        if "live_log_method" in params:
+            self.w_live_log_method.value = str(params["live_log_method"])
+        if "live_gamma_enabled" in params:
+            self.w_live_gamma_enabled.value = bool(params["live_gamma_enabled"])
+        if "live_gamma_value" in params:
+            self.w_live_gamma_value.value = float(params["live_gamma_value"])
+        if "live_clahe_enabled" in params:
+            self.w_live_clahe_enabled.value = bool(params["live_clahe_enabled"])
+        if "live_clahe_clip" in params:
+            self.w_live_clahe_clip.value = float(params["live_clahe_clip"])
+        if "live_clahe_tile" in params:
+            self.w_live_clahe_tile.value = int(params["live_clahe_tile"])
+        if "live_lcn_enabled" in params:
+            self.w_live_lcn_enabled.value = bool(params["live_lcn_enabled"])
+        if "live_lcn_sigma" in params:
+            self.w_live_lcn_sigma.value = float(params["live_lcn_sigma"])
+        if "live_unsharp_enabled" in params:
+            self.w_live_unsharp_enabled.value = bool(params["live_unsharp_enabled"])
+        if "live_unsharp_sigma" in params:
+            self.w_live_unsharp_sigma.value = float(params["live_unsharp_sigma"])
+        if "live_unsharp_alpha" in params:
+            self.w_live_unsharp_alpha.value = float(params["live_unsharp_alpha"])
+        if "live_percentile_enabled" in params:
+            self.w_live_percentile_enabled.value = bool(params["live_percentile_enabled"])
+        if "live_percentile_low" in params:
+            self.w_live_percentile_low.value = float(params["live_percentile_low"])
+        if "live_percentile_high" in params:
+            self.w_live_percentile_high.value = float(params["live_percentile_high"])
+        if "live_soft_threshold_enabled" in params:
+            self.w_live_soft_threshold_enabled.value = bool(params["live_soft_threshold_enabled"])
+        if "live_soft_percentile" in params:
+            self.w_live_soft_percentile.value = float(params["live_soft_percentile"])
+        if "live_soft_smoothness" in params:
+            self.w_live_soft_smoothness.value = float(params["live_soft_smoothness"])
+    
+    def save_preset(self, name: str) -> bool:
+        """Save current parameters as a preset.
+        
+        Preset jest zapisywany w podfolderze '.mmpp_presets' w bieżącym
+        katalogu roboczym, dzięki czemu każdy projekt może mieć własne presety.
+        
+        Parameters
+        ----------
+        name : str
+            Name of the preset (without .json extension)
+            
+        Returns
+        -------
+        bool
+            True if saved successfully, False otherwise
+        """
+        try:
+            # Sanitize name
+            name = name.strip().replace("/", "_").replace("\\", "_")
+            if not name:
+                logger.warning("Preset name cannot be empty")
+                return False
+            
+            presets_dir = self._get_presets_dir()
+            preset_file = presets_dir / f"{name}.json"
+            
+            params = self._get_current_params()
+            
+            # Add metadata
+            from datetime import datetime
+            preset_data = {
+                "created": datetime.now().isoformat(),
+                "params": params
+            }
+            
+            with open(preset_file, 'w') as f:
+                json.dump(preset_data, f, indent=2)
+            
+            logger.info(f"Preset '{name}' saved to {preset_file}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save preset '{name}': {e}")
+            return False
+    
+    def load_preset(self, name: str) -> bool:
+        """Load parameters from a preset.
+        
+        Parameters
+        ----------
+        name : str
+            Name of the preset (without .json extension)
+            
+        Returns
+        -------
+        bool
+            True if loaded successfully, False otherwise
+        """
+        try:
+            presets_dir = self._get_presets_dir()
+            preset_file = presets_dir / f"{name}.json"
+            
+            if not preset_file.exists():
+                logger.warning(f"Preset '{name}' not found at {preset_file}")
+                return False
+            
+            with open(preset_file, 'r') as f:
+                preset_data = json.load(f)
+            
+            # Handle both old format (direct params) and new format (with metadata)
+            if isinstance(preset_data, dict) and "params" in preset_data:
+                params = preset_data["params"]
+            else:
+                params = preset_data
+            
+            self._apply_params(params)
+            logger.info(f"Preset '{name}' loaded from {preset_file}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load preset '{name}': {e}")
+            return False
+    
+    def delete_preset(self, name: str) -> bool:
+        """Delete a saved preset.
+        
+        Parameters
+        ----------
+        name : str
+            Name of the preset (without .json extension)
+            
+        Returns
+        -------
+        bool
+            True if deleted successfully, False otherwise
+        """
+        try:
+            presets_dir = self._get_presets_dir()
+            preset_file = presets_dir / f"{name}.json"
+            
+            if not preset_file.exists():
+                logger.warning(f"Preset '{name}' not found")
+                return False
+            
+            preset_file.unlink()
+            logger.info(f"Preset '{name}' deleted")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete preset '{name}': {e}")
+            return False
+    
+    def list_presets(self) -> list[str]:
+        """List all available presets.
+        
+        Returns
+        -------
+        list[str]
+            List of preset names (without .json extension)
+        """
+        try:
+            presets_dir = self._get_presets_dir()
+            preset_files = list(presets_dir.glob("*.json"))
+            return sorted([f.stem for f in preset_files])
+        except Exception as e:
+            logger.error(f"Failed to list presets: {e}")
+            return []
 
     def fold(
         self,
@@ -181,6 +592,8 @@ class InteractiveDispersionModes:
         **compute_kwargs : dict
             Extra kwargs passed to compute_1d if result needs to be computed.
         """
+        self._ensure_runtime_state()
+
         if not _HAS_WIDGETS:
             raise ImportError(
                 "ipywidgets is required for interactive mode. "
@@ -195,8 +608,10 @@ class InteractiveDispersionModes:
         # Priority: explicit result > self.result > compute
         if result is not None:
             self.result = result
+            self._last_compute_kwargs = {}
         elif self.result is None:
             logger.info("Computing dispersion result...")
+            self._last_compute_kwargs = dict(compute_kwargs)
             self.result = self.interface.compute_1d(**compute_kwargs)
 
         # Set lattice constant (use provided or keep default from dispersion_modes())
@@ -222,6 +637,7 @@ class InteractiveDispersionModes:
 
     def _create_widgets(self):
         """Create all interactive widgets."""
+        self._ensure_runtime_state()
         params = self._default_params
 
         # === Lattice parameters ===
@@ -238,7 +654,7 @@ class InteractiveDispersionModes:
 
         self.w_n_bz_mask = widgets.IntSlider(
             value=params["n_bz_mask"],
-            min=1,
+            min=0,
             max=10,
             step=1,
             description="N_BZ mask:",
@@ -283,6 +699,39 @@ class InteractiveDispersionModes:
             style={"description_width": "70px"},
         )
 
+        self.w_k_margin = widgets.IntSlider(
+            value=params["k_margin_bins"],
+            min=0,
+            max=3,
+            step=1,
+            description="k margin:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+
+        self.w_f_margin = widgets.IntSlider(
+            value=params["f_margin_bins"],
+            min=0,
+            max=3,
+            step=1,
+            description="f margin:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+
+        self.w_neighbor_reduce = widgets.Dropdown(
+            options=[
+                ("Mean (recommended)", "mean"),
+                ("Sum", "sum"),
+            ],
+            value=params["neighbor_reduce"],
+            description="Nbh agg:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+        )
+
         # === Mode visualization type ===
         self.w_mode_type = widgets.Dropdown(
             options=[
@@ -315,9 +764,356 @@ class InteractiveDispersionModes:
             style={"description_width": "70px"},
         )
 
+        # === Live post-filters (from cached S(k,f)) ===
+        self.w_live_snr_enabled = widgets.Checkbox(
+            value=params["live_snr_enabled"],
+            description="SNR filter",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_snr_threshold = widgets.FloatSlider(
+            value=params["live_snr_threshold"],
+            min=0.5,
+            max=10.0,
+            step=0.1,
+            description="SNR thr:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_gaussian_enabled = widgets.Checkbox(
+            value=params["live_gaussian_enabled"],
+            description="Gauss+morph",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_sigma_f = widgets.FloatSlider(
+            value=params["live_sigma_f"],
+            min=0.0,
+            max=4.0,
+            step=0.1,
+            description="σf:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_sigma_k = widgets.FloatSlider(
+            value=params["live_sigma_k"],
+            min=0.0,
+            max=4.0,
+            step=0.1,
+            description="σk:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_gaussian_threshold_std = widgets.FloatSlider(
+            value=params["live_gaussian_threshold_std"],
+            min=0.0,
+            max=4.0,
+            step=0.1,
+            description="thr std:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_wiener_enabled = widgets.Checkbox(
+            value=params["live_wiener_enabled"],
+            description="Wiener2D",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_wiener_window = widgets.IntSlider(
+            value=params["live_wiener_window"],
+            min=1,
+            max=21,
+            step=2,
+            description="W win:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_bandpass_enabled = widgets.Checkbox(
+            value=params["live_bandpass_enabled"],
+            description="Bandpass (k,f)",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_kmin = widgets.FloatSlider(
+            value=params["live_kmin_rad_um"],
+            min=-20.0,
+            max=0.0,
+            step=0.1,
+            description="k min:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_kmax = widgets.FloatSlider(
+            value=params["live_kmax_rad_um"],
+            min=0.0,
+            max=20.0,
+            step=0.1,
+            description="k max:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+        )
+
+        # === Enhancement Filters (Non-destructive, applied on display) ===
+        self.w_live_log_enabled = widgets.Checkbox(
+            value=params["live_log_enabled"],
+            description="Log transform",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_log_method = widgets.Dropdown(
+            options=[
+                ("log1p (smooth)", "log1p"),
+                ("log10 (classic)", "log10"),
+                ("arcsinh (symmetric)", "arcsinh"),
+                ("sqrt (mild)", "sqrt"),
+            ],
+            value=params["live_log_method"],
+            description="Method:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+        )
+        self.w_live_gamma_enabled = widgets.Checkbox(
+            value=params["live_gamma_enabled"],
+            description="Gamma correction",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_gamma_value = widgets.FloatSlider(
+            value=params["live_gamma_value"],
+            min=0.1,
+            max=2.0,
+            step=0.05,
+            description="γ:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_clahe_enabled = widgets.Checkbox(
+            value=params["live_clahe_enabled"],
+            description="CLAHE (local contrast)",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_clahe_clip = widgets.FloatSlider(
+            value=params["live_clahe_clip"],
+            min=0.01,
+            max=0.5,
+            step=0.01,
+            description="Clip limit:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_clahe_tile = widgets.IntSlider(
+            value=params["live_clahe_tile"],
+            min=4,
+            max=64,
+            step=4,
+            description="Tile size:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_lcn_enabled = widgets.Checkbox(
+            value=params["live_lcn_enabled"],
+            description="Local Contrast Norm",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_lcn_sigma = widgets.FloatSlider(
+            value=params["live_lcn_sigma"],
+            min=2.0,
+            max=50.0,
+            step=1.0,
+            description="σ (smooth):",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_unsharp_enabled = widgets.Checkbox(
+            value=params["live_unsharp_enabled"],
+            description="Unsharp mask (edges)",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_unsharp_sigma = widgets.FloatSlider(
+            value=params["live_unsharp_sigma"],
+            min=0.5,
+            max=10.0,
+            step=0.5,
+            description="σ blur:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_unsharp_alpha = widgets.FloatSlider(
+            value=params["live_unsharp_alpha"],
+            min=0.1,
+            max=5.0,
+            step=0.1,
+            description="α strength:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_percentile_enabled = widgets.Checkbox(
+            value=params["live_percentile_enabled"],
+            description="Percentile autoscale",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_percentile_low = widgets.FloatSlider(
+            value=params["live_percentile_low"],
+            min=0.0,
+            max=50.0,
+            step=0.5,
+            description="Low %:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_percentile_high = widgets.FloatSlider(
+            value=params["live_percentile_high"],
+            min=50.0,
+            max=100.0,
+            step=0.5,
+            description="High %:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_soft_threshold_enabled = widgets.Checkbox(
+            value=params["live_soft_threshold_enabled"],
+            description="Soft threshold",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_live_soft_percentile = widgets.FloatSlider(
+            value=params["live_soft_percentile"],
+            min=0.0,
+            max=100.0,
+            step=5.0,
+            description="Thr %:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_live_soft_smoothness = widgets.FloatSlider(
+            value=params["live_soft_smoothness"],
+            min=1.0,
+            max=20.0,
+            step=0.5,
+            description="Smooth:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+
+        # === Compute-stage filters (require FFT recompute) ===
+        self.w_pre_remove_static = widgets.Checkbox(
+            value=params["pre_remove_static"],
+            description="remove_static",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_remove_average = widgets.Checkbox(
+            value=params["pre_remove_average"],
+            description="remove_average",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_hann_time = widgets.Checkbox(
+            value=params["pre_hann_time"],
+            description="hann_time",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_hann_space = widgets.Checkbox(
+            value=params["pre_hann_space"],
+            description="hann_space",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_envelope_enabled = widgets.Checkbox(
+            value=params["pre_envelope_enabled"],
+            description="envelope",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_envelope_threshold_std = widgets.FloatSlider(
+            value=params["pre_envelope_threshold_std"],
+            min=0.0,
+            max=5.0,
+            step=0.1,
+            description="env thr:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_pre_envelope_margin = widgets.IntSlider(
+            value=params["pre_envelope_margin"],
+            min=0,
+            max=50,
+            step=1,
+            description="env marg:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_pre_wavelet_enabled = widgets.Checkbox(
+            value=params["pre_wavelet_enabled"],
+            description="wavelet1D",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_wavelet_level = widgets.IntSlider(
+            value=params["pre_wavelet_level"],
+            min=1,
+            max=6,
+            step=1,
+            description="w lvl:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_pre_equalize_enabled = widgets.Checkbox(
+            value=params["pre_equalize_enabled"],
+            description="amp equalize",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_compression_enabled = widgets.Checkbox(
+            value=params["pre_compression_enabled"],
+            description="compression",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_compression_alpha = widgets.FloatSlider(
+            value=params["pre_compression_alpha"],
+            min=1.0,
+            max=50.0,
+            step=0.5,
+            description="α:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_pre_welch_enabled = widgets.Checkbox(
+            value=params["pre_welch_enabled"],
+            description="Welch avg",
+            layout=widgets.Layout(width="95%"),
+        )
+        self.w_pre_welch_segments = widgets.IntSlider(
+            value=params["pre_welch_segments"],
+            min=2,
+            max=12,
+            step=1,
+            description="segments:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+        self.w_pre_welch_overlap = widgets.FloatSlider(
+            value=params["pre_welch_overlap"],
+            min=0.0,
+            max=0.9,
+            step=0.05,
+            description="overlap:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            continuous_update=False,
+        )
+
         # === Buttons ===
         self.w_update = widgets.Button(
-            description="🔄 Update",
+            description="🔄 Refresh Plot",
             button_style="success",
             layout=widgets.Layout(width="95%"),
         )
@@ -335,6 +1131,13 @@ class InteractiveDispersionModes:
             tooltip="Toggle mode oscillation animation (full 2π cycle)",
         )
 
+        self.w_recompute = widgets.Button(
+            description="♻️ Recompute FFT",
+            button_style="primary",
+            layout=widgets.Layout(width="95%"),
+            tooltip="Recompute dispersion with selected compute-stage filters",
+        )
+
         # === Info display ===
         self.w_info = widgets.HTML(
             value="<small>Click on dispersion to select mode (k, f)</small>",
@@ -350,6 +1153,7 @@ class InteractiveDispersionModes:
         self.w_update.on_click(self._on_update)
         self.w_auto_detect.on_click(self._on_auto_detect)
         self.w_animate.on_click(self._on_animate)
+        self.w_recompute.on_click(self._on_recompute_dispersion)
 
         # Connect changes that should update immediately
         # w_lattice also updates BZ lines on dispersion plot
@@ -358,29 +1162,235 @@ class InteractiveDispersionModes:
 
         # Connect mode visualization params
         # w_lattice affects BZ mask positions for mode extraction
-        for w in [self.w_n_bz_mask, self.w_k_direction, self.w_mode_type, self.w_cmap_mode, self.w_lattice]:
+        for w in [
+            self.w_n_bz_mask,
+            self.w_k_direction,
+            self.w_k_margin,
+            self.w_f_margin,
+            self.w_neighbor_reduce,
+            self.w_mode_type,
+            self.w_cmap_mode,
+            self.w_lattice,
+        ]:
             w.observe(self._on_mode_param_change, names="value")
         
         # Watch n_bz to show/hide k-direction widget
         self.w_n_bz_mask.observe(self._on_n_bz_change, names="value")
         self._update_k_direction_visibility()
 
+        # Live post-filter controls update plot immediately.
+        for w in [
+            self.w_live_snr_enabled,
+            self.w_live_snr_threshold,
+            self.w_live_gaussian_enabled,
+            self.w_live_sigma_f,
+            self.w_live_sigma_k,
+            self.w_live_gaussian_threshold_std,
+            self.w_live_wiener_enabled,
+            self.w_live_wiener_window,
+            self.w_live_bandpass_enabled,
+            self.w_live_kmin,
+            self.w_live_kmax,
+            # Enhancement filters (non-destructive)
+            self.w_live_log_enabled,
+            self.w_live_log_method,
+            self.w_live_gamma_enabled,
+            self.w_live_gamma_value,
+            self.w_live_clahe_enabled,
+            self.w_live_clahe_clip,
+            self.w_live_clahe_tile,
+            self.w_live_lcn_enabled,
+            self.w_live_lcn_sigma,
+            self.w_live_unsharp_enabled,
+            self.w_live_unsharp_sigma,
+            self.w_live_unsharp_alpha,
+            self.w_live_percentile_enabled,
+            self.w_live_percentile_low,
+            self.w_live_percentile_high,
+            self.w_live_soft_threshold_enabled,
+            self.w_live_soft_percentile,
+            self.w_live_soft_smoothness,
+        ]:
+            w.observe(self._on_live_filter_change, names="value")
+
+        # === Preset Management (Top Priority) ===
+        available_presets = self.list_presets()
+        preset_options = [("-- Load Preset --", "")] + [(name, name) for name in available_presets]
+        
+        self.w_preset_load = widgets.Dropdown(
+            options=preset_options,
+            value="",
+            description="",
+            layout=widgets.Layout(width="calc(100% - 90px)"),
+            tooltip="Load saved preset from current folder",
+        )
+        
+        self.w_preset_refresh_btn = widgets.Button(
+            description="🔄",
+            button_style="",
+            layout=widgets.Layout(width="40px"),
+            tooltip="Refresh preset list",
+        )
+        
+        self.w_preset_name = widgets.Text(
+            value="",
+            placeholder="Preset name...",
+            description="",
+            layout=widgets.Layout(width="calc(100% - 90px)"),
+        )
+        
+        self.w_preset_save_btn = widgets.Button(
+            description="💾",
+            button_style="success",
+            layout=widgets.Layout(width="40px"),
+            tooltip="Save current settings as preset",
+        )
+        
+        self.w_preset_delete_btn = widgets.Button(
+            description="🗑️",
+            button_style="danger",
+            layout=widgets.Layout(width="40px"),
+            tooltip="Delete selected preset",
+        )
+        
+        # Connect preset callbacks
+        self.w_preset_save_btn.on_click(self._on_save_preset)
+        self.w_preset_delete_btn.on_click(self._on_delete_preset)
+        self.w_preset_refresh_btn.on_click(self._on_refresh_presets)
+        self.w_preset_load.observe(self._on_load_preset, names="value")
+
         self._widgets_created = True
 
     def _create_layout(self) -> widgets.Widget:
         """Create layout with controls on left, stacked plots on right."""
+
+        live_filters_box = widgets.VBox(
+            [
+                self.w_live_snr_enabled,
+                self.w_live_snr_threshold,
+                self.w_live_gaussian_enabled,
+                self.w_live_sigma_f,
+                self.w_live_sigma_k,
+                self.w_live_gaussian_threshold_std,
+                self.w_live_wiener_enabled,
+                self.w_live_wiener_window,
+                self.w_live_bandpass_enabled,
+                self.w_live_kmin,
+                self.w_live_kmax,
+                widgets.HTML("<small>Bandpass uses current f min/f max sliders.</small>"),
+            ],
+            layout=widgets.Layout(width="100%"),
+        )
+
+        compute_filters_box = widgets.VBox(
+            [
+                self.w_pre_remove_static,
+                self.w_pre_remove_average,
+                self.w_pre_hann_time,
+                self.w_pre_hann_space,
+                self.w_pre_envelope_enabled,
+                self.w_pre_envelope_threshold_std,
+                self.w_pre_envelope_margin,
+                self.w_pre_wavelet_enabled,
+                self.w_pre_wavelet_level,
+                self.w_pre_equalize_enabled,
+                self.w_pre_compression_enabled,
+                self.w_pre_compression_alpha,
+                self.w_pre_welch_enabled,
+                self.w_pre_welch_segments,
+                self.w_pre_welch_overlap,
+                self.w_recompute,
+            ],
+            layout=widgets.Layout(width="100%"),
+        )
+
+        # Enhancement filters (non-destructive, image-like processing)
+        enhancement_filters_box = widgets.VBox(
+            [
+                widgets.HTML("<small><b>Dynamic Range</b></small>"),
+                self.w_live_log_enabled,
+                self.w_live_log_method,
+                self.w_live_gamma_enabled,
+                self.w_live_gamma_value,
+                self.w_live_percentile_enabled,
+                self.w_live_percentile_low,
+                self.w_live_percentile_high,
+                widgets.HTML("<hr style='margin:5px'>"),
+                widgets.HTML("<small><b>Contrast Enhancement</b></small>"),
+                self.w_live_clahe_enabled,
+                self.w_live_clahe_clip,
+                self.w_live_clahe_tile,
+                self.w_live_lcn_enabled,
+                self.w_live_lcn_sigma,
+                widgets.HTML("<hr style='margin:5px'>"),
+                widgets.HTML("<small><b>Edge Enhancement</b></small>"),
+                self.w_live_unsharp_enabled,
+                self.w_live_unsharp_sigma,
+                self.w_live_unsharp_alpha,
+                widgets.HTML("<hr style='margin:5px'>"),
+                widgets.HTML("<small><b>Noise Suppression (soft)</b></small>"),
+                self.w_live_soft_threshold_enabled,
+                self.w_live_soft_percentile,
+                self.w_live_soft_smoothness,
+                widgets.HTML("<small style='color:#888'>These filters enhance visibility without destroying data.</small>"),
+            ],
+            layout=widgets.Layout(width="100%"),
+        )
+
+        filters_accordion = widgets.Accordion(
+            children=[enhancement_filters_box, live_filters_box, compute_filters_box],
+            selected_index=0,  # Enhancement filters open by default
+            layout=widgets.Layout(width="95%"),
+        )
+        filters_accordion.set_title(0, "✨ Enhancement (fast)")
+        filters_accordion.set_title(1, "🔧 Classic post-filters")
+        filters_accordion.set_title(2, "♻️ Compute filters (recompute)")
+
+
+        # Preset controls at the very top
+        preset_load_box = widgets.HBox(
+            [self.w_preset_load, self.w_preset_refresh_btn],
+            layout=widgets.Layout(width="100%")
+        )
+        
+        preset_save_box = widgets.HBox(
+            [self.w_preset_name, self.w_preset_save_btn],
+            layout=widgets.Layout(width="100%")
+        )
+        
+        preset_controls = widgets.VBox(
+            [
+                widgets.HTML("<small style='color:#666'><b>📁 Presets</b> (saved in current folder)</small>"),
+                preset_load_box,
+                preset_save_box,
+                widgets.HBox(
+                    [self.w_preset_delete_btn],
+                    layout=widgets.Layout(justify_content="center", width="100%")
+                ),
+            ],
+            layout=widgets.Layout(
+                width="100%",
+                padding="5px",
+                border="1px solid #ddd",
+                margin="0 0 10px 0"
+            )
+        )
 
         # Left panel: controls
         left_panel = widgets.VBox(
             [
                 widgets.HTML("<b>🌊 BZ Mode Analysis</b>"),
                 widgets.HTML("<hr style='margin:2px'>"),
+                preset_controls,
                 widgets.HTML("<small><b>Lattice</b></small>"),
                 self.w_lattice,
                 self.w_auto_detect,
                 widgets.HTML("<small><b>Mask Settings</b></small>"),
                 self.w_n_bz_mask,
                 self.w_k_direction,
+                self.w_k_margin,
+                self.w_f_margin,
+                self.w_neighbor_reduce,
                 widgets.HTML("<small><b>Mode Visualization</b></small>"),
                 self.w_mode_type,
                 widgets.HTML("<small><b>Frequency Range</b></small>"),
@@ -389,6 +1399,8 @@ class InteractiveDispersionModes:
                 widgets.HTML("<small><b>Display</b></small>"),
                 self.w_cmap_disp,
                 self.w_cmap_mode,
+                widgets.HTML("<small><b>Filters</b></small>"),
+                filters_accordion,
                 self.w_update,
                 self.w_animate,
                 widgets.HTML("<hr style='margin:5px'>"),
@@ -398,7 +1410,7 @@ class InteractiveDispersionModes:
                 self.w_mode_info,
             ],
             layout=widgets.Layout(
-                width="200px",
+                width="310px",
                 padding="5px",
                 border="1px solid #ddd",
             ),
@@ -410,8 +1422,8 @@ class InteractiveDispersionModes:
                 self._output,
             ],
             layout=widgets.Layout(
-                width="calc(100% - 220px)",
-                min_width="700px",
+                width="calc(100% - 330px)",
+                min_width="760px",
             ),
         )
 
@@ -476,6 +1488,62 @@ class InteractiveDispersionModes:
         if self._selected_k is not None:
             self._update_mode_visualization()
 
+    def _on_recompute_dispersion(self, _):
+        """Recompute dispersion with selected compute-stage filters."""
+        if self.result is None:
+            self.w_info.value = "<small style='color:red'>⚠️ No dispersion result to recompute</small>"
+            return
+
+        self.w_recompute.disabled = True
+        old_desc = self.w_recompute.description
+        self.w_recompute.description = "⏳ Recomputing..."
+
+        try:
+            filters_cfg = self._build_compute_filters_config()
+
+            # Preserve interactive mode extraction capability.
+            axis = self.result.axis
+            component = self.result.component
+            compute_kwargs = dict(self._last_compute_kwargs)
+            compute_kwargs["axis"] = axis
+            compute_kwargs["component"] = component
+            compute_kwargs["avg_over_orthogonal"] = False
+            compute_kwargs["force"] = True
+            compute_kwargs["save"] = False
+
+            if filters_cfg:
+                compute_kwargs["filters"] = filters_cfg
+
+            t0 = time.perf_counter()
+            self.result = self.interface.compute_1d(**compute_kwargs)
+            elapsed = time.perf_counter() - t0
+            self._last_compute_kwargs = {
+                k: v for k, v in compute_kwargs.items()
+                if k not in {"force", "save", "filters"}
+            }
+
+            # Refresh frequency slider bounds for new result.
+            f_max_ghz = float(self.result.f_axis.max() / 1e9)
+            self.w_fmin.max = max(f_max_ghz, 0.1)
+            self.w_fmax.max = max(f_max_ghz * 1.5, 0.2)
+            if self.w_fmax.value > self.w_fmax.max:
+                self.w_fmax.value = self.w_fmax.max
+
+            self.w_info.value = (
+                f"<small style='color:green'>✅ Recomputed dispersion in {elapsed:.2f} s "
+                f"(avg_over_orthogonal=False)</small>"
+            )
+
+            self._update_dispersion_plot()
+            if self._selected_k is not None:
+                self._update_mode_visualization()
+        except Exception as exc:
+            logger.exception("Dispersion recompute failed")
+            self.w_info.value = f"<small style='color:red'>❌ Recompute error: {exc}</small>"
+        finally:
+            self.w_recompute.description = old_desc
+            self.w_recompute.disabled = False
+
     def _on_display_param_change(self, change):
         """Handle display parameter changes."""
         self._update_dispersion_plot()
@@ -486,23 +1554,298 @@ class InteractiveDispersionModes:
             self._update_mode_visualization()
     
     def _on_n_bz_change(self, change):
-        """Handle N_BZ slider change - update k-direction visibility."""
+        """Handle N_BZ slider change."""
         self._update_k_direction_visibility()
         if self._selected_k is not None:
             self._update_mode_visualization()
+
+    def _on_live_filter_change(self, change):
+        """Handle live post-filter parameter changes."""
+        self._update_dispersion_plot()
+    
+    def _on_save_preset(self, _):
+        """Save current parameters as a preset."""
+        preset_name = self.w_preset_name.value.strip()
+        if not preset_name:
+            self.w_info.value = "<small style='color:orange'>⚠️ Enter preset name</small>"
+            return
+        
+        if self.save_preset(preset_name):
+            presets_dir = self._get_presets_dir()
+            self.w_info.value = f"<small style='color:green'>✅ Saved to .mmpp_presets/{preset_name}.json</small>"
+            self._refresh_preset_dropdown()
+            self.w_preset_name.value = ""
+        else:
+            self.w_info.value = f"<small style='color:red'>❌ Failed to save '{preset_name}'</small>"
+    
+    def _on_load_preset(self, change):
+        """Load a selected preset."""
+        preset_name = change['new']
+        if not preset_name:
+            return
+        
+        if self.load_preset(preset_name):
+            self.w_info.value = f"<small style='color:green'>✅ Preset '{preset_name}' loaded</small>"
+            # Update plots with new parameters
+            self._update_dispersion_plot()
+            if self._selected_k is not None:
+                self._update_mode_visualization()
+        else:
+            self.w_info.value = f"<small style='color:red'>❌ Failed to load preset '{preset_name}'</small>"
+    
+    def _on_delete_preset(self, _):
+        """Delete the selected preset."""
+        preset_name = self.w_preset_load.value
+        if not preset_name:
+            self.w_info.value = "<small style='color:orange'>⚠️ Select preset to delete</small>"
+            return
+        
+        if self.delete_preset(preset_name):
+            self.w_info.value = f"<small style='color:green'>✅ Deleted '{preset_name}'</small>"
+            self._refresh_preset_dropdown()
+            self.w_preset_load.value = ""
+        else:
+            self.w_info.value = f"<small style='color:red'>❌ Failed to delete '{preset_name}'</small>"
+    
+    def _on_refresh_presets(self, _):
+        """Refresh the preset dropdown list."""
+        self._refresh_preset_dropdown()
+        presets_dir = self._get_presets_dir()
+        count = len(self.list_presets())
+        self.w_info.value = f"<small style='color:green'>✅ Found {count} preset(s) in {presets_dir.name}/</small>"
+    
+    def _refresh_preset_dropdown(self):
+        """Update the preset dropdown with current list of presets."""
+        available_presets = self.list_presets()
+        preset_options = [("-- Load Preset --", "")] + [(name, name) for name in available_presets]
+        self.w_preset_load.options = preset_options
     
     def _update_k_direction_visibility(self):
         """Show/hide k-direction dropdown based on N_BZ value.
         
-        When N_BZ=1, only one k-point is selected so k-direction is meaningless.
+        With current mask definition (k0 ± n*G), direction is meaningful even
+        for N_BZ=0, so keep it visible in normal operation.
         """
-        n_bz = self.w_n_bz_mask.value
-        if n_bz <= 1:
-            # Hide k-direction - only one point, direction doesn't matter
-            self.w_k_direction.layout.display = 'none'
-        else:
-            # Show k-direction - multiple BZ so direction matters
-            self.w_k_direction.layout.display = ''
+        self.w_k_direction.layout.display = ''
+
+    def _canonicalize_s_complex(
+        self,
+        S_complex: np.ndarray,
+        k_axis: np.ndarray,
+        f_axis: np.ndarray,
+    ) -> tuple[np.ndarray, bool]:
+        """Return S_complex in canonical shape: (N_orth, Nk, Nf) or (Nk, Nf)."""
+        arr = np.asarray(S_complex)
+        n_k = len(k_axis)
+        n_f = len(f_axis)
+
+        if arr.ndim == 2:
+            if arr.shape == (n_k, n_f):
+                return arr, False
+            if arr.shape == (n_f, n_k):
+                logger.warning("S_complex stored as (Nf, Nk); transposing to (Nk, Nf)")
+                return arr.T, False
+            raise ValueError(
+                f"Unexpected 2D S_complex shape {arr.shape}; expected (Nk,Nf)=({n_k},{n_f})"
+            )
+
+        if arr.ndim != 3:
+            raise ValueError(f"Unsupported S_complex rank={arr.ndim}; expected 2D or 3D")
+
+        # Detect frequency axis by matching f_axis length.
+        freq_candidates = [ax for ax, size in enumerate(arr.shape) if size == n_f]
+        if not freq_candidates:
+            raise ValueError(
+                f"Cannot locate frequency axis in S_complex shape {arr.shape}; "
+                f"no axis matches Nf={n_f}"
+            )
+        freq_axis = 2 if 2 in freq_candidates else freq_candidates[0]
+        arr = np.moveaxis(arr, freq_axis, 2)
+
+        # Detect k-axis among non-frequency axes.
+        k_candidates = [ax for ax in (0, 1) if arr.shape[ax] == n_k]
+        if not k_candidates:
+            raise ValueError(
+                f"Cannot locate k-axis in S_complex shape {arr.shape}; "
+                f"no axis matches Nk={n_k}"
+            )
+        k_axis_idx = 1 if 1 in k_candidates else k_candidates[0]
+        if k_axis_idx != 1:
+            logger.warning("S_complex stored with k-axis=%d; moving to axis=1", k_axis_idx)
+            arr = np.moveaxis(arr, k_axis_idx, 1)
+
+        return arr, True
+
+    def _build_live_filters_config(self) -> dict[str, object] | None:
+        """Build live-capable post-filter config from widget values."""
+        live_cfg: dict[str, object] = {}
+
+        if self.w_live_snr_enabled.value:
+            live_cfg["snr_filter"] = {
+                "enabled": True,
+                "threshold_snr": float(self.w_live_snr_threshold.value),
+                "method": "percentile",
+                "noise_percentile": 5.0,
+            }
+
+        if self.w_live_gaussian_enabled.value:
+            live_cfg["gaussian_morph"] = {
+                "enabled": True,
+                "sigma_f": float(self.w_live_sigma_f.value),
+                "sigma_k": float(self.w_live_sigma_k.value),
+                "threshold_std": float(self.w_live_gaussian_threshold_std.value),
+                "opening_size": 3,
+            }
+
+        if self.w_live_wiener_enabled.value:
+            live_cfg["wiener2d"] = {
+                "enabled": True,
+                "window_size": int(self.w_live_wiener_window.value),
+            }
+
+        if self.w_live_bandpass_enabled.value:
+            k_min = min(self.w_live_kmin.value, self.w_live_kmax.value) * 1e6
+            k_max = max(self.w_live_kmin.value, self.w_live_kmax.value) * 1e6
+            f_min = float(self.w_fmin.value) * 1e9
+            f_max = float(self.w_fmax.value) * 1e9
+            live_cfg["fk_bandpass"] = {
+                "enabled": True,
+                "k_min": k_min,
+                "k_max": k_max,
+                "f_min": f_min,
+                "f_max": f_max,
+            }
+
+        # =====================================================================
+        # Enhancement filters (non-destructive, applied in order for best results)
+        # Order: percentile → soft_threshold → log_transform → gamma → 
+        #        local_contrast → clahe → unsharp_mask
+        # =====================================================================
+
+        # Percentile autoscale - clip to robust range first
+        if self.w_live_percentile_enabled.value:
+            live_cfg["percentile_autoscale"] = {
+                "enabled": True,
+                "low_percentile": float(self.w_live_percentile_low.value),
+                "high_percentile": float(self.w_live_percentile_high.value),
+            }
+
+        # Soft threshold - non-destructive noise suppression
+        if self.w_live_soft_threshold_enabled.value:
+            live_cfg["soft_threshold"] = {
+                "enabled": True,
+                "threshold_percentile": float(self.w_live_soft_percentile.value),
+                "smoothness": float(self.w_live_soft_smoothness.value),
+            }
+
+        # Log transform - dynamic range compression
+        if self.w_live_log_enabled.value:
+            live_cfg["log_transform"] = {
+                "enabled": True,
+                "method": str(self.w_live_log_method.value),
+                "scale": 1.0,
+                "floor_percentile": 1.0,
+            }
+
+        # Gamma correction - reveal weak signals
+        if self.w_live_gamma_enabled.value:
+            live_cfg["gamma"] = {
+                "enabled": True,
+                "gamma": float(self.w_live_gamma_value.value),
+            }
+
+        # Local contrast normalization
+        if self.w_live_lcn_enabled.value:
+            live_cfg["local_contrast"] = {
+                "enabled": True,
+                "sigma": float(self.w_live_lcn_sigma.value),
+                "epsilon": 1e-5,
+            }
+
+        # CLAHE - adaptive histogram equalization
+        if self.w_live_clahe_enabled.value:
+            live_cfg["clahe"] = {
+                "enabled": True,
+                "clip_limit": float(self.w_live_clahe_clip.value),
+                "tile_size": int(self.w_live_clahe_tile.value),
+            }
+
+        # Unsharp mask - edge enhancement (apply last for sharpening)
+        if self.w_live_unsharp_enabled.value:
+            live_cfg["unsharp_mask"] = {
+                "enabled": True,
+                "sigma": float(self.w_live_unsharp_sigma.value),
+                "alpha": float(self.w_live_unsharp_alpha.value),
+                "threshold": 0.0,
+            }
+
+        if not live_cfg:
+            return None
+        return {"live": live_cfg}
+
+
+    def _build_compute_filters_config(self) -> dict[str, object] | None:
+        """Build compute-stage filter config for recomputation."""
+        filters_cfg: dict[str, object] = {}
+
+        if self.w_pre_remove_static.value:
+            filters_cfg["remove_static"] = True
+        if self.w_pre_remove_average.value:
+            filters_cfg["remove_average"] = True
+        if self.w_pre_hann_time.value:
+            filters_cfg["hann_time"] = True
+        if self.w_pre_hann_space.value:
+            filters_cfg["hann_space"] = True
+
+        pre_cfg: dict[str, object] = {}
+
+        if self.w_pre_envelope_enabled.value:
+            pre_cfg["envelope_extraction"] = {
+                "enabled": True,
+                "threshold_std": float(self.w_pre_envelope_threshold_std.value),
+                "margin_samples": int(self.w_pre_envelope_margin.value),
+            }
+
+        if self.w_pre_wavelet_enabled.value:
+            pre_cfg["wavelet_denoise"] = {
+                "enabled": True,
+                "wavelet": "db4",
+                "level": int(self.w_pre_wavelet_level.value),
+                "method": "visu",
+            }
+
+        if self.w_pre_equalize_enabled.value:
+            pre_cfg["amplitude_equalization"] = {
+                "enabled": True,
+                "smoothing_fraction": 0.05,
+                "max_gain": 10.0,
+                "target": "mean",
+            }
+
+        if self.w_pre_compression_enabled.value:
+            pre_cfg["dynamic_compression"] = {
+                "enabled": True,
+                "method": "log",
+                "alpha": float(self.w_pre_compression_alpha.value),
+                "preserve_scale": True,
+            }
+
+        if self.w_pre_welch_enabled.value:
+            pre_cfg["welch_average"] = {
+                "enabled": True,
+                "n_segments": int(self.w_pre_welch_segments.value),
+                "overlap": float(self.w_pre_welch_overlap.value),
+                "apply_hann": True,
+            }
+
+        if pre_cfg:
+            filters_cfg["pre"] = pre_cfg
+
+        live_cfg = self._build_live_filters_config()
+        if live_cfg is not None and isinstance(live_cfg.get("live"), dict):
+            filters_cfg["live"] = live_cfg["live"]
+
+        return filters_cfg or None
 
     def _on_auto_detect(self, _):
         """Handle auto-detect button click."""
@@ -569,6 +1912,9 @@ class InteractiveDispersionModes:
                 lattice_constant=a,
                 n_bz=n_bz,
                 k_direction=k_direction,
+                k_margin_bins=self.w_k_margin.value,
+                f_margin_bins=self.w_f_margin.value,
+                neighbor_reduce=self.w_neighbor_reduce.value,
             )
             
             # Time parameters for full 2π cycle
@@ -784,8 +2130,26 @@ class InteractiveDispersionModes:
                 pass
             self._colorbar_disp = None
 
-        # Get data
-        S = self.result.S.T  # (Nf, Nk)
+        # Get data (optionally with live post-filters)
+        S_map = self.result.S  # (Nk, Nf)
+        live_filters = self._build_live_filters_config()
+        if live_filters is not None:
+            try:
+                from ..utils import apply_dispersion_post_filters
+
+                S_map = apply_dispersion_post_filters(
+                    S_map,
+                    k_axis=self.result.k_axis,
+                    f_axis=self.result.f_axis,
+                    filters=live_filters,
+                    include_live=True,
+                )
+            except Exception:
+                logger.exception("Live post-filter application failed")
+                self.w_info.value = "<small style='color:red'>⚠️ Live filter error (showing raw S)</small>"
+                S_map = self.result.S
+
+        S = S_map.T  # (Nf, Nk)
         k_axis = self.result.k_axis / 1e6  # rad/μm
         f_axis = self.result.f_axis / 1e9  # GHz
 
@@ -931,7 +2295,9 @@ class InteractiveDispersionModes:
         self.w_info.value = (
             f"<small>Mask includes <b>{len(mask_positions)}</b> k-positions<br>"
             f"k = {', '.join([f'{k:.1f}' for k in mask_positions[:5]])}"
-            f"{'...' if len(mask_positions) > 5 else ''} rad/μm</small>"
+            f"{'...' if len(mask_positions) > 5 else ''} rad/μm<br>"
+            f"neighbors: Δk=±{self.w_k_margin.value} bin, Δf=±{self.w_f_margin.value} bin, "
+            f"agg={self.w_neighbor_reduce.value}</small>"
         )
 
     def _update_mode_visualization(self):
@@ -966,6 +2332,9 @@ class InteractiveDispersionModes:
                 lattice_constant=a,
                 n_bz=n_bz,
                 k_direction=k_direction,
+                k_margin_bins=self.w_k_margin.value,
+                f_margin_bins=self.w_f_margin.value,
+                neighbor_reduce=self.w_neighbor_reduce.value,
             )
             
             # Extract requested component
@@ -1096,14 +2465,19 @@ class InteractiveDispersionModes:
         lattice_constant: float,
         n_bz: int,
         k_direction: str,
+        k_margin_bins: int = 0,
+        f_margin_bins: int = 0,
+        neighbor_reduce: str = "mean",
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Extract 2D spatial mode profile m(x, y) using pre-computed S_complex.
         
         Algorithm (following Rychły et al.):
         1. Use S_complex from dispersion result (already FFT'd!)
-        2. Select frequency f_0 and create mask for k_0 ± n·G (BZ replicas)
-        3. IFFT only over k → propagation axis (phase preserved!)
+        2. Select frequency neighborhood around f_0 and create mask for k_0 ± n·G
+           (optionally with extra +/- k-bin margin around each replica)
+        3. Aggregate selected frequency bins (mean/sum), then IFFT only over k
+           → propagation axis (phase preserved!)
         4. Result: M(x, y) spatial profile of the mode
         
         This is FAST - no re-computation of FFT! Uses cached S_complex.
@@ -1122,59 +2496,95 @@ class InteractiveDispersionModes:
         axis = self.result.axis  # 'x' or 'y'
         k_axis = self.result.k_axis.copy()
         f_axis = self.result.f_axis.copy()
-        S_complex = self.result.S_complex  # Shape: (Nk, Nf) or (N_orth, Nk, Nf)
+        S_complex = self.result.S_complex
         
         # Get grid spacings from result
         dx = self.result.dx if self.result.dx > 0 else 1e-9
         
-        # Determine if we have orthogonal spectra
-        if S_complex.ndim == 3:
-            # Shape: (N_orth, Nk, Nf) - we have spatial variation in orthogonal direction
+        # Canonicalize to robustly handle cached/legacy axis orderings.
+        S_complex, has_orth = self._canonicalize_s_complex(S_complex, k_axis, f_axis)
+
+        if has_orth:
             N_orth, N_k, N_f = S_complex.shape
             has_orth = True
             logger.info(f"Using orthogonal spectra: {N_orth} positions")
         else:
-            # Shape: (Nk, Nf) - averaged over orthogonal direction
             N_k, N_f = S_complex.shape
             N_orth = 1
             has_orth = False
             logger.info("Using averaged spectrum (no orthogonal variation)")
         
-        # ===== STEP 1: Select frequency f_0 =====
+        # ===== STEP 1: Select frequency neighborhood around f_0 =====
         idx_f = np.argmin(np.abs(f_axis - f_0))
         f_selected = f_axis[idx_f]
+        f_margin = max(0, int(f_margin_bins))
+        f_start = max(0, idx_f - f_margin)
+        f_stop = min(len(f_axis), idx_f + f_margin + 1)
+        f_indices = np.arange(f_start, f_stop, dtype=int)
         
         logger.info(f"Selected frequency: f={f_selected/1e9:.3f} GHz (requested: {f_0/1e9:.3f} GHz)")
         
-        # ===== STEP 2: Create BZ mask for k_0 ± n·G =====
+        # =========================================================================
+        # STEP 2: Create BZ mask for k_0 ± n·G
+        # =========================================================================
+        # Physical theory: For periodic lattice (period a), wave vectors k and k+nG
+        # represent the same physical wave. To reconstruct the mode correctly, we
+        # MUST sum ALL periodic copies:
+        #   M_physical(y) = Σₙ M̃(k₀ + n·G) exp(i(k₀ + n·G)y)
+        # This is implemented by creating a mask that selects all k₀ + n·G positions.
         G = 2 * np.pi / lattice_constant
         dk = np.abs(k_axis[1] - k_axis[0]) if len(k_axis) > 1 else 1.0
-        
-        # Mask width: 2 k-bins
-        delta_k = dk * 2
-        
+
+        # Base mask: nearest bin to each selected BZ replica (single-pixel when N_BZ=0).
+        k_margin = max(0, int(k_margin_bins))
         mask = np.zeros(len(k_axis), dtype=bool)
-        
+        n_targets = 0
+
         for n in range(-n_bz, n_bz + 1):
-            k_target = k_0 + n * G
+            k_target = k_0 + n * G  # ← Periodic copy: k₀ + n·G
             
             # Apply k-direction filter
             if k_direction == "positive" and k_target < 0:
                 continue
             if k_direction == "negative" and k_target > 0:
                 continue
-            
-            # Find k-values within delta_k of target
-            mask |= np.abs(k_axis - k_target) < delta_k
+            n_targets += 1
+
+            # Keep nearest k-bin for this replica.
+            idx_k = int(np.argmin(np.abs(k_axis - k_target)))
+            k_lo = max(0, idx_k - k_margin)
+            k_hi = min(len(k_axis), idx_k + k_margin + 1)
+            mask[k_lo:k_hi] = True  # ← Include this BZ copy in the mask
+
+        # Fallback only when targets were valid but numerical grid mismatch still
+        # produced an empty mask.
+        if not np.any(mask) and n_targets > 0:
+            idx_k = int(np.argmin(np.abs(k_axis - k_0)))
+            k_lo = max(0, idx_k - k_margin)
+            k_hi = min(len(k_axis), idx_k + k_margin + 1)
+            mask[k_lo:k_hi] = True
+            logger.warning(
+                "BZ mask selected 0 bins for k0=%.3f rad/um; falling back to nearest k-bin neighborhood (idx=%d)",
+                k_0 / 1e6,
+                idx_k,
+            )
             
         logger.info(f"BZ mask: {np.sum(mask)} k-points selected out of {len(k_axis)}")
         
-        # ===== STEP 3: Extract slice at f_0 and apply mask =====
+        # ===== STEP 3: Extract frequency neighborhood and apply k-mask =====
+        reducer = str(neighbor_reduce).lower()
+        if reducer not in {"mean", "sum"}:
+            reducer = "mean"
+
         if has_orth:
             # S_complex shape: (N_orth, Nk, Nf)
-            # Extract at f_0: (N_orth, Nk)
-            S_at_f = S_complex[:, :, idx_f]
-            
+            # Extract around f_0: (N_orth, Nk, Nf_sel)
+            S_at_f = S_complex[:, :, f_indices]
+            if reducer == "sum":
+                S_at_f = np.sum(S_at_f, axis=2)
+            else:
+                S_at_f = np.mean(S_at_f, axis=2)
+
             # Apply mask: zero non-selected k
             S_filtered = S_at_f.copy()
             S_filtered[:, ~mask] = 0
@@ -1182,16 +2592,29 @@ class InteractiveDispersionModes:
             # S_filtered shape: (N_orth, Nk)
         else:
             # S_complex shape: (Nk, Nf)
-            # Extract at f_0: (Nk,)
-            S_at_f = S_complex[:, idx_f]
-            
+            # Extract around f_0: (Nk, Nf_sel)
+            S_at_f = S_complex[:, f_indices]
+            if reducer == "sum":
+                S_at_f = np.sum(S_at_f, axis=1)
+            else:
+                S_at_f = np.mean(S_at_f, axis=1)
+
             # Apply mask
             S_filtered = S_at_f.copy()
             S_filtered[~mask] = 0
             
             # S_filtered shape: (Nk,)
             
-        # ===== STEP 4: IFFT over k → spatial axis =====
+        # =========================================================================
+        # STEP 4: IFFT over k → spatial axis
+        # =========================================================================
+        # The IFFT performs the sum over all masked k-points:
+        #   M(y) = Σₙ M̃(k₀ + nG) exp(i(k₀ + nG)y)
+        # This AUTOMATICALLY sums all periodic copies, giving:
+        # - Physically correct amplitude (coherent addition of all BZ copies)
+        # - Correct phase structure (phase info from S_complex preserved)
+        # - Spatial periodicity enforcement: m(y + a) = m(y)
+        
         # Undo fftshift before IFFT
         if has_orth:
             S_unshift = np.fft.ifftshift(S_filtered, axes=1)  # Unshift k-axis (axis=1)
@@ -1254,6 +2677,9 @@ class InteractiveDispersionModes:
         lattice_constant_nm: float | None = None,
         n_bz: int = 3,
         k_direction: str = "both",
+        k_margin_bins: int = 0,
+        f_margin_bins: int = 0,
+        neighbor_reduce: str = "mean",
     ) -> ModeProfile:
         """
         Extract 2D spatial mode profile m(x, y) and return visualization object.
@@ -1274,6 +2700,12 @@ class InteractiveDispersionModes:
             Number of Brillouin zones to include in mask (±n_bz around k_0).
         k_direction : str, default='both'
             Direction filter: 'both' (±k), 'positive' (+k only), 'negative' (-k only).
+        k_margin_bins : int, default=0
+            Number of neighboring k-bins (±) to include around each selected replica.
+        f_margin_bins : int, default=0
+            Number of neighboring frequency bins (±) to include around selected f.
+        neighbor_reduce : {'mean', 'sum'}, default='mean'
+            Reduction over the selected frequency neighborhood.
             
         Returns
         -------
@@ -1326,6 +2758,9 @@ class InteractiveDispersionModes:
             lattice_constant=a,
             n_bz=n_bz,
             k_direction=k_direction,
+            k_margin_bins=k_margin_bins,
+            f_margin_bins=f_margin_bins,
+            neighbor_reduce=neighbor_reduce,
         )
         
         # Build metadata
@@ -1335,6 +2770,9 @@ class InteractiveDispersionModes:
             'lattice_constant_nm': lattice_constant_nm,
             'n_bz': n_bz,
             'k_direction': k_direction,
+            'k_margin_bins': int(k_margin_bins),
+            'f_margin_bins': int(f_margin_bins),
+            'neighbor_reduce': str(neighbor_reduce),
             'shape': mode_2d_complex.shape,
             'amplitude_max': float(np.abs(mode_2d_complex).max()),
         }

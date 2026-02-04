@@ -19,6 +19,10 @@ from .utils import (
     detrend_time_series,
     apply_window_1d,
     apply_filter_pipeline,
+    normalize_filter_config,
+    split_filter_stages,
+    apply_dispersion_post_filters,
+    compute_welch_power_spectrum,
     k_axis_from_grid,
     fold_spectrum_1d,
     find_peaks_1d,
@@ -508,7 +512,7 @@ class SpinWaveAnalyzer:
         detrend: Optional[str] = None,
         fold_period: Optional[float] = None,
         fold_agg: Optional[str] = None,
-        filters: Optional[dict[str, bool]] = None,
+        filters: Optional[dict[str, Any]] = None,
         flipx: bool = True,
     ) -> DispersionResult1D:
         """
@@ -548,8 +552,9 @@ class SpinWaveAnalyzer:
             Folding aggregation method ('sum', 'max')
             If None, uses config.fold_agg
         filters : Optional[dict]
-            Optional preprocessing filters (remove_static, remove_average,
-            hann_time, hann_space)
+            Optional filter configuration. Supports legacy preprocessing flags
+            (remove_static/remove_average/hann_time/hann_space) and advanced
+            ``pre``/``post``/``live`` technique dictionaries.
         flipx : bool, default=True
             Apply mirror flip to k-axis (k → -k) to correct NumPy FFT convention.
             When True (default), applies S[:,::-1] to swap positive/negative wave vectors.
@@ -618,29 +623,48 @@ class SpinWaveAnalyzer:
         # Extract magnetization component
         signal = extract_magnetization_component(self.M_data, component)
 
-        filters_for_pipeline = None
-        if filters:
-            filters_for_pipeline = {key: bool(value) for key, value in filters.items() if bool(value)}
-            if filters_for_pipeline.get("remove_average") and detrend == "mean":
-                logger.debug(
-                    "remove_average filter skipped because detrend='mean' already subtracts the temporal mean",
-                )
-                filters_for_pipeline.pop("remove_average", None)
-            if not filters_for_pipeline:
-                filters_for_pipeline = None
-
-        active_filters = [name for name in (filters_for_pipeline or {}).keys()]
-        if active_filters:
-            preview_frame = signal[:1].copy()
-            logger.info(
-                "Applying raw-data filters before dispersion: %s",
-                ", ".join(active_filters),
+        filters_config = normalize_filter_config(filters)
+        pre_filters, post_filters, live_filters = split_filter_stages(filters_config)
+        if pre_filters.get("remove_average") and detrend == "mean":
+            logger.debug(
+                "remove_average filter skipped because detrend='mean' already subtracts the temporal mean",
             )
-            signal = apply_filter_pipeline(signal, filters_for_pipeline)
+            pre_filters.pop("remove_average", None)
+
+        # Stage summary for logging/debugging.
+        active_pre = sorted(pre_filters.keys())
+        active_post = sorted(post_filters.keys())
+        active_live = sorted(live_filters.keys())
+
+        if active_pre:
+            logger.info(
+                "Raw-data preprocessing filters active: %s",
+                ", ".join(active_pre),
+            )
+
+        if active_post:
+            logger.info(
+                "Post-FFT filters active: %s",
+                ", ".join(active_post),
+            )
+
+        if active_live:
+            logger.info(
+                "Live-capable post filters configured: %s",
+                ", ".join(active_live),
+            )
+
+        if active_pre:
+            preview_frame = signal[:1].copy()
+            signal = apply_filter_pipeline(
+                signal,
+                pre_filters,
+                time_axis=0,
+                spatial_axes=(2, 3),
+                dt=self.dt,
+            )
             delta = float(np.linalg.norm(signal[:1] - preview_frame))
             logger.debug("Filter impact on first frame (L2 delta): %.3e", delta)
-        elif filters_for_pipeline is not None:
-            logger.debug("Filter configuration provided but no active flags: %s", filters_for_pipeline)
 
         # Preserve complex information for perpendicular analysis
         if np.iscomplexobj(signal):
@@ -706,13 +730,32 @@ class SpinWaveAnalyzer:
         f_axis = np.fft.fftshift(np.fft.fftfreq(T_len, self.dt))
         Sk_full = np.fft.fft(sig_k, axis=0)
         Sk_shift = np.fft.fftshift(Sk_full, axes=0)
-        
+
         # Store complex spectrum BEFORE taking abs (needed for mode reconstruction)
-        # Shape: (Nk, Nf) or (Nk, Northogonal, Nf) depending on keep_orthogonal_dimension
+        # Shape: (Nk, Nf) or (Nk, N_orth, Nf) depending on keep_orthogonal_dimension
         S_complex_raw = np.moveaxis(Sk_shift, 0, -1)  # Move freq to last axis
-        
-        # Compute power spectrum for visualization
-        power = np.abs(Sk_shift) ** 2
+
+        # Compute power spectrum for visualization (optionally Welch-averaged).
+        welch_cfg = pre_filters.get("welch_average")
+        if welch_cfg is not None:
+            welch_options = welch_cfg if isinstance(welch_cfg, dict) else {}
+            logger.info(
+                "Applying Welch temporal averaging: n_segments=%s overlap=%.2f",
+                welch_options.get("n_segments", 4),
+                float(welch_options.get("overlap", 0.5)),
+            )
+            power_shift = compute_welch_power_spectrum(
+                sig_k,
+                axis=0,
+                n_segments=int(welch_options.get("n_segments", 4)),
+                overlap=float(welch_options.get("overlap", 0.5)),
+                n_fft=T_len,
+                apply_hann=bool(welch_options.get("apply_hann", True)),
+            )
+            power = np.abs(power_shift)
+        else:
+            power = np.abs(Sk_shift) ** 2
+
         power = np.moveaxis(power, 0, -1)  # -> (..., Nf)
 
         if not keep_orthogonal_dimension:
@@ -745,6 +788,37 @@ class SpinWaveAnalyzer:
                 else:  # (Nk, Nf)
                     S_complex = S_complex[::-1, :]
 
+        # Apply post-FFT filters for visualization-friendly S(k,f).
+        if post_filters or live_filters:
+            post_config: dict[str, Any] = {
+                "post": post_filters,
+                "live": live_filters,
+            }
+            S = apply_dispersion_post_filters(
+                S,
+                k_axis=k_axis,
+                f_axis=f_axis,
+                filters=post_config,
+                include_live=True,
+            )
+
+            apply_to_local = False
+            for option in list(post_filters.values()) + list(live_filters.values()):
+                if isinstance(option, dict) and bool(option.get("apply_to_local", False)):
+                    apply_to_local = True
+                    break
+            if apply_to_local and S_local is not None:
+                filtered_local = np.empty_like(S_local, dtype=float)
+                for idx in range(S_local.shape[0]):
+                    filtered_local[idx] = apply_dispersion_post_filters(
+                        S_local[idx],
+                        k_axis=k_axis,
+                        f_axis=f_axis,
+                        filters=post_config,
+                        include_live=True,
+                    )
+                S_local = filtered_local
+
         logger.info(
             "Computed dispersion: S.shape=%s, k_range=[%.2e, %.2e], f_range=[%.1f, %.1f] Hz",
             S.shape,
@@ -761,6 +835,14 @@ class SpinWaveAnalyzer:
             notes.append("Orthogonal averaging disabled; local spectra stored in S_local")
         elif orthogonal_avg_mode != "magnetization":
             notes.append(f"Orthogonal collapse via {orthogonal_avg_mode}")
+        if active_pre:
+            notes.append(f"Pre-filters: {', '.join(active_pre)}")
+        if "welch_average" in pre_filters:
+            notes.append("Welch temporal averaging enabled for power spectrum")
+        if active_post:
+            notes.append(f"Post-filters: {', '.join(active_post)}")
+        if active_live:
+            notes.append(f"Live-capable filters configured: {', '.join(active_live)}")
 
         # Create result object
         result = DispersionResult1D(

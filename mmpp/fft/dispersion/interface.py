@@ -35,6 +35,12 @@ except ImportError:
 
 from .core import SpinWaveAnalyzer, DispersionConfig
 from .models import DispersionResult1D, DispersionResult2D, DispersionBranch
+from .utils import (
+    normalize_filter_config,
+    split_filter_stages,
+    apply_dispersion_post_filters,
+    classify_filter_execution,
+)
 
 if TYPE_CHECKING:
     from .modes import InteractiveDispersionModes
@@ -69,6 +75,20 @@ def _format_dataset_accessor(dataset_name: str) -> str:
     if isinstance(dataset_name, str) and dataset_name.isidentifier():
         return f".{dataset_name}"
     return f"[{dataset_name!r}]"
+
+
+def _merge_dicts(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in extra.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _merge_dicts(cast(dict[str, Any], merged[key]), cast(dict[str, Any], value))
+        else:
+            merged[key] = value
+    return merged
 
 
 class _DispersionMethodHelper:
@@ -121,7 +141,7 @@ class FFTDispersionInterface:
         self._config = None
         self._tmax: Optional[int] = 100
         self._memory_cache: dict[str, DispersionResult1D] = {}
-        self._filters_config: Optional[dict[str, bool]] = None
+        self._filters_config: Optional[dict[str, Any]] = None
         self._last_plot_result: Optional[DispersionResult1D] = None
         self._cache_dir: Optional[str] = None  # External cache directory
 
@@ -818,6 +838,13 @@ class FFTDispersionInterface:
         if result.S_local is not None:
             S_local_trim = result.S_local[:, mask, :]
 
+        S_complex_trim = None
+        if result.S_complex is not None:
+            if result.S_complex.ndim == 3:
+                S_complex_trim = result.S_complex[:, mask, :]
+            else:
+                S_complex_trim = result.S_complex[mask, :]
+
         S_folded_trim = result.S_folded
         k_folded_trim = result.k_folded
         if result.k_folded is not None and result.S_folded is not None:
@@ -843,10 +870,12 @@ class FFTDispersionInterface:
             k_folded=k_folded_trim,
             fold_period=result.fold_period,
             S_local=S_local_trim,
+            S_complex=S_complex_trim,
             orth_axis=result.orth_axis,
             orth_axis_label=result.orth_axis_label,
             dt=result.dt,
             dx=result.dx,
+            flipx=result.flipx,
             notes=notes,
         )
 
@@ -1028,6 +1057,10 @@ class FFTDispersionInterface:
         remove_static: bool = False,
         average: bool = False,
         window: Optional[Union[str, Sequence[str]]] = None,
+        pre: Optional[dict[str, Any]] = None,
+        post: Optional[dict[str, Any]] = None,
+        live: Optional[dict[str, Any]] = None,
+        advanced: Optional[dict[str, Any]] = None,
     ) -> "FFTDispersionInterface":
         """Return new interface with preprocessing filters applied to data.
 
@@ -1041,6 +1074,17 @@ class FFTDispersionInterface:
             Apply Hann windows: ``'time'`` for temporal, ``'space'`` (or ``'2d'``)
             for spatial, and ``'both'``/``'hann'`` for both domains. Multiple
             entries can be provided via a sequence.
+        pre : dict, optional
+            Advanced raw-data techniques (compute stage), e.g.
+            ``{"wavelet_denoise": {"enabled": True, "level": 3}}``.
+        post : dict, optional
+            Post-FFT spectrum filters applied to S(k,f) during compute/plot.
+        live : dict, optional
+            Post-FFT filters intended for fast live recomputation from cached
+            S(k,f) without reloading raw magnetization data.
+        advanced : dict, optional
+            Convenience merged configuration; can include any of the keys above
+            and root-level technique shorthands.
 
         Returns
         -------
@@ -1052,6 +1096,10 @@ class FFTDispersionInterface:
             remove_static=remove_static,
             average=average,
             window=window,
+            pre=pre,
+            post=post,
+            live=live,
+            advanced=advanced,
         )
 
         clone = self.clone_for_dataset(self.dataset_name, self.slice_info)
@@ -1064,8 +1112,12 @@ class FFTDispersionInterface:
         remove_static: bool,
         average: bool,
         window: Optional[Union[str, Sequence[str]]],
-    ) -> Optional[dict[str, bool]]:
-        config: dict[str, bool] = {}
+        pre: Optional[dict[str, Any]],
+        post: Optional[dict[str, Any]],
+        live: Optional[dict[str, Any]],
+        advanced: Optional[dict[str, Any]],
+    ) -> Optional[dict[str, Any]]:
+        config: dict[str, Any] = {}
 
         if remove_static:
             config["remove_static"] = True
@@ -1078,7 +1130,16 @@ class FFTDispersionInterface:
         if space_flag:
             config["hann_space"] = True
 
-        return config or None
+        if pre:
+            config["pre"] = copy.deepcopy(pre)
+        if post:
+            config["post"] = copy.deepcopy(post)
+        if live:
+            config["live"] = copy.deepcopy(live)
+        if advanced:
+            config["advanced"] = copy.deepcopy(advanced)
+
+        return normalize_filter_config(config)
 
     def _interpret_filter_window(
         self,
@@ -1118,14 +1179,24 @@ class FFTDispersionInterface:
             return []
 
         labels: list[str] = []
-        if self._filters_config.get("remove_static"):
+        cfg = normalize_filter_config(self._filters_config) or {}
+
+        if cfg.get("remove_static"):
             labels.append("remove_static")
-        if self._filters_config.get("remove_average"):
+        if cfg.get("remove_average"):
             labels.append("average")
-        if self._filters_config.get("hann_time"):
+        if cfg.get("hann_time"):
             labels.append("hann_time")
-        if self._filters_config.get("hann_space"):
+        if cfg.get("hann_space"):
             labels.append("hann_space")
+
+        stage_info = classify_filter_execution(cfg)
+        if stage_info["compute_stage"]:
+            labels.append(f"compute[{len(stage_info['compute_stage'])}]")
+        if stage_info["post_stage"]:
+            labels.append(f"post[{len(stage_info['post_stage'])}]")
+        if stage_info["live_capable"]:
+            labels.append(f"live[{len(stage_info['live_capable'])}]")
         return labels
     
     def compute_1d(
@@ -1177,32 +1248,34 @@ class FFTDispersionInterface:
         filters_config = compute_kwargs.pop("filters", None)
         if filters_config is None:
             filters_config = copy.deepcopy(self._filters_config)
-
-        sanitized_filters = None
-        if filters_config:
-            sanitized_filters = {key: bool(value) for key, value in filters_config.items() if bool(value)}
+        filters_config = normalize_filter_config(filters_config)
 
         effective_config = self._config or DispersionConfig()
         effective_detrend = compute_kwargs.get("detrend", effective_config.detrend)
 
-        if sanitized_filters and sanitized_filters.get("remove_average") and effective_detrend == "mean":
+        pre_filters, _, _ = split_filter_stages(filters_config)
+
+        if pre_filters.get("remove_average") and effective_detrend == "mean":
             logger.debug(
                 "remove_average filter requested together with detrend='mean'; keeping flag for reproducibility",
             )
 
-        if sanitized_filters:
-            filter_labels = ", ".join(sorted(sanitized_filters))
+        if filters_config:
+            stage_info = classify_filter_execution(filters_config)
+            filter_labels = []
+            if stage_info["compute_stage"]:
+                filter_labels.append(f"compute={','.join(stage_info['compute_stage'])}")
+            if stage_info["post_stage"]:
+                filter_labels.append(f"post={','.join(stage_info['post_stage'])}")
+            if stage_info["live_capable"]:
+                filter_labels.append(f"live={','.join(stage_info['live_capable'])}")
             logger.info(
                 "Dispersion filters active for %s axis=%s component=%s → %s",
                 self.dataset_name or "global",
                 axis,
                 component or effective_config.component,
-                filter_labels,
+                " | ".join(filter_labels) if filter_labels else "configured",
             )
-        else:
-            sanitized_filters = None
-
-        filters_config = sanitized_filters
         
         # Extract flipx from kwargs (default True)
         flipx = compute_kwargs.pop("flipx", True)
@@ -1316,6 +1389,84 @@ class FFTDispersionInterface:
             result = self._trim_dispersion_kmax(result, kmax)
 
         return cast(DispersionResult1D, result)
+
+    def apply_live_filters(
+        self,
+        result: DispersionResult1D,
+        *,
+        filters: Optional[dict[str, Any]] = None,
+        include_configured: bool = True,
+        apply_to_local: bool = False,
+    ) -> DispersionResult1D:
+        """
+        Apply post-FFT/live-capable filters to an existing dispersion result.
+
+        This is intended for fast interactive recalculation from cached ``S(k,f)``
+        without recomputing FFT from raw ``M(t,x,y,z)`` data.
+        """
+        if result is None:
+            raise ValueError("result is required")
+
+        merged: dict[str, Any] = {}
+
+        if include_configured and self._filters_config:
+            cfg_norm = normalize_filter_config(self._filters_config)
+            if cfg_norm:
+                merged = cfg_norm
+
+        if filters:
+            incoming = normalize_filter_config(filters)
+            if incoming:
+                merged = _merge_dicts(merged, incoming)
+
+        if not merged:
+            return result
+
+        filtered_S = apply_dispersion_post_filters(
+            result.S,
+            k_axis=result.k_axis,
+            f_axis=result.f_axis,
+            filters=merged,
+            include_live=True,
+        )
+
+        filtered_local = result.S_local
+        if apply_to_local and result.S_local is not None:
+            local_out = np.empty_like(result.S_local, dtype=float)
+            for idx in range(result.S_local.shape[0]):
+                local_out[idx] = apply_dispersion_post_filters(
+                    result.S_local[idx],
+                    k_axis=result.k_axis,
+                    f_axis=result.f_axis,
+                    filters=merged,
+                    include_live=True,
+                )
+            filtered_local = local_out
+
+        notes = list(result.notes or [])
+        stage_info = classify_filter_execution(merged)
+        if stage_info["post_stage"]:
+            notes.append(f"Live post-filters applied: {', '.join(stage_info['post_stage'])}")
+
+        return DispersionResult1D(
+            S=filtered_S,
+            k_axis=result.k_axis,
+            f_axis=result.f_axis,
+            axis=result.axis,
+            component=result.component,
+            config=result.config,
+            S_folded=result.S_folded,
+            k_folded=result.k_folded,
+            fold_period=result.fold_period,
+            S_local=filtered_local,
+            orth_axis=result.orth_axis,
+            orth_axis_label=result.orth_axis_label,
+            S_complex=result.S_complex,
+            dt=result.dt,
+            dx=result.dx,
+            flipx=result.flipx,
+            notes=notes,
+        )
     
     def compute_2d(
         self,
@@ -1990,6 +2141,7 @@ class FFTDispersionInterface:
         fmax: Optional[float] = None,
         colornorm: Union[str, Normalize, None] = None,
         colornorm_kwargs: Optional[dict[str, Any]] = None,
+        live_filters: Optional[dict[str, Any]] = None,
         **kwargs,
     ) -> tuple:
         """
@@ -2034,6 +2186,9 @@ class FFTDispersionInterface:
             Extra keyword arguments forwarded to the normalization constructor
             (e.g. ``{"linthresh": 1e-5}`` for ``symlognorm``). Ignored when
             ``colornorm`` is a Normalize instance.
+        live_filters : dict, optional
+            Post-FFT filters recomputed directly from cached S(k,f) at plot time
+            (e.g. ``{"live": {"gaussian_morph": {"enabled": True}}}``).
         k0_normalization : int or float, default=0
             Adaptive k≈0 mode suppression intensity. 0=disabled, 1-10=increasing suppression strength.
             Uses advanced dynamic thresholding based on k≠0 statistical reference with soft audio-style
@@ -2162,6 +2317,15 @@ class FFTDispersionInterface:
                     title = f"Spin-Wave Dispersion {orth_label}={axis_value:g}"
                 else:
                     title = f"Spin-Wave Dispersion ({orth_label} index {orth_index})"
+
+        if live_filters:
+            spectrum = apply_dispersion_post_filters(
+                spectrum,
+                k_axis=result.k_axis,
+                f_axis=result.f_axis,
+                filters=live_filters,
+                include_live=True,
+            )
 
         # Remove negative frequencies from visualization
         if f_axis.ndim == 1 and spectrum.shape[1] == f_axis.shape[0]:
@@ -2478,6 +2642,7 @@ class FFTDispersionInterface:
         fmax: Optional[float] = None,
         colornorm: Union[str, Normalize, None] = None,
         colornorm_kwargs: Optional[dict[str, Any]] = None,
+        live_filters: Optional[dict[str, Any]] = None,
     ) -> tuple:
         """
         Plot a pre-computed dispersion result without recomputation.
@@ -2519,6 +2684,8 @@ class FFTDispersionInterface:
             Overrides the legacy ``lognorm`` flag.
         colornorm_kwargs : dict, optional
             Extra keyword arguments forwarded to the selected normalization constructor.
+        live_filters : dict, optional
+            Post-FFT filters recomputed at plot time from ``result.S``.
         k0_normalization : int or float, default=0
             k≈0 mode suppression intensity (0=disabled, 1-10=increasing strength)
         k0_normalization_width : int, default=1
@@ -2605,6 +2772,15 @@ class FFTDispersionInterface:
                     title = f"Spin-Wave Dispersion {orth_label}={axis_value:g}"
                 else:
                     title = f"Spin-Wave Dispersion ({orth_label} index {orth_index})"
+
+        if live_filters:
+            spectrum = apply_dispersion_post_filters(
+                spectrum,
+                k_axis=result.k_axis,
+                f_axis=result.f_axis,
+                filters=live_filters,
+                include_live=True,
+            )
 
         # Remove negative frequencies from visualization
         if f_axis.ndim == 1 and spectrum.shape[1] == f_axis.shape[0]:
@@ -2867,8 +3043,8 @@ class FFTDispersionInterface:
                 "Plot pre-computed dispersion result",
             ),
             (
-                "filters(remove_static=False, average=False, window=None)",
-                "Clone interface with preprocessing filters (Hann/time averages)",
+                "filters(remove_static=False, average=False, window=None, pre=None, post=None, live=None)",
+                "Clone interface with compute/post/live filter configuration",
             ),
             ("track_branch(result, k_path, f_seed, **opts)", "Follow dispersion branch"),
             ("plot_branch(branch, **opts)", "Plot branch with group velocity"),
@@ -2941,6 +3117,10 @@ class FFTDispersionInterface:
             "None",
             "Hann window selection: 'time', 'space'/'2d', 'both'/'hann'",
         )
+        filters_table.add_row("pre", "None", "Advanced compute-stage filters dict (envelope, wavelet, Wiener, ...)")
+        filters_table.add_row("post", "None", "Post-FFT filters dict for S(k,f) (bandpass, SNR, 2D Wiener, ...)")
+        filters_table.add_row("live", "None", "Fast post-filters recomputable from cached S(k,f)")
+        filters_table.add_row("advanced", "None", "Merged convenience config; supports root-level shorthand keys")
 
         plot_table = Table(
             show_header=True,
@@ -2963,6 +3143,7 @@ class FFTDispersionInterface:
         plot_table.add_row("vmin", "None", "Manual minimum for color scale normalization")
         plot_table.add_row("vmax", "None", "Manual maximum for color scale normalization")
         plot_table.add_row("k0_normalization", "0", "k≈0 compression strength: 0=off, 1-10=increasing suppression")
+        plot_table.add_row("live_filters", "None", "Fast post-filters from cached S(k,f) at plot time")
         plot_table.add_row("kscale", "'rad_um'", "Wave-vector units: 'rad_um' (rad/μm) | 'rad' | 'meter'")
         plot_table.add_row("f_units", "'GHz'", "Frequency axis units ('Hz' | 'GHz')")
         plot_table.add_row("orth_index", "None", "Select orthogonal slice when available")
@@ -3073,14 +3254,15 @@ class FFTDispersionInterface:
             "  • compute_2d()\n"
             "  • plot_dispersion(axis='x', lognorm=False, kscale='meter', **opts)\n"
             "  • plot_result(result, lognorm=False, kscale='meter', **opts)\n"
-            "  • filters(remove_static=False, average=False, window=None)\n"
+            "  • filters(remove_static=False, average=False, window=None, pre=None, post=None, live=None)\n"
+            "  • apply_live_filters(result, filters=None, include_configured=True)\n"
             "  • track_branch(result, k_path, f_seed)\n"
             "  • plot_branch(branch, **opts)\n"
             "  • find_peaks(result, min_prominence=0.1)\n"
             "  • configure(dt=..., dx=..., dy=..., component='perp')\n"
             "compute_1d opts: avg_over_orthogonal, time_window, space_window, detrend, fold_period, fold_agg\n"
             "plot_dispersion opts: result, figsize, dpi, cmap, kscale, f_units, lognorm, orth_index, k_xlim, save(True→auto path), title\n"
-            "filters opts: remove_static, average (time mean), window=('time'|'space'/'2d'|'both') Hann\n"
+            "filters opts: remove_static, average, window plus pre/post/live dicts for advanced filters\n"
             "Extra kwargs forward to compute_1d (supports kmax, window controls, folding, etc.)\n"
             "Examples:\n"
             f"  disp = {disp_prefix}.dispersion\n"
@@ -3114,7 +3296,7 @@ class FFTDispersionInterface:
             ("compute_2d(component=None, **opts)", "Compute 2D dispersion S(kx, ky, f)"),
             ("plot_dispersion(axis='x', **opts)", "Compute + plot dispersion"),
             ("plot_result(result, **opts)", "Plot pre-computed dispersion result"),
-            ("filters(remove_static=False, average=False, window=None)", "Clone interface with preprocessing filters"),
+            ("filters(remove_static=False, average=False, window=None, pre=None, post=None, live=None)", "Clone interface with compute/post/live filter configuration"),
             ("track_branch(result, k_path, f_seed, **opts)", "Track dispersion branch"),
             ("plot_branch(branch, **opts)", "Plot branch and group velocity"),
             ("find_peaks(result, min_prominence=0.0, **opts)", "Find spectral peaks"),
@@ -3290,6 +3472,10 @@ class FFTDispersionInterface:
             ("remove_static", "False", "Subtract first time frame from all samples"),
             ("average", "False", "Remove temporal mean per spatial point"),
             ("window", "None", "Hann windows: 'time', 'space'/'2d', 'both'/'hann'"),
+            ("pre", "None", "Advanced compute-stage filters dict"),
+            ("post", "None", "Post-FFT filters dict for S(k,f)"),
+            ("live", "None", "Live-capable post-filters (fast recompute from S)"),
+            ("advanced", "None", "Merged convenience config/shorthand"),
         ]
 
         param_rows = "".join(
@@ -3304,7 +3490,13 @@ class FFTDispersionInterface:
         example_code = "\n".join(
             [
                 "disp = {prefix}".format(prefix=usage_prefix),
-                "disp_f = disp.filters(remove_static=True, window='both')",
+                "disp_f = disp.filters(",
+                "    remove_static=True,",
+                "    window='both',",
+                "    pre={'wavelet_denoise': {'enabled': True, 'level': 3}},",
+                "    post={'snr_filter': {'enabled': True, 'threshold_snr': 3.0}},",
+                "    live={'gaussian_morph': {'enabled': True, 'sigma_f': 1.0, 'sigma_k': 1.0}},",
+                ")",
                 "disp_f.plot_dispersion(axis='x')",
             ]
         )
@@ -3313,7 +3505,7 @@ class FFTDispersionInterface:
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
           <div style="margin-bottom: 12px;">
             <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">filters</div>
-            <div style="color: #94a3b8; margin-top: 4px;">Clone the interface with preprocessing filters applied to the raw data.</div>
+            <div style="color: #94a3b8; margin-top: 4px;">Clone the interface with compute-stage and post-FFT filter configuration.</div>
           </div>
 
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
