@@ -261,15 +261,18 @@ class ModeExtractor:
         M_mode: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Assign propagation/orthogonal axes to x/y based on FFT axis."""
+        # M_mode shape: (N_orth, N_prop)
+        # For axis='x': N_orth=N_y, N_prop=N_x → M_mode is (N_y, N_x) ✓
+        # For axis='y': N_orth=N_x, N_prop=N_y → M_mode is (N_x, N_y), need transpose
         if axis == "x":
             x_axis = prop_axis
             y_axis = orth_axis
-            # M_mode shape: (N_y, N_x) - transpose to (N_x, N_y) for imshow
-            mode_2d = M_mode.T
+            # M_mode shape: (N_y, N_x) - already correct for m[y, x] indexing
+            mode_2d = M_mode
         else:  # axis == 'y'
             x_axis = orth_axis
             y_axis = prop_axis
-            # M_mode shape: (N_y, N_x) already correct
+            # M_mode shape: (N_x, N_y) - need transpose to (N_y, N_x) for m[y, x]
             mode_2d = M_mode.T
         
         # Take real part (shows oscillation structure)

@@ -548,3 +548,136 @@ def get_frequency_band_mask(
         mask &= (f_axis <= f_max)
         
     return mask
+
+
+def create_amplitude_phase_colormap(
+    complex_data: np.ndarray,
+    saturation: float = 1.0,
+    amp_min: Optional[float] = None,
+    amp_max: Optional[float] = None,
+) -> np.ndarray:
+    """
+    Create RGB image where phase determines hue and amplitude determines brightness.
+    
+    This creates a visualization that combines both amplitude and phase information:
+    - Hue (color): Determined by phase angle (-π to π)
+    - Value (brightness): Determined by amplitude (0 to max)
+    - Saturation: Fixed (can be adjusted)
+    
+    Parameters
+    ----------
+    complex_data : np.ndarray
+        Complex array of shape (M, N) or any 2D shape
+    saturation : float
+        HSV saturation value (0 to 1). Default 1.0 for vivid colors.
+    amp_min : float, optional
+        Minimum amplitude for scaling. If None, uses data minimum.
+    amp_max : float, optional  
+        Maximum amplitude for scaling. If None, uses data maximum.
+    
+    Returns
+    -------
+    np.ndarray
+        RGB image of shape (M, N, 3) with values in [0, 1]
+    
+    Examples
+    --------
+    >>> # Create test complex data
+    >>> x = np.linspace(-np.pi, np.pi, 100)
+    >>> y = np.linspace(-np.pi, np.pi, 100)
+    >>> X, Y = np.meshgrid(x, y)
+    >>> complex_data = (1 + 0.5*np.sin(X)) * np.exp(1j * Y)
+    >>> 
+    >>> # Generate RGB colormap
+    >>> rgb = create_amplitude_phase_colormap(complex_data)
+    >>> plt.imshow(rgb, origin='lower')
+    >>> plt.title('Amplitude × Phase')
+    >>> plt.show()
+    """
+    # Extract amplitude and phase
+    amplitude = np.abs(complex_data)
+    phase = np.angle(complex_data)  # Range: -π to π
+    
+    # Normalize amplitude to [0, 1]
+    if amp_min is None:
+        amp_min = amplitude.min()
+    if amp_max is None:
+        amp_max = amplitude.max()
+    
+    # Avoid division by zero
+    if amp_max - amp_min < 1e-12:
+        value = np.ones_like(amplitude)
+    else:
+        value = (amplitude - amp_min) / (amp_max - amp_min)
+        value = np.clip(value, 0, 1)
+    
+    # Convert phase from [-π, π] to [0, 1] for hue
+    # Phase = 0 → red, π/2 → green, -π/2 → purple, ±π → cyan
+    hue = (phase + np.pi) / (2 * np.pi)  # Range: 0 to 1
+    
+    # Create HSV array
+    hsv = np.stack([hue, np.full_like(hue, saturation), value], axis=-1)
+    
+    # Convert HSV to RGB using colorsys-based vectorized approach
+    rgb = _hsv_to_rgb_array(hsv)
+    
+    return rgb
+
+
+def _hsv_to_rgb_array(hsv: np.ndarray) -> np.ndarray:
+    """
+    Vectorized HSV to RGB conversion.
+    
+    Parameters
+    ----------
+    hsv : np.ndarray
+        Array of shape (..., 3) with H, S, V in range [0, 1]
+    
+    Returns
+    -------
+    np.ndarray
+        RGB array of same shape with values in [0, 1]
+    """
+    h = hsv[..., 0]
+    s = hsv[..., 1]
+    v = hsv[..., 2]
+    
+    # Convert using standard HSV→RGB algorithm
+    c = v * s  # Chroma
+    h_prime = h * 6.0  # Scale to [0, 6]
+    x = c * (1 - np.abs(h_prime % 2 - 1))
+    m = v - c
+    
+    # Initialize RGB
+    rgb = np.zeros(hsv.shape)
+    
+    # Conditional assignment based on h_prime sector
+    mask0 = (h_prime >= 0) & (h_prime < 1)
+    mask1 = (h_prime >= 1) & (h_prime < 2)
+    mask2 = (h_prime >= 2) & (h_prime < 3)
+    mask3 = (h_prime >= 3) & (h_prime < 4)
+    mask4 = (h_prime >= 4) & (h_prime < 5)
+    mask5 = (h_prime >= 5) & (h_prime < 6)
+    
+    rgb[mask0, 0] = c[mask0]
+    rgb[mask0, 1] = x[mask0]
+    
+    rgb[mask1, 0] = x[mask1]
+    rgb[mask1, 1] = c[mask1]
+    
+    rgb[mask2, 1] = c[mask2]
+    rgb[mask2, 2] = x[mask2]
+    
+    rgb[mask3, 1] = x[mask3]
+    rgb[mask3, 2] = c[mask3]
+    
+    rgb[mask4, 0] = x[mask4]
+    rgb[mask4, 2] = c[mask4]
+    
+    rgb[mask5, 0] = c[mask5]
+    rgb[mask5, 2] = x[mask5]
+    
+    # Add minimum value
+    rgb += m[..., np.newaxis]
+    
+    return np.clip(rgb, 0, 1)

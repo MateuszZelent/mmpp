@@ -26,6 +26,7 @@ from .models import (
 from .folding import BrillouinZoneFolding
 from .detection import BrillouinZoneDetector
 from .interactive import InteractiveDispersionModes
+from .profile import ModeProfile
 from .animation import (
     extract_amplitude_phase,
     compute_spinwave_field,
@@ -39,6 +40,7 @@ __all__ = [
     "BrillouinZoneConfig",
     "DispersionMode",
     "FoldedDispersionResult",
+    "ModeProfile",
     # Core
     "BrillouinZoneFolding",
     "BrillouinZoneDetector",

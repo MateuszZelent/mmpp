@@ -258,6 +258,18 @@ class FFTDispersionInterface:
             final_compute_kwargs["force"] = force
             final_compute_kwargs["disk_cache"] = True  # Enable disk caching
             
+            # CRITICAL for mode reconstruction: keep orthogonal dimension!
+            # We need S_complex(N_orth, N_k, N_f) for spatial mode m(x,y).
+            # Force avg_over_orthogonal=False to preserve Y-axis.
+            if "avg_over_orthogonal" not in final_compute_kwargs:
+                final_compute_kwargs["avg_over_orthogonal"] = False
+                logger.info("Mode visualization: setting avg_over_orthogonal=False to preserve spatial info")
+            elif final_compute_kwargs.get("avg_over_orthogonal", True):
+                logger.warning(
+                    "avg_over_orthogonal=True will lose orthogonal spatial info! "
+                    "Mode reconstruction requires avg_over_orthogonal=False."
+                )
+            
             # Compute dispersion with all settings
             # Note: Mode visualization uses raw M_data from analyzer, not S_local
             result = self.compute_1d(**final_compute_kwargs)

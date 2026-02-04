@@ -61,6 +61,8 @@ if TYPE_CHECKING:
     from .folding import BrillouinZoneFolding
     from .detection import BrillouinZoneDetector
 
+from .profile import ModeProfile
+
 
 class InteractiveDispersionModes:
     """
@@ -97,6 +99,10 @@ class InteractiveDispersionModes:
         self._selected_k = None
         self._selected_f = None
         self._mask_markers = []  # Artists for mask position markers
+        
+        # Animation state
+        self._animation = None  # FuncAnimation object
+        self._is_animating = False
 
         # Default parameters
         self._default_params = {
@@ -277,6 +283,21 @@ class InteractiveDispersionModes:
             style={"description_width": "70px"},
         )
 
+        # === Mode visualization type ===
+        self.w_mode_type = widgets.Dropdown(
+            options=[
+                ("Real part", "real"),
+                ("Imaginary part", "imag"),
+                ("Amplitude |M|", "abs"),
+                ("Phase φ[M]", "phase"),
+                ("Ampl×Phase", "ampl_phase"),
+            ],
+            value="real",
+            description="Mode type:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+        )
+
         # === Colormaps ===
         self.w_cmap_disp = widgets.Dropdown(
             options=["viridis", "plasma", "cividis", "turbo", "inferno"],
@@ -307,6 +328,13 @@ class InteractiveDispersionModes:
             layout=widgets.Layout(width="95%"),
         )
 
+        self.w_animate = widgets.Button(
+            description="🎬 Animate Mode",
+            button_style="warning",
+            layout=widgets.Layout(width="95%"),
+            tooltip="Toggle mode oscillation animation (full 2π cycle)",
+        )
+
         # === Info display ===
         self.w_info = widgets.HTML(
             value="<small>Click on dispersion to select mode (k, f)</small>",
@@ -321,6 +349,7 @@ class InteractiveDispersionModes:
         # === Connect callbacks ===
         self.w_update.on_click(self._on_update)
         self.w_auto_detect.on_click(self._on_auto_detect)
+        self.w_animate.on_click(self._on_animate)
 
         # Connect changes that should update immediately
         # w_lattice also updates BZ lines on dispersion plot
@@ -329,7 +358,7 @@ class InteractiveDispersionModes:
 
         # Connect mode visualization params
         # w_lattice affects BZ mask positions for mode extraction
-        for w in [self.w_n_bz_mask, self.w_k_direction, self.w_cmap_mode, self.w_lattice]:
+        for w in [self.w_n_bz_mask, self.w_k_direction, self.w_mode_type, self.w_cmap_mode, self.w_lattice]:
             w.observe(self._on_mode_param_change, names="value")
         
         # Watch n_bz to show/hide k-direction widget
@@ -352,6 +381,8 @@ class InteractiveDispersionModes:
                 widgets.HTML("<small><b>Mask Settings</b></small>"),
                 self.w_n_bz_mask,
                 self.w_k_direction,
+                widgets.HTML("<small><b>Mode Visualization</b></small>"),
+                self.w_mode_type,
                 widgets.HTML("<small><b>Frequency Range</b></small>"),
                 self.w_fmin,
                 self.w_fmax,
@@ -359,6 +390,7 @@ class InteractiveDispersionModes:
                 self.w_cmap_disp,
                 self.w_cmap_mode,
                 self.w_update,
+                self.w_animate,
                 widgets.HTML("<hr style='margin:5px'>"),
                 self.w_info,
                 widgets.HTML("<hr style='margin:5px'>"),
@@ -495,6 +527,245 @@ class InteractiveDispersionModes:
         else:
             self.w_info.value = "<small style='color:orange'>Detection failed</small>"
 
+    def _ensure_animation_state(self):
+        """Backfill animation attributes for legacy/stale live instances."""
+        if not hasattr(self, "_animation"):
+            self._animation = None
+        if not hasattr(self, "_is_animating"):
+            self._is_animating = False
+
+    def _on_animate(self, _):
+        """Toggle animation of selected mode in the mode visualization panel."""
+        self._ensure_animation_state()
+
+        if self._selected_k is None or self._selected_f is None:
+            self.w_info.value = "<small style='color:red'>⚠️ Select a mode first (click on dispersion)</small>"
+            return
+        
+        # Toggle animation on/off
+        if self._is_animating:
+            # Stop animation
+            self._stop_animation()
+            self.w_info.value = "<small>Animation stopped</small>"
+            self.w_animate.description = "🎬 Animate Mode"
+            self.w_animate.button_style = "warning"
+            # Restore static view
+            self._update_mode_visualization()
+            return
+        
+        try:
+            from matplotlib.animation import FuncAnimation
+            
+            # Get parameters
+            a = self.w_lattice.value * 1e-9
+            n_bz = self.w_n_bz_mask.value
+            k_direction = self.w_k_direction.value
+            mode_type = self.w_mode_type.value
+            
+            # Extract complex mode data
+            x_axis, y_axis, mode_2d_complex = self._extract_mode_2d_custom(
+                k_0=self._selected_k,
+                f_0=self._selected_f,
+                lattice_constant=a,
+                n_bz=n_bz,
+                k_direction=k_direction,
+            )
+            
+            # Time parameters for full 2π cycle
+            period_s = 1.0 / self._selected_f  # Full period
+            omega = 2 * np.pi * self._selected_f
+            n_frames = 60  # Smooth animation
+            fps = 30
+            
+            # Time array for one complete cycle (0 to T)
+            time_array = np.linspace(0, period_s, n_frames, endpoint=False)
+            
+            # Pre-compute all frames for selected visualization mode
+            mode_labels = {
+                'real': 'Re[M]',
+                'imag': 'Im[M]',
+                'abs': '|M|',
+                'phase': 'φ[M]',
+                'ampl_phase': 'Ampl×Phase',
+            }
+            mode_label = mode_labels.get(mode_type, mode_type)
+            is_rgb = (mode_type == 'ampl_phase')
+
+            if mode_type in ['real', 'imag']:
+                frames = []
+                for t in time_array:
+                    m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                    if mode_type == 'real':
+                        m_t = np.real(m_t_complex)
+                    else:
+                        m_t = np.imag(m_t_complex)
+                    frames.append(m_t)
+
+                frames = np.array(frames)  # (n_frames, N_y, N_x)
+                vmax = np.max(np.abs(frames))
+                if vmax < 1e-20:
+                    vmax = 1.0
+                vmin = -vmax
+                cmap = self.w_cmap_mode.value
+                cbar_label = "Re[M(t)]" if mode_type == 'real' else "Im[M(t)]"
+
+            elif mode_type == 'abs':
+                # |M| is the spatial envelope and stays constant in time for a pure harmonic mode.
+                amplitude = np.abs(mode_2d_complex)
+                frames = np.repeat(amplitude[np.newaxis, :, :], n_frames, axis=0)
+                vmin = 0.0
+                vmax = np.max(amplitude)
+                if vmax < 1e-20:
+                    vmax = 1.0
+                cmap = 'hot'
+                cbar_label = "|M|"
+
+            elif mode_type == 'phase':
+                frames = []
+                for t in time_array:
+                    m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                    frames.append(np.angle(m_t_complex))
+
+                frames = np.array(frames)
+                vmin = -np.pi
+                vmax = np.pi
+                cmap = 'hsv'
+                cbar_label = "φ[M(t)] [rad]"
+
+            elif mode_type == 'ampl_phase':
+                from ..utils import create_amplitude_phase_colormap
+
+                amplitude_ref = np.abs(mode_2d_complex)
+                amp_min = float(amplitude_ref.min())
+                amp_max = float(amplitude_ref.max())
+
+                frames = []
+                for t in time_array:
+                    m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                    frames.append(
+                        create_amplitude_phase_colormap(
+                            m_t_complex,
+                            amp_min=amp_min,
+                            amp_max=amp_max,
+                        )
+                    )
+
+                frames = np.array(frames)  # (n_frames, N_y, N_x, 3)
+                vmin = None
+                vmax = None
+                cmap = None
+                cbar_label = None
+
+            else:
+                raise ValueError(f"Unknown mode_type='{mode_type}'")
+            
+            # Setup axes
+            ax = self._ax_mode
+            ax.clear()
+            
+            # Remove old mode colorbar
+            if self._colorbar_mode is not None:
+                try:
+                    self._colorbar_mode.remove()
+                except Exception:
+                    pass
+                self._colorbar_mode = None
+            
+            # Extent
+            x_um = x_axis * 1e6
+            y_um = y_axis * 1e6
+            extent = [x_um[0], x_um[-1], y_um[0], y_um[-1]]
+            
+            # Initial frame
+            if is_rgb:
+                im = ax.imshow(
+                    frames[0],
+                    aspect="auto",
+                    origin="lower",
+                    extent=extent,
+                    interpolation="bilinear",
+                )
+            else:
+                im = ax.imshow(
+                    frames[0],
+                    aspect="auto",
+                    origin="lower",
+                    extent=extent,
+                    cmap=cmap,
+                    vmin=vmin,
+                    vmax=vmax,
+                    interpolation="bilinear",
+                )
+            
+            # Colorbar only for scalar data
+            if not is_rgb:
+                self._colorbar_mode = self._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+                self._colorbar_mode.set_label(cbar_label, fontsize=9)
+            
+            # Labels
+            ax.set_xlabel("x [μm]", fontsize=10)
+            ax.set_ylabel("y [μm]", fontsize=10)
+            
+            # Title (will be updated each frame)
+            k_str = f"k = {self._selected_k/1e6:.2f} rad/μm"
+            f_str = f"f = {self._selected_f/1e9:.2f} GHz"
+            title = ax.set_title(
+                f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns | φ=0.00°",
+                fontsize=11
+            )
+            ax.tick_params(labelsize=9)
+            
+            # Animation update function
+            def update(frame_idx):
+                im.set_data(frames[frame_idx])
+                t_ns = time_array[frame_idx] * 1e9
+                phase_deg = (time_array[frame_idx] / period_s) * 360
+                title.set_text(
+                    f"{mode_label} Mode | {k_str}, {f_str} | t={t_ns:.2f} ns | φ={phase_deg:.0f}°"
+                )
+                return [im, title]
+            
+            # Create animation
+            interval = 1000 / fps  # ms between frames
+            self._animation = FuncAnimation(
+                self._fig,
+                update,
+                frames=n_frames,
+                interval=interval,
+                blit=True,
+                repeat=True,
+            )
+            
+            self._is_animating = True
+            self.w_animate.description = "⏸️ Stop Animation"
+            self.w_animate.button_style = "danger"
+            abs_note = " | |M| is time-invariant for harmonic modes" if mode_type == 'abs' else ""
+            self.w_info.value = (
+                f"<small style='color:green'>🎬 Animating: {n_frames} frames, "
+                f"T={period_s*1e9:.2f} ns (1 period = 2π), mode={mode_label}{abs_note}</small>"
+            )
+            
+            # Redraw
+            self._fig.canvas.draw_idle()
+            
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"Animation failed:\n{tb}")
+            self.w_info.value = f"<small style='color:red'>❌ Animation error: {str(e)[:50]}</small>"
+            self._is_animating = False
+            self.w_animate.description = "🎬 Animate Mode"
+            self.w_animate.button_style = "warning"
+    
+    def _stop_animation(self):
+        """Stop the current animation."""
+        self._ensure_animation_state()
+
+        if self._animation is not None:
+            self._animation.event_source.stop()
+            self._animation = None
+        self._is_animating = False
+
     def _update_dispersion_plot(self):
         """Update the dispersion heatmap."""
         if self.result is None or self._ax_disp is None:
@@ -561,7 +832,7 @@ class InteractiveDispersionModes:
             k_line = n * G
             if abs(k_line) <= k_max * 1.1:  # Show if within range
                 alpha = 0.8 if abs(n) == 1 else 0.4  # Emphasize ±1G
-                ax.axvline(k_line, color="red", linestyle="--", 
+                ax.axvline(k_line, color="red", linestyle="--",
                           linewidth=1.5 if abs(n) == 1 else 1.0, alpha=alpha)
         
         # Add k=0 line and legend
@@ -575,8 +846,8 @@ class InteractiveDispersionModes:
         ax.grid(True, alpha=0.3, linestyle=":")
         ax.tick_params(labelsize=9)
 
-        # Set default k-axis limits to ±2 BZ (can be zoomed out manually)
-        k_limit = 2 * k_bz  # ±2 Brillouin zones
+        # Set default k-axis limits to ±2 Brillouin zones (from -2G to +2G)
+        k_limit = 2 * G  # ±2 zones (each zone spans G)
         ax.set_xlim(-k_limit, k_limit)
 
         # Redraw selection marker if exists
@@ -686,15 +957,45 @@ class InteractiveDispersionModes:
             a = self.w_lattice.value * 1e-9
             n_bz = self.w_n_bz_mask.value
             k_direction = self.w_k_direction.value
+            mode_type = self.w_mode_type.value  # 'real', 'imag', 'abs', 'phase'
 
-            # Extract spatial mode profile m(x, y)
-            x_axis, y_axis, mode_2d = self._extract_mode_2d_custom(
+            # Extract spatial mode profile m(x, y) - returns COMPLEX data
+            x_axis, y_axis, mode_2d_complex = self._extract_mode_2d_custom(
                 k_0=self._selected_k,
                 f_0=self._selected_f,
                 lattice_constant=a,
                 n_bz=n_bz,
                 k_direction=k_direction,
             )
+            
+            # Extract requested component
+            if mode_type == 'real':
+                mode_2d = np.real(mode_2d_complex)
+                cmap = self.w_cmap_mode.value
+                cbar_label = "Re[M]"
+                use_rgb = False
+            elif mode_type == 'imag':
+                mode_2d = np.imag(mode_2d_complex)
+                cmap = self.w_cmap_mode.value
+                cbar_label = "Im[M]"
+                use_rgb = False
+            elif mode_type == 'abs':
+                mode_2d = np.abs(mode_2d_complex)
+                cmap = 'hot'  # Better for amplitude
+                cbar_label = "|M|"
+                use_rgb = False
+            elif mode_type == 'phase':
+                mode_2d = np.angle(mode_2d_complex)
+                cmap = 'hsv'  # Cyclic colormap for phase
+                cbar_label = "φ[M] [rad]"
+                use_rgb = False
+            elif mode_type == 'ampl_phase':
+                # Use RGB colormap: hue=phase, brightness=amplitude
+                from ..utils import create_amplitude_phase_colormap
+                mode_2d = create_amplitude_phase_colormap(mode_2d_complex)
+                cmap = None  # RGB data doesn't use colormap
+                cbar_label = "Ampl×Phase"
+                use_rgb = True
 
             # Convert axes to convenient units
             x_um = x_axis * 1e6  # μm
@@ -703,33 +1004,71 @@ class InteractiveDispersionModes:
             # Plot 2D spatial heatmap
             extent = [x_um[0], x_um[-1], y_um[0], y_um[-1]]
 
-            # Use symmetric colormap for real part (shows oscillation structure)
-            vmax = np.max(np.abs(mode_2d))
-            if vmax < 1e-20:
-                vmax = 1.0
-            vmin = -vmax
+            # Auto color limits based on mode type
+            if mode_type in ['real', 'imag']:
+                # Symmetric for real/imag
+                vmax = np.max(np.abs(mode_2d))
+                if vmax < 1e-20:
+                    vmax = 1.0
+                vmin = -vmax
+            elif mode_type == 'abs':
+                # Always positive
+                vmin = 0
+                vmax = np.max(mode_2d)
+                if vmax < 1e-20:
+                    vmax = 1.0
+            elif mode_type == 'phase':
+                # Phase range
+                vmin = -np.pi
+                vmax = np.pi
+            elif mode_type == 'ampl_phase':
+                # RGB image - no vmin/vmax needed
+                vmin = None
+                vmax = None
 
-            im = ax.imshow(
-                mode_2d,
-                aspect="auto",
-                origin="lower",
-                extent=extent,
-                cmap="RdBu_r",  # Symmetric diverging colormap for real part
-                vmin=vmin,
-                vmax=vmax,
-                interpolation="bilinear",
-            )
+            if use_rgb:
+                # RGB image - no colormap
+                im = ax.imshow(
+                    mode_2d,
+                    aspect="auto",
+                    origin="lower",
+                    extent=extent,
+                    interpolation="bilinear",
+                )
+            else:
+                # Scalar data with colormap
+                im = ax.imshow(
+                    mode_2d,
+                    aspect="auto",
+                    origin="lower",
+                    extent=extent,
+                    cmap=cmap,
+                    vmin=vmin,
+                    vmax=vmax,
+                    interpolation="bilinear",
+                )
 
-            self._colorbar_mode = self._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
-            self._colorbar_mode.set_label("Re[m]", fontsize=9)
+            # Only add colorbar for scalar data
+            if not use_rgb:
+                self._colorbar_mode = self._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+                self._colorbar_mode.set_label(cbar_label, fontsize=9)
 
             # Labels
             ax.set_xlabel("x [μm]", fontsize=10)
             ax.set_ylabel("y [μm]", fontsize=10)
 
+            # Title with mode type
+            mode_type_labels = {
+                'real': 'Re[M]',
+                'imag': 'Im[M]',
+                'abs': '|M|',
+                'phase': 'φ[M]',
+                'ampl_phase': 'Ampl×Phase',
+            }
+            mode_label = mode_type_labels.get(mode_type, mode_type)
             k_str = f"k = {self._selected_k/1e6:.2f} rad/μm"
             f_str = f"f = {self._selected_f/1e9:.2f} GHz"
-            ax.set_title(f"Mode Profile m(x, y) | {k_str}, {f_str}", fontsize=11)
+            ax.set_title(f"{mode_label} Mode | {k_str}, {f_str}", fontsize=11)
             ax.tick_params(labelsize=9)
 
             # Redraw dispersion with markers
@@ -880,21 +1219,27 @@ class InteractiveDispersionModes:
             orth_axis = np.arange(N_orth) * dx
             
         # ===== STEP 6: Assign to x, y based on propagation axis =====
+        # M_mode shape: (N_orth, N_prop)
+        # For axis='x': N_orth=N_y, N_prop=N_x → M_mode is (N_y, N_x) ✓
+        # For axis='y': N_orth=N_x, N_prop=N_y → M_mode is (N_x, N_y), need transpose
         if axis == "x":
             x_axis = prop_axis
             y_axis = orth_axis
-            # M_mode shape: (N_y, N_x) - transpose to (N_x, N_y) for imshow
-            mode_2d = M_mode.T
+            # M_mode shape: (N_y, N_x) - already correct for m[y, x] indexing
+            mode_2d = M_mode
         else:  # axis == 'y'
             x_axis = orth_axis
             y_axis = prop_axis
-            # M_mode shape: (N_y, N_x) already correct
+            # M_mode shape: (N_x, N_y) - need transpose to (N_y, N_x) for m[y, x]
             mode_2d = M_mode.T
             
-        # Take real part (shows oscillation structure)
-        mode_2d = np.real(mode_2d)
-        
-        logger.info(f"Mode profile shape: {mode_2d.shape}, x: {x_axis.min()*1e6:.1f}-{x_axis.max()*1e6:.1f} μm, y: {y_axis.min()*1e6:.1f}-{y_axis.max()*1e6:.1f} μm")
+        # Return COMPLEX mode (caller decides whether to take real, imag, abs, phase)
+        logger.info(
+            f"Mode profile shape: {mode_2d.shape} (complex), "
+            f"x: {x_axis.min()*1e6:.1f}-{x_axis.max()*1e6:.1f} μm, "
+            f"y: {y_axis.min()*1e6:.1f}-{y_axis.max()*1e6:.1f} μm, "
+            f"|M|_max: {np.abs(mode_2d).max():.2e}"
+        )
 
         return x_axis, y_axis, mode_2d
 
@@ -909,11 +1254,13 @@ class InteractiveDispersionModes:
         lattice_constant_nm: float | None = None,
         n_bz: int = 3,
         k_direction: str = "both",
-    ) -> dict:
+    ) -> ModeProfile:
         """
-        Programmatically extract 2D spatial mode profile m(x, y).
+        Extract 2D spatial mode profile m(x, y) and return visualization object.
         
-        Simple interface for getting mode data outside of interactive widget.
+        Returns a ModeProfile object with plotting and animation capabilities.
+        Uses the Rychły et al. algorithm to reconstruct spatial mode from
+        pre-computed S_complex data.
         
         Parameters
         ----------
@@ -930,19 +1277,32 @@ class InteractiveDispersionModes:
             
         Returns
         -------
-        dict with keys:
-            - 'x': x-axis in meters (ndarray)
-            - 'y': y-axis in meters (ndarray)
-            - 'm_xy': 2D spatial mode profile m(x, y) (real part, ndarray)
-            - 'k': Selected k in m^-1
-            - 'f': Selected f in Hz
-            - 'info': Dict with additional info
+        ModeProfile
+            Object containing complex mode profile M(x,y) with methods:
+            - .plot(mode_type='real'|'imag'|'abs'|'phase', cmap=..., dpi=...)
+            - .animate(duration_ns=..., n_frames=..., fps=...)
+            - .get_components() → dict with all components
+            - .to_dict() → legacy dict format
             
         Examples
         --------
         >>> modes = job[0].m_layer13[...].fft.dispersion.dispersion_modes(save=True)
-        >>> mode_data = modes.mode(k=2.30, f=1.12)
-        >>> plt.imshow(mode_data['m_xy'], extent=[...])
+        >>> 
+        >>> # Get mode object
+        >>> mode = modes.mode(k=2.30, f=1.12)
+        >>> 
+        >>> # Plot different components
+        >>> mode.plot(mode_type='abs', cmap='hot', dpi=150)
+        >>> mode.plot(mode_type='phase', cmap='hsv')
+        >>> mode.plot(mode_type='real', figsize=(12, 8))
+        >>> 
+        >>> # Animate
+        >>> anim = mode.animate(duration_ns=10, n_frames=100, fps=30)
+        >>> anim.save('mode.gif', writer='pillow')
+        >>> 
+        >>> # Access data
+        >>> print(mode.m_xy.shape)  # Complex array (N_y, N_x)
+        >>> components = mode.get_components()  # dict with real, imag, abs, phase
         """
         if self.result is None:
             raise ValueError(
@@ -959,8 +1319,8 @@ class InteractiveDispersionModes:
             lattice_constant_nm = self._default_params.get("lattice_nm", 470.0)
         a = lattice_constant_nm * 1e-9  # nm → m
         
-        # Extract mode using internal method
-        x_axis, y_axis, mode_2d = self._extract_mode_2d_custom(
+        # Extract mode using internal method (returns COMPLEX data!)
+        x_axis, y_axis, mode_2d_complex = self._extract_mode_2d_custom(
             k_0=k_si,
             f_0=f_si,
             lattice_constant=a,
@@ -968,22 +1328,26 @@ class InteractiveDispersionModes:
             k_direction=k_direction,
         )
         
-        # Return structured dict
-        return {
-            'x': x_axis,
-            'y': y_axis,
-            'm_xy': mode_2d,
-            'k': k_si,
-            'f': f_si,
-            'info': {
-                'k_rad_um': k,
-                'f_GHz': f,
-                'lattice_constant_nm': lattice_constant_nm,
-                'n_bz': n_bz,
-                'k_direction': k_direction,
-                'shape': mode_2d.shape,
-            }
+        # Build metadata
+        info = {
+            'k_rad_um': k,
+            'f_GHz': f,
+            'lattice_constant_nm': lattice_constant_nm,
+            'n_bz': n_bz,
+            'k_direction': k_direction,
+            'shape': mode_2d_complex.shape,
+            'amplitude_max': float(np.abs(mode_2d_complex).max()),
         }
+        
+        # Return ModeProfile object
+        return ModeProfile(
+            m_xy=mode_2d_complex,
+            x=x_axis,
+            y=y_axis,
+            k=k_si,
+            f=f_si,
+            info=info,
+        )
 
     def extract_mode_profile(
         self,
@@ -1159,10 +1523,17 @@ class InteractiveDispersionModes:
                 alpha=0.8,
             )
 
-        # FBZ lines
-        k_bz = np.pi / lattice_constant / 1e6
-        ax.axvline(-k_bz, color="red", linestyle="--", linewidth=1.5)
-        ax.axvline(k_bz, color="red", linestyle="--", linewidth=1.5, label=f"FBZ ±{k_bz:.1f}")
+        # BZ boundary lines (reciprocal lattice vectors G = 2π/a)
+        G = 2 * np.pi / lattice_constant / 1e6  # rad/μm
+        ax.axvline(-G, color="red", linestyle="--", linewidth=1.5)
+        ax.axvline(G, color="red", linestyle="--", linewidth=1.5, label=f"±G = ±{G:.1f}")
+
+        # Show ±2G as well if in range
+        k_range = ax.get_xlim()
+        k_max = max(abs(k_range[0]), abs(k_range[1]))
+        if 2*G <= k_max:
+            ax.axvline(-2*G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
+            ax.axvline(2*G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
 
         ax.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
         ax.set_ylabel("f [GHz]", fontsize=10)
