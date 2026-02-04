@@ -153,6 +153,20 @@ class InteractiveDispersionModes:
             self._default_params = {}
         if not hasattr(self, "_presets_dir"):
             self._presets_dir = None
+        if not hasattr(self, "_geometry_contour"):
+            self._geometry_contour = None
+        if not hasattr(self, "_first_dispersion_plot"):
+            self._first_dispersion_plot = True
+        if not hasattr(self, "_dispersion_xlim"):
+            self._dispersion_xlim = None
+        if not hasattr(self, "_dispersion_ylim"):
+            self._dispersion_ylim = None
+        if not hasattr(self, "_first_mode_plot"):
+            self._first_mode_plot = True
+        if not hasattr(self, "_mode_xlim"):
+            self._mode_xlim = None
+        if not hasattr(self, "_mode_ylim"):
+            self._mode_ylim = None
 
         base = self._base_default_params()
         for key, value in base.items():
@@ -196,6 +210,9 @@ class InteractiveDispersionModes:
         
         # Preset management
         self._presets_dir = None  # Will be set when needed
+        
+        # Geometry contour overlay (for mode visualization)
+        self._geometry_contour: np.ndarray | None = None
 
     @property
     def detector(self) -> BrillouinZoneDetector:
@@ -574,6 +591,7 @@ class InteractiveDispersionModes:
         figsize: tuple[float, float] = (10, 10),
         dpi: int = 150,
         lattice_constant_nm: float | None = None,
+        add_contour: np.ndarray | None = None,
         **compute_kwargs,
     ):
         """
@@ -589,9 +607,13 @@ class InteractiveDispersionModes:
             Figure DPI (default 150)
         lattice_constant_nm : float, optional
             Initial lattice constant in nm. If None, uses default from dispersion_modes().
+        add_contour : np.ndarray, optional
+            2D geometry array (0/1) to overlay as contour on mode visualization.
+            This is useful for showing material boundaries (e.g., oscillators, antidots).
         **compute_kwargs : dict
             Extra kwargs passed to compute_1d if result needs to be computed.
         """
+
         self._ensure_runtime_state()
 
         if not _HAS_WIDGETS:
@@ -621,6 +643,19 @@ class InteractiveDispersionModes:
         # Set initial parameters from result
         f_max_ghz = self.result.f_axis.max() / 1e9
         self._default_params["f_max_ghz"] = min(f_max_ghz, 20.0)
+
+        # Store geometry contour for mode overlay
+        if add_contour is not None:
+            # Squeeze to 2D if needed
+            geom = np.asarray(add_contour).squeeze()
+            if geom.ndim == 2:
+                self._geometry_contour = geom
+                logger.info(f"Geometry contour set with shape {geom.shape}")
+            else:
+                logger.warning(f"add_contour must be 2D after squeeze, got {geom.ndim}D")
+                self._geometry_contour = None
+        else:
+            self._geometry_contour = None
 
         # Create widgets
         self._create_widgets()
@@ -745,6 +780,18 @@ class InteractiveDispersionModes:
             description="Mode type:",
             layout=widgets.Layout(width="95%"),
             style={"description_width": "70px"},
+        )
+
+        self.w_mode_x_periods = widgets.FloatSlider(
+            value=1.5,
+            min=0.5,
+            max=5.0,
+            step=0.5,
+            description="x width:",
+            layout=widgets.Layout(width="95%"),
+            style={"description_width": "70px"},
+            tooltip="Number of lattice periods to show in x direction",
+            continuous_update=False,
         )
 
         # === Colormaps ===
@@ -1118,6 +1165,13 @@ class InteractiveDispersionModes:
             layout=widgets.Layout(width="95%"),
         )
 
+        self.w_reset_zoom = widgets.Button(
+            description="🔍 Reset Zoom",
+            button_style="",
+            layout=widgets.Layout(width="95%"),
+            tooltip="Reset zoom for both dispersion and mode plots",
+        )
+
         self.w_auto_detect = widgets.Button(
             description="🔍 Auto-detect a",
             button_style="info",
@@ -1129,6 +1183,60 @@ class InteractiveDispersionModes:
             button_style="warning",
             layout=widgets.Layout(width="95%"),
             tooltip="Toggle mode oscillation animation (full 2π cycle)",
+        )
+
+        # === Animation controls ===
+        self.w_anim_frames = widgets.IntSlider(
+            value=60,
+            min=10,
+            max=200,
+            step=10,
+            description="Frames:",
+            style={'description_width': '60px'},
+            layout=widgets.Layout(width="95%"),
+            tooltip="Number of frames per animation cycle (higher = smoother but slower)",
+        )
+
+        self.w_anim_fps = widgets.IntSlider(
+            value=30,
+            min=10,
+            max=60,
+            step=5,
+            description="FPS:",
+            style={'description_width': '60px'},
+            layout=widgets.Layout(width="95%"),
+            tooltip="Frames per second (higher = faster animation)",
+        )
+
+        self.w_save_animation = widgets.Button(
+            description="💾 Save Animation",
+            button_style="",
+            layout=widgets.Layout(width="95%"),
+            tooltip="Save animation as MP4 or GIF file",
+        )
+
+        self.w_anim_save_mode = widgets.Dropdown(
+            options=[
+                ("Mode only", "mode"),
+                ("Full view (dispersion + mode)", "full"),
+            ],
+            value="mode",
+            description="View:",
+            style={'description_width': '60px'},
+            layout=widgets.Layout(width="95%"),
+            tooltip="Choose what to save: mode animation only or full interface",
+        )
+
+        self.w_anim_file_format = widgets.Dropdown(
+            options=[
+                ("GIF (animated)", "gif"),
+                ("MP4 (video)", "mp4"),
+            ],
+            value="gif",
+            description="Format:",
+            style={'description_width': '60px'},
+            layout=widgets.Layout(width="95%"),
+            tooltip="Choose file format: GIF or MP4",
         )
 
         self.w_recompute = widgets.Button(
@@ -1151,8 +1259,10 @@ class InteractiveDispersionModes:
 
         # === Connect callbacks ===
         self.w_update.on_click(self._on_update)
+        self.w_reset_zoom.on_click(self._on_reset_zoom)
         self.w_auto_detect.on_click(self._on_auto_detect)
         self.w_animate.on_click(self._on_animate)
+        self.w_save_animation.on_click(self._on_save_animation)
         self.w_recompute.on_click(self._on_recompute_dispersion)
 
         # Connect changes that should update immediately
@@ -1169,6 +1279,7 @@ class InteractiveDispersionModes:
             self.w_f_margin,
             self.w_neighbor_reduce,
             self.w_mode_type,
+            self.w_mode_x_periods,
             self.w_cmap_mode,
             self.w_lattice,
         ]:
@@ -1177,6 +1288,10 @@ class InteractiveDispersionModes:
         # Watch n_bz to show/hide k-direction widget
         self.w_n_bz_mask.observe(self._on_n_bz_change, names="value")
         self._update_k_direction_visibility()
+
+        # Animation controls - restart animation if active
+        for w in [self.w_anim_frames, self.w_anim_fps]:
+            w.observe(self._on_anim_param_change, names="value")
 
         # Live post-filter controls update plot immediately.
         for w in [
@@ -1393,6 +1508,7 @@ class InteractiveDispersionModes:
                 self.w_neighbor_reduce,
                 widgets.HTML("<small><b>Mode Visualization</b></small>"),
                 self.w_mode_type,
+                self.w_mode_x_periods,
                 widgets.HTML("<small><b>Frequency Range</b></small>"),
                 self.w_fmin,
                 self.w_fmax,
@@ -1402,7 +1518,14 @@ class InteractiveDispersionModes:
                 widgets.HTML("<small><b>Filters</b></small>"),
                 filters_accordion,
                 self.w_update,
+                self.w_reset_zoom,
                 self.w_animate,
+                widgets.HTML("<small><b>Animation Settings</b></small>"),
+                self.w_anim_frames,
+                self.w_anim_fps,
+                self.w_anim_save_mode,
+                self.w_anim_file_format,
+                self.w_save_animation,
                 widgets.HTML("<hr style='margin:5px'>"),
                 self.w_info,
                 widgets.HTML("<hr style='margin:5px'>"),
@@ -1485,8 +1608,16 @@ class InteractiveDispersionModes:
     def _on_update(self, _):
         """Handle update button click."""
         self._update_dispersion_plot()
-        if self._selected_k is not None:
-            self._update_mode_visualization()
+        self._refresh_mode_or_animation()
+
+    def _on_reset_zoom(self, _):
+        """Reset both dispersion and mode plot zoom to defaults."""
+        # Set flags to trigger default limits on next update
+        self._first_dispersion_plot = True
+        self._first_mode_plot = True
+        self._update_dispersion_plot()
+        self._refresh_mode_or_animation()
+        self.w_info.value = "<small style='color:green'>✅ Zoom reset for both plots</small>"
 
     def _on_recompute_dispersion(self, _):
         """Recompute dispersion with selected compute-stage filters."""
@@ -1508,11 +1639,19 @@ class InteractiveDispersionModes:
             compute_kwargs["axis"] = axis
             compute_kwargs["component"] = component
             compute_kwargs["avg_over_orthogonal"] = False
-            compute_kwargs["force"] = True
+            compute_kwargs["force"] = True  # Force recompute from original data
             compute_kwargs["save"] = False
+
+            # CRITICAL: Clear any cached filtered results to ensure we start from original raw data
+            # This prevents "sticky filters" where unchecked filters still affect results
+            if hasattr(self.interface, '_clear_cache'):
+                self.interface._clear_cache()
 
             if filters_cfg:
                 compute_kwargs["filters"] = filters_cfg
+            else:
+                # Explicitly set filters to None/empty to ensure no filters are applied
+                compute_kwargs["filters"] = None
 
             t0 = time.perf_counter()
             self.result = self.interface.compute_1d(**compute_kwargs)
@@ -1529,14 +1668,20 @@ class InteractiveDispersionModes:
             if self.w_fmax.value > self.w_fmax.max:
                 self.w_fmax.value = self.w_fmax.max
 
+            # Count active filters for user info
+            n_filters = 0
+            if filters_cfg:
+                n_filters += sum(1 for k, v in filters_cfg.items() if k in ["remove_static", "remove_average", "hann_time", "hann_space"] and v)
+                if "pre" in filters_cfg:
+                    n_filters += len([k for k, v in filters_cfg["pre"].items() if isinstance(v, dict) and v.get("enabled")])
+            
+            filter_info = f" | {n_filters} filter(s) applied" if n_filters > 0 else " | no filters (original data)"
             self.w_info.value = (
-                f"<small style='color:green'>✅ Recomputed dispersion in {elapsed:.2f} s "
-                f"(avg_over_orthogonal=False)</small>"
+                f"<small style='color:green'>✅ Recomputed from original data in {elapsed:.2f} s{filter_info}</small>"
             )
 
             self._update_dispersion_plot()
-            if self._selected_k is not None:
-                self._update_mode_visualization()
+            self._refresh_mode_or_animation()
         except Exception as exc:
             logger.exception("Dispersion recompute failed")
             self.w_info.value = f"<small style='color:red'>❌ Recompute error: {exc}</small>"
@@ -1548,16 +1693,36 @@ class InteractiveDispersionModes:
         """Handle display parameter changes."""
         self._update_dispersion_plot()
 
+    def _refresh_mode_or_animation(self):
+        """Refresh mode visualization or restart animation if active."""
+        if self._selected_k is None:
+            return
+        
+        self._ensure_animation_state()
+        if self._is_animating:
+            # Restart animation with new parameters
+            self._stop_animation()
+            self._on_animate(None)
+        else:
+            # Update static mode visualization
+            self._update_mode_visualization()
+
     def _on_mode_param_change(self, change):
         """Handle mode visualization parameter changes."""
-        if self._selected_k is not None:
-            self._update_mode_visualization()
+        self._refresh_mode_or_animation()
     
     def _on_n_bz_change(self, change):
         """Handle N_BZ slider change."""
         self._update_k_direction_visibility()
-        if self._selected_k is not None:
-            self._update_mode_visualization()
+        self._refresh_mode_or_animation()
+
+    def _on_anim_param_change(self, change):
+        """Handle animation parameter changes (frames, fps)."""
+        # Only restart if animation is currently active
+        self._ensure_animation_state()
+        if self._is_animating and self._selected_k is not None:
+            self._stop_animation()
+            self._on_animate(None)
 
     def _on_live_filter_change(self, change):
         """Handle live post-filter parameter changes."""
@@ -1588,8 +1753,7 @@ class InteractiveDispersionModes:
             self.w_info.value = f"<small style='color:green'>✅ Preset '{preset_name}' loaded</small>"
             # Update plots with new parameters
             self._update_dispersion_plot()
-            if self._selected_k is not None:
-                self._update_mode_visualization()
+            self._refresh_mode_or_animation()
         else:
             self.w_info.value = f"<small style='color:red'>❌ Failed to load preset '{preset_name}'</small>"
     
@@ -1920,8 +2084,8 @@ class InteractiveDispersionModes:
             # Time parameters for full 2π cycle
             period_s = 1.0 / self._selected_f  # Full period
             omega = 2 * np.pi * self._selected_f
-            n_frames = 60  # Smooth animation
-            fps = 30
+            n_frames = self.w_anim_frames.value  # From widget
+            fps = self.w_anim_fps.value  # From widget
             
             # Time array for one complete cycle (0 to T)
             time_array = np.linspace(0, period_s, n_frames, endpoint=False)
@@ -2007,6 +2171,11 @@ class InteractiveDispersionModes:
             
             # Setup axes
             ax = self._ax_mode
+            
+            # Save current zoom/pan state BEFORE clearing
+            xlim_saved = ax.get_xlim()
+            ylim_saved = ax.get_ylim()
+            
             ax.clear()
             
             # Remove old mode colorbar
@@ -2061,6 +2230,49 @@ class InteractiveDispersionModes:
             )
             ax.tick_params(labelsize=9)
             
+            # Restore zoom/pan state (preserve user's zoom during animation)
+            # Check if this is first plot (matplotlib default xlim is 0,1)
+            is_first_plot = (abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01)
+            
+            if not is_first_plot and not self._first_mode_plot:
+                # Preserve user's zoom/pan
+                ax.set_xlim(xlim_saved)
+                ax.set_ylim(ylim_saved)
+            else:
+                # First animation - use configured number of periods from slider
+                x_periods = self.w_mode_x_periods.value
+                x_center = (x_um[0] + x_um[-1]) / 2
+                half_width = (x_periods / 2.0) * (a * 1e6)  # periods to μm
+                ax.set_xlim(x_center - half_width, x_center + half_width)
+                ax.set_ylim(y_um[0], y_um[-1])
+            
+            # Overlay geometry contour if provided (draw once, persists through animation)
+            if self._geometry_contour is not None:
+                try:
+                    geom = self._geometry_contour
+                    # Create coordinate arrays for the geometry
+                    geom_y = np.linspace(y_um[0], y_um[-1], geom.shape[0])
+                    geom_x = np.linspace(x_um[0], x_um[-1], geom.shape[1])
+                    
+                    # Draw contour at level 0.5 (boundary between 0 and 1)
+                    ax.contour(
+                        geom_x, geom_y, geom,
+                        levels=[0.5],
+                        colors=['white'],
+                        linewidths=[1.5],
+                        linestyles=['solid'],
+                    )
+                    # Add black outline for visibility on light backgrounds
+                    ax.contour(
+                        geom_x, geom_y, geom,
+                        levels=[0.5],
+                        colors=['black'],
+                        linewidths=[0.5],
+                        linestyles=['solid'],
+                    )
+                except Exception as contour_err:
+                    logger.warning(f"Failed to draw geometry contour in animation: {contour_err}")
+            
             # Animation update function
             def update(frame_idx):
                 im.set_data(frames[frame_idx])
@@ -2103,6 +2315,197 @@ class InteractiveDispersionModes:
             self.w_animate.description = "🎬 Animate Mode"
             self.w_animate.button_style = "warning"
     
+    def _on_save_animation(self, _):
+        """Save the current animation to file."""
+        if self._selected_k is None or self._selected_f is None:
+            self.w_info.value = "<small style='color:red'>⚠️ Select a mode first (click on dispersion)</small>"
+            return
+        
+        try:
+            from matplotlib.animation import FuncAnimation, PillowWriter, FFMpegWriter
+            import tempfile
+            from pathlib import Path
+            
+            # Get parameters
+            a = self.w_lattice.value * 1e-9
+            n_bz = self.w_n_bz_mask.value
+            k_direction = self.w_k_direction.value
+            mode_type = self.w_mode_type.value
+            n_frames = self.w_anim_frames.value
+            fps = self.w_anim_fps.value
+            save_mode = self.w_anim_save_mode.value
+            file_format = self.w_anim_file_format.value
+            
+            self.w_info.value = "<small style='color:blue'>⏳ Preparing animation for save...</small>"
+            
+            # Extract complex mode data
+            x_axis, y_axis, mode_2d_complex = self._extract_mode_2d_custom(
+                k_0=self._selected_k,
+                f_0=self._selected_f,
+                lattice_constant=a,
+                n_bz=n_bz,
+                k_direction=k_direction,
+                k_margin_bins=self.w_k_margin.value,
+                f_margin_bins=self.w_f_margin.value,
+                neighbor_reduce=self.w_neighbor_reduce.value,
+            )
+            
+            # Time parameters
+            period_s = 1.0 / self._selected_f
+            omega = 2 * np.pi * self._selected_f
+            time_array = np.linspace(0, period_s, n_frames, endpoint=False)
+            
+            # Pre-compute frames (same logic as _on_animate)
+            mode_labels = {
+                'real': 'Re[M]',
+                'imag': 'Im[M]',
+                'abs': '|M|',
+                'phase': 'φ[M]',
+                'ampl_phase': 'Ampl×Phase',
+            }
+            mode_label = mode_labels.get(mode_type, mode_type)
+            is_rgb = (mode_type == 'ampl_phase')
+
+            if mode_type in ['real', 'imag']:
+                frames = []
+                for t in time_array:
+                    m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                    frames.append(np.real(m_t_complex) if mode_type == 'real' else np.imag(m_t_complex))
+                frames = np.array(frames)
+                vmax = np.max(np.abs(frames))
+                if vmax < 1e-20:
+                    vmax = 1.0
+                vmin = -vmax
+                cmap = self.w_cmap_mode.value
+                cbar_label = "Re[M(t)]" if mode_type == 'real' else "Im[M(t)]"
+
+            elif mode_type == 'abs':
+                amplitude = np.abs(mode_2d_complex)
+                frames = np.repeat(amplitude[np.newaxis, :, :], n_frames, axis=0)
+                vmin, vmax = 0.0, np.max(amplitude)
+                if vmax < 1e-20:
+                    vmax = 1.0
+                cmap = 'hot'
+                cbar_label = "|M|"
+
+            elif mode_type == 'phase':
+                frames = []
+                for t in time_array:
+                    m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                    frames.append(np.angle(m_t_complex))
+                frames = np.array(frames)
+                vmin, vmax = -np.pi, np.pi
+                cmap = 'hsv'
+                cbar_label = "φ[M(t)] [rad]"
+
+            elif mode_type == 'ampl_phase':
+                from ..utils import create_amplitude_phase_colormap
+                amplitude_ref = np.abs(mode_2d_complex)
+                amp_min, amp_max = float(amplitude_ref.min()), float(amplitude_ref.max())
+                frames = []
+                for t in time_array:
+                    m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                    frames.append(create_amplitude_phase_colormap(m_t_complex, amp_min=amp_min, amp_max=amp_max))
+                frames = np.array(frames)
+                vmin, vmax = None, None
+                cmap = None
+                cbar_label = None
+
+            # Create temporary figure for saving
+            if save_mode == "mode":
+                # Save only mode panel
+                fig_save, ax_save = plt.subplots(figsize=(8, 6), dpi=150, constrained_layout=True)
+            else:
+                # Save full view (dispersion + mode)
+                fig_save, (ax_disp_save, ax_mode_save) = plt.subplots(1, 2, figsize=(16, 6), dpi=150, constrained_layout=True)
+                ax_save = ax_mode_save
+                
+                # Plot static dispersion on left
+                S_map = self.result.S
+                k_axis = self.result.k_axis / 1e6
+                f_axis = self.result.f_axis / 1e9
+                extent_disp = [k_axis[0], k_axis[-1], f_axis[0], f_axis[-1]]
+                ax_disp_save.imshow(np.log10(S_map.T + 1e-20), aspect="auto", origin="lower",
+                                   extent=extent_disp, cmap=self.w_cmap_disp.value, interpolation="bilinear")
+                ax_disp_save.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
+                ax_disp_save.set_ylabel("f [GHz]", fontsize=10)
+                ax_disp_save.set_title(f"Dispersion | a = {a*1e9:.0f} nm", fontsize=11)
+                
+                # Add selection marker
+                ax_disp_save.plot(self._selected_k/1e6, self._selected_f/1e9, "rs",
+                                 markersize=12, markerfacecolor="none", markeredgewidth=2)
+            
+            # Setup mode animation axes
+            x_um = x_axis * 1e6
+            y_um = y_axis * 1e6
+            extent = [x_um[0], x_um[-1], y_um[0], y_um[-1]]
+            
+            if is_rgb:
+                im = ax_save.imshow(frames[0], aspect="auto", origin="lower", extent=extent, interpolation="bilinear")
+            else:
+                im = ax_save.imshow(frames[0], aspect="auto", origin="lower", extent=extent,
+                                   cmap=cmap, vmin=vmin, vmax=vmax, interpolation="bilinear")
+                fig_save.colorbar(im, ax=ax_save, shrink=0.8, pad=0.02).set_label(cbar_label, fontsize=9)
+            
+            # Add geometry contour if available
+            if self._geometry_contour is not None:
+                try:
+                    geom = self._geometry_contour
+                    geom_y = np.linspace(y_um[0], y_um[-1], geom.shape[0])
+                    geom_x = np.linspace(x_um[0], x_um[-1], geom.shape[1])
+                    ax_save.contour(geom_x, geom_y, geom, levels=[0.5], colors=['white'], linewidths=[1.5])
+                    ax_save.contour(geom_x, geom_y, geom, levels=[0.5], colors=['black'], linewidths=[0.5])
+                except Exception:
+                    pass
+            
+            ax_save.set_xlabel("x [μm]", fontsize=10)
+            ax_save.set_ylabel("y [μm]", fontsize=10)
+            k_str = f"k = {self._selected_k/1e6:.2f} rad/μm"
+            f_str = f"f = {self._selected_f/1e9:.2f} GHz"
+            title = ax_save.set_title(f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns", fontsize=11)
+            
+            # Animation update function
+            def update(frame_idx):
+                im.set_data(frames[frame_idx])
+                t_ns = time_array[frame_idx] * 1e9
+                phase_deg = (time_array[frame_idx] / period_s) * 360
+                title.set_text(f"{mode_label} Mode | {k_str}, {f_str} | t={t_ns:.2f} ns | φ={phase_deg:.0f}°")
+                return [im, title]
+            
+            # Create animation
+            anim = FuncAnimation(fig_save, update, frames=n_frames, interval=1000/fps, blit=True)
+            
+            # Generate filename
+            from datetime import datetime
+            k_val = f"{self._selected_k/1e6:.2f}".replace('.', 'p')
+            f_val = f"{self._selected_f/1e9:.2f}".replace('.', 'p')
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"mode_anim_k{k_val}_f{f_val}_{mode_type}_{timestamp}.{file_format}"
+            
+            # Save animation with appropriate writer
+            output_path = Path.cwd() / filename
+            self.w_info.value = f"<small style='color:blue'>💾 Saving animation to {filename}...</small>"
+            
+            if file_format == "gif":
+                writer = PillowWriter(fps=fps)
+            else:  # mp4
+                writer = FFMpegWriter(fps=fps, bitrate=1800, codec='libx264', extra_args=['-pix_fmt', 'yuv420p'])
+            
+            anim.save(str(output_path), writer=writer)
+            
+            plt.close(fig_save)
+            
+            file_size_mb = output_path.stat().st_size / (1024 * 1024)
+            self.w_info.value = (
+                f"<small style='color:green'>✅ Animation saved: {filename} ({file_size_mb:.1f} MB)<br>"
+                f"{n_frames} frames @ {fps} fps, mode={mode_label}, format={file_format.upper()}</small>"
+            )
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Animation save failed:\n{traceback.format_exc()}")
+            self.w_info.value = f"<small style='color:red'>❌ Save error: {str(e)[:80]}</small>"
+
     def _stop_animation(self):
         """Stop the current animation."""
         self._ensure_animation_state()
@@ -2118,6 +2521,10 @@ class InteractiveDispersionModes:
             return
 
         ax = self._ax_disp
+
+        # Save current zoom/pan state BEFORE clearing
+        xlim_saved = ax.get_xlim()
+        ylim_saved = ax.get_ylim()
 
         # Clear axes
         ax.clear()
@@ -2181,10 +2588,27 @@ class InteractiveDispersionModes:
         self._colorbar_disp = self._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
         self._colorbar_disp.set_label("log₁₀(S)", fontsize=9)
 
-        # Add BZ boundary lines (reciprocal lattice vectors G = 2π/a)
+        # Calculate reciprocal lattice vector (for BZ boundaries and default zoom)
         a = self.w_lattice.value * 1e-9
         G = 2 * np.pi / a / 1e6  # rad/μm (reciprocal lattice vector)
         
+        # Restore zoom/pan state (or set default ±1.5G on first plot)
+        k_limit = 1.5 * G  # ±1.5 zones
+        
+        # Check if this is first plot (matplotlib default xlim is 0,1)
+        # OR if user explicitly reset zoom via reset button
+        is_first_plot = (abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01)
+        
+        if is_first_plot or self._first_dispersion_plot:
+            # First plot or explicit reset - use default ±1.5G
+            ax.set_xlim(-k_limit, k_limit)
+            self._first_dispersion_plot = False
+        else:
+            # Preserve user's zoom/pan
+            ax.set_xlim(xlim_saved)
+            ax.set_ylim(ylim_saved)
+        
+        # Add BZ boundary lines (reciprocal lattice vectors G = 2π/a)
         # Show multiple BZ boundaries within k-range
         k_range = ax.get_xlim()
         k_max = max(abs(k_range[0]), abs(k_range[1]))
@@ -2209,10 +2633,6 @@ class InteractiveDispersionModes:
         ax.set_title(f"Dispersion S(k, f) | a = {a*1e9:.0f} nm | Click to select mode", fontsize=11)
         ax.grid(True, alpha=0.3, linestyle=":")
         ax.tick_params(labelsize=9)
-
-        # Set default k-axis limits to ±2 Brillouin zones (from -2G to +2G)
-        k_limit = 2 * G  # ±2 zones (each zone spans G)
-        ax.set_xlim(-k_limit, k_limit)
 
         # Redraw selection marker if exists
         if self._selected_k is not None and self._selected_f is not None:
@@ -2308,6 +2728,11 @@ class InteractiveDispersionModes:
             return
 
         ax = self._ax_mode
+
+        # Save current zoom/pan state BEFORE clearing
+        xlim_saved = ax.get_xlim()
+        ylim_saved = ax.get_ylim()
+
         ax.clear()
 
         # Remove old colorbar
@@ -2422,9 +2847,39 @@ class InteractiveDispersionModes:
                 self._colorbar_mode = self._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
                 self._colorbar_mode.set_label(cbar_label, fontsize=9)
 
+            # Overlay geometry contour if provided
+            if self._geometry_contour is not None:
+                try:
+                    geom = self._geometry_contour
+                    # Create coordinate arrays for the geometry
+                    # Assume geometry spans the same spatial domain as mode data
+                    geom_y = np.linspace(y_um[0], y_um[-1], geom.shape[0])
+                    geom_x = np.linspace(x_um[0], x_um[-1], geom.shape[1])
+                    
+                    # Draw contour at level 0.5 (boundary between 0 and 1)
+                    # Use a distinct color that stands out on any colormap
+                    ax.contour(
+                        geom_x, geom_y, geom,
+                        levels=[0.5],
+                        colors=['white'],
+                        linewidths=[1.5],
+                        linestyles=['solid'],
+                    )
+                    # Add black outline for visibility on light backgrounds
+                    ax.contour(
+                        geom_x, geom_y, geom,
+                        levels=[0.5],
+                        colors=['black'],
+                        linewidths=[0.5],
+                        linestyles=['solid'],
+                    )
+                except Exception as contour_err:
+                    logger.warning(f"Failed to draw geometry contour: {contour_err}")
+
             # Labels
             ax.set_xlabel("x [μm]", fontsize=10)
             ax.set_ylabel("y [μm]", fontsize=10)
+
 
             # Title with mode type
             mode_type_labels = {
@@ -2439,6 +2894,24 @@ class InteractiveDispersionModes:
             f_str = f"f = {self._selected_f/1e9:.2f} GHz"
             ax.set_title(f"{mode_label} Mode | {k_str}, {f_str}", fontsize=11)
             ax.tick_params(labelsize=9)
+
+            # Restore zoom/pan state (or use auto limits on first plot)
+            # Check if this is first plot (matplotlib default xlim is 0,1)
+            is_first_plot = (abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01)
+            
+            if not is_first_plot and not self._first_mode_plot:
+                # Preserve user's zoom/pan
+                ax.set_xlim(xlim_saved)
+                ax.set_ylim(ylim_saved)
+            else:
+                # First plot - use configured number of periods from slider
+                x_periods = self.w_mode_x_periods.value
+                x_center = (x_um[0] + x_um[-1]) / 2
+                half_width = (x_periods / 2.0) * (a * 1e6)  # periods to μm
+                ax.set_xlim(x_center - half_width, x_center + half_width)
+                # Keep full y range
+                ax.set_ylim(y_um[0], y_um[-1])
+                self._first_mode_plot = False
 
             # Redraw dispersion with markers
             self._update_dispersion_plot()
