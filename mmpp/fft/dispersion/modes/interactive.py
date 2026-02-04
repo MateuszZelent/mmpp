@@ -323,12 +323,18 @@ class InteractiveDispersionModes:
         self.w_auto_detect.on_click(self._on_auto_detect)
 
         # Connect changes that should update immediately
-        for w in [self.w_cmap_disp, self.w_fmin, self.w_fmax]:
+        # w_lattice also updates BZ lines on dispersion plot
+        for w in [self.w_cmap_disp, self.w_fmin, self.w_fmax, self.w_lattice]:
             w.observe(self._on_display_param_change, names="value")
 
         # Connect mode visualization params
-        for w in [self.w_n_bz_mask, self.w_k_direction, self.w_cmap_mode]:
+        # w_lattice affects BZ mask positions for mode extraction
+        for w in [self.w_n_bz_mask, self.w_k_direction, self.w_cmap_mode, self.w_lattice]:
             w.observe(self._on_mode_param_change, names="value")
+        
+        # Watch n_bz to show/hide k-direction widget
+        self.w_n_bz_mask.observe(self._on_n_bz_change, names="value")
+        self._update_k_direction_visibility()
 
         self._widgets_created = True
 
@@ -446,6 +452,25 @@ class InteractiveDispersionModes:
         """Handle mode visualization parameter changes."""
         if self._selected_k is not None:
             self._update_mode_visualization()
+    
+    def _on_n_bz_change(self, change):
+        """Handle N_BZ slider change - update k-direction visibility."""
+        self._update_k_direction_visibility()
+        if self._selected_k is not None:
+            self._update_mode_visualization()
+    
+    def _update_k_direction_visibility(self):
+        """Show/hide k-direction dropdown based on N_BZ value.
+        
+        When N_BZ=1, only one k-point is selected so k-direction is meaningless.
+        """
+        n_bz = self.w_n_bz_mask.value
+        if n_bz <= 1:
+            # Hide k-direction - only one point, direction doesn't matter
+            self.w_k_direction.layout.display = 'none'
+        else:
+            # Show k-direction - multiple BZ so direction matters
+            self.w_k_direction.layout.display = ''
 
     def _on_auto_detect(self, _):
         """Handle auto-detect button click."""
@@ -521,13 +546,27 @@ class InteractiveDispersionModes:
         self._colorbar_disp = self._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
         self._colorbar_disp.set_label("log₁₀(S)", fontsize=9)
 
-        # Add FBZ lines
+        # Add BZ boundary lines (reciprocal lattice vectors G = 2π/a)
         a = self.w_lattice.value * 1e-9
-        k_bz = np.pi / a / 1e6  # rad/μm
-        ax.axvline(-k_bz, color="red", linestyle="--", linewidth=1.5, alpha=0.7)
-        ax.axvline(k_bz, color="red", linestyle="--", linewidth=1.5, alpha=0.7, label=f"±π/a = ±{k_bz:.1f}")
+        G = 2 * np.pi / a / 1e6  # rad/μm (reciprocal lattice vector)
+        
+        # Show multiple BZ boundaries within k-range
+        k_range = ax.get_xlim()
+        k_max = max(abs(k_range[0]), abs(k_range[1]))
+        n_zones = int(np.ceil(k_max / G)) + 1
+        
+        for n in range(-n_zones, n_zones + 1):
+            if n == 0:
+                continue
+            k_line = n * G
+            if abs(k_line) <= k_max * 1.1:  # Show if within range
+                alpha = 0.8 if abs(n) == 1 else 0.4  # Emphasize ±1G
+                ax.axvline(k_line, color="red", linestyle="--", 
+                          linewidth=1.5 if abs(n) == 1 else 1.0, alpha=alpha)
+        
+        # Add k=0 line and legend
         ax.axvline(0, color="gray", linestyle=":", alpha=0.5, linewidth=1)
-        ax.legend(loc="upper right", fontsize=8)
+        ax.legend([f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8)
 
         # Labels
         ax.set_xlabel(r"$k$ [rad/μm]", fontsize=10)

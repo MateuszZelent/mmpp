@@ -388,11 +388,11 @@ def normalize_magnetization_components(M: np.ndarray) -> np.ndarray:
     np.ndarray
         Normalized array with shape (T, Z, Y, X, C) where C is 1 or 3
     """
-    # Case 1: Full 3-component data
+    # Case 1: Full 5D data - can be (T, Z, Y, X, 3) or (T, Z, Y, X, 1)
     if M.ndim == 5:
-        # (T, Z, Y, X, 3)
-        if M.shape[-1] != 3:
-            raise ValueError(f"5D array must have last axis=3 (mx,my,mz), got {M.shape[-1]}")
+        # (T, Z, Y, X, C) where C is 1 or 3
+        if M.shape[-1] not in (1, 3):
+            raise ValueError(f"5D array must have last axis=1 or 3, got {M.shape[-1]}")
         return M
     elif M.ndim == 4:
         # Could be (T, Y, X, 3) or (T, Z, Y, X) single component
