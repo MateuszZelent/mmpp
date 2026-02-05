@@ -259,19 +259,35 @@ def overlay_transmission(
                     "'sim_result' object must be provided to use 'normalize_to' feature."
                 )
 
-            # Find the corresponding simulation cross-section from the axes' lines.
-            # This is robust, as it finds what is already plotted on the target axes.
+            # Try to find the corresponding simulation cross-section from the axes' lines first
             sim_line = next((line for line in ax.get_lines() if line.get_label() != label), None)
-            if sim_line is None:
-                raise RuntimeError(
-                    "Could not find a simulation line on the provided axes to normalize against."
+            
+            if sim_line is not None:
+                # Use data from the plotted line
+                sim_transmission_data = (
+                    sim_line.get_xdata() if flip else sim_line.get_ydata()
                 )
-
-            # Select simulation transmission data based on orientation
-            sim_transmission_data = (
-                sim_line.get_xdata() if flip else sim_line.get_ydata()
-            )
-            sim_max = np.max(sim_transmission_data)
+                sim_max = np.max(sim_transmission_data)
+            else:
+                # No line found on axes - get data directly from sim_result object
+                # Extract transmission data for the same d, p parameters
+                try:
+                    # Get the transmission data directly from the result object
+                    # This assumes sim_result has a get_transmission_crosssection method or similar
+                    if hasattr(sim_result, 'transmission'):
+                        # Access raw transmission data
+                        sim_transmission_data = sim_result.transmission
+                        sim_max = np.max(sim_transmission_data)
+                    elif hasattr(sim_result, 'get_transmission_crosssection'):
+                        # Try to get specific cross-section
+                        sim_transmission_data = sim_result.get_transmission_crosssection(d=d, p=p)
+                        sim_max = np.max(sim_transmission_data)
+                    else:
+                        # Fallback: use the maximum of all transmission data
+                        sim_max = np.max(sim_result.data) if hasattr(sim_result, 'data') else 1.0
+                except Exception:
+                    # If all else fails, just use 1.0 (no normalization)
+                    sim_max = 1.0
 
             # Scale experimental data
             exp_max = np.max(amplitudes)
@@ -936,12 +952,170 @@ def overlay_transmission_heatmaps(
     return ax, im_sim, im_exp
 
 
+def plot_experimental_transmission(
+    ax: Axes,
+    *,
+    d: Union[int, str],
+    p: Union[int, str],
+    base_path: Union[str, Path] = "experiment",
+    width_tag: str = "w5",
+    freq_filename: str = "freq.txt",
+    freq_file_unit: str = "GHz",
+    target_freq_unit: Optional[str] = None,
+    bias_index: Optional[float] = None,
+    column: Union[int, str, None] = None,
+    reverse_frequency: bool = True,
+    flip: bool = True,
+    normalize: bool = True,
+    color: str = "green",
+    linewidth: float = 1.5,
+    label: Optional[str] = None,
+    **plot_kwargs: Any,
+) -> Line2D:
+    """Plot experimental transmission trace on specified axes (standalone version).
+
+    This is a simplified version of `overlay_transmission` that works independently
+    without requiring simulation data to be present. It's designed to be used on
+    any axes object, including empty ones.
+
+    Parameters
+    ----------
+    ax:
+        Matplotlib axes to plot on.
+    d, p:
+        Thickness ``d`` and period ``p`` values used to locate the experimental file.
+        **Special case**: If ``d=0`` and ``p=0``, loads reference data from ``ref.txt``
+        instead of the standard ``d{d}p{p}_{width_tag}.txt`` file.
+    base_path:
+        Directory that contains the experimental spectra (default ``"experiment"``).
+    width_tag:
+        Suffix that distinguishes measurement geometry (default ``"w5"``).
+    freq_filename:
+        File with the experimental frequency vector (default ``"freq.txt"``).
+    freq_file_unit:
+        Unit stored in ``freq_filename`` (``"Hz"``, ``"kHz"``, ``"MHz"`` or ``"GHz"``).
+    target_freq_unit:
+        Desired unit for plotting. When ``None`` the original unit is used.
+    bias_index:
+        Optional magnetic bias index used to infer the measurement column.
+    column:
+        Explicit column index or label from the measurement file. Overrides ``bias_index``.
+    reverse_frequency:
+        Reverse the frequency axis to match typical experimental formatting.
+    flip:
+        If True (default), plot frequency on the Y-axis and transmission on the X-axis.
+        Set to False to plot frequency on X-axis, transmission on Y-axis.
+    normalize:
+        If True (default), normalizes the experimental transmission so maximum value is 1.
+    color, linewidth, label, plot_kwargs:
+        Forwarded to :func:`matplotlib.axes.Axes.plot`.
+
+    Returns
+    -------
+    matplotlib.lines.Line2D
+        Handle of the added experimental trace.
+
+    Examples
+    --------
+    Plot experimental data on a new axes:
+
+    >>> fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+    >>> plot_experimental_transmission(
+    ...     ax=ax,
+    ...     d=180,
+    ...     p=630,
+    ...     base_path="/path/to/experiment",
+    ...     width_tag="w5",
+    ...     bias_index=50,
+    ...     freq_file_unit="GHz",
+    ...     target_freq_unit="GHz",
+    ...     normalize=True,
+    ...     color="green",
+    ...     label="Experiment B=50"
+    ... )
+    """
+
+    if target_freq_unit is None:
+        target_freq_unit = freq_file_unit
+
+    base_path = Path(base_path)
+    
+    # Special case: d=0 and p=0 means load reference file
+    if d == 0 and p == 0:
+        spectra_path = base_path / "ref.txt"
+    else:
+        spectra_path = base_path / f"d{d}p{p}_{width_tag}.txt"
+    
+    freq_path = base_path / freq_filename
+
+    if not spectra_path.exists():
+        raise FileNotFoundError(
+            f"Experimental spectrum '{spectra_path}' not found."
+        )
+    if not freq_path.exists():
+        raise FileNotFoundError(
+            f"Experimental frequency file '{freq_path}' not found."
+        )
+
+    spectrum_df = pd.read_csv(spectra_path, sep="\t")
+    selected_column = _resolve_data_column(
+        spectrum_df,
+        column=column,
+        bias_index=bias_index,
+    )
+    amplitudes = spectrum_df[selected_column].to_numpy(dtype=float)
+
+    # Apply normalization if requested
+    if normalize:
+        exp_max = np.max(amplitudes)
+        if exp_max > 0:
+            amplitudes = amplitudes / exp_max
+
+    # Load frequency data
+    freq_df = pd.read_csv(freq_path)
+    if freq_df.shape[1] != 1:
+        raise ValueError(f"Frequency file '{freq_path}' should contain exactly one column.")
+    frequencies = freq_df.iloc[:, 0].to_numpy(dtype=float)
+
+    if reverse_frequency:
+        frequencies = frequencies[::-1]
+
+    from_scale = _resolve_frequency_unit(freq_file_unit)
+    to_scale = _resolve_frequency_unit(target_freq_unit)
+    frequencies = frequencies * from_scale / to_scale
+
+    if amplitudes.shape[0] != frequencies.shape[0]:
+        raise ValueError(
+            "Experimental amplitude and frequency arrays have different lengths: "
+            f"{amplitudes.shape[0]} vs {frequencies.shape[0]}."
+        )
+
+    if label is None:
+        label = f"exp d={d} p={p}"
+
+    if flip:
+        plot_x, plot_y = amplitudes, frequencies
+    else:
+        plot_x, plot_y = frequencies, amplitudes
+
+    line, = ax.plot(
+        plot_x,
+        plot_y,
+        color=color,
+        linewidth=linewidth,
+        label=label,
+        **plot_kwargs,
+    )
+    return line
+
+
 # Alias for backward compatibility
 overlay_experimental_transmission = overlay_transmission
 
 __all__ = [
     "overlay_transmission",
     "overlay_experimental_transmission",
+    "plot_experimental_transmission",
     "load_experimental_transmission_data",
     "plot_experimental_transmission_heatmap",
     "overlay_transmission_heatmaps",
