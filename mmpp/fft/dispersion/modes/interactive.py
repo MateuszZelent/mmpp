@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     from .folding import BrillouinZoneFolding
     from .detection import BrillouinZoneDetector
 
-from .profile import ModeProfile
+from .mode_profile import ModeProfile
 
 
 class InteractiveDispersionModes:
@@ -679,8 +679,8 @@ class InteractiveDispersionModes:
         self.w_lattice = widgets.FloatSlider(
             value=params["lattice_nm"],
             min=50,
-            max=2000,
-            step=5,
+            max=20000,
+            step=10,
             description="a [nm]:",
             layout=widgets.Layout(width="95%"),
             style={"description_width": "70px"},
@@ -696,6 +696,13 @@ class InteractiveDispersionModes:
             layout=widgets.Layout(width="95%"),
             style={"description_width": "70px"},
             continuous_update=False,
+        )
+
+        self.w_show_bz_lines = widgets.Checkbox(
+            value=True,
+            description="Show BZ lines",
+            layout=widgets.Layout(width="95%"),
+            tooltip="Show/hide Brillouin zone boundary lines on dispersion plot",
         )
 
         # === Frequency range ===
@@ -1178,6 +1185,13 @@ class InteractiveDispersionModes:
             layout=widgets.Layout(width="95%"),
         )
 
+        self.w_show_system_info = widgets.Button(
+            description="ℹ️ System Info",
+            button_style="",
+            layout=widgets.Layout(width="95%"),
+            tooltip="Show simulation parameters and data dimensions",
+        )
+
         self.w_animate = widgets.Button(
             description="🎬 Animate Mode",
             button_style="warning",
@@ -1261,13 +1275,14 @@ class InteractiveDispersionModes:
         self.w_update.on_click(self._on_update)
         self.w_reset_zoom.on_click(self._on_reset_zoom)
         self.w_auto_detect.on_click(self._on_auto_detect)
+        self.w_show_system_info.on_click(self._on_show_system_info)
         self.w_animate.on_click(self._on_animate)
         self.w_save_animation.on_click(self._on_save_animation)
         self.w_recompute.on_click(self._on_recompute_dispersion)
 
         # Connect changes that should update immediately
         # w_lattice also updates BZ lines on dispersion plot
-        for w in [self.w_cmap_disp, self.w_fmin, self.w_fmax, self.w_lattice]:
+        for w in [self.w_cmap_disp, self.w_fmin, self.w_fmax, self.w_lattice, self.w_show_bz_lines]:
             w.observe(self._on_display_param_change, names="value")
 
         # Connect mode visualization params
@@ -1477,65 +1492,103 @@ class InteractiveDispersionModes:
         
         preset_controls = widgets.VBox(
             [
-                widgets.HTML("<small style='color:#666'><b>📁 Presets</b> (saved in current folder)</small>"),
+                widgets.HTML("<small style='color:#666'><b>📁 Presets</b></small>"),
                 preset_load_box,
                 preset_save_box,
-                widgets.HBox(
-                    [self.w_preset_delete_btn],
-                    layout=widgets.Layout(justify_content="center", width="100%")
-                ),
+                self.w_preset_delete_btn,
             ],
-            layout=widgets.Layout(
-                width="100%",
-                padding="5px",
-                border="1px solid #ddd",
-                margin="0 0 10px 0"
-            )
+            layout=widgets.Layout(width="100%", padding="3px")
         )
 
-        # Left panel: controls
-        left_panel = widgets.VBox(
+        # === TAB 1: Dispersion Parameters ===
+        tab_dispersion = widgets.VBox(
             [
-                widgets.HTML("<b>🌊 BZ Mode Analysis</b>"),
-                widgets.HTML("<hr style='margin:2px'>"),
-                preset_controls,
-                widgets.HTML("<small><b>Lattice</b></small>"),
+                widgets.HTML("<small><b>Lattice & BZ</b></small>"),
                 self.w_lattice,
                 self.w_auto_detect,
-                widgets.HTML("<small><b>Mask Settings</b></small>"),
+                self.w_show_bz_lines,
+                self.w_show_system_info,
+                widgets.HTML("<hr style='margin:5px'>"),
+                widgets.HTML("<small><b>Frequency Range</b></small>"),
+                self.w_fmin,
+                self.w_fmax,
+                widgets.HTML("<hr style='margin:5px'>"),
+                widgets.HTML("<small><b>Display</b></small>"),
+                self.w_cmap_disp,
+            ],
+            layout=widgets.Layout(width="100%", padding="5px")
+        )
+
+        # === TAB 2: Mode Parameters ===
+        tab_modes = widgets.VBox(
+            [
+                widgets.HTML("<small><b>BZ Mask Settings</b></small>"),
                 self.w_n_bz_mask,
                 self.w_k_direction,
                 self.w_k_margin,
                 self.w_f_margin,
                 self.w_neighbor_reduce,
-                widgets.HTML("<small><b>Mode Visualization</b></small>"),
+                widgets.HTML("<hr style='margin:5px'>"),
+                widgets.HTML("<small><b>Visualization</b></small>"),
                 self.w_mode_type,
                 self.w_mode_x_periods,
-                widgets.HTML("<small><b>Frequency Range</b></small>"),
-                self.w_fmin,
-                self.w_fmax,
-                widgets.HTML("<small><b>Display</b></small>"),
-                self.w_cmap_disp,
                 self.w_cmap_mode,
-                widgets.HTML("<small><b>Filters</b></small>"),
-                filters_accordion,
+            ],
+            layout=widgets.Layout(width="100%", padding="5px")
+        )
+
+        # === TAB 3: Actions & Animation ===
+        tab_actions = widgets.VBox(
+            [
+                widgets.HTML("<small><b>Plot Controls</b></small>"),
                 self.w_update,
                 self.w_reset_zoom,
+                widgets.HTML("<hr style='margin:5px'>"),
+                widgets.HTML("<small><b>Animation</b></small>"),
                 self.w_animate,
-                widgets.HTML("<small><b>Animation Settings</b></small>"),
                 self.w_anim_frames,
                 self.w_anim_fps,
                 self.w_anim_save_mode,
                 self.w_anim_file_format,
                 self.w_save_animation,
+            ],
+            layout=widgets.Layout(width="100%", padding="5px")
+        )
+
+        # === TAB 4: Filters ===
+        tab_filters = widgets.VBox(
+            [
+                filters_accordion,
+            ],
+            layout=widgets.Layout(width="100%", padding="5px")
+        )
+
+        # Create tabs
+        tabs = widgets.Tab(
+            children=[tab_dispersion, tab_modes, tab_actions, tab_filters],
+            layout=widgets.Layout(width="100%")
+        )
+        tabs.set_title(0, "📊 Dispersion")
+        tabs.set_title(1, "🎯 Modes")
+        tabs.set_title(2, "⚡ Actions")
+        tabs.set_title(3, "🔧 Filters")
+
+        # Left panel: controls
+        left_panel = widgets.VBox(
+            [
+                widgets.HTML("<b>🌊 BZ Mode Analysis</b>"),
+                widgets.HTML("<hr style='margin:3px'>"),
+                preset_controls,
+                widgets.HTML("<hr style='margin:3px'>"),
+                tabs,
                 widgets.HTML("<hr style='margin:5px'>"),
                 self.w_info,
-                widgets.HTML("<hr style='margin:5px'>"),
+                widgets.HTML("<hr style='margin:3px'>"),
                 widgets.HTML("<small><b>Selected Mode</b></small>"),
                 self.w_mode_info,
             ],
             layout=widgets.Layout(
-                width="310px",
+                width="320px",
                 padding="5px",
                 border="1px solid #ddd",
             ),
@@ -1547,7 +1600,7 @@ class InteractiveDispersionModes:
                 self._output,
             ],
             layout=widgets.Layout(
-                width="calc(100% - 330px)",
+                width="calc(100% - 340px)",
                 min_width="760px",
             ),
         )
@@ -1993,6 +2046,85 @@ class InteractiveDispersionModes:
             self.w_info.value = f"<small style='color:green'>Detected: {detected_a*1e9:.0f} nm</small>"
         else:
             self.w_info.value = "<small style='color:orange'>Detection failed</small>"
+
+    def _on_show_system_info(self, _):
+        """Display detailed system information from simulation data."""
+        try:
+            analyzer = self.interface.analyzer
+            
+            # Grid spacings
+            dx = analyzer.grid_spacings.get('dx', 0) * 1e9  # m → nm
+            dy = analyzer.grid_spacings.get('dy', 0) * 1e9
+            dz = analyzer.grid_spacings.get('dz', 0) * 1e9
+            dt = analyzer.dt * 1e12  # s → ps
+            
+            # Data dimensions
+            if analyzer.M_data is not None:
+                shape = analyzer.M_data.shape
+                nt, nz, ny, nx = shape[0], shape[1], shape[2], shape[3]
+            else:
+                nt = ny = nx = nz = 0
+            
+            # Physical domain sizes
+            Lx = nx * dx  # nm
+            Ly = ny * dy  # nm
+            Lz = nz * dz  # nm
+            T_total = nt * dt / 1000  # ps → ns
+            
+            # Frequency/k-space info from result
+            if self.result is not None:
+                fmax = self.result.f_axis.max() / 1e9  # Hz → GHz
+                fmin = self.result.f_axis.min() / 1e9
+                df = (self.result.f_axis[1] - self.result.f_axis[0]) / 1e9 if len(self.result.f_axis) > 1 else 0
+                
+                kmax = self.result.k_axis.max() / 1e6  # 1/m → rad/μm
+                kmin = self.result.k_axis.min() / 1e6
+                dk = (self.result.k_axis[1] - self.result.k_axis[0]) / 1e6 if len(self.result.k_axis) > 1 else 0
+                
+                nf = len(self.result.f_axis)
+                nk = len(self.result.k_axis)
+            else:
+                fmax = fmin = df = kmax = kmin = dk = nf = nk = 0
+            
+            # Format HTML info
+            info_html = f"""
+            <div style='font-family:monospace; font-size:11px; line-height:1.4; background:#f5f5f5; padding:8px; border-radius:4px; margin:5px 0;'>
+            <b style='color:#2563eb'>📊 System Parameters</b><br>
+            <hr style='margin:4px 0; border:none; border-top:1px solid #ccc'>
+            <b>Spatial Grid:</b><br>
+            • dx = {dx:.2f} nm, dy = {dy:.2f} nm, dz = {dz:.2f} nm<br>
+            • Nx = {nx}, Ny = {ny}, Nz = {nz}<br>
+            • Lx = {Lx:.1f} nm ({Lx/1000:.3f} μm)<br>
+            • Ly = {Ly:.1f} nm ({Ly/1000:.3f} μm)<br>
+            • Lz = {Lz:.1f} nm ({Lz/1000:.3f} μm)<br>
+            <br>
+            <b>Time Domain:</b><br>
+            • dt = {dt:.3f} ps (t_sampl)<br>
+            • Nt = {nt} steps<br>
+            • T_total = {T_total:.2f} ns<br>
+            <br>
+            <b>Frequency Space:</b><br>
+            • f_range = [{fmin:.2f}, {fmax:.2f}] GHz<br>
+            • df = {df:.3f} GHz<br>
+            • Nf = {nf} points<br>
+            <br>
+            <b>k-Space:</b><br>
+            • k_range = [{kmin:.2f}, {kmax:.2f}] rad/μm<br>
+            • dk = {dk:.3f} rad/μm<br>
+            • Nk = {nk} points<br>
+            <br>
+            <b>Current Lattice:</b><br>
+            • a = {self.w_lattice.value:.1f} nm<br>
+            • G = 2π/a = {2*np.pi/(self.w_lattice.value/1000):.3f} rad/μm<br>
+            </div>
+            """
+            
+            self.w_info.value = info_html
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"System info display failed:\n{traceback.format_exc()}")
+            self.w_info.value = f"<small style='color:red'>❌ Error: {str(e)[:100]}</small>"
 
     def _ensure_animation_state(self):
         """Backfill animation attributes for legacy/stale live instances."""
@@ -2485,30 +2617,33 @@ class InteractiveDispersionModes:
                     view_f_max = min(disp_ylim[1], f_max, f_axis_positive[-1])
                     ax_disp_save.set_ylim(view_f_min, view_f_max)
 
-                # Add BZ boundary lines (using current xlim)
-                k_range = ax_disp_save.get_xlim()
-                k_max = max(abs(k_range[0]), abs(k_range[1]))
-                if G > 0:
-                    n_zones = int(np.ceil(k_max / G)) + 1
-                else:
-                    n_zones = 1
+                # Add BZ boundary lines if enabled (using current xlim)
+                if self.w_show_bz_lines.value:
+                    k_range = ax_disp_save.get_xlim()
+                    k_max = max(abs(k_range[0]), abs(k_range[1]))
+                    if G > 0:
+                        n_zones = int(np.ceil(k_max / G)) + 1
+                    else:
+                        n_zones = 1
 
-                for n in range(-n_zones, n_zones + 1):
-                    if n == 0:
-                        continue
-                    k_line = n * G
-                    if abs(k_line) <= k_max * 1.1:
-                        alpha = 0.8 if abs(n) == 1 else 0.4
-                        ax_disp_save.axvline(
-                            k_line,
-                            color="red",
-                            linestyle="--",
-                            linewidth=1.5 if abs(n) == 1 else 1.0,
-                            alpha=alpha,
-                        )
-
+                    for n in range(-n_zones, n_zones + 1):
+                        if n == 0:
+                            continue
+                        k_line = n * G
+                        if abs(k_line) <= k_max * 1.1:
+                            alpha = 0.8 if abs(n) == 1 else 0.4
+                            ax_disp_save.axvline(
+                                k_line,
+                                color="red",
+                                linestyle="--",
+                                linewidth=1.5 if abs(n) == 1 else 1.0,
+                                alpha=alpha,
+                            )
+                    
+                    ax_disp_save.legend([f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8)
+                
+                # Always add k=0 reference line
                 ax_disp_save.axvline(0, color="gray", linestyle=":", alpha=0.5, linewidth=1)
-                ax_disp_save.legend([f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8)
                 ax_disp_save.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
                 ax_disp_save.set_ylabel("f [GHz]", fontsize=10)
                 ax_disp_save.set_title(
@@ -2765,24 +2900,27 @@ class InteractiveDispersionModes:
             view_f_max = min(ylim_saved[1], f_max, f_axis_positive[-1])
             ax.set_ylim(view_f_min, view_f_max)
         
-        # Add BZ boundary lines (reciprocal lattice vectors G = 2π/a)
-        # Show multiple BZ boundaries within k-range
-        k_range = ax.get_xlim()
-        k_max = max(abs(k_range[0]), abs(k_range[1]))
-        n_zones = int(np.ceil(k_max / G)) + 1
+        # Add BZ boundary lines (reciprocal lattice vectors G = 2π/a) if enabled
+        if self.w_show_bz_lines.value:
+            # Show multiple BZ boundaries within k-range
+            k_range = ax.get_xlim()
+            k_max = max(abs(k_range[0]), abs(k_range[1]))
+            n_zones = int(np.ceil(k_max / G)) + 1
+            
+            for n in range(-n_zones, n_zones + 1):
+                if n == 0:
+                    continue
+                k_line = n * G
+                if abs(k_line) <= k_max * 1.1:  # Show if within range
+                    alpha = 0.8 if abs(n) == 1 else 0.4  # Emphasize ±1G
+                    ax.axvline(k_line, color="red", linestyle="--",
+                              linewidth=1.5 if abs(n) == 1 else 1.0, alpha=alpha)
+            
+            # Add legend
+            ax.legend([f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8)
         
-        for n in range(-n_zones, n_zones + 1):
-            if n == 0:
-                continue
-            k_line = n * G
-            if abs(k_line) <= k_max * 1.1:  # Show if within range
-                alpha = 0.8 if abs(n) == 1 else 0.4  # Emphasize ±1G
-                ax.axvline(k_line, color="red", linestyle="--",
-                          linewidth=1.5 if abs(n) == 1 else 1.0, alpha=alpha)
-        
-        # Add k=0 line and legend
+        # Always add k=0 reference line
         ax.axvline(0, color="gray", linestyle=":", alpha=0.5, linewidth=1)
-        ax.legend([f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8)
 
         # Labels
         ax.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
@@ -3394,6 +3532,7 @@ class InteractiveDispersionModes:
         figsize: tuple[float, float] = (12, 7),
         dpi: int = 150,
         show_heatmap: bool = True,
+        show_bz_lines: bool = True,
         cmap: str = "viridis",
         ax: Axes | None = None,
         **compute_kwargs,
@@ -3445,17 +3584,18 @@ class InteractiveDispersionModes:
             # Apply frequency limits to viewport only
             ax.set_ylim(f_min, f_max if f_max < np.inf else f_axis_positive[-1])
 
-        # BZ boundary lines (reciprocal lattice vectors G = 2π/a)
-        G = 2 * np.pi / lattice_constant / 1e6  # rad/μm
-        ax.axvline(-G, color="red", linestyle="--", linewidth=1.5)
-        ax.axvline(G, color="red", linestyle="--", linewidth=1.5, label=f"±G = ±{G:.1f}")
+        # BZ boundary lines (reciprocal lattice vectors G = 2π/a) if enabled
+        if show_bz_lines:
+            G = 2 * np.pi / lattice_constant / 1e6  # rad/μm
+            ax.axvline(-G, color="red", linestyle="--", linewidth=1.5)
+            ax.axvline(G, color="red", linestyle="--", linewidth=1.5, label=f"±G = ±{G:.1f}")
 
-        # Show ±2G as well if in range
-        k_range = ax.get_xlim()
-        k_max = max(abs(k_range[0]), abs(k_range[1]))
-        if 2*G <= k_max:
-            ax.axvline(-2*G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
-            ax.axvline(2*G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
+            # Show ±2G as well if in range
+            k_range = ax.get_xlim()
+            k_max = max(abs(k_range[0]), abs(k_range[1]))
+            if 2*G <= k_max:
+                ax.axvline(-2*G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
+                ax.axvline(2*G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
 
         ax.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
         ax.set_ylabel("f [GHz]", fontsize=10)
