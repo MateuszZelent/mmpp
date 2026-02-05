@@ -2435,23 +2435,27 @@ class InteractiveDispersionModes:
                 cmap = None
                 cbar_label = None
 
-            # Create temporary figure for saving
+            # Create temporary figure for saving (Full HD quality: 1920px width minimum)
+            # Quality settings: figsize * dpi = pixels (e.g., 16 inches * 120 dpi = 1920 px)
+            save_dpi = 120  # High quality export
+            
             if save_mode == "mode":
-                # Save only mode panel
-                mode_height = max(3.0, float(self._figsize[1]) / 2.2)
+                # Save only mode panel: 1920x1200 px (16" x 10" @ 120 dpi)
                 fig_save, ax_save = plt.subplots(
-                    figsize=(float(self._figsize[0]), mode_height),
-                    dpi=int(self._dpi),
+                    figsize=(16, 10),
+                    dpi=save_dpi,
+                    constrained_layout=True,
                 )
                 ax_disp_save = None
             else:
-                # Save full view (dispersion + mode) in the SAME 2-row layout as the UI.
+                # Save full view: 1920x1680 px (16" x 14" @ 120 dpi)
                 fig_save, (ax_disp_save, ax_save) = plt.subplots(
                     2,
                     1,
-                    figsize=(float(self._figsize[0]), float(self._figsize[1])),
-                    dpi=int(self._dpi),
+                    figsize=(16, 14),
+                    dpi=save_dpi,
                     gridspec_kw={"height_ratios": [1.2, 1], "hspace": 0.25},
+                    constrained_layout=True,
                 )
                 
                 # Plot dispersion exactly like the interactive view (filters, limits, markers).
@@ -2479,17 +2483,24 @@ class InteractiveDispersionModes:
                 k_axis_plot = self.result.k_axis / 1e6  # rad/μm
                 f_axis_plot = self.result.f_axis / 1e9  # GHz
 
-                # Apply frequency limits (as in UI)
+                # Get frequency limits (for viewport only, not data cutting)
                 f_min = float(self.w_fmin.value)
                 f_max = float(self.w_fmax.value)
-                f_mask = (f_axis_plot >= f_min) & (f_axis_plot <= f_max)
-                if np.sum(f_mask) < 2:
-                    raise ValueError("No data in current frequency range for save")
 
-                S = S[f_mask, :]
-                f_axis_plot = f_axis_plot[f_mask]
+                # Check if there's valid data
+                if len(f_axis_plot) < 2 or len(k_axis_plot) < 2:
+                    raise ValueError("Insufficient data for animation save")
 
-                extent_disp = [k_axis_plot[0], k_axis_plot[-1], f_axis_plot[0], f_axis_plot[-1]]
+                # Cut data to show only positive frequencies (upper half)
+                positive_freq_mask = f_axis_plot >= 0
+                if np.sum(positive_freq_mask) > 0:
+                    S = S[positive_freq_mask, :]
+                    f_axis_positive = f_axis_plot[positive_freq_mask]
+                else:
+                    f_axis_positive = f_axis_plot
+
+                # Plot data with extent from 0 to fmax
+                extent_disp = [k_axis_plot[0], k_axis_plot[-1], 0, f_axis_positive[-1]]
                 im_disp = ax_disp_save.imshow(
                     np.log10(S + 1e-20),
                     aspect="auto",
@@ -2508,8 +2519,14 @@ class InteractiveDispersionModes:
                     ax_disp_save.set_xlim(-1.5 * G, 1.5 * G)
                 else:
                     ax_disp_save.set_xlim(disp_xlim)
-                if not is_default_ylim:
-                    ax_disp_save.set_ylim(disp_ylim)
+                if is_default_ylim:
+                    # Show all available frequencies on first plot
+                    ax_disp_save.set_ylim(0, f_axis_positive[-1])
+                else:
+                    # Preserve user zoom but constrain to frequency limits and available data
+                    view_f_min = max(disp_ylim[0], f_min, 0)
+                    view_f_max = min(disp_ylim[1], f_max, f_axis_positive[-1])
+                    ax_disp_save.set_ylim(view_f_min, view_f_max)
 
                 # Add BZ boundary lines (using current xlim)
                 k_range = ax_disp_save.get_xlim()
@@ -2629,9 +2646,11 @@ class InteractiveDispersionModes:
             self.w_info.value = f"<small style='color:blue'>💾 Saving animation to {filename}...</small>"
             
             if file_format == "gif":
-                writer = PillowWriter(fps=fps)
+                # High quality GIF: disable optimization to preserve quality, higher quality setting
+                writer = PillowWriter(fps=fps, metadata={'Author': 'MMPP', 'Title': 'Mode Animation'})
             else:  # mp4
-                writer = FFMpegWriter(fps=fps, bitrate=1800, codec='libx264', extra_args=['-pix_fmt', 'yuv420p'])
+                # High quality MP4: increased bitrate for Full HD
+                writer = FFMpegWriter(fps=fps, bitrate=4000, codec='libx264', extra_args=['-pix_fmt', 'yuv420p', '-preset', 'slower', '-crf', '18'])
             
             anim.save(str(output_path), writer=writer)
             
@@ -2702,20 +2721,28 @@ class InteractiveDispersionModes:
         k_axis = self.result.k_axis / 1e6  # rad/μm
         f_axis = self.result.f_axis / 1e9  # GHz
 
-        # Apply frequency limits
+        # Get frequency limits (for viewport only, not data cutting)
         f_min = self.w_fmin.value
         f_max = self.w_fmax.value
-        f_mask = (f_axis >= f_min) & (f_axis <= f_max)
 
-        if np.sum(f_mask) < 2:
-            ax.text(0.5, 0.5, "No data in frequency range", transform=ax.transAxes, ha="center")
+        # Check if there's any valid data at all
+        if len(f_axis) < 2:
+            ax.text(0.5, 0.5, "No data available", transform=ax.transAxes, ha="center")
             self._fig.canvas.draw_idle()
             return
 
-        S = S[f_mask, :]
-        f_axis_plot = f_axis[f_mask]
+        # Cut data to show only positive frequencies (upper half)
+        # If f_axis contains negative frequencies, take only f >= 0
+        positive_freq_mask = f_axis >= 0
+        if np.sum(positive_freq_mask) > 0:
+            S = S[positive_freq_mask, :]
+            f_axis_positive = f_axis[positive_freq_mask]
+        else:
+            # All frequencies are already positive
+            f_axis_positive = f_axis
 
-        extent = [k_axis[0], k_axis[-1], f_axis_plot[0], f_axis_plot[-1]]
+        # Plot data with extent from 0 to fmax
+        extent = [k_axis[0], k_axis[-1], 0, f_axis_positive[-1]]
 
         # Plot heatmap
         im = ax.imshow(
@@ -2742,13 +2769,17 @@ class InteractiveDispersionModes:
         is_first_plot = (abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01)
         
         if is_first_plot or self._first_dispersion_plot:
-            # First plot or explicit reset - use default ±1.5G
+            # First plot or explicit reset - use default ±1.5G for k, full range for f
             ax.set_xlim(-k_limit, k_limit)
+            ax.set_ylim(0, f_axis_positive[-1])  # Show all available positive frequencies
             self._first_dispersion_plot = False
         else:
-            # Preserve user's zoom/pan
+            # Preserve user's zoom/pan for k
             ax.set_xlim(xlim_saved)
-            ax.set_ylim(ylim_saved)
+            # For frequency: constrain to [f_min, f_max] but stay within available data
+            view_f_min = max(ylim_saved[0], f_min, 0)
+            view_f_max = min(ylim_saved[1], f_max, f_axis_positive[-1])
+            ax.set_ylim(view_f_min, view_f_max)
         
         # Add BZ boundary lines (reciprocal lattice vectors G = 2π/a)
         # Show multiple BZ boundaries within k-range
@@ -3563,11 +3594,16 @@ class InteractiveDispersionModes:
             k_axis = result.k_axis / 1e6
             f_axis = result.f_axis / 1e9
 
-            f_mask = (f_axis >= f_min) & (f_axis <= (f_max if f_max < np.inf else f_axis.max()))
-            S = S[f_mask, :]
-            f_axis = f_axis[f_mask]
+            # Cut data to show only positive frequencies (upper half)
+            positive_freq_mask = f_axis >= 0
+            if np.sum(positive_freq_mask) > 0:
+                S = S[positive_freq_mask, :]
+                f_axis_positive = f_axis[positive_freq_mask]
+            else:
+                f_axis_positive = f_axis
 
-            extent = [k_axis[0], k_axis[-1], f_axis[0], f_axis[-1]]
+            # Plot data with extent from 0 to fmax
+            extent = [k_axis[0], k_axis[-1], 0, f_axis_positive[-1]]
             ax.imshow(
                 np.log10(S + 1e-20),
                 aspect="auto",
@@ -3576,6 +3612,8 @@ class InteractiveDispersionModes:
                 cmap=cmap,
                 alpha=0.8,
             )
+            # Apply frequency limits to viewport only
+            ax.set_ylim(f_min, f_max if f_max < np.inf else f_axis_positive[-1])
 
         # BZ boundary lines (reciprocal lattice vectors G = 2π/a)
         G = 2 * np.pi / lattice_constant / 1e6  # rad/μm

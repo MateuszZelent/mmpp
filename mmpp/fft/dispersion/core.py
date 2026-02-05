@@ -68,32 +68,7 @@ class SpinWaveAnalyzer:
 
     def __init__(
         self,
-        zarr_path: Union[str, Path],
-        config: DispersionConfig,
-        tmax: int = 100,
-        slice_info: Optional[tuple] = None,
-        dataset_name: Optional[str] = None,
-    ) -> None:
-        """
-        Initialize SpinWaveAnalyzer.
-
-        Parameters
-        ----------
-        zarr_path : Union[str, Path]
-            Path to zarr file
-        config : DispersionConfig
-            Analysis configuration
-        tmax : int, optional
-            Maximum time steps to load (default: 100)
-        slice_info : Optional[tuple], optional
-            Spatial slicing specification
-        dataset_name : Optional[str], optional
-            Name of magnetization dataset to use (default: auto-detect)
-        """
-        self.zarr_path: Path = Path(zarr_path)
-    def __init__(
-        self,
-        zarr_path: str,
+        zarr_path: str | Path,
         config: Optional[DispersionConfig] = None,
         tmax: Optional[int] = 100,
         slice_info: Optional[tuple] = None,
@@ -116,13 +91,11 @@ class SpinWaveAnalyzer:
         dataset_name : str, optional
             Name of magnetization dataset in zarr file
         """
-        self.config: DispersionConfig = config
+        self.config: DispersionConfig = config or DispersionConfig()
         self.tmax: Optional[int] = tmax if tmax is None else int(tmax)
         self.slice_info: Optional[tuple] = slice_info
         self.dataset_name: Optional[str] = dataset_name
-        self.zarr_file: Optional[zarr.Group] = None
         self.zarr_path = Path(zarr_path)
-        self.config = config or DispersionConfig()
 
         # Data storage
         self.zarr_file: Optional[zarr.Group] = None
@@ -776,10 +749,15 @@ class SpinWaveAnalyzer:
                 S_complex = None
             S = self._collapse_orthogonal_spectra(orthogonal_spectra, orthogonal_avg_mode)
         
-        # Apply flipx to correct NumPy FFT convention (swap +/- wave vectors)
-        # This must be done AFTER all FFT operations and averaging
+        # Apply flipx to correct NumPy FFT convention (swap +/- wave vectors).
+        #
+        # IMPORTANT: keep k_axis monotonic (it is already fftshifted ascending),
+        # and mirror the k-dependent arrays instead. This preserves the invariant
+        # that S[k_i] corresponds to k_axis[k_i] while mapping k -> -k.
+        #
+        # This must be done AFTER all FFT operations and averaging.
         if flipx:
-            k_axis = k_axis[::-1]
+            S = S[::-1, :]
             if S_local is not None:
                 S_local = S_local[:, ::-1, :]
             if S_complex is not None:

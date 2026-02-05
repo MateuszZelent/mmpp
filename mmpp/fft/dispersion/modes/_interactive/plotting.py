@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class InteractivePlotter:
     """Handles matplotlib plotting for interactive dispersion visualization."""
     
-    def __init__(self, result: Dispersion Result1D):
+    def __init__(self, result: "DispersionResult1D"):
         """
         Initialize plotter with dispersion result.
         

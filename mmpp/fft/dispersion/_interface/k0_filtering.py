@@ -292,7 +292,7 @@ class K0Filter:
         if _SCIPY_AVAILABLE and smooth_win is not None and F > smooth_win:
             win = _odd(smooth_win)
             if F >= win:
-                for i in range(len(case0)):
+                for i in range(len(idx0)):
                     try:
                         gain_map[:, i] = savgol_filter(
                             gain_map[:, i],
