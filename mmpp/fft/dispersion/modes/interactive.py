@@ -783,7 +783,7 @@ class InteractiveDispersionModes:
         )
 
         self.w_mode_x_periods = widgets.FloatSlider(
-            value=1.5,
+            value=3.0,
             min=0.5,
             max=5.0,
             step=0.5,
@@ -1279,11 +1279,13 @@ class InteractiveDispersionModes:
             self.w_f_margin,
             self.w_neighbor_reduce,
             self.w_mode_type,
-            self.w_mode_x_periods,
             self.w_cmap_mode,
             self.w_lattice,
         ]:
             w.observe(self._on_mode_param_change, names="value")
+        
+        # x_periods slider needs special handling to reset zoom
+        self.w_mode_x_periods.observe(self._on_x_periods_change, names="value")
         
         # Watch n_bz to show/hide k-direction widget
         self.w_n_bz_mask.observe(self._on_n_bz_change, names="value")
@@ -1709,6 +1711,12 @@ class InteractiveDispersionModes:
 
     def _on_mode_param_change(self, change):
         """Handle mode visualization parameter changes."""
+        self._refresh_mode_or_animation()
+    
+    def _on_x_periods_change(self, change):
+        """Handle x_periods slider change - reset zoom to apply new width."""
+        # Reset flag so new width from slider is applied
+        self._first_mode_plot = True
         self._refresh_mode_or_animation()
     
     def _on_n_bz_change(self, change):
@@ -2316,15 +2324,19 @@ class InteractiveDispersionModes:
             self.w_animate.button_style = "warning"
     
     def _on_save_animation(self, _):
-        """Save the current animation to file."""
+        """Save the current animation to file.
+
+        Goal: saved file should match what the user currently sees (layout, zoom,
+        filters, colormaps, markers).
+        """
         if self._selected_k is None or self._selected_f is None:
             self.w_info.value = "<small style='color:red'>⚠️ Select a mode first (click on dispersion)</small>"
             return
         
         try:
             from matplotlib.animation import FuncAnimation, PillowWriter, FFMpegWriter
-            import tempfile
             from pathlib import Path
+            from datetime import datetime
             
             # Get parameters
             a = self.w_lattice.value * 1e-9
@@ -2337,6 +2349,18 @@ class InteractiveDispersionModes:
             file_format = self.w_anim_file_format.value
             
             self.w_info.value = "<small style='color:blue'>⏳ Preparing animation for save...</small>"
+
+            # Capture current view state (zoom/pan) so the saved animation matches the UI.
+            disp_xlim = None
+            disp_ylim = None
+            mode_xlim = None
+            mode_ylim = None
+            if self._ax_disp is not None:
+                disp_xlim = self._ax_disp.get_xlim()
+                disp_ylim = self._ax_disp.get_ylim()
+            if self._ax_mode is not None:
+                mode_xlim = self._ax_mode.get_xlim()
+                mode_ylim = self._ax_mode.get_ylim()
             
             # Extract complex mode data
             x_axis, y_axis, mode_2d_complex = self._extract_mode_2d_custom(
@@ -2414,26 +2438,114 @@ class InteractiveDispersionModes:
             # Create temporary figure for saving
             if save_mode == "mode":
                 # Save only mode panel
-                fig_save, ax_save = plt.subplots(figsize=(8, 6), dpi=150, constrained_layout=True)
+                mode_height = max(3.0, float(self._figsize[1]) / 2.2)
+                fig_save, ax_save = plt.subplots(
+                    figsize=(float(self._figsize[0]), mode_height),
+                    dpi=int(self._dpi),
+                )
+                ax_disp_save = None
             else:
-                # Save full view (dispersion + mode)
-                fig_save, (ax_disp_save, ax_mode_save) = plt.subplots(1, 2, figsize=(16, 6), dpi=150, constrained_layout=True)
-                ax_save = ax_mode_save
+                # Save full view (dispersion + mode) in the SAME 2-row layout as the UI.
+                fig_save, (ax_disp_save, ax_save) = plt.subplots(
+                    2,
+                    1,
+                    figsize=(float(self._figsize[0]), float(self._figsize[1])),
+                    dpi=int(self._dpi),
+                    gridspec_kw={"height_ratios": [1.2, 1], "hspace": 0.25},
+                )
                 
-                # Plot static dispersion on left
-                S_map = self.result.S
-                k_axis = self.result.k_axis / 1e6
-                f_axis = self.result.f_axis / 1e9
-                extent_disp = [k_axis[0], k_axis[-1], f_axis[0], f_axis[-1]]
-                ax_disp_save.imshow(np.log10(S_map.T + 1e-20), aspect="auto", origin="lower",
-                                   extent=extent_disp, cmap=self.w_cmap_disp.value, interpolation="bilinear")
+                # Plot dispersion exactly like the interactive view (filters, limits, markers).
+                if self.result is None:
+                    raise ValueError("No dispersion result available")
+
+                S_map = self.result.S  # (Nk, Nf)
+                live_filters = self._build_live_filters_config()
+                if live_filters is not None:
+                    try:
+                        from ..utils import apply_dispersion_post_filters
+
+                        S_map = apply_dispersion_post_filters(
+                            S_map,
+                            k_axis=self.result.k_axis,
+                            f_axis=self.result.f_axis,
+                            filters=live_filters,
+                            include_live=True,
+                        )
+                    except Exception:
+                        logger.exception("Live post-filter application failed for save; using raw S")
+                        S_map = self.result.S
+
+                S = S_map.T  # (Nf, Nk)
+                k_axis_plot = self.result.k_axis / 1e6  # rad/μm
+                f_axis_plot = self.result.f_axis / 1e9  # GHz
+
+                # Apply frequency limits (as in UI)
+                f_min = float(self.w_fmin.value)
+                f_max = float(self.w_fmax.value)
+                f_mask = (f_axis_plot >= f_min) & (f_axis_plot <= f_max)
+                if np.sum(f_mask) < 2:
+                    raise ValueError("No data in current frequency range for save")
+
+                S = S[f_mask, :]
+                f_axis_plot = f_axis_plot[f_mask]
+
+                extent_disp = [k_axis_plot[0], k_axis_plot[-1], f_axis_plot[0], f_axis_plot[-1]]
+                im_disp = ax_disp_save.imshow(
+                    np.log10(S + 1e-20),
+                    aspect="auto",
+                    origin="lower",
+                    extent=extent_disp,
+                    cmap=self.w_cmap_disp.value,
+                    interpolation="bilinear",
+                )
+                fig_save.colorbar(im_disp, ax=ax_disp_save, shrink=0.8, pad=0.02).set_label("log₁₀(S)", fontsize=9)
+
+                G = 2 * np.pi / a / 1e6  # rad/μm
+                # Restore current zoom/pan if available (match UI)
+                is_default_xlim = disp_xlim is None or (abs(disp_xlim[0] - 0.0) < 0.01 and abs(disp_xlim[1] - 1.0) < 0.01)
+                is_default_ylim = disp_ylim is None or (abs(disp_ylim[0] - 0.0) < 0.01 and abs(disp_ylim[1] - 1.0) < 0.01)
+                if is_default_xlim:
+                    ax_disp_save.set_xlim(-1.5 * G, 1.5 * G)
+                else:
+                    ax_disp_save.set_xlim(disp_xlim)
+                if not is_default_ylim:
+                    ax_disp_save.set_ylim(disp_ylim)
+
+                # Add BZ boundary lines (using current xlim)
+                k_range = ax_disp_save.get_xlim()
+                k_max = max(abs(k_range[0]), abs(k_range[1]))
+                if G > 0:
+                    n_zones = int(np.ceil(k_max / G)) + 1
+                else:
+                    n_zones = 1
+
+                for n in range(-n_zones, n_zones + 1):
+                    if n == 0:
+                        continue
+                    k_line = n * G
+                    if abs(k_line) <= k_max * 1.1:
+                        alpha = 0.8 if abs(n) == 1 else 0.4
+                        ax_disp_save.axvline(
+                            k_line,
+                            color="red",
+                            linestyle="--",
+                            linewidth=1.5 if abs(n) == 1 else 1.0,
+                            alpha=alpha,
+                        )
+
+                ax_disp_save.axvline(0, color="gray", linestyle=":", alpha=0.5, linewidth=1)
+                ax_disp_save.legend([f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8)
                 ax_disp_save.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
                 ax_disp_save.set_ylabel("f [GHz]", fontsize=10)
-                ax_disp_save.set_title(f"Dispersion | a = {a*1e9:.0f} nm", fontsize=11)
-                
-                # Add selection marker
-                ax_disp_save.plot(self._selected_k/1e6, self._selected_f/1e9, "rs",
-                                 markersize=12, markerfacecolor="none", markeredgewidth=2)
+                ax_disp_save.set_title(
+                    f"Dispersion S(k, f) | a = {a*1e9:.0f} nm | Click to select mode",
+                    fontsize=11,
+                )
+                ax_disp_save.grid(True, alpha=0.3, linestyle=":")
+                ax_disp_save.tick_params(labelsize=9)
+
+                # Mark selection and mask replicas (but don't touch UI info text)
+                self._draw_selection_markers(ax_disp_save, update_info=False)
             
             # Setup mode animation axes
             x_um = x_axis * 1e6
@@ -2462,25 +2574,55 @@ class InteractiveDispersionModes:
             ax_save.set_ylabel("y [μm]", fontsize=10)
             k_str = f"k = {self._selected_k/1e6:.2f} rad/μm"
             f_str = f"f = {self._selected_f/1e9:.2f} GHz"
-            title = ax_save.set_title(f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns", fontsize=11)
+            title = ax_save.set_title(
+                f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns | φ=0.00°",
+                fontsize=11,
+            )
+            ax_save.tick_params(labelsize=9)
+
+            # Match current mode zoom/pan when available.
+            is_default_xlim = mode_xlim is None or (abs(mode_xlim[0] - 0.0) < 0.01 and abs(mode_xlim[1] - 1.0) < 0.01)
+            is_default_ylim = mode_ylim is None or (abs(mode_ylim[0] - 0.0) < 0.01 and abs(mode_ylim[1] - 1.0) < 0.01)
+
+            if is_default_xlim:
+                # Same default view logic as the UI.
+                x_periods = float(self.w_mode_x_periods.value)
+                x_center = (x_um[0] + x_um[-1]) / 2
+                half_width = (x_periods / 2.0) * (a * 1e6)
+                ax_save.set_xlim(x_center - half_width, x_center + half_width)
+            else:
+                ax_save.set_xlim(mode_xlim)
+
+            if is_default_ylim:
+                ax_save.set_ylim(y_um[0], y_um[-1])
+            else:
+                ax_save.set_ylim(mode_ylim)
             
             # Animation update function
             def update(frame_idx):
                 im.set_data(frames[frame_idx])
                 t_ns = time_array[frame_idx] * 1e9
                 phase_deg = (time_array[frame_idx] / period_s) * 360
-                title.set_text(f"{mode_label} Mode | {k_str}, {f_str} | t={t_ns:.2f} ns | φ={phase_deg:.0f}°")
+                title.set_text(
+                    f"{mode_label} Mode | {k_str}, {f_str} | t={t_ns:.2f} ns | φ={phase_deg:.0f}°"
+                )
                 return [im, title]
             
             # Create animation
-            anim = FuncAnimation(fig_save, update, frames=n_frames, interval=1000/fps, blit=True)
+            anim = FuncAnimation(
+                fig_save,
+                update,
+                frames=n_frames,
+                interval=1000 / fps,
+                blit=False,  # more reliable when saving complex multi-axes figures
+                repeat=False,
+            )
             
             # Generate filename
-            from datetime import datetime
             k_val = f"{self._selected_k/1e6:.2f}".replace('.', 'p')
             f_val = f"{self._selected_f/1e9:.2f}".replace('.', 'p')
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"mode_anim_k{k_val}_f{f_val}_{mode_type}_{timestamp}.{file_format}"
+            filename = f"mode_anim_{save_mode}_k{k_val}_f{f_val}_{mode_type}_{timestamp}.{file_format}"
             
             # Save animation with appropriate writer
             output_path = Path.cwd() / filename
@@ -2640,7 +2782,7 @@ class InteractiveDispersionModes:
 
         self._fig.canvas.draw_idle()
 
-    def _draw_selection_markers(self, ax: Axes):
+    def _draw_selection_markers(self, ax: Axes, *, update_info: bool = True):
         """Draw markers showing selected (k, f) and all mask positions."""
         if self._selected_k is None:
             return
@@ -2712,13 +2854,14 @@ class InteractiveDispersionModes:
             if self.result.k_axis.min() <= k_copy <= self.result.k_axis.max():
                 mask_positions.append(k_copy / 1e6)
 
-        self.w_info.value = (
-            f"<small>Mask includes <b>{len(mask_positions)}</b> k-positions<br>"
-            f"k = {', '.join([f'{k:.1f}' for k in mask_positions[:5]])}"
-            f"{'...' if len(mask_positions) > 5 else ''} rad/μm<br>"
-            f"neighbors: Δk=±{self.w_k_margin.value} bin, Δf=±{self.w_f_margin.value} bin, "
-            f"agg={self.w_neighbor_reduce.value}</small>"
-        )
+        if update_info:
+            self.w_info.value = (
+                f"<small>Mask includes <b>{len(mask_positions)}</b> k-positions<br>"
+                f"k = {', '.join([f'{k:.1f}' for k in mask_positions[:5]])}"
+                f"{'...' if len(mask_positions) > 5 else ''} rad/μm<br>"
+                f"neighbors: Δk=±{self.w_k_margin.value} bin, Δf=±{self.w_f_margin.value} bin, "
+                f"agg={self.w_neighbor_reduce.value}</small>"
+            )
 
     def _update_mode_visualization(self):
         """Update the 2D spatial mode visualization m(x, y)."""
