@@ -496,7 +496,7 @@ class BrillouinZoneFolding:
         delta_k: Optional[float] = None,
         delta_f: Optional[float] = None,
         return_complex: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, dict]:
         """
         Extract the spatial profile of a specific mode using inverse FFT.
         
@@ -562,106 +562,57 @@ class BrillouinZoneFolding:
         --------
         create_mode_mask : Creates the BZ-folding mask
         """
-        # Use complex spectrum for proper phase reconstruction
-        # If S_complex is not available, fall back to S (amplitude only)
-        if hasattr(result, 'S_complex') and result.S_complex is not None:
-            S_data = result.S_complex.copy()
-            logger.debug("Using S_complex for phase-preserving mode reconstruction")
-        else:
-            S_data = result.S.copy()
-            logger.warning(
-                "S_complex not available, using amplitude-only spectrum S. "
-                "Mode reconstruction will assume zero phase (symmetric profile)."
+        from .extraction import extract_mode_profile_1d
+
+        if getattr(result, "S_complex", None) is None:
+            raise ValueError(
+                "Mode profile reconstruction requires complex spectrum S_complex "
+                "(phase information). Recompute dispersion with avg_over_orthogonal=False."
             )
-        
-        k_axis = result.k_axis.copy()
-        f_axis = result.f_axis.copy()
-        
-        # =========================================================================
-        # STEP 1: Create BZ-folding mask
-        # =========================================================================
-        # This mask selects ALL periodic copies: k₀, k₀±G, k₀±2G, ...
-        # where G = 2π/a is the reciprocal lattice vector.
-        # This is ESSENTIAL for physically correct mode reconstruction!
-        mask = self.create_mode_mask(
-            k_axis=k_axis,
-            f_axis=f_axis,
-            k_0=k_0,
-            f_0=f_0,
-            delta_k=delta_k,
-            delta_f=delta_f,
-            include_all_copies=True,  # ← CRITICAL: Include all BZ copies!
+
+        G = 2 * np.pi / self.a
+        dk_val = 0.1 * G if delta_k is None else float(delta_k)
+        df_val = 0.5e9 if delta_f is None else float(delta_f)
+
+        prop_axis, profile_complex, info = extract_mode_profile_1d(
+            result,
+            k_0=float(k_0),
+            f_0=float(f_0),
+            lattice_constant=float(self.a),
+            n_bz=int(self.n_periods),
+            k_direction="both",
+            k_margin_bins=0,
+            f_margin_bins=0,
+            neighbor_reduce="mean",
+            orth_reduce="mean",
+            delta_k=dk_val,
+            delta_f=df_val,
         )
-        
-        # =========================================================================
-        # STEP 2: Apply mask to complex spectrum
-        # =========================================================================
-        # Masking in k-space: M̃_filtered(k) = M̃(k) · Mask(k)
-        # This selects all Brillouin zone copies while preserving phase
-        S_filtered = S_data * mask.astype(S_data.dtype)
-        
-        # Find frequency index closest to f_0
-        i_f0 = np.argmin(np.abs(f_axis - f_0))
-        
-        # Extract 1D spectrum at this frequency
-        # S_at_f0 now contains contributions from k₀ + nG for all n
-        S_at_f0 = S_filtered[:, i_f0]
-        
-        # Reconstruct position axis from k_axis
-        # Δk = 2π/L → L = 2π/Δk
-        if len(k_axis) > 1:
-            dk = np.abs(k_axis[1] - k_axis[0])
-            L_y = 2 * np.pi / dk
-            N_y = len(k_axis)
-            y_axis = np.linspace(0, L_y, N_y, endpoint=False)
-        else:
-            y_axis = np.array([0])
-        
-        # =========================================================================
-        # STEP 3: Inverse FFT - Automatic summation of periodic copies
-        # =========================================================================
-        # The IFFT performs the sum over all masked k-points:
-        #   M(y) = Σₙ M̃(k₀ + nG) exp(i(k₀ + nG)y)
-        # This is the PHYSICALLY CORRECT reconstruction that includes ALL
-        # periodic copies, leading to:
-        # - Correct amplitude (coherent addition)
-        # - Correct phase structure
-        # - Automatic enforcement of spatial periodicity m(y + a) = m(y)
-        
-        # Handle fftshift: if k_axis is centered, undo shift first
-        k_center = (k_axis[0] + k_axis[-1]) / 2
-        is_shifted = np.abs(k_center) < 0.1 * np.abs(k_axis).max()
-        
-        if is_shifted:
-            S_for_ifft = np.fft.ifftshift(S_at_f0)
-        else:
-            S_for_ifft = S_at_f0
-        
-        # Inverse FFT: k → y
-        # This is where the summation Σₙ M̃(k₀ + nG) exp(i·k·y) happens!
-        mode_profile_complex = np.fft.ifft(S_for_ifft)
-        
-        if return_complex:
-            mode_profile = mode_profile_complex
-        else:
-            mode_profile = np.real(mode_profile_complex)
-        
+
+        mode_profile = profile_complex if return_complex else np.real(profile_complex)
+
         mask_info = {
-            "k_0": k_0,
-            "f_0": f_0,
-            "delta_k": delta_k if delta_k is not None else 0.1 * (2 * np.pi / self.a),
-            "delta_f": delta_f if delta_f is not None else 0.5e9,
-            "n_points_masked": np.sum(mask),
-            "frequency_index": i_f0,
+            "k_0": float(k_0),
+            "f_0": float(f_0),
+            "delta_k": float(dk_val),
+            "delta_f": float(df_val),
+            "n_periods": int(self.n_periods),
+            "k_bins_selected": int(info.get("k_bins_selected", 0)),
+            "f_bins_selected": int(info.get("f_bins_selected", 0)),
+            # Backwards compatible key (historically counted 2D mask pixels).
+            "n_points_masked": int(info.get("k_bins_selected", 0)) * int(info.get("f_bins_selected", 0)),
+            "frequency_index": int(np.argmin(np.abs(np.asarray(result.f_axis) - float(f_0)))),
+            "orth_reduce": str(info.get("orth_reduce", "mean")),
         }
-        
+
         logger.info(
-            "Extracted mode profile: k_0=%.3f rad/μm, f_0=%.2f GHz, "
-            "%d spatial points",
-            k_0 / 1e6, f_0 / 1e9, len(y_axis)
+            "Extracted mode profile: k_0=%.3f rad/um, f_0=%.2f GHz, points=%d",
+            float(k_0) / 1e6,
+            float(f_0) / 1e9,
+            int(prop_axis.size),
         )
-        
-        return y_axis, mode_profile, mask_info
+
+        return prop_axis, mode_profile, mask_info
     
     def extract_mode_profile_from_mode(
         self,
@@ -701,6 +652,8 @@ class BrillouinZoneFolding:
         f_0: float,
         delta_k: Optional[float] = None,
         delta_f: Optional[float] = None,
+        include_negative_frequency: bool = True,
+        return_complex: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Extract mode profile with full time evolution using 2D inverse FFT.
@@ -727,70 +680,89 @@ class BrillouinZoneFolding:
         mode_evolution : np.ndarray
             2D array m(t, y) of shape (N_t, N_y)
         """
-        S = result.S.copy()
-        k_axis = result.k_axis.copy()
-        f_axis = result.f_axis.copy()
-        
-        # Create mask
-        mask = self.create_mode_mask(
-            k_axis=k_axis,
-            f_axis=f_axis,
-            k_0=k_0,
-            f_0=f_0,
-            delta_k=delta_k,
-            delta_f=delta_f,
-            include_all_copies=True,
+        from .extraction import canonicalize_s_complex, build_bz_k_mask
+
+        if getattr(result, "S_complex", None) is None:
+            raise ValueError(
+                "Mode time evolution requires complex spectrum S_complex (phase information)."
+            )
+
+        k_axis = np.asarray(result.k_axis)
+        f_axis = np.asarray(result.f_axis)
+
+        S_complex, has_orth = canonicalize_s_complex(result.S_complex, k_axis=k_axis, f_axis=f_axis)
+        if has_orth:
+            # Collapse orthogonal dimension (linear -> equivalent to averaging after IFFT).
+            S_complex = np.mean(S_complex, axis=0)
+
+        a = float(self.a)
+        G = 2 * np.pi / a
+        dk_val = 0.1 * G if delta_k is None else float(delta_k)
+        df_val = 0.5e9 if delta_f is None else float(delta_f)
+
+        k_mask = build_bz_k_mask(
+            k_axis,
+            k_0=float(k_0),
+            lattice_constant=a,
+            n_bz=int(self.n_periods),
+            k_direction="both",
+            k_margin_bins=0,
+            delta_k=dk_val,
         )
-        
-        # Apply mask
-        S_filtered = S * mask.astype(float)
-        
-        # Handle fftshift
-        k_center = (k_axis[0] + k_axis[-1]) / 2
-        is_k_shifted = np.abs(k_center) < 0.1 * np.abs(k_axis).max()
-        
-        f_center = (f_axis[0] + f_axis[-1]) / 2
-        is_f_shifted = np.abs(f_center) < 0.1 * np.abs(f_axis).max()
-        
-        S_for_ifft = S_filtered
-        if is_k_shifted:
-            S_for_ifft = np.fft.ifftshift(S_for_ifft, axes=0)
-        if is_f_shifted:
-            S_for_ifft = np.fft.ifftshift(S_for_ifft, axes=1)
-        
-        # 2D inverse FFT: (k, f) → (y, t)
-        # Note: S has shape (N_k, N_f), result will be (N_y, N_t)
-        mode_evolution_yt = np.fft.ifft2(S_for_ifft)
-        
-        # Transpose to (N_t, N_y) for conventional time-space ordering
-        mode_evolution = np.real(mode_evolution_yt.T)
-        
-        # Reconstruct axes
-        N_k, N_f = S.shape
-        
-        # Position axis from k
-        if N_k > 1:
-            dk = np.abs(k_axis[1] - k_axis[0])
-            L_y = 2 * np.pi / dk
-            y_axis = np.linspace(0, L_y, N_k, endpoint=False)
+
+        # Select +/- frequency neighborhoods if requested.
+        if include_negative_frequency:
+            f_mask = (np.abs(f_axis - float(f_0)) < df_val) | (np.abs(f_axis + float(f_0)) < df_val)
         else:
-            y_axis = np.array([0])
-        
-        # Time axis from f
-        if N_f > 1:
-            df = np.abs(f_axis[1] - f_axis[0])
-            T_total = 1.0 / df
-            t_axis = np.linspace(0, T_total, N_f, endpoint=False)
+            f_mask = np.abs(f_axis - float(f_0)) < df_val
+        if not np.any(f_mask):
+            idx = int(np.argmin(np.abs(f_axis - float(f_0))))
+            f_mask = np.zeros(f_axis.size, dtype=bool)
+            f_mask[idx] = True
+
+        S_filtered = np.asarray(S_complex, dtype=np.complex128) * k_mask[:, None] * f_mask[None, :]
+
+        # Undo fftshift before IFFT (k and f are stored shifted for visualization).
+        if np.all(np.diff(k_axis) > 0):
+            S_filtered = np.fft.ifftshift(S_filtered, axes=0)
+        if np.all(np.diff(f_axis) > 0):
+            S_filtered = np.fft.ifftshift(S_filtered, axes=1)
+
+        # 2D inverse FFT: (k, f) -> (prop, t)
+        mode_evolution_prop_t = np.fft.ifft2(S_filtered)
+        mode_evolution_t_prop = mode_evolution_prop_t.T  # (Nt, Nprop)
+
+        N_prop, N_t = mode_evolution_prop_t.shape
+        dx = float(getattr(result, "dx", 0.0) or 0.0)
+        if dx > 0:
+            prop_axis = np.arange(N_prop, dtype=float) * dx
         else:
-            t_axis = np.array([0])
-        
+            if k_axis.size > 1:
+                dk = float(np.abs(k_axis[1] - k_axis[0]))
+                L = 2 * np.pi / dk if dk > 0 else float(N_prop)
+            else:
+                L = float(N_prop)
+            prop_axis = np.linspace(0.0, L, N_prop, endpoint=False)
+
+        dt = float(getattr(result, "dt", 0.0) or 0.0)
+        if dt > 0:
+            t_axis = np.arange(N_t, dtype=float) * dt
+        else:
+            # Fallback from df.
+            df = float(np.abs(f_axis[1] - f_axis[0])) if f_axis.size > 1 else 1.0
+            T_total = 1.0 / df if df > 0 else float(N_t)
+            t_axis = np.linspace(0.0, T_total, N_t, endpoint=False)
+
+        mode_evolution = mode_evolution_t_prop if return_complex else np.real(mode_evolution_t_prop)
+
         logger.info(
-            "Extracted mode time evolution: shape (%d, %d), "
-            "T=%.2f ns, L=%.2f μm",
-            len(t_axis), len(y_axis), T_total * 1e9, L_y * 1e6
+            "Extracted mode time evolution: shape=%s, T=%.2f ns, L=%.2f um",
+            mode_evolution.shape,
+            float(t_axis[-1] - t_axis[0]) * 1e9 if t_axis.size > 1 else 0.0,
+            float(prop_axis[-1] - prop_axis[0]) * 1e6 if prop_axis.size > 1 else 0.0,
         )
-        
-        return t_axis, y_axis, mode_evolution
+
+        return t_axis, prop_axis, mode_evolution
     
     def __repr__(self) -> str:
         return (

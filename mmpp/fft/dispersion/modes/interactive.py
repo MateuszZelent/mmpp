@@ -82,7 +82,7 @@ class InteractiveDispersionModes:
         """Canonical defaults used by fresh and hot-reloaded instances."""
         return {
             "lattice_nm": 470.0,
-            "n_bz_mask": 3,
+            "n_bz_mask": 10,
             "k_margin_bins": 0,
             "f_margin_bins": 0,
             "neighbor_reduce": "mean",
@@ -690,7 +690,7 @@ class InteractiveDispersionModes:
         self.w_n_bz_mask = widgets.IntSlider(
             value=params["n_bz_mask"],
             min=0,
-            max=10,
+            max=40,
             step=1,
             description="N_BZ mask:",
             layout=widgets.Layout(width="95%"),
@@ -1800,54 +1800,6 @@ class InteractiveDispersionModes:
         """
         self.w_k_direction.layout.display = ''
 
-    def _canonicalize_s_complex(
-        self,
-        S_complex: np.ndarray,
-        k_axis: np.ndarray,
-        f_axis: np.ndarray,
-    ) -> tuple[np.ndarray, bool]:
-        """Return S_complex in canonical shape: (N_orth, Nk, Nf) or (Nk, Nf)."""
-        arr = np.asarray(S_complex)
-        n_k = len(k_axis)
-        n_f = len(f_axis)
-
-        if arr.ndim == 2:
-            if arr.shape == (n_k, n_f):
-                return arr, False
-            if arr.shape == (n_f, n_k):
-                logger.warning("S_complex stored as (Nf, Nk); transposing to (Nk, Nf)")
-                return arr.T, False
-            raise ValueError(
-                f"Unexpected 2D S_complex shape {arr.shape}; expected (Nk,Nf)=({n_k},{n_f})"
-            )
-
-        if arr.ndim != 3:
-            raise ValueError(f"Unsupported S_complex rank={arr.ndim}; expected 2D or 3D")
-
-        # Detect frequency axis by matching f_axis length.
-        freq_candidates = [ax for ax, size in enumerate(arr.shape) if size == n_f]
-        if not freq_candidates:
-            raise ValueError(
-                f"Cannot locate frequency axis in S_complex shape {arr.shape}; "
-                f"no axis matches Nf={n_f}"
-            )
-        freq_axis = 2 if 2 in freq_candidates else freq_candidates[0]
-        arr = np.moveaxis(arr, freq_axis, 2)
-
-        # Detect k-axis among non-frequency axes.
-        k_candidates = [ax for ax in (0, 1) if arr.shape[ax] == n_k]
-        if not k_candidates:
-            raise ValueError(
-                f"Cannot locate k-axis in S_complex shape {arr.shape}; "
-                f"no axis matches Nk={n_k}"
-            )
-        k_axis_idx = 1 if 1 in k_candidates else k_candidates[0]
-        if k_axis_idx != 1:
-            logger.warning("S_complex stored with k-axis=%d; moving to axis=1", k_axis_idx)
-            arr = np.moveaxis(arr, k_axis_idx, 1)
-
-        return arr, True
-
     def _build_live_filters_config(self) -> dict[str, object] | None:
         """Build live-capable post-filter config from widget values."""
         live_cfg: dict[str, object] = {}
@@ -2335,6 +2287,11 @@ class InteractiveDispersionModes:
         
         try:
             from matplotlib.animation import FuncAnimation, PillowWriter, FFMpegWriter
+            try:
+                from matplotlib.animation import ImageMagickWriter
+                _has_imagemagick = True
+            except ImportError:
+                _has_imagemagick = False
             from pathlib import Path
             from datetime import datetime
             
@@ -2645,21 +2602,48 @@ class InteractiveDispersionModes:
             output_path = Path.cwd() / filename
             self.w_info.value = f"<small style='color:blue'>💾 Saving animation to {filename}...</small>"
             
+            # Use higher DPI for GIF to compensate for color limitation
+            export_dpi = 150 if file_format == "gif" else save_dpi
+            
             if file_format == "gif":
-                # High quality GIF: disable optimization to preserve quality, higher quality setting
-                writer = PillowWriter(fps=fps, metadata={'Author': 'MMPP', 'Title': 'Mode Animation'})
+                # Try ImageMagick first (much better quality and dithering)
+                if _has_imagemagick:
+                    try:
+                        # ImageMagick with optimized settings for quality
+                        writer = ImageMagickWriter(
+                            fps=fps,
+                            metadata={'Author': 'MMPP', 'Title': 'Mode Animation'},
+                            bitrate=2000,  # Higher bitrate for better quality
+                            extra_args=['-layers', 'Optimize']  # Optimize file size while keeping quality
+                        )
+                        writer_name = "ImageMagick"
+                    except Exception:
+                        # Fallback to Pillow if ImageMagick fails
+                        writer = PillowWriter(fps=fps, metadata={'Author': 'MMPP', 'Title': 'Mode Animation'})
+                        writer_name = "Pillow (256 colors)"
+                else:
+                    # PillowWriter fallback - limited to 256 colors
+                    writer = PillowWriter(fps=fps, metadata={'Author': 'MMPP', 'Title': 'Mode Animation'})
+                    writer_name = "Pillow (256 colors)"
             else:  # mp4
                 # High quality MP4: increased bitrate for Full HD
                 writer = FFMpegWriter(fps=fps, bitrate=4000, codec='libx264', extra_args=['-pix_fmt', 'yuv420p', '-preset', 'slower', '-crf', '18'])
+                writer_name = "FFmpeg"
             
-            anim.save(str(output_path), writer=writer)
+            anim.save(str(output_path), writer=writer, dpi=export_dpi)
             
             plt.close(fig_save)
             
             file_size_mb = output_path.stat().st_size / (1024 * 1024)
+            
+            # Add quality hint for GIF format
+            quality_hint = ""
+            if file_format == "gif" and writer_name == "Pillow (256 colors)":
+                quality_hint = "<br>💡 <i>Tip: Use MP4 format for better color quality</i>"
+            
             self.w_info.value = (
                 f"<small style='color:green'>✅ Animation saved: {filename} ({file_size_mb:.1f} MB)<br>"
-                f"{n_frames} frames @ {fps} fps, mode={mode_label}, format={file_format.upper()}</small>"
+                f"{n_frames} frames @ {fps} fps, {export_dpi} DPI, mode={mode_label}, writer={writer_name}{quality_hint}</small>"
             )
             
         except Exception as e:
@@ -3131,186 +3115,32 @@ class InteractiveDispersionModes:
         
         Returns x_axis, y_axis, mode_2d(x, y).
         """
-        # Check if we have complex spectrum
-        if self.result.S_complex is None:
+        from .extraction import extract_mode_2d
+
+        if self.result is None:
             raise ValueError(
-                "Mode visualization requires complex spectrum S_complex.\n"
-                "This should be automatically computed with dispersion.\n"
-                "Try recomputing with force=True."
+                "No dispersion result available. "
+                "Run dispersion_modes(..., save=True) or compute dispersion first."
             )
-        
-        # Get axes and data
-        axis = self.result.axis  # 'x' or 'y'
-        k_axis = self.result.k_axis.copy()
-        f_axis = self.result.f_axis.copy()
-        S_complex = self.result.S_complex
-        
-        # Get grid spacings from result
-        dx = self.result.dx if self.result.dx > 0 else 1e-9
-        
-        # Canonicalize to robustly handle cached/legacy axis orderings.
-        S_complex, has_orth = self._canonicalize_s_complex(S_complex, k_axis, f_axis)
 
-        if has_orth:
-            N_orth, N_k, N_f = S_complex.shape
-            has_orth = True
-            logger.info(f"Using orthogonal spectra: {N_orth} positions")
-        else:
-            N_k, N_f = S_complex.shape
-            N_orth = 1
-            has_orth = False
-            logger.info("Using averaged spectrum (no orthogonal variation)")
-        
-        # ===== STEP 1: Select frequency neighborhood around f_0 =====
-        idx_f = np.argmin(np.abs(f_axis - f_0))
-        f_selected = f_axis[idx_f]
-        f_margin = max(0, int(f_margin_bins))
-        f_start = max(0, idx_f - f_margin)
-        f_stop = min(len(f_axis), idx_f + f_margin + 1)
-        f_indices = np.arange(f_start, f_stop, dtype=int)
-        
-        logger.info(f"Selected frequency: f={f_selected/1e9:.3f} GHz (requested: {f_0/1e9:.3f} GHz)")
-        
-        # =========================================================================
-        # STEP 2: Create BZ mask for k_0 ± n·G
-        # =========================================================================
-        # Physical theory: For periodic lattice (period a), wave vectors k and k+nG
-        # represent the same physical wave. To reconstruct the mode correctly, we
-        # MUST sum ALL periodic copies:
-        #   M_physical(y) = Σₙ M̃(k₀ + n·G) exp(i(k₀ + n·G)y)
-        # This is implemented by creating a mask that selects all k₀ + n·G positions.
-        G = 2 * np.pi / lattice_constant
-        dk = np.abs(k_axis[1] - k_axis[0]) if len(k_axis) > 1 else 1.0
-
-        # Base mask: nearest bin to each selected BZ replica (single-pixel when N_BZ=0).
-        k_margin = max(0, int(k_margin_bins))
-        mask = np.zeros(len(k_axis), dtype=bool)
-        n_targets = 0
-
-        for n in range(-n_bz, n_bz + 1):
-            k_target = k_0 + n * G  # ← Periodic copy: k₀ + n·G
-            
-            # Apply k-direction filter
-            if k_direction == "positive" and k_target < 0:
-                continue
-            if k_direction == "negative" and k_target > 0:
-                continue
-            n_targets += 1
-
-            # Keep nearest k-bin for this replica.
-            idx_k = int(np.argmin(np.abs(k_axis - k_target)))
-            k_lo = max(0, idx_k - k_margin)
-            k_hi = min(len(k_axis), idx_k + k_margin + 1)
-            mask[k_lo:k_hi] = True  # ← Include this BZ copy in the mask
-
-        # Fallback only when targets were valid but numerical grid mismatch still
-        # produced an empty mask.
-        if not np.any(mask) and n_targets > 0:
-            idx_k = int(np.argmin(np.abs(k_axis - k_0)))
-            k_lo = max(0, idx_k - k_margin)
-            k_hi = min(len(k_axis), idx_k + k_margin + 1)
-            mask[k_lo:k_hi] = True
-            logger.warning(
-                "BZ mask selected 0 bins for k0=%.3f rad/um; falling back to nearest k-bin neighborhood (idx=%d)",
-                k_0 / 1e6,
-                idx_k,
-            )
-            
-        logger.info(f"BZ mask: {np.sum(mask)} k-points selected out of {len(k_axis)}")
-        
-        # ===== STEP 3: Extract frequency neighborhood and apply k-mask =====
-        reducer = str(neighbor_reduce).lower()
-        if reducer not in {"mean", "sum"}:
-            reducer = "mean"
-
-        if has_orth:
-            # S_complex shape: (N_orth, Nk, Nf)
-            # Extract around f_0: (N_orth, Nk, Nf_sel)
-            S_at_f = S_complex[:, :, f_indices]
-            if reducer == "sum":
-                S_at_f = np.sum(S_at_f, axis=2)
-            else:
-                S_at_f = np.mean(S_at_f, axis=2)
-
-            # Apply mask: zero non-selected k
-            S_filtered = S_at_f.copy()
-            S_filtered[:, ~mask] = 0
-            
-            # S_filtered shape: (N_orth, Nk)
-        else:
-            # S_complex shape: (Nk, Nf)
-            # Extract around f_0: (Nk, Nf_sel)
-            S_at_f = S_complex[:, f_indices]
-            if reducer == "sum":
-                S_at_f = np.sum(S_at_f, axis=1)
-            else:
-                S_at_f = np.mean(S_at_f, axis=1)
-
-            # Apply mask
-            S_filtered = S_at_f.copy()
-            S_filtered[~mask] = 0
-            
-            # S_filtered shape: (Nk,)
-            
-        # =========================================================================
-        # STEP 4: IFFT over k → spatial axis
-        # =========================================================================
-        # The IFFT performs the sum over all masked k-points:
-        #   M(y) = Σₙ M̃(k₀ + nG) exp(i(k₀ + nG)y)
-        # This AUTOMATICALLY sums all periodic copies, giving:
-        # - Physically correct amplitude (coherent addition of all BZ copies)
-        # - Correct phase structure (phase info from S_complex preserved)
-        # - Spatial periodicity enforcement: m(y + a) = m(y)
-        
-        # Undo fftshift before IFFT
-        if has_orth:
-            S_unshift = np.fft.ifftshift(S_filtered, axes=1)  # Unshift k-axis (axis=1)
-            M_mode = np.fft.ifft(S_unshift, axis=1)  # IFFT along k
-            # M_mode shape: (N_orth, N_prop) where N_prop is propagation axis length
-        else:
-            S_unshift = np.fft.ifftshift(S_filtered)
-            M_mode = np.fft.ifft(S_unshift)
-            # M_mode shape: (N_prop,)
-            # Expand to 2D for consistency
-            M_mode = M_mode[np.newaxis, :]  # → (1, N_prop)
-            
-        # ===== STEP 5: Construct spatial axes =====
-        N_prop = N_k  # Propagation axis length = k-axis length
-        
-        # Propagation axis
-        L_prop = 2 * np.pi / dk if dk > 0 else N_prop * dx
-        prop_axis = np.linspace(0, L_prop, N_prop, endpoint=False)
-        
-        # Orthogonal axis
-        if has_orth and self.result.orth_axis is not None:
-            orth_axis = self.result.orth_axis
-        else:
-            # Fallback - assume same spacing
-            orth_axis = np.arange(N_orth) * dx
-            
-        # ===== STEP 6: Assign to x, y based on propagation axis =====
-        # M_mode shape: (N_orth, N_prop)
-        # For axis='x': N_orth=N_y, N_prop=N_x → M_mode is (N_y, N_x) ✓
-        # For axis='y': N_orth=N_x, N_prop=N_y → M_mode is (N_x, N_y), need transpose
-        if axis == "x":
-            x_axis = prop_axis
-            y_axis = orth_axis
-            # M_mode shape: (N_y, N_x) - already correct for m[y, x] indexing
-            mode_2d = M_mode
-        else:  # axis == 'y'
-            x_axis = orth_axis
-            y_axis = prop_axis
-            # M_mode shape: (N_x, N_y) - need transpose to (N_y, N_x) for m[y, x]
-            mode_2d = M_mode.T
-            
-        # Return COMPLEX mode (caller decides whether to take real, imag, abs, phase)
-        logger.info(
-            f"Mode profile shape: {mode_2d.shape} (complex), "
-            f"x: {x_axis.min()*1e6:.1f}-{x_axis.max()*1e6:.1f} μm, "
-            f"y: {y_axis.min()*1e6:.1f}-{y_axis.max()*1e6:.1f} μm, "
-            f"|M|_max: {np.abs(mode_2d).max():.2e}"
+        x_axis, y_axis, mode_2d, info = extract_mode_2d(
+            self.result,
+            k_0=float(k_0),
+            f_0=float(f_0),
+            lattice_constant=float(lattice_constant),
+            n_bz=int(n_bz),
+            k_direction=str(k_direction),
+            k_margin_bins=int(k_margin_bins),
+            f_margin_bins=int(f_margin_bins),
+            neighbor_reduce=str(neighbor_reduce),
         )
 
+        logger.info(
+            "Mode profile extracted: shape=%s, k_bins=%s, f_bins=%s",
+            getattr(mode_2d, "shape", None),
+            info.get("k_bins_selected"),
+            info.get("f_bins_selected"),
+        )
         return x_axis, y_axis, mode_2d
 
     # =========================================================================

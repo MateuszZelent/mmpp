@@ -426,13 +426,7 @@ class SpinWaveAnalyzer:
         for axis, spacing in self.grid_spacings.items():
             if hasattr(self.config, axis):
                 setattr(self.config, axis, spacing)
-        
-        for spatial_dim, keys in spacing_keys.items():
-            for key in keys:
-                if key in attrs:
-                    self.grid_spacings[spatial_dim] = float(attrs[key])
-                    break
-            
+
         # Use config values as fallback
         if 'dx' not in self.grid_spacings and self.config.dx:
             self.grid_spacings['dx'] = self.config.dx

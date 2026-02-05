@@ -47,6 +47,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Bump this when cached dispersion results are no longer compatible due to
+# algorithmic/axis-convention changes. Included in the cache context hash.
+DISPERSION_CACHE_SCHEMA_VERSION = 2
+
 
 def _format_slice_for_display(slice_info: Optional[Any]) -> str:
     if slice_info is None:
@@ -412,6 +416,7 @@ class FFTDispersionInterface:
     ) -> dict[str, Any]:
         config_obj = self._config or DispersionConfig()
         context = {
+            "schema_version": DISPERSION_CACHE_SCHEMA_VERSION,
             "mode": mode,
             "axis": axis,
             "component": component,
@@ -2950,7 +2955,7 @@ class FFTDispersionInterface:
                     k_points.size,
                 )
 
-                ax.scatter(k_points[::-1], f_points, label="COMSOL", **scatter_kwargs)
+                ax.scatter(k_points, f_points, label="COMSOL", **scatter_kwargs)
 
         try:
             fig.tight_layout()

@@ -1854,27 +1854,62 @@ def find_peaks_1d(
     np.ndarray
         Indices of detected peaks
     """
+    y = np.asarray(y)
     if y.size < 3:
         return np.array([], dtype=int)
-        
+
+    prom = float(min_prominence or 0.0)
+    if prom < 0:
+        prom = 0.0
+
+    # Prefer SciPy's reference implementation when available.
+    if prom > 0:
+        try:
+            from scipy.signal import find_peaks as _scipy_find_peaks  # type: ignore
+        except Exception:
+            _scipy_find_peaks = None
+
+        if _scipy_find_peaks is not None:
+            peaks, _props = _scipy_find_peaks(y, prominence=prom)
+            return np.asarray(peaks, dtype=int)
+
     dy = np.diff(y)
-    # Maxima where derivative changes from + to -
+    # Candidate maxima where derivative changes from + to -.
     cand = np.where((dy[:-1] > 0) & (dy[1:] < 0))[0] + 1
-    
-    if min_prominence <= 0:
-        return cand
-        
-    # Filter by prominence
-    keep = []
-    for i in cand:
-        left_max = np.max(y[:i]) if i > 0 else y[i]
-        right_max = np.max(y[i+1:]) if i < y.size - 1 else y[i]
-        base = max(min(left_max, right_max), 0.0)
-        prominence = y[i] - base
-        if prominence >= min_prominence:
-            keep.append(i)
-    
-    return np.array(keep, dtype=int)
+
+    if prom <= 0 or cand.size == 0:
+        return np.asarray(cand, dtype=int)
+
+    # Fallback prominence approximation (SciPy-like):
+    # For each peak, extend a horizontal line at peak height until a higher point
+    # is encountered (or boundary). Prominence is peak - max(min_left, min_right).
+    keep: list[int] = []
+    n = int(y.size)
+    for idx in cand:
+        peak = float(y[idx])
+
+        left_min = peak
+        j = int(idx)
+        while j > 0:
+            j -= 1
+            left_min = min(left_min, float(y[j]))
+            if float(y[j]) > peak:
+                break
+
+        right_min = peak
+        j = int(idx)
+        while j < n - 1:
+            j += 1
+            right_min = min(right_min, float(y[j]))
+            if float(y[j]) > peak:
+                break
+
+        base = max(left_min, right_min)
+        prominence = peak - base
+        if prominence >= prom:
+            keep.append(int(idx))
+
+    return np.asarray(keep, dtype=int)
 
 
 def group_velocity_1d(

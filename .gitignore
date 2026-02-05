@@ -57,6 +57,12 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# NOTE: an earlier broad pattern `test*` exists in this file. Keep it for legacy
+# ignores, but allow tracking a small curated set of unit tests under `tests/`.
+!tests/
+tests/**
+!tests/test_dispersion_mode_extraction.py
+
 # Translations
 *.mo
 *.pot
@@ -145,6 +151,7 @@ dmypy.json
 Thumbs.db
 
 # Project specific
+.mmpp_presets/
 *.zarr
 *.h5
 *.hdf5
@@ -168,4 +175,3 @@ temp/
 mmpp/Untitled-1.ipynb
 mmpp/fft/transmission/experiment/*
 mmpp/fft/transmission/experiment/
-
