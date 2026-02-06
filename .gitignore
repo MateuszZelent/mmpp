@@ -23,6 +23,8 @@ lib/
 lib64/
 parts/
 *.md
+!README.md
+!docs/**/*.md
 sdist/
 var/
 wheels/

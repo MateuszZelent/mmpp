@@ -1,51 +1,27 @@
-# FFT Analysis Module
+# FFT API
 
-The FFT module provides comprehensive frequency domain analysis capabilities for micromagnetic simulations.
+FFT/FMR ecosystem in `mmpp`, including single-result and batch interfaces.
 
 ```{toctree}
 :maxdepth: 2
 
 core
-modes
-main
 compute_fft
-electromagnetic_analysis
+modes
+dispersion
+spectrum_batch
+transmission
 plot
+electromagnetic_analysis
+main
 ```
 
-## Module Overview
+## Main Objects
 
-### Main Classes
-- {class}`mmpp.fft.FFT` - Main FFT interface
-- {class}`mmpp.fft.FMRModeAnalyzer` - FMR mode analysis  
-- {class}`mmpp.fft.FFTAnalyzer` - Core FFT computation
-
-### Key Features
-- Fast Fourier Transform computation
-- FMR mode identification and analysis
-- Frequency spectrum analysis
-- Mode visualization and animation
-- Electromagnetic field analysis
-
-## Quick Start
-
-```python
-import mmpp as mp
-
-# Load simulation result
-op = mp.open("/path/to/simulation")
-result = op[0]
-
-# Access FFT functionality
-fft = result.fft
-
-# Compute and analyze modes
-modes = fft.modes.compute_modes()
-peaks = fft.modes.analyze_all()
-
-# Generate visualizations
-fft.modes.save_modes_animation(
-    frequency_range=(1.0, 3.0),
-    animation_type="temporal"
-)
-```
+- `mmpp.fft.core.FFT`: single-result FFT entry point (`result.fft`)
+- `mmpp.fft.core.SpectrumResult`: result object from `fft.spectrum(...)`
+- `mmpp.fft.modes.interface.FFTModeInterfaceNew`: FMR mode interface
+- `mmpp.fft.dispersion.interface.FFTDispersionInterface`: dispersion workflows
+- `mmpp.fft.spectrum_batch.BatchSpectrum`: batch spectrum compute and plotting
+- `mmpp.fft.transmission.interface.FFTTransmissionInterface`: transmission for one result
+- `mmpp.fft.transmission.batch.BatchTransmission`: transmission for many results

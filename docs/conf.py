@@ -19,8 +19,8 @@ sys.path.insert(0, str(project_root))
 project = "MMPP"
 copyright = "2025, Mateusz Zelent"
 author = "Mateusz Zelent"
-release = "0.1.0"
-version = "0.1.0"
+release = "0.5.3"
+version = "0.5.3"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -56,6 +56,7 @@ language = "en"
 
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
+html_baseurl = "https://mateuszzelent.github.io/mmpp/"
 
 # Theme options
 html_theme_options = {

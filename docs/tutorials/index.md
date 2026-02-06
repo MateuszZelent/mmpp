@@ -1,22 +1,21 @@
 # Tutorials
 
-Learn how to use MMPP with these step-by-step tutorials.
+Task-oriented guides for everyday `mmpp` usage.
 
 ```{toctree}
 :maxdepth: 2
 
 getting_started
+fft_spectrum_analysis
+dispersion_analysis
 batch_operations
 examples
+mode_visualization_api
 ```
 
-## Tutorial Overview
+## Recommended Order
 
-### 🚀 Getting Started
-Learn the basics of loading simulations, scanning directories, and accessing results.
-
-### 📊 Batch Operations  
-Master the powerful batch processing capabilities for analyzing multiple simulations at once.
-
-### � Examples
-Real-world usage examples and advanced techniques for various analysis workflows.
+1. `getting_started`
+2. `fft_spectrum_analysis`
+3. `dispersion_analysis`
+4. `batch_operations`

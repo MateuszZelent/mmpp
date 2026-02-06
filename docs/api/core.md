@@ -1,4 +1,16 @@
-# Core Module
+# Core API
+
+Core objects for scanning simulations and working with single `.zarr` results.
+
+## `mmpp` Top-Level
+
+```{eval-rst}
+.. automodule:: mmpp
+   :members:
+   :undoc-members:
+```
+
+## `mmpp.core` Module
 
 ```{eval-rst}
 .. automodule:: mmpp.core
@@ -7,33 +19,35 @@
    :show-inheritance:
 ```
 
-## Main Classes
-
-### MMPP
+## `MMPP`
 
 ```{eval-rst}
 .. autoclass:: mmpp.core.MMPP
    :members:
    :undoc-members:
    :show-inheritance:
-   :special-members: __init__, __getitem__, __len__, __iter__
+   :special-members: __init__, __getitem__, __iter__, __len__, __repr__
 ```
 
-### ZarrJobResult
+## `ZarrJobResult`
 
 ```{eval-rst}
 .. autoclass:: mmpp.core.ZarrJobResult
    :members:
    :undoc-members:
    :show-inheritance:
-   :special-members: __init__, __getitem__, __str__, __repr__
+   :special-members: __getitem__, __getattr__, __repr__
 ```
 
-### Data Classes
+## Common Workflow
 
-```{eval-rst}
-.. autoclass:: mmpp.core.ScanResult
-   :members:
-   :undoc-members:
-   :show-inheritance:
+```python
+import mmpp as mp
+
+job = mp.open("/path/to/sims")
+subset = job.find(B0=0.12)
+result = subset[0]
+
+print(result.datasets)
+print(result.get_largest_m_dataset())
 ```

@@ -1,153 +1,103 @@
-# Batch Operations Tutorial
+# Batch Operations
 
-## Overview
-
-MMPP provides powerful batch processing capabilities that allow you to perform operations on entire directories of simulation results. This is particularly useful when you have many simulation outputs and want to process them all at once.
-
-## Basic Usage
-
-### Getting All Results
-
-To work with all results in a directory, use slice notation:
+Batch workflows start from `job[:]`, which returns `BatchOperations`.
 
 ```python
-import mmpp
-
-# Load all results from a directory
-op = mmpp.MMPP('path/to/results')
-all_results = op[:]  # Returns BatchOperations instance
+batch = job[:]
+print(len(batch))
 ```
 
-### FFT Analysis on Multiple Results
+## 1. Batch Mode Computation
 
 ```python
-# Perform FFT analysis on all results
-batch_fft = all_results.fft
-fft_results = batch_fft.compute_all(
-    dset='m_z5-8'
-)
-
-print(f"Processed {len(fft_results)} results")
-for result in fft_results:
-    if result['success']:
-        print(f"✓ {result['file']}: {result['result'].shape}")
-    else:
-        print(f"✗ {result['file']}: {result['error']}")
-```
-
-### Mode Analysis
-
-```python
-# Compute FMR modes for all results
-mode_results = all_results.fft.modes.compute_modes(
-    dset='m_z5-8',
+summary = batch.fft.modes.compute_modes(
+    dset="m",
     parallel=True,
-    max_workers=4
+    max_workers=4,
 )
 
-# Filter successful results
-successful_modes = [r for r in mode_results if r['success']]
-print(f"Successfully computed modes for {len(successful_modes)} files")
+print(summary["successful"], summary["failed"])
+print(summary["total_time"])
 ```
 
-## Advanced Features
-
-### Custom Processing
-
-You can define custom processing functions:
+## 2. High-Level Batch Process
 
 ```python
-def custom_analysis(zarr_result):
-    """Custom analysis function"""
-    # Your custom processing logic here
-    return {"custom_metric": some_value}
-
-# Note: Custom analysis functions would need custom implementation
-# This is an example of what could be possible:
-# custom_results = process_custom_analysis(all_results, custom_analysis)
-```
-
-### Error Handling
-
-The batch operations provide comprehensive error handling:
-
-```python
-results = all_results.fft.compute_all('m_z5-8')
-
-# Check for errors
-errors = [r for r in results if not r['success']]
-if errors:
-    print(f"Found {len(errors)} errors:")
-    for error in errors:
-        print(f"  {error['file']}: {error['error']}")
-```
-
-### Progress Tracking
-
-All batch operations support progress tracking:
-
-```python
-# Enable progress bars
-results = all_results.fft.modes.compute_modes(
-    dset='m_z5-8',
-    progress=True,  # Shows progress bar
+report = batch.process(
+    dset="m",
     parallel=True,
-    max_workers=8
+    max_workers=4,
 )
+
+print(report["successful"], report["failed"])
 ```
 
-## Best Practices
+## 3. Batch Spectrum
 
-1. **Use parallel processing** for large datasets with `parallel=True`
-2. **Enable progress tracking** with `progress=True` for long operations  
-3. **Handle errors gracefully** by checking the `success` field in results
-4. **Limit workers** with `max_workers` to avoid overwhelming your system
-5. **Use appropriate datasets** - make sure the dataset name exists in your files
-
-## Example: Complete Workflow
+### Explicit call
 
 ```python
-import mmpp
-
-# Load data
-op = mmpp.MMPP('simulation_results/')
-batch = op[:]
-
-print(f"Found {len(batch.zarr_results)} simulation files")
-
-# Compute FFT spectra
-print("Computing FFT spectra...")
-spectra = batch.fft.compute_all(
-    dset='m_z5-8',
+spec_batch = batch.fft.spectrum.compute_all(
+    dataset_name="m_layer13",
+    slice_info=(slice(0, 800), Ellipsis, slice(0, 1)),
+    extract_parameters=["B0", "d", "p"],
+    fmin=1e9,
+    fmax=25e9,
     parallel=True,
-    progress=True,
-    max_workers=6
+    save=True,
 )
-
-# Compute modes
-print("Computing FMR modes...")  
-modes = batch.fft.modes.compute_modes(
-    dset='m_z5-8', 
-    parallel=True,
-    progress=True,
-    max_workers=6
-)
-
-# Generate summary
-successful_spectra = sum(1 for r in spectra if r['success'])
-successful_modes = sum(1 for r in modes if r['success'])
-
-print(f"\\nResults Summary:")
-print(f"  Spectra computed: {successful_spectra}/{len(spectra)}")
-print(f"  Modes computed: {successful_modes}/{len(modes)}")
-
-# Save results for later analysis
-import pickle
-with open('batch_results.pkl', 'wb') as f:
-    pickle.dump({
-        'spectra': spectra,
-        'modes': modes
-    }, f)
 ```
 
-This workflow demonstrates the power of batch operations for processing large simulation datasets efficiently.
+### Dataset-aware fluent call
+
+```python
+spec_batch = batch.m_layer13[:800, ..., 0:1].fft.spectrum(
+    extract_parameters=["B0", "d", "p"],
+    fmin=1e9,
+    fmax=25e9,
+)
+```
+
+### Plot and inspect
+
+```python
+spec_batch.show_parameters()
+
+entry0 = spec_batch[0]
+fig, ax = entry0.plot(freq_unit="GHz")
+
+fig, ax = spec_batch.plot_heatmap(
+    parameter="B0",
+    freq_unit="GHz",
+    fmax=25,
+)
+```
+
+## 4. Batch Transmission
+
+```python
+trans_batch = batch.m_layer13[:800, ..., 0:1].fft.transmission(
+    spatial_window=120,
+    extract_parameters=["B0", "d", "p"],
+    parallel=True,
+    save_batch=True,
+)
+
+fig, ax = trans_batch.plot_transmission_crosssection_heatmap(
+    swapping_parameter="B0",
+    x=120,
+    freq_unit="GHz",
+)
+```
+
+## 5. Caching Strategy
+
+- per-result cache:
+  - `save=True`
+  - `use_cache=True`
+  - `force=True` to invalidate and recompute
+- whole-batch cache:
+  - `save_batch=True`
+  - optional `batch_cache_dir="..."`
+
+For repeated parameter sweeps, batch cache usually gives the biggest speedup.

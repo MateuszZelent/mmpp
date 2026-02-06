@@ -1,4 +1,4 @@
-name: Build and Deploy Documentation
+name: Documentation
 
 on:
   push:
@@ -6,80 +6,73 @@ on:
   pull_request:
     branches: [ main, master ]
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
-  contents: write
-  pages: write
-  id-token: write
-  actions: read
+  contents: read
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: "docs-${{ github.ref }}"
+  cancel-in-progress: true
 
 jobs:
   build-docs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e .[dev]
+          pip install linkify-it-py
+
+      - name: Build documentation
+        run: |
+          cd docs
+          mkdir -p _build
+          sphinx-build -b html . _build --keep-going
+          cp .nojekyll _build/.nojekyll 2>/dev/null || touch _build/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs/_build
+
+  deploy-docs:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: build-docs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    
+    concurrency:
+      group: "pages"
+      cancel-in-progress: false
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Fetch full history for better Git info
-    
-    - name: Setup Pages
-      uses: actions/configure-pages@v5
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Cache pip packages
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools wheel
-        pip install sphinx sphinx-rtd-theme myst-parser sphinx-autodoc-typehints linkify-it-py
-        # Install package dependencies
-        if [ -f pyproject.toml ]; then
-            pip install -e .
-        elif [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-        fi
-    
-    - name: Build documentation
-      continue-on-error: true
-      run: |
-        cd docs
-        # Ensure build directory exists
-        mkdir -p _build
-        # Copy .nojekyll to build directory
-        if [ -f .nojekyll ]; then
-            cp .nojekyll _build/.nojekyll
-        else
-            touch _build/.nojekyll
-        fi
-        # Build docs without treating warnings as errors and continue on errors
-        sphinx-build -b html . _build --keep-going -q || echo "Documentation built with warnings/errors, but continuing..."
-    
-    - name: Upload Pages artifact
-      uses: actions/upload-pages-artifact@v3
-      with:
-        path: ./docs/_build
-    
-    - name: Deploy to GitHub Pages
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      id: deployment
-      uses: actions/deploy-pages@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

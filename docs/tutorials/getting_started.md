@@ -1,112 +1,84 @@
-# Getting Started with MMPP
+# Getting Started
 
 ## Installation
-
-MMPP can be installed using pip:
 
 ```bash
 pip install mmpp
 ```
 
-Or for development:
+For development/docs:
 
 ```bash
-git clone https://github.com/MateuszZelent/mmpp.git
-cd mmpp
-pip install -e .
+pip install -e .[dev]
 ```
 
-## Quick Start
-
-### Loading Simulation Data
+## 1. Open Simulations
 
 ```python
-import mmpp
+import mmpp as mp
 
-# Load a single simulation result
-result = mmpp.MMPP('path/to/simulation.zarr')
-
-# Access the underlying data
-zarr_data = result[0]  # Get first (and only) result
-print(f"Available datasets: {list(zarr_data.root.keys())}")
+job = mp.open("/path/to/simulations")
+print(len(job))
+print(job.columns)
 ```
 
-### Basic FFT Analysis
+`mmpp.open(...)` scans `.zarr` directories and builds/loads a metadata index.
+
+## 2. Filter by Metadata
 
 ```python
-import numpy as np
+subset = job.find(B0=0.12, d=150e-9)
+print(len(subset))
 
-# Perform FFT analysis
-fft = result[0].fft
-
-# Get complex spectrum
-freqs, spectrum = fft.spectrum(dset='m_z11')
-print(f"Spectrum shape: {spectrum.shape}")
-
-# Get frequency array
-frequencies = fft.frequencies()
-print(f"Frequency range: {frequencies[0]/1e9:.2f} - {frequencies[-1]/1e9:.2f} GHz")
-
-# Get power spectrum  
-power = fft.power(dset='m_z11')
-print(f"Peak power: {np.max(power):.2e}")
-
-# Plot the spectrum
-fig, ax = fft.plot_spectrum(dset='m_z11', log_scale=True)
+result = subset[0]
+print(result.path)
 ```
 
-### FMR Mode Analysis
+For numeric columns, `find()` uses nearest value matching.
+
+## 3. Inspect Datasets in One Result
 
 ```python
-# Analyze FMR modes
-modes = fft.modes
+print(result.datasets)
+print(result.get_largest_m_dataset())
 
-# Find peaks in spectrum
-peaks = modes.find_peaks(threshold=0.1)
-print(f"Found {len(peaks)} peaks")
-
-# Interactive spectrum visualization
-fig = modes.interactive_spectrum(components=['x', 'y', 'z'])
-
-# Plot modes at specific frequency
-if peaks:
-    peak_freq = peaks[0].freq  # First peak frequency
-    fig, axes = modes.plot_modes(frequency=peak_freq)
-    print(f"Plotted modes at {peak_freq:.3f} GHz")
-
-# Compute spatial modes
-modes.compute_modes(save=True)
+# quick tree view
+result.pp
 ```
 
-## Working with Multiple Files
+## 4. Run a First FFT Spectrum
 
 ```python
-# Load multiple simulation results from database
-db = mmpp.open('path/to/results_directory/')
-results = db.find(solver=3, limit=10)
-print(f"Found {len(results)} simulation results")
+dset = result.get_largest_m_dataset()
+spec = result.fft.spectrum(dset=dset, tmax=800)
 
-# Analyze each result
-for i, result in enumerate(results):
-    fft = result.fft
-    power = fft.power(dset='m_z11')
-    frequencies = fft.frequencies()
-    
-    # Find peak frequency
-    peak_idx = np.argmax(power)
-    peak_freq = frequencies[peak_idx] / 1e9  # Convert to GHz
-    
-    print(f"Result {i}: Peak at {peak_freq:.3f} GHz")
+freqs, complex_spec = spec
+power = spec.power
 
-# Use batch operations for parallel processing
-from mmpp.batch_operations import BatchOperations
-batch = BatchOperations(results)
-batch_results = batch.fft.compute_all(dset='m_z11')
-print(f"Processed {len(batch_results)} files in batch")
+fig, ax, peaks = spec.plot_spectrum(freq_unit="GHz", log_scale=True)
 ```
 
-## Next Steps
+## 5. Access Modes, Dispersion, Transmission
 
-- Learn about [Batch Operations](batch_operations.md) for processing multiple files
-- Explore the [API Reference](../api/index.md) for detailed documentation
-- Check out [Examples](examples.md) for more complex workflows
+```python
+# FMR mode workflow
+result.fft.modes.interactive_spectrum(dpi=140)
+
+# Dispersion S(k,f)
+fig, ax = result.fft.dispersion.plot_dispersion(axis="x", f_units="GHz")
+
+# Transmission
+trans = result.fft.transmission(spatial_window=120)
+fig, ax, image = trans.plot_transmission()
+```
+
+## 6. Batch Operations
+
+```python
+batch = job[:]
+
+summary = batch.fft.modes.compute_modes(parallel=True, max_workers=4)
+print(summary["successful"], summary["failed"])
+```
+
+`job[:]` is the main entry point for processing many simulations together.
