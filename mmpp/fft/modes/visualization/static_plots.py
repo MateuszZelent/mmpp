@@ -24,7 +24,7 @@ except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
 # Import utilities
-from ..styling import setup_animation_styling
+from ..style import setup_animation_styling
 from ..utils.scalebar import calculate_optimal_length, format_scalebar_label
 
 # Import for scale bar

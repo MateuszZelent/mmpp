@@ -24,7 +24,7 @@ from ..compat import (
     AXES_GRID_AVAILABLE,
 )
 
-from ..styling import STYLING_AVAILABLE, load_paper_style
+from ..style import STYLING_AVAILABLE, load_paper_style
 
 from .animation import (
     toggle_mode_animation as _toggle_mode_animation,

@@ -5,8 +5,10 @@ Provides FFTModeInterface for elegant job[0].fft.modes syntax.
 Integrates with DatasetAwareWrapper for slice propagation.
 """
 
+from dataclasses import dataclass
 from typing import Any, Optional, Union
 import logging
+import numpy as np
 
 log = logging.getLogger("mmpp.fft.modes")
 
@@ -18,6 +20,157 @@ def _get_data_loader():
 def _get_interactive():
     from .interactive import InteractiveSpectrum
     return InteractiveSpectrum
+
+
+def _get_interactive_plot():
+    from .interactive import plot as plot_spectrum
+    return plot_spectrum
+
+
+@dataclass
+class ModeResult:
+    """Fluent wrapper around FMR mode data with plotting helpers."""
+
+    _modes: "FFTModeInterfaceNew"
+    mode_data: Any
+    requested_frequency: float
+    z_layer: int
+
+    @property
+    def frequency(self) -> float:
+        """Actual frequency (GHz) used for loaded mode."""
+        return float(getattr(self.mode_data, "frequency", self.requested_frequency))
+
+    @property
+    def data(self) -> np.ndarray:
+        """Raw complex mode array."""
+        return np.asarray(getattr(self.mode_data, "mode_array"))
+
+    @property
+    def extent(self) -> tuple[float, float, float, float]:
+        """Spatial extent passed to imshow."""
+        ext = getattr(self.mode_data, "extent", None)
+        if ext is None:
+            arr = self.data
+            return (0.0, float(arr.shape[1]), 0.0, float(arr.shape[0]))
+        return tuple(ext)
+
+    @property
+    def plt(self) -> "ModePlotAccessor":
+        """Plot helper namespace."""
+        return ModePlotAccessor(self)
+
+    def get_component(
+        self,
+        component: Union[str, int] = "z",
+        value: str = "complex",
+    ) -> np.ndarray:
+        """Return selected mode component transformed to requested representation."""
+        comp_data = self.mode_data.get_component(component)
+        mode = str(value).lower()
+        if mode in {"complex", "raw"}:
+            return np.asarray(comp_data)
+        if mode in {"magnitude", "abs"}:
+            return np.abs(comp_data)
+        if mode == "phase":
+            return np.angle(comp_data)
+        if mode == "real":
+            return np.real(comp_data)
+        if mode in {"imag", "imaginary"}:
+            return np.imag(comp_data)
+        if mode == "combined":
+            magnitude = np.abs(comp_data)
+            return magnitude * np.cos(np.angle(comp_data))
+        raise ValueError(
+            "Unknown value mode. Use: complex, magnitude, phase, real, imag, combined."
+        )
+
+    def __getattr__(self, item: str) -> Any:
+        """Delegate unknown attributes to underlying FMRModeData."""
+        return getattr(self.mode_data, item)
+
+    def __array__(self):
+        return np.asarray(self.data)
+
+    def __repr__(self) -> str:
+        shape = getattr(self.data, "shape", None)
+        return (
+            f"ModeResult(f={self.frequency:.3f} GHz, z={self.z_layer}, "
+            f"shape={shape})"
+        )
+
+
+class ModePlotAccessor:
+    """Plot helper API for ModeResult."""
+
+    def __init__(self, mode_result: ModeResult):
+        self._mode = mode_result
+
+    def imshow(
+        self,
+        component: Union[str, int] = "z",
+        value: str = "magnitude",
+        ax: Any = None,
+        cmap: Optional[str] = None,
+        origin: str = "lower",
+        interpolation: str = "nearest",
+        aspect: str = "equal",
+        colorbar: bool = False,
+        **kwargs,
+    ):
+        """Render selected mode representation as imshow and return AxesImage."""
+        import matplotlib.pyplot as plt
+
+        data = self._mode.get_component(component=component, value=value)
+
+        if cmap is None:
+            value_mode = str(value).lower()
+            if value_mode == "phase":
+                cmap = "twilight"
+            elif value_mode == "combined":
+                cmap = "RdBu_r"
+            else:
+                cmap = "viridis"
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(6, 5), dpi=120)
+        else:
+            fig = ax.figure
+
+        image = ax.imshow(
+            data,
+            origin=origin,
+            extent=self._mode.extent,
+            cmap=cmap,
+            interpolation=interpolation,
+            aspect=aspect,
+            **kwargs,
+        )
+        ax.set_title(
+            f"m_{component} ({value}) @ {self._mode.frequency:.3f} GHz, z={self._mode.z_layer}"
+        )
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+
+        if colorbar:
+            fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+
+        return image
+
+    def interactive(
+        self,
+        toolbar: bool = True,
+        show: bool = True,
+        **kwargs,
+    ):
+        """Open interactive spectrum pre-positioned at this mode frequency."""
+        kwargs.setdefault("initial_frequency", self._mode.frequency)
+        kwargs.setdefault("z_layer", self._mode.z_layer)
+        return self._mode._modes._interactive_spectrum_impl(
+            toolbar=toolbar,
+            show=show,
+            **kwargs,
+        )
 
 
 class InteractiveSpectrumHelper:
@@ -64,12 +217,12 @@ class InteractiveSpectrumHelper:
             features = Text()
             features.append("✨ Interactive Features:\n\n", style="bold yellow")
             feature_list = [
-                ("Click", "Select frequency → update mode plots"),
-                ("Right-click", "Snap to nearest peak"),
-                ("Double-click", "Toggle mode animation on subplot"),
-                ("'c' key", "Characterize current mode"),
-                ("'s' key", "Save animated view"),
-                ("'h' key", "Show help dialog"),
+                ("Toolbar", "Display/mode/filter tabs inspired by dispersion UI"),
+                ("Click", "Select frequency in spectrum → update mode panels"),
+                ("Right-click", "Snap selected frequency to nearest detected peak"),
+                ("Sweep", "Play + frame slider for frequency sweep animation"),
+                ("Save sweep", "Export GIF/MP4 sweep animation from toolbar"),
+                ("Presets", "Save/load/delete toolbar configuration"),
             ]
             for key, desc in feature_list:
                 features.append(f"  • ", style="dim")
@@ -90,11 +243,16 @@ class InteractiveSpectrumHelper:
                 ("z_layer", "int", "-1", "Z-layer for modes (top layer)"),
                 ("dpi", "int", "100", "Figure resolution"),
                 ("figsize", "tuple", "(16,10)", "Figure size (width, height)"),
+                ("toolbar", "bool", "True", "Toolbar UI with live filtering"),
+                ("show", "bool", "True", "Display figure/widget immediately"),
                 ("log_scale", "bool", "False", "Logarithmic Y-scale"),
                 ("normalize", "bool", "True", "Normalize power to max"),
+                ("baseline_mode", "str", "'none'", "none/mean/median/linear baseline correction"),
+                ("clip_percentile_low", "float", "0.0", "Low percentile clipping"),
+                ("clip_percentile_high", "float", "100.0", "High percentile clipping"),
+                ("soft_threshold_percentile", "float", "0.0", "Soft-threshold denoising"),
                 ("show_peaks", "bool", "True", "Detect and mark peaks"),
-                ("saveanim", "str/bool", "None", "Path to save animation"),
-                ("auto_animate", "bool", "False", "Auto-start all animations"),
+                ("toolbar=False", "bool", "legacy", "Fallback to legacy keyboard/mouse mode"),
             ]
             for p, t, d, desc in param_data:
                 params.add_row(p, t, d, desc)
@@ -115,11 +273,16 @@ job[0].fft.modes.interactive_spectrum(
     show_peaks=True,
 )
 
-# With auto-animation:
-job[0].fft.modes.interactive_spectrum(auto_animate=True)
+# Advanced filtering in toolbar:
+job[0].fft.modes.interactive_spectrum(
+    baseline_mode="linear",
+    clip_percentile_low=2.0,
+    clip_percentile_high=99.0,
+    soft_threshold_percentile=40.0,
+)
 
-# Save animation directly:
-job[0].fft.modes.interactive_spectrum(saveanim="modes.mp4", auto_save=True)'''
+# Legacy fallback (double-click animations, key bindings):
+job[0].fft.modes.interactive_spectrum(toolbar=False, auto_animate=True)'''
             
             syntax = Syntax(example, "python", theme="monokai", line_numbers=False)
             console.print(Panel(syntax, title="[bold green]Examples", border_style="green"))
@@ -167,6 +330,7 @@ class FFTModeInterfaceNew:
         # Lazy-loaded instances
         self._data_loader = None
         self._mode_analyzer = None
+        self._interactive_filters: dict[str, Any] = {}
     
     @property
     def zarr_path(self) -> str:
@@ -247,6 +411,95 @@ class FFTModeInterfaceNew:
             log.debug(f"Created data loader with dataset={self.dataset_name}, component={self.component_index}")
         
         return self._data_loader
+
+    def _clone(self) -> "FFTModeInterfaceNew":
+        """Create a shallow clone preserving context and fluent filters."""
+        clone = FFTModeInterfaceNew(self.fft_result_index, self.parent_fft)
+        clone._dataset_context = self._dataset_context
+        clone._slice_context = self._slice_context
+        clone._data_loader = self._data_loader
+        clone._mode_analyzer = self._mode_analyzer
+        clone._interactive_filters = dict(self._interactive_filters)
+        return clone
+
+    def filters(
+        self,
+        *,
+        freq_min: Optional[float] = None,
+        freq_max: Optional[float] = None,
+        fmin: Optional[float] = None,
+        fmax: Optional[float] = None,
+        smooth_filter: Optional[str] = None,
+        smooth_window: Optional[int] = None,
+        smooth_sigma: Optional[float] = None,
+        baseline_mode: Optional[str] = None,
+        clip_percentile_low: Optional[float] = None,
+        clip_percentile_high: Optional[float] = None,
+        clip_low: Optional[float] = None,
+        clip_high: Optional[float] = None,
+        soft_threshold_percentile: Optional[float] = None,
+        soft_threshold: Optional[float] = None,
+        normalize: Optional[bool] = None,
+        log_scale: Optional[bool] = None,
+        show_peaks: Optional[bool] = None,
+        peak_prominence: Optional[float] = None,
+        peak_distance: Optional[int] = None,
+    ) -> "FFTModeInterfaceNew":
+        """Return cloned interface with configured interactive spectrum filters.
+
+        This mirrors the fluent style used in dispersion:
+        ``job[0].fft.modes.filters(...).plot()``.
+        """
+        clone = self._clone()
+        updates: dict[str, Any] = {}
+
+        fmin_val = freq_min if freq_min is not None else fmin
+        fmax_val = freq_max if freq_max is not None else fmax
+        clip_low_val = clip_percentile_low if clip_percentile_low is not None else clip_low
+        clip_high_val = clip_percentile_high if clip_percentile_high is not None else clip_high
+        soft_thr_val = (
+            soft_threshold_percentile
+            if soft_threshold_percentile is not None
+            else soft_threshold
+        )
+
+        if fmin_val is not None:
+            updates["freq_min"] = float(fmin_val)
+        if fmax_val is not None:
+            updates["freq_max"] = float(fmax_val)
+        if smooth_filter is not None:
+            updates["smooth_filter"] = str(smooth_filter)
+        if smooth_window is not None:
+            updates["smooth_window"] = int(smooth_window)
+        if smooth_sigma is not None:
+            updates["smooth_sigma"] = float(smooth_sigma)
+        if baseline_mode is not None:
+            updates["baseline_mode"] = str(baseline_mode)
+        if clip_low_val is not None:
+            updates["clip_percentile_low"] = float(clip_low_val)
+        if clip_high_val is not None:
+            updates["clip_percentile_high"] = float(clip_high_val)
+        if soft_thr_val is not None:
+            updates["soft_threshold_percentile"] = float(soft_thr_val)
+        if normalize is not None:
+            updates["normalize"] = bool(normalize)
+        if log_scale is not None:
+            updates["log_scale"] = bool(log_scale)
+        if show_peaks is not None:
+            updates["show_peaks"] = bool(show_peaks)
+        if peak_prominence is not None:
+            updates["peak_prominence"] = float(peak_prominence)
+        if peak_distance is not None:
+            updates["peak_distance"] = int(peak_distance)
+
+        clone._interactive_filters.update(updates)
+        return clone
+
+    def clear_filters(self) -> "FFTModeInterfaceNew":
+        """Return cloned interface without preconfigured filters."""
+        clone = self._clone()
+        clone._interactive_filters = {}
+        return clone
     
     def _interactive_spectrum_impl(
         self,
@@ -254,12 +507,25 @@ class FFTModeInterfaceNew:
         z_layer: int = -1,
         dpi: int = 100,
         figsize: tuple = (16, 10),
-        log_scale: bool = False,
-        normalize: bool = True,
-        freq_unit: str = "GHz",
-        show_peaks: bool = True,
+        toolbar: bool = True,
+        show: bool = True,
+        log_scale: Optional[bool] = None,
+        normalize: Optional[bool] = None,
+        freq_unit: Optional[str] = None,
+        show_peaks: Optional[bool] = None,
         title: Optional[str] = None,
         initial_frequency: Optional[float] = None,
+        freq_min: Optional[float] = None,
+        freq_max: Optional[float] = None,
+        smooth_filter: Optional[str] = None,
+        smooth_window: Optional[int] = None,
+        smooth_sigma: Optional[float] = None,
+        baseline_mode: Optional[str] = None,
+        clip_percentile_low: Optional[float] = None,
+        clip_percentile_high: Optional[float] = None,
+        soft_threshold_percentile: Optional[float] = None,
+        peak_prominence: Optional[float] = None,
+        peak_distance: Optional[int] = None,
         **kwargs,
     ):
         """Create interactive spectrum with mode visualization panels.
@@ -335,21 +601,100 @@ class FFTModeInterfaceNew:
             component_names = ['x', 'y', 'z']
             components = [component_names[self.component_index]]
             log.info(f"Auto-selected component: {components[0]} (from slice context)")
+
+        viewer_kwargs = dict(self._interactive_filters)
+        viewer_kwargs.update(kwargs)
+
+        explicit_overrides = {
+            "log_scale": log_scale,
+            "normalize": normalize,
+            "freq_unit": freq_unit,
+            "show_peaks": show_peaks,
+            "title": title,
+            "initial_frequency": initial_frequency,
+            "freq_min": freq_min,
+            "freq_max": freq_max,
+            "smooth_filter": smooth_filter,
+            "smooth_window": smooth_window,
+            "smooth_sigma": smooth_sigma,
+            "baseline_mode": baseline_mode,
+            "clip_percentile_low": clip_percentile_low,
+            "clip_percentile_high": clip_percentile_high,
+            "soft_threshold_percentile": soft_threshold_percentile,
+            "peak_prominence": peak_prominence,
+            "peak_distance": peak_distance,
+        }
+        for key, value in explicit_overrides.items():
+            if value is not None:
+                viewer_kwargs[key] = value
         
-        # Use FULL legacy FMRModeAnalyzer.interactive_spectrum with all features:
-        # - Click to select frequency
-        # - Right-click to snap to peak  
-        # - Double-click to toggle animations
-        # - Press 'c' to characterize mode
-        # - Press 's' to save animation
-        # - Press 'h' for help
+        # Some arguments are implemented only by the legacy analyzer view.
+        legacy_only_keys = {"saveanim", "auto_animate", "auto_save", "method", "force", "use_fft_spectrum"}
+        if any(key in viewer_kwargs for key in legacy_only_keys):
+            toolbar = False
+            log.info("Legacy interactive mode selected due to legacy-only arguments")
+
+        if toolbar:
+            resolved_log_scale = bool(viewer_kwargs.pop("log_scale", False))
+            resolved_normalize = bool(viewer_kwargs.pop("normalize", True))
+            resolved_freq_unit = str(viewer_kwargs.pop("freq_unit", "GHz"))
+            resolved_show_peaks = bool(viewer_kwargs.pop("show_peaks", True))
+            resolved_title = viewer_kwargs.pop("title", title)
+            resolved_initial_frequency = viewer_kwargs.pop(
+                "initial_frequency",
+                initial_frequency,
+            )
+
+            InteractiveSpectrum = _get_interactive()
+            viewer = InteractiveSpectrum(
+                data_loader=self.data_loader,
+                spectrum_result=spectrum_result,
+                component_label=self.component_label,
+                analyzer=self._legacy_analyzer,
+                dpi=dpi,
+                figsize=figsize,
+            )
+            return viewer.show(
+                components=components,
+                z_layer=z_layer,
+                log_scale=resolved_log_scale,
+                normalize=resolved_normalize,
+                freq_unit=resolved_freq_unit,
+                show_peaks=resolved_show_peaks,
+                title=resolved_title,
+                initial_frequency=resolved_initial_frequency,
+                toolbar=True,
+                show=show,
+                **viewer_kwargs,
+            )
+
+        # Legacy fallback with full keyboard/mouse animation controls.
+        toolbar_only_keys = {
+            "freq_min",
+            "freq_max",
+            "smooth_filter",
+            "smooth_window",
+            "smooth_sigma",
+            "baseline_mode",
+            "clip_percentile_low",
+            "clip_percentile_high",
+            "soft_threshold_percentile",
+            "peak_prominence",
+            "peak_distance",
+        }
+        for key in toolbar_only_keys:
+            viewer_kwargs.pop(key, None)
+
         return self._legacy_analyzer.interactive_spectrum(
             components=components,
             z_layer=z_layer,
             spectrum_result=spectrum_result,  # Inject FFT spectrum!
-            figsize=figsize,  # Explicitly pass figsize
-            dpi=dpi,  # Explicitly pass dpi
-            **kwargs
+            figsize=figsize,
+            dpi=dpi,
+            log_scale=bool(viewer_kwargs.pop("log_scale", False)),
+            normalize=bool(viewer_kwargs.pop("normalize", True)),
+            show=show,
+            **viewer_kwargs,
         )
     
     @property
@@ -384,6 +729,88 @@ class FFTModeInterfaceNew:
                 dataset_name=dataset,
             )
         return self._mode_analyzer
+
+    def _default_mode_frequency(self) -> float:
+        """Resolve default mode frequency from peaks or maximum spectrum power."""
+        spectrum_result = self.spectrum_result
+        peaks_info = getattr(spectrum_result, "peaks_info", None)
+
+        if peaks_info:
+            try:
+                first = peaks_info[0]
+                if hasattr(first, "freq"):
+                    return float(first.freq)
+                if isinstance(first, dict):
+                    return float(first.get("frequency", first.get("freq")))
+                if isinstance(first, (list, tuple)) and first:
+                    return float(first[0])
+            except Exception:
+                pass
+
+        frequencies = np.asarray(getattr(spectrum_result, "frequencies", []), dtype=float)
+        power = np.asarray(getattr(spectrum_result, "power", []))
+        if frequencies.size == 0:
+            raise ValueError("Cannot determine default frequency: no spectrum frequencies")
+
+        if power.ndim > 1:
+            if power.shape[-1] <= 3:
+                avg_power = np.mean(power, axis=-1)
+            else:
+                avg_power = np.mean(power, axis=tuple(range(1, power.ndim)))
+        else:
+            avg_power = power
+
+        idx = int(np.argmax(np.asarray(avg_power, dtype=float)))
+        idx = max(0, min(idx, frequencies.size - 1))
+        return float(frequencies[idx])
+
+    def mode(
+        self,
+        f: Optional[float] = None,
+        *,
+        frequency: Optional[float] = None,
+        z_layer: int = -1,
+    ) -> ModeResult:
+        """Return direct mode data wrapper for fluent plotting.
+
+        Examples
+        --------
+        >>> mode = job[0].fft.modes.mode(f=20.0)
+        >>> mode.plt.imshow()
+        >>> mode.plt.interactive()
+        """
+        target_freq = frequency if frequency is not None else f
+        if target_freq is None:
+            target_freq = self._default_mode_frequency()
+
+        mode_data = self._legacy_analyzer.get_mode(float(target_freq), z_layer=z_layer)
+        return ModeResult(
+            _modes=self,
+            mode_data=mode_data,
+            requested_frequency=float(target_freq),
+            z_layer=int(z_layer),
+        )
+
+    def plot(
+        self,
+        *,
+        show: bool = True,
+        **kwargs,
+    ):
+        """Plot filtered FMR spectrum (fluent companion to ``filters()``)."""
+        import matplotlib.pyplot as plt
+
+        plot_kwargs = dict(self._interactive_filters)
+        plot_kwargs.update(kwargs)
+
+        plot_spectrum = _get_interactive_plot()
+        fig = plot_spectrum(self.data_loader, **plot_kwargs)
+        if show:
+            plt.show()
+        return fig
+
+    # Alias matching explicit naming style.
+    plot_spectrum = plot
     
     def plot_modes(
         self,
@@ -551,7 +978,10 @@ class FFTModeInterfaceNew:
             methods.add_column("Method", style="cyan")
             methods.add_column("Description", style="white")
             
-            methods.add_row("interactive_spectrum(dpi=100)", "Plot spectrum with legends")
+            methods.add_row("filters(...)", "Clone interface with FMR spectrum filters")
+            methods.add_row("plot(...)", "Plot filtered FMR spectrum")
+            methods.add_row("mode(f=...)", "Direct mode data access with .plt helpers")
+            methods.add_row("interactive_spectrum(dpi=100)", "Interactive toolbar spectrum+mode view")
             methods.add_row("plot_modes(frequency)", "Visualize mode at frequency")
             methods.add_row("characterize_mode(frequency)", "Classify mode type")
             methods.add_row("save_modes_animation(...)", "Create mode animations")
@@ -566,6 +996,20 @@ job[0].m[:200,...,1].fft.modes.interactive_spectrum(dpi=150)
 
 # All components:
 job[0].fft.modes.interactive_spectrum(log_scale=True)
+
+# Fluent filters + plot:
+job[0].fft.modes.filters(
+    freq_min=2.0,
+    freq_max=25.0,
+    smooth_filter="gaussian",
+    smooth_sigma=1.2,
+    baseline_mode="linear",
+).plot()
+
+# Direct mode access:
+mode = job[0].fft.modes.mode(f=9.5)
+mode.plt.imshow(component="z", value="phase")
+mode.plt.interactive()
 
 # Mode visualization:
 job[0].fft.modes.plot_modes(frequency=9.5)
@@ -586,4 +1030,3 @@ job[0].fft.modes.save_modes_animation(frequency=9.5, save_path="mode.mp4")'''
             f"FFTModeInterface(dataset={self.dataset_name}, "
             f"component={self.component_label or 'all'})"
         )
-

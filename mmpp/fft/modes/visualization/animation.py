@@ -28,7 +28,7 @@ except ImportError:
 
 # Import FFmpeg utilities
 from ..ffmpeg_utils import _ensure_ffmpeg_available, _create_ffmpeg_writer
-from ..styling import setup_animation_styling, MidpointNormalize
+from ..style import setup_animation_styling, MidpointNormalize
 
 
 def save_modes_animation(

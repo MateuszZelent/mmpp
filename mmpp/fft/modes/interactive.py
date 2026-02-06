@@ -1,106 +1,536 @@
-"""
-Interactive Spectrum Module
+"""Interactive FMR spectrum explorer.
 
-Provides interactive spectrum visualization with mode panels.
-Split layout: spectrum on left with peak selection, 3x3 mode grid on right.
+This module provides a refactored interactive UI for FMR spectrum analysis.
+It supports two operation modes:
+
+- Toolbar mode (ipywidgets): interactive controls, filtering, and sweep animation
+- Classic matplotlib mode: click-to-select spectrum with mode panels
 """
 
-from typing import Any, Optional, Tuple, List, Union
-import numpy as np
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+import json
+from pathlib import Path
+from typing import Any, Iterable, Optional, Sequence, Tuple, Union
+
 import logging
+import numpy as np
 
 log = logging.getLogger("mmpp.fft.modes")
 
 # Component labels
 COMPONENT_LABELS = [r"$m_x$", r"$m_y$", r"$m_z$"]
 COMPONENT_NAMES = ["x", "y", "z"]
+_COMPONENT_INDEX = {name: idx for idx, name in enumerate(COMPONENT_NAMES)}
 
 try:
     import matplotlib.pyplot as plt
     from matplotlib.figure import Figure
     from matplotlib.axes import Axes
     from matplotlib.gridspec import GridSpec
-    import matplotlib.colors as mcolors
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
+
+    _HAS_MATPLOTLIB = True
+except ImportError:  # pragma: no cover - optional dependency
     Figure = Any
     Axes = Any
+    _HAS_MATPLOTLIB = False
+
+try:
+    import ipywidgets as widgets
+    from IPython.display import clear_output, display
+
+    _HAS_WIDGETS = True
+except ImportError:  # pragma: no cover - optional dependency
+    widgets = None  # type: ignore[assignment]
+    clear_output = display = None  # type: ignore[assignment]
+    _HAS_WIDGETS = False
+
+try:
+    from scipy.ndimage import gaussian_filter1d
+except ImportError:  # pragma: no cover - optional dependency
+    gaussian_filter1d = None
+
+try:
+    from scipy.signal import find_peaks as scipy_find_peaks
+    from scipy.signal import savgol_filter
+except ImportError:  # pragma: no cover - optional dependency
+    scipy_find_peaks = None
+    savgol_filter = None
+
+
+@dataclass
+class SpectrumFilterState:
+    """Runtime filter state for spectrum processing."""
+
+    freq_min: float
+    freq_max: float
+    smooth_filter: str = "none"
+    smooth_window: int = 7
+    smooth_sigma: float = 1.0
+    baseline_mode: str = "none"
+    clip_percentile_low: float = 0.0
+    clip_percentile_high: float = 100.0
+    soft_threshold_percentile: float = 0.0
+    normalize: bool = True
+    log_scale: bool = False
+
+
+def _component_from_label(label: Optional[str]) -> Optional[str]:
+    """Infer component key from a label like '$m_x$' or 'my'."""
+    if not label:
+        return None
+    text = str(label).lower().replace("$", "")
+    if "x" in text:
+        return "x"
+    if "y" in text:
+        return "y"
+    if "z" in text:
+        return "z"
+    return None
+
+
+def _to_ghz(frequencies: np.ndarray) -> np.ndarray:
+    """Convert frequencies to GHz when input appears to be in Hz."""
+    freqs = np.asarray(frequencies, dtype=float)
+    if freqs.size == 0:
+        return freqs
+
+    max_abs = float(np.nanmax(np.abs(freqs)))
+    if max_abs > 1e6:
+        return freqs / 1e9
+    return freqs
+
+
+def _to_power(spectrum: np.ndarray) -> np.ndarray:
+    """Convert complex or amplitude spectrum to non-negative power-like data."""
+    spec = np.asarray(spectrum)
+    if spec.size == 0:
+        return spec.astype(float)
+
+    if np.iscomplexobj(spec):
+        return np.abs(spec) ** 2
+
+    spec = np.asarray(spec, dtype=float)
+    if np.nanmin(spec) < 0:
+        return np.abs(spec)
+    return spec
+
+
+def normalize_component_selection(
+    components: Optional[Sequence[Union[int, str]]],
+    available: Optional[Sequence[str]] = None,
+) -> list[str]:
+    """Normalize mixed component input to canonical ['x', 'y', 'z'] subset."""
+    if components is None:
+        normalized = ["x", "y", "z"]
+    else:
+        normalized = []
+        for comp in components:
+            key: Optional[str] = None
+            if isinstance(comp, int):
+                if 0 <= comp <= 2:
+                    key = COMPONENT_NAMES[comp]
+            elif isinstance(comp, str):
+                text = comp.strip().lower().replace("_", "")
+                if text.startswith("m") and len(text) > 1:
+                    text = text[1:]
+                if text in _COMPONENT_INDEX:
+                    key = text
+
+            if key is not None and key not in normalized:
+                normalized.append(key)
+
+    if available:
+        allowed = [c for c in normalized if c in available]
+        if allowed:
+            return allowed
+        return [available[0]]
+
+    return normalized or ["z"]
+
+
+def collapse_spectrum_components(
+    spectrum_power: np.ndarray,
+    component_hint: Optional[str] = None,
+) -> dict[str, np.ndarray]:
+    """Collapse arbitrary spectrum shapes into per-component 1D traces."""
+    spec = np.asarray(spectrum_power)
+    if spec.ndim == 0:
+        return {component_hint or "z": np.asarray([float(spec)])}
+
+    if spec.ndim == 1:
+        key = component_hint or "z"
+        return {key: spec.astype(float, copy=False)}
+
+    if spec.shape[-1] <= 3:
+        if spec.ndim == 2:
+            traces = spec
+        else:
+            spatial_axes = tuple(range(1, spec.ndim - 1))
+            traces = np.mean(spec, axis=spatial_axes)
+
+        out: dict[str, np.ndarray] = {}
+        n_comp = min(traces.shape[-1], 3)
+        for idx in range(n_comp):
+            out[COMPONENT_NAMES[idx]] = np.asarray(traces[:, idx], dtype=float)
+        return out
+
+    # Generic high-dimensional fallback: average over non-frequency axes.
+    reduced = np.mean(spec, axis=tuple(range(1, spec.ndim)))
+    key = component_hint or "z"
+    return {key: np.asarray(reduced, dtype=float)}
+
+
+def _moving_average(values: np.ndarray, window: int) -> np.ndarray:
+    """Simple moving average smoothing."""
+    if window <= 1 or values.size < 3:
+        return values
+
+    window = max(1, int(window))
+    kernel = np.ones(window, dtype=float) / float(window)
+    pad = window // 2
+    padded = np.pad(values, pad_width=pad, mode="edge")
+    smoothed = np.convolve(padded, kernel, mode="valid")
+    return smoothed[: values.size]
+
+
+def _apply_smoothing(
+    values: np.ndarray,
+    smooth_filter: str,
+    smooth_window: int,
+    smooth_sigma: float,
+) -> np.ndarray:
+    """Apply selected smoothing filter."""
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr
+
+    mode = (smooth_filter or "none").lower()
+    if mode == "none":
+        return arr
+
+    if mode == "moving_average":
+        window = max(1, int(smooth_window))
+        if window % 2 == 0:
+            window += 1
+        return _moving_average(arr, window)
+
+    if mode == "gaussian":
+        sigma = max(0.0, float(smooth_sigma))
+        if sigma == 0.0:
+            return arr
+        if gaussian_filter1d is None:
+            # Fallback approximation when scipy is unavailable.
+            window = max(3, int(round(4 * sigma)) | 1)
+            return _moving_average(arr, window)
+        return gaussian_filter1d(arr, sigma=sigma, mode="nearest")
+
+    if mode == "savgol":
+        window = max(3, int(smooth_window))
+        if window % 2 == 0:
+            window += 1
+        if window >= arr.size:
+            window = max(3, arr.size - (1 - arr.size % 2))
+        if window < 3:
+            return arr
+        if savgol_filter is None:
+            return _moving_average(arr, window)
+        polyorder = 2 if window > 3 else 1
+        return savgol_filter(arr, window_length=window, polyorder=polyorder, mode="interp")
+
+    return arr
+
+
+def _remove_baseline(values: np.ndarray, baseline_mode: str) -> np.ndarray:
+    """Apply baseline correction to 1D spectrum trace."""
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr
+
+    mode = (baseline_mode or "none").lower()
+    if mode == "none":
+        return arr
+
+    finite = np.isfinite(arr)
+    if not np.any(finite):
+        return np.zeros_like(arr)
+
+    out = arr.copy()
+    baseline = float(np.nanmedian(out[finite]))
+
+    if mode == "mean":
+        baseline = float(np.nanmean(out[finite]))
+        out = out - baseline
+    elif mode == "median":
+        baseline = float(np.nanmedian(out[finite]))
+        out = out - baseline
+    elif mode == "linear":
+        x = np.arange(out.size, dtype=float)[finite]
+        y = out[finite]
+        if x.size >= 2:
+            try:
+                coeff = np.polyfit(x, y, deg=1)
+                trend = np.polyval(coeff, np.arange(out.size, dtype=float))
+                out = out - trend
+            except Exception:
+                out = out - baseline
+        else:
+            out = out - baseline
+    else:
+        out = out - baseline
+
+    # Keep the spectrum in non-negative domain after detrending.
+    min_val = float(np.nanmin(out))
+    if np.isfinite(min_val) and min_val < 0:
+        out = out - min_val
+    return out
+
+
+def _apply_percentile_clip(
+    values: np.ndarray,
+    clip_percentile_low: float,
+    clip_percentile_high: float,
+) -> np.ndarray:
+    """Clip values to robust percentile range and re-zero output."""
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr
+
+    low = float(np.clip(min(clip_percentile_low, clip_percentile_high), 0.0, 100.0))
+    high = float(np.clip(max(clip_percentile_low, clip_percentile_high), 0.0, 100.0))
+    if low <= 0.0 and high >= 100.0:
+        return arr
+
+    finite = np.isfinite(arr)
+    if not np.any(finite):
+        return np.zeros_like(arr)
+
+    lo_val = float(np.nanpercentile(arr[finite], low))
+    hi_val = float(np.nanpercentile(arr[finite], high))
+    if hi_val < lo_val:
+        hi_val = lo_val
+
+    clipped = np.clip(arr, lo_val, hi_val)
+    if lo_val != 0.0:
+        clipped = clipped - lo_val
+    return clipped
+
+
+def _apply_soft_threshold(values: np.ndarray, percentile: float) -> np.ndarray:
+    """Suppress weak components using soft thresholding."""
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr
+
+    pct = float(np.clip(percentile, 0.0, 100.0))
+    if pct <= 0.0:
+        return arr
+
+    finite = np.isfinite(arr)
+    if not np.any(finite):
+        return np.zeros_like(arr)
+
+    threshold = float(np.nanpercentile(arr[finite], pct))
+    if not np.isfinite(threshold) or threshold <= 0:
+        return arr
+
+    # Soft-threshold keeps stronger peaks but attenuates low-level noise.
+    return np.sign(arr) * np.maximum(np.abs(arr) - threshold, 0.0)
+
+
+def apply_spectrum_filters(
+    frequencies_ghz: np.ndarray,
+    component_power: dict[str, np.ndarray],
+    filters: SpectrumFilterState,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Apply frequency range, smoothing, normalization and optional log transform."""
+    freqs = np.asarray(frequencies_ghz, dtype=float)
+    if freqs.size == 0:
+        return freqs, {key: np.asarray(val, dtype=float) for key, val in component_power.items()}
+
+    fmin = float(min(filters.freq_min, filters.freq_max))
+    fmax = float(max(filters.freq_min, filters.freq_max))
+    mask = (freqs >= fmin) & (freqs <= fmax)
+    if not np.any(mask):
+        mask = np.ones_like(freqs, dtype=bool)
+
+    filtered_freqs = freqs[mask]
+    output: dict[str, np.ndarray] = {}
+
+    for comp, values in component_power.items():
+        arr = np.asarray(values, dtype=float)
+        if arr.shape[0] != freqs.shape[0]:
+            length = min(arr.shape[0], freqs.shape[0])
+            arr = arr[:length]
+            local_mask = mask[:length]
+            local_freqs = freqs[:length]
+        else:
+            local_mask = mask
+            local_freqs = freqs
+
+        sub = arr[local_mask]
+        if sub.size == 0:
+            sub = np.asarray([0.0], dtype=float)
+            local_freqs = np.asarray([fmin], dtype=float)
+            filtered_freqs = local_freqs
+
+        sub = _apply_smoothing(
+            sub,
+            smooth_filter=filters.smooth_filter,
+            smooth_window=filters.smooth_window,
+            smooth_sigma=filters.smooth_sigma,
+        )
+        sub = _remove_baseline(sub, filters.baseline_mode)
+        sub = _apply_percentile_clip(
+            sub,
+            clip_percentile_low=filters.clip_percentile_low,
+            clip_percentile_high=filters.clip_percentile_high,
+        )
+        sub = _apply_soft_threshold(sub, filters.soft_threshold_percentile)
+
+        finite = np.isfinite(sub)
+        if np.any(finite):
+            sub = np.where(finite, sub, np.nanmedian(sub[finite]))
+        else:
+            sub = np.zeros_like(sub)
+
+        min_val = float(np.nanmin(sub)) if sub.size else 0.0
+        if np.isfinite(min_val) and min_val < 0:
+            sub = sub - min_val
+
+        if filters.normalize and sub.size:
+            vmax = float(np.nanmax(sub))
+            if vmax > 0:
+                sub = sub / vmax
+
+        if filters.log_scale:
+            sub = np.log10(np.clip(sub, 1e-12, None))
+
+        output[comp] = np.asarray(sub, dtype=float)
+
+        if filtered_freqs.shape[0] != local_freqs[local_mask].shape[0]:
+            filtered_freqs = local_freqs[local_mask]
+
+    return filtered_freqs, output
+
+
+def detect_spectrum_peaks(
+    frequencies_ghz: np.ndarray,
+    spectrum_1d: np.ndarray,
+    min_prominence: float = 0.05,
+    min_distance: int = 5,
+) -> list[tuple[float, float]]:
+    """Detect local peaks and return list of ``(frequency, amplitude)`` tuples."""
+    freqs = np.asarray(frequencies_ghz, dtype=float)
+    values = np.asarray(spectrum_1d, dtype=float)
+
+    if freqs.size < 3 or values.size < 3 or freqs.shape[0] != values.shape[0]:
+        return []
+
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return []
+
+    data = values.copy()
+    data[~finite] = np.nanmin(data[finite])
+
+    if scipy_find_peaks is not None:
+        max_val = float(np.nanmax(data))
+        prominence = float(min_prominence)
+        if 0 < prominence < 1 and max_val > 1:
+            prominence = prominence * max_val
+
+        try:
+            idx, _ = scipy_find_peaks(
+                data,
+                prominence=max(prominence, 0.0),
+                distance=max(int(min_distance), 1),
+            )
+        except Exception:
+            idx = np.array([], dtype=int)
+    else:
+        idx = []
+        threshold = np.nanmin(data) + float(min_prominence) * (
+            np.nanmax(data) - np.nanmin(data)
+        )
+        for i in range(1, data.size - 1):
+            if (
+                data[i] > data[i - 1]
+                and data[i] > data[i + 1]
+                and data[i] >= threshold
+            ):
+                idx.append(i)
+        idx = np.asarray(idx, dtype=int)
+
+    peaks = [(float(freqs[i]), float(data[i])) for i in idx]
+    peaks.sort(key=lambda item: item[1], reverse=True)
+    return peaks
 
 
 class InteractiveSpectrum:
-    """Interactive spectrum with full mode visualization.
-    
-    Split layout:
-    - Left panel: FFT power spectrum with clickable peaks
-    - Right panel: 3x3 grid showing magnitude, phase, combined for each component
-    
-    Parameters
-    ----------
-    data_loader : ModeDataLoader
-        Data loader with slice context
-    dpi : int
-        Figure resolution
-    figsize : tuple
-        Figure size (width, height)
-    
-    Examples
-    --------
-    >>> from .data_loader import ModeDataLoader, ModeDataContext
-    >>> context = ModeDataContext(zarr_path="...", dataset_name="m", slice_info=(...,1))
-    >>> loader = ModeDataLoader(context)
-    >>> spectrum = InteractiveSpectrum(loader, dpi=150)
-    >>> fig = spectrum.show()
-    """
-    
+    """Interactive FMR spectrum explorer with optional toolbar UI."""
+
     def __init__(
         self,
-        data_loader: Any = None,  # ModeDataLoader
-        spectrum_result: Any = None,  # SpectrumResult from FFT.spectrum()
-        component_label: str = None,
+        data_loader: Any = None,
+        spectrum_result: Any = None,
+        component_label: Optional[str] = None,
+        analyzer: Any = None,
         dpi: int = 100,
-        figsize: Tuple[float, float] = (16, 10),
+        figsize: Tuple[float, float] = (16.0, 10.0),
     ):
-        """Initialize InteractiveSpectrum.
-        
-        Parameters
-        ----------
-        data_loader : ModeDataLoader, optional
-            Data loader for mode visualization
-        spectrum_result : SpectrumResult, optional
-            Pre-computed spectrum from FFT.spectrum() for consistency.
-            If provided, uses frequencies/power from this result.
-            If not provided, loads spectrum via data_loader.
-        component_label : str, optional
-            Label for single-component display
-        dpi : int
-            Figure resolution
-        figsize : tuple
-            Figure size
-        """
-        if not MATPLOTLIB_AVAILABLE:
-            raise ImportError("Matplotlib required for interactive spectrum")
-        
+        if not _HAS_MATPLOTLIB:
+            raise ImportError("Matplotlib is required for interactive spectrum")
+
         self.data_loader = data_loader
         self.spectrum_result = spectrum_result
         self._component_label = component_label
-        self.dpi = dpi
-        self.figsize = figsize
-        
-        # State
-        self._fig = None
-        self._ax_spectrum = None
-        self._mode_axes = None  # 3x3 grid
-        self._frequency_line = None
-        self._current_frequency = None
-        self._frequencies = None
-        self._spectrum = None
-        self._power = None
-        self._peaks = []
-        
+        self.analyzer = analyzer
+
+        self.dpi = int(dpi)
+        self.figsize = tuple(figsize)
+
+        # Spectrum state
+        self._raw_frequencies_ghz: np.ndarray = np.array([], dtype=float)
+        self._raw_component_power: dict[str, np.ndarray] = {}
+        self._available_components: list[str] = []
+
+        self._filtered_frequencies_ghz: np.ndarray = np.array([], dtype=float)
+        self._filtered_component_power: dict[str, np.ndarray] = {}
+        self._peaks: list[tuple[float, float]] = []
+
+        # Visualization state
+        self._fig: Optional[Figure] = None
+        self._ax_spectrum: Optional[Axes] = None
+        self._mode_axes: Optional[np.ndarray] = None
+        self._mode_row_types: list[str] = ["magnitude", "phase", "combined"]
+        self._mode_colorbars: list[Any] = []
+        self._frequency_line: Any = None
+        self._current_frequency_ghz: Optional[float] = None
+        self._current_components: list[str] = ["x", "y", "z"]
+        self._current_z_layer: int = -1
+        self._freq_unit: str = "GHz"
+        self._title: Optional[str] = None
+        self._show_peaks: bool = True
+        self._filter_state = SpectrumFilterState(0.0, 1.0)
+
+        # Toolbar widgets/state
+        self._toolbar_enabled = False
+        self._widget_root: Any = None
+        self._widget_output: Any = None
+        self._controls: dict[str, Any] = {}
+        self._internal_update = False
+        self._presets_dir: Optional[Path] = None
+        self._is_saving_animation = False
+
+    # ---------------------------------------------------------------------
+    # Public API
+    # ---------------------------------------------------------------------
     def show(
         self,
-        components: Optional[List[Union[int, str]]] = None,
+        components: Optional[Sequence[Union[int, str]]] = None,
         z_layer: int = -1,
         log_scale: bool = False,
         normalize: bool = True,
@@ -108,452 +538,1565 @@ class InteractiveSpectrum:
         show_peaks: bool = True,
         title: Optional[str] = None,
         initial_frequency: Optional[float] = None,
-    ) -> Figure:
-        """Create interactive spectrum with mode panels.
-        
-        Parameters
-        ----------
-        components : list, optional
-            Components to show: ['x', 'y', 'z'] or [0, 1, 2]
-        z_layer : int
-            Z-layer for mode visualization
-        log_scale : bool
-            Use log scale for spectrum
-        normalize : bool
-            Normalize spectrum
-        freq_unit : str
-            Frequency unit
-        show_peaks : bool
-            Show detected peaks
-        title : str, optional
-            Custom title
-        initial_frequency : float, optional
-            Initial frequency to display modes for
-        
-        Returns
-        -------
-        None
-            Figure is displayed via plt.show()
+        toolbar: bool = True,
+        smooth_filter: str = "none",
+        smooth_window: int = 7,
+        smooth_sigma: float = 1.0,
+        baseline_mode: str = "none",
+        clip_percentile_low: float = 0.0,
+        clip_percentile_high: float = 100.0,
+        soft_threshold_percentile: float = 0.0,
+        freq_min: Optional[float] = None,
+        freq_max: Optional[float] = None,
+        peak_prominence: float = 0.05,
+        peak_distance: int = 5,
+        mode_view: str = "all",
+        show: bool = True,
+        **_ignored: Any,
+    ) -> Any:
+        """Create interactive spectrum with mode visualization.
+
+        Parameters mirror previous API and extend it with toolbar/filter options.
         """
-        if components is None:
-            components = ["x", "y", "z"]
-        
-        # Check backend
+        self._load_spectrum_data()
+
+        self._current_z_layer = int(z_layer)
+        self._freq_unit = str(freq_unit)
+        self._title = title
+        self._show_peaks = bool(show_peaks)
+        self._mode_row_types = self._resolve_mode_rows(mode_view)
+        self._current_components = normalize_component_selection(
+            components,
+            available=self._available_components or COMPONENT_NAMES,
+        )
+
+        data_fmin = float(np.nanmin(self._raw_frequencies_ghz))
+        data_fmax = float(np.nanmax(self._raw_frequencies_ghz))
+        init_fmin = data_fmin if freq_min is None else float(freq_min)
+        init_fmax = data_fmax if freq_max is None else float(freq_max)
+        init_fmin = float(np.clip(init_fmin, data_fmin, data_fmax))
+        init_fmax = float(np.clip(init_fmax, data_fmin, data_fmax))
+        if init_fmin > init_fmax:
+            init_fmin, init_fmax = init_fmax, init_fmin
+
+        self._filter_state = SpectrumFilterState(
+            freq_min=init_fmin,
+            freq_max=init_fmax,
+            smooth_filter=str(smooth_filter),
+            smooth_window=int(smooth_window),
+            smooth_sigma=float(smooth_sigma),
+            baseline_mode=str(baseline_mode),
+            clip_percentile_low=float(clip_percentile_low),
+            clip_percentile_high=float(clip_percentile_high),
+            soft_threshold_percentile=float(soft_threshold_percentile),
+            normalize=bool(normalize),
+            log_scale=bool(log_scale),
+        )
+
+        self._peak_prominence = float(peak_prominence)
+        self._peak_distance = int(peak_distance)
+
+        self._recompute_filtered_spectrum()
+        self._initialize_frequency(initial_frequency)
+
+        if toolbar and _HAS_WIDGETS:
+            self._toolbar_enabled = True
+            self._build_toolbar()
+            self._render_figure()
+            if show:
+                display(self._widget_root)
+            return self._widget_root
+
+        self._toolbar_enabled = False
+        self._render_figure()
+        if show:
+            plt.show()
+        return self._fig
+
+    # ---------------------------------------------------------------------
+    # Data processing
+    # ---------------------------------------------------------------------
+    def _load_spectrum_data(self) -> None:
+        """Load and normalize spectrum data from available source."""
+        freqs: Optional[np.ndarray] = None
+        spectrum: Optional[np.ndarray] = None
+        component_hint = _component_from_label(self._component_label)
+
+        if self.spectrum_result is not None:
+            freqs = np.asarray(getattr(self.spectrum_result, "frequencies", []), dtype=float)
+            if hasattr(self.spectrum_result, "power"):
+                spectrum = np.asarray(self.spectrum_result.power)
+            elif hasattr(self.spectrum_result, "spectrum"):
+                spectrum = _to_power(np.asarray(self.spectrum_result.spectrum))
+            else:
+                spectrum = None
+
+            hint_from_result = _component_from_label(
+                getattr(self.spectrum_result, "component_label", None)
+            )
+            component_hint = hint_from_result or component_hint
+
+        if (freqs is None or spectrum is None) and self.data_loader is not None:
+            loaded_freqs, loaded_spectrum, loaded_label = self.data_loader.load_spectrum()
+            freqs = np.asarray(loaded_freqs, dtype=float)
+            spectrum = _to_power(np.asarray(loaded_spectrum))
+            component_hint = _component_from_label(loaded_label) or component_hint
+
+        if (freqs is None or spectrum is None) and self.analyzer is not None:
+            if getattr(self.analyzer, "frequencies", None) is not None:
+                freqs = np.asarray(self.analyzer.frequencies, dtype=float)
+            if getattr(self.analyzer, "spectrum", None) is not None:
+                spectrum = _to_power(np.asarray(self.analyzer.spectrum))
+
+        if freqs is None or spectrum is None:
+            raise ValueError(
+                "No spectrum data available. Provide spectrum_result, data_loader, or analyzer."
+            )
+
+        freqs_ghz = _to_ghz(freqs)
+        component_power = collapse_spectrum_components(_to_power(spectrum), component_hint)
+
+        # Align component traces to frequency axis length.
+        trimmed: dict[str, np.ndarray] = {}
+        for comp, values in component_power.items():
+            arr = np.asarray(values, dtype=float)
+            length = min(arr.shape[0], freqs_ghz.shape[0])
+            if length == 0:
+                continue
+            trimmed[comp] = arr[:length]
+
+        if not trimmed:
+            raise ValueError("Spectrum data is empty after preprocessing")
+
+        min_len = min(trace.shape[0] for trace in trimmed.values())
+        self._raw_frequencies_ghz = freqs_ghz[:min_len]
+        self._raw_component_power = {k: v[:min_len] for k, v in trimmed.items()}
+        self._available_components = list(self._raw_component_power.keys())
+
+    def _recompute_filtered_spectrum(self) -> None:
+        """Recompute filtered traces and peak list from current filter state."""
+        self._filtered_frequencies_ghz, filtered = apply_spectrum_filters(
+            self._raw_frequencies_ghz,
+            self._raw_component_power,
+            self._filter_state,
+        )
+
+        selected = {
+            comp: values
+            for comp, values in filtered.items()
+            if comp in self._current_components
+        }
+        if not selected:
+            fallback_key = self._available_components[0]
+            selected = {fallback_key: filtered[fallback_key]}
+            self._current_components = [fallback_key]
+
+        self._filtered_component_power = selected
+
+        if self._show_peaks:
+            stacked = np.vstack(list(selected.values()))
+            avg_trace = np.mean(stacked, axis=0)
+            self._peaks = detect_spectrum_peaks(
+                self._filtered_frequencies_ghz,
+                avg_trace,
+                min_prominence=self._peak_prominence,
+                min_distance=self._peak_distance,
+            )
+        else:
+            self._peaks = []
+
+    def _initialize_frequency(self, initial_frequency: Optional[float]) -> None:
+        """Set current frequency based on initial request, peaks, or center."""
+        if initial_frequency is not None:
+            self._current_frequency_ghz = float(initial_frequency)
+            return
+
+        if self._peaks:
+            self._current_frequency_ghz = float(self._peaks[0][0])
+            return
+
+        if self._filtered_frequencies_ghz.size:
+            center = self._filtered_frequencies_ghz.size // 2
+            self._current_frequency_ghz = float(self._filtered_frequencies_ghz[center])
+            return
+
+        self._current_frequency_ghz = None
+
+    # ---------------------------------------------------------------------
+    # Presets
+    # ---------------------------------------------------------------------
+    def _get_presets_dir(self) -> Path:
+        """Return project-local presets directory."""
+        if self._presets_dir is None:
+            self._presets_dir = Path.cwd() / ".mmpp_presets"
+            self._presets_dir.mkdir(parents=True, exist_ok=True)
+        return self._presets_dir
+
+    def _list_presets(self) -> list[str]:
+        """List available interactive toolbar presets."""
+        preset_dir = self._get_presets_dir()
+        names = []
+        for file_path in sorted(preset_dir.glob("fmr_*.json")):
+            name = file_path.stem.removeprefix("fmr_")
+            if name:
+                names.append(name)
+        return names
+
+    def _collect_preset_state(self) -> dict[str, Any]:
+        """Collect serializable state from current controls."""
+        return {
+            "components": list(self._current_components),
+            "z_layer": int(self._current_z_layer),
+            "freq_min": float(self._filter_state.freq_min),
+            "freq_max": float(self._filter_state.freq_max),
+            "smooth_filter": str(self._filter_state.smooth_filter),
+            "smooth_window": int(self._filter_state.smooth_window),
+            "smooth_sigma": float(self._filter_state.smooth_sigma),
+            "baseline_mode": str(self._filter_state.baseline_mode),
+            "clip_percentile_low": float(self._filter_state.clip_percentile_low),
+            "clip_percentile_high": float(self._filter_state.clip_percentile_high),
+            "soft_threshold_percentile": float(self._filter_state.soft_threshold_percentile),
+            "normalize": bool(self._filter_state.normalize),
+            "log_scale": bool(self._filter_state.log_scale),
+            "show_peaks": bool(self._show_peaks),
+            "peak_prominence": float(self._peak_prominence),
+            "peak_distance": int(self._peak_distance),
+            "mode_view": "all" if len(self._mode_row_types) > 1 else self._mode_row_types[0],
+            "cmap_mag": str(self._controls.get("cmap_mag").value) if self._controls.get("cmap_mag") else "viridis",
+            "cmap_phase": str(self._controls.get("cmap_phase").value) if self._controls.get("cmap_phase") else "twilight",
+            "cmap_combined": str(self._controls.get("cmap_combined").value) if self._controls.get("cmap_combined") else "RdBu_r",
+            "freq_unit": str(self._freq_unit),
+        }
+
+    def _apply_preset_state(self, payload: dict[str, Any]) -> None:
+        """Apply preset payload to widgets/state."""
+        if not self._controls:
+            return
+
+        self._internal_update = True
         try:
-            import matplotlib
-            backend = matplotlib.get_backend()
-            if "inline" in backend:
-                log.warning(f"Current matplotlib backend is '{backend}'. Interactivity features (clicking) will likely NOT work.")
-                print(f"⚠️ Warning: Backend is '{backend}'. For interactivity, run `%matplotlib widget` (VS Code/JupyterLab) or `%matplotlib notebook`.")
+            components = normalize_component_selection(
+                payload.get("components"),
+                available=self._available_components or COMPONENT_NAMES,
+            )
+            self._controls["components"].value = tuple(components)
+            z_control = self._controls["z_layer"]
+            z_val = int(payload.get("z_layer", self._current_z_layer))
+            self._controls["z_layer"].value = int(np.clip(z_val, z_control.min, z_control.max))
+
+            fmin_control = self._controls["fmin"]
+            fmax_control = self._controls["fmax"]
+            fmin = float(payload.get("freq_min", self._filter_state.freq_min))
+            fmax = float(payload.get("freq_max", self._filter_state.freq_max))
+            self._controls["fmin"].value = float(np.clip(fmin, fmin_control.min, fmin_control.max))
+            self._controls["fmax"].value = float(np.clip(fmax, fmax_control.min, fmax_control.max))
+
+            smooth_filter = str(payload.get("smooth_filter", self._filter_state.smooth_filter))
+            if smooth_filter not in [opt[1] for opt in self._controls["smooth_filter"].options]:
+                smooth_filter = "none"
+            self._controls["smooth_filter"].value = smooth_filter
+
+            smooth_window = self._controls["smooth_window"]
+            self._controls["smooth_window"].value = int(
+                np.clip(
+                    int(payload.get("smooth_window", self._filter_state.smooth_window)),
+                    smooth_window.min,
+                    smooth_window.max,
+                )
+            )
+
+            smooth_sigma = self._controls["smooth_sigma"]
+            self._controls["smooth_sigma"].value = float(
+                np.clip(
+                    float(payload.get("smooth_sigma", self._filter_state.smooth_sigma)),
+                    smooth_sigma.min,
+                    smooth_sigma.max,
+                )
+            )
+
+            baseline_mode = str(payload.get("baseline_mode", self._filter_state.baseline_mode))
+            if baseline_mode not in [opt[1] for opt in self._controls["baseline_mode"].options]:
+                baseline_mode = "none"
+            self._controls["baseline_mode"].value = baseline_mode
+            clip_low = self._controls["clip_low"]
+            clip_high = self._controls["clip_high"]
+            soft_thr = self._controls["soft_threshold"]
+            self._controls["clip_low"].value = float(
+                np.clip(
+                    float(payload.get("clip_percentile_low", self._filter_state.clip_percentile_low)),
+                    clip_low.min,
+                    clip_low.max,
+                )
+            )
+            self._controls["clip_high"].value = float(
+                np.clip(
+                    float(payload.get("clip_percentile_high", self._filter_state.clip_percentile_high)),
+                    clip_high.min,
+                    clip_high.max,
+                )
+            )
+            self._controls["soft_threshold"].value = float(
+                np.clip(
+                    float(
+                        payload.get(
+                            "soft_threshold_percentile",
+                            self._filter_state.soft_threshold_percentile,
+                        )
+                    ),
+                    soft_thr.min,
+                    soft_thr.max,
+                )
+            )
+
+            self._controls["normalize"].value = bool(payload.get("normalize", self._filter_state.normalize))
+            self._controls["log_scale"].value = bool(payload.get("log_scale", self._filter_state.log_scale))
+            self._controls["show_peaks"].value = bool(payload.get("show_peaks", self._show_peaks))
+            peak_prom = self._controls["peak_prom"]
+            self._controls["peak_prom"].value = float(
+                np.clip(
+                    float(payload.get("peak_prominence", self._peak_prominence)),
+                    peak_prom.min,
+                    peak_prom.max,
+                )
+            )
+            peak_dist = self._controls["peak_dist"]
+            self._controls["peak_dist"].value = int(
+                np.clip(
+                    int(payload.get("peak_distance", self._peak_distance)),
+                    peak_dist.min,
+                    peak_dist.max,
+                )
+            )
+
+            mode_view = str(payload.get("mode_view", "all"))
+            if mode_view not in [opt[1] for opt in self._controls["mode_view"].options]:
+                mode_view = "all"
+            self._controls["mode_view"].value = mode_view
+
+            cmap_mag = str(payload.get("cmap_mag", "viridis"))
+            if cmap_mag not in self._controls["cmap_mag"].options:
+                cmap_mag = "viridis"
+            self._controls["cmap_mag"].value = cmap_mag
+
+            cmap_phase = str(payload.get("cmap_phase", "twilight"))
+            if cmap_phase not in self._controls["cmap_phase"].options:
+                cmap_phase = "twilight"
+            self._controls["cmap_phase"].value = cmap_phase
+
+            cmap_combined = str(payload.get("cmap_combined", "RdBu_r"))
+            if cmap_combined not in self._controls["cmap_combined"].options:
+                cmap_combined = "RdBu_r"
+            self._controls["cmap_combined"].value = cmap_combined
+        finally:
+            self._internal_update = False
+
+        self._read_controls()
+        self._recompute_filtered_spectrum()
+        self._refresh_freq_slider_bounds()
+        self._render_figure()
+
+    def _refresh_preset_options(self) -> None:
+        """Refresh preset dropdown options."""
+        if "preset_select" not in self._controls:
+            return
+        options = [("-- load preset --", "")] + [(name, name) for name in self._list_presets()]
+        current = self._controls["preset_select"].value
+        self._controls["preset_select"].options = options
+        if current not in [opt[1] for opt in options]:
+            self._controls["preset_select"].value = ""
+
+    def _on_save_preset_clicked(self, _btn: Any) -> None:
+        """Persist current toolbar config as a preset."""
+        if not self._controls:
+            return
+
+        name = str(self._controls["preset_name"].value).strip()
+        if not name:
+            self._set_status("Preset name required", color="darkorange")
+            return
+
+        safe_name = "".join(ch for ch in name if ch.isalnum() or ch in ("-", "_")).strip("_-")
+        if not safe_name:
+            self._set_status("Preset name contains invalid characters", color="crimson")
+            return
+
+        payload = self._collect_preset_state()
+        payload["saved_at"] = datetime.now().isoformat()
+
+        preset_path = self._get_presets_dir() / f"fmr_{safe_name}.json"
+        try:
+            preset_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception as exc:
+            self._set_status(f"Failed to save preset: {exc}", color="crimson")
+            return
+
+        self._controls["preset_name"].value = ""
+        self._refresh_preset_options()
+        self._controls["preset_select"].value = safe_name
+        self._set_status(f"Preset saved: {preset_path.name}", color="seagreen")
+
+    def _on_load_preset_changed(self, change: Any) -> None:
+        """Load selected preset and apply values to toolbar."""
+        if change.get("name") != "value":
+            return
+        name = str(change.get("new") or "").strip()
+        if not name:
+            return
+
+        preset_path = self._get_presets_dir() / f"fmr_{name}.json"
+        if not preset_path.exists():
+            self._set_status(f"Preset not found: {name}", color="crimson")
+            self._refresh_preset_options()
+            return
+
+        try:
+            payload = json.loads(preset_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._set_status(f"Failed to load preset: {exc}", color="crimson")
+            return
+
+        self._apply_preset_state(payload)
+        self._set_status(f"Preset loaded: {name}", color="seagreen")
+
+    def _on_delete_preset_clicked(self, _btn: Any) -> None:
+        """Delete selected preset file."""
+        if not self._controls:
+            return
+
+        name = str(self._controls["preset_select"].value or "").strip()
+        if not name:
+            self._set_status("Select preset to delete", color="darkorange")
+            return
+
+        preset_path = self._get_presets_dir() / f"fmr_{name}.json"
+        if not preset_path.exists():
+            self._set_status(f"Preset not found: {name}", color="crimson")
+            self._refresh_preset_options()
+            return
+
+        try:
+            preset_path.unlink()
+        except Exception as exc:
+            self._set_status(f"Failed to delete preset: {exc}", color="crimson")
+            return
+
+        self._refresh_preset_options()
+        self._set_status(f"Preset deleted: {name}", color="seagreen")
+
+    # ---------------------------------------------------------------------
+    # Widget toolbar
+    # ---------------------------------------------------------------------
+    def _build_toolbar(self) -> None:
+        """Build ipywidgets toolbar UI."""
+        if not _HAS_WIDGETS:
+            raise RuntimeError("ipywidgets is required for toolbar mode")
+
+        fmin = float(np.nanmin(self._raw_frequencies_ghz))
+        fmax = float(np.nanmax(self._raw_frequencies_ghz))
+
+        z_min, z_max = self._guess_layer_bounds()
+
+        controls: dict[str, Any] = {}
+        controls["components"] = widgets.SelectMultiple(
+            options=[(f"m_{name}", name) for name in self._available_components],
+            value=tuple(self._current_components),
+            description="Comp:",
+            layout=widgets.Layout(width="100%", height="90px"),
+            style={"description_width": "55px"},
+        )
+        controls["z_layer"] = widgets.IntSlider(
+            value=self._current_z_layer,
+            min=z_min,
+            max=z_max,
+            step=1,
+            description="z:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+
+        controls["fmin"] = widgets.FloatSlider(
+            value=self._filter_state.freq_min,
+            min=fmin,
+            max=fmax,
+            step=max((fmax - fmin) / 400.0, 1e-4),
+            description="f min:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["fmax"] = widgets.FloatSlider(
+            value=self._filter_state.freq_max,
+            min=fmin,
+            max=fmax,
+            step=max((fmax - fmin) / 400.0, 1e-4),
+            description="f max:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+
+        controls["smooth_filter"] = widgets.Dropdown(
+            options=[
+                ("none", "none"),
+                ("moving average", "moving_average"),
+                ("gaussian", "gaussian"),
+                ("savitzky-golay", "savgol"),
+            ],
+            value=self._filter_state.smooth_filter,
+            description="smooth:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+        controls["smooth_window"] = widgets.IntSlider(
+            value=self._filter_state.smooth_window,
+            min=3,
+            max=61,
+            step=2,
+            description="window:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["smooth_sigma"] = widgets.FloatSlider(
+            value=self._filter_state.smooth_sigma,
+            min=0.0,
+            max=8.0,
+            step=0.1,
+            description="sigma:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["baseline_mode"] = widgets.Dropdown(
+            options=[
+                ("none", "none"),
+                ("mean", "mean"),
+                ("median", "median"),
+                ("linear", "linear"),
+            ],
+            value=self._filter_state.baseline_mode,
+            description="baseline:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+        controls["clip_low"] = widgets.FloatSlider(
+            value=self._filter_state.clip_percentile_low,
+            min=0.0,
+            max=50.0,
+            step=0.5,
+            description="clip lo:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["clip_high"] = widgets.FloatSlider(
+            value=self._filter_state.clip_percentile_high,
+            min=50.0,
+            max=100.0,
+            step=0.5,
+            description="clip hi:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["soft_threshold"] = widgets.FloatSlider(
+            value=self._filter_state.soft_threshold_percentile,
+            min=0.0,
+            max=100.0,
+            step=1.0,
+            description="soft thr:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+
+        controls["normalize"] = widgets.Checkbox(
+            value=self._filter_state.normalize,
+            description="normalize",
+            layout=widgets.Layout(width="100%"),
+        )
+        controls["log_scale"] = widgets.Checkbox(
+            value=self._filter_state.log_scale,
+            description="log10",
+            layout=widgets.Layout(width="100%"),
+        )
+        controls["show_peaks"] = widgets.Checkbox(
+            value=self._show_peaks,
+            description="show peaks",
+            layout=widgets.Layout(width="100%"),
+        )
+        controls["peak_prom"] = widgets.FloatSlider(
+            value=self._peak_prominence,
+            min=0.0,
+            max=1.0,
+            step=0.01,
+            description="prom:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["peak_dist"] = widgets.IntSlider(
+            value=self._peak_distance,
+            min=1,
+            max=200,
+            step=1,
+            description="dist:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+
+        controls["mode_view"] = widgets.Dropdown(
+            options=[
+                ("all", "all"),
+                ("magnitude", "magnitude"),
+                ("phase", "phase"),
+                ("combined", "combined"),
+            ],
+            value="all" if len(self._mode_row_types) > 1 else self._mode_row_types[0],
+            description="rows:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+
+        controls["cmap_mag"] = widgets.Dropdown(
+            options=["viridis", "inferno", "plasma", "cividis", "magma"],
+            value="viridis",
+            description="cmap |m|:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+        controls["cmap_phase"] = widgets.Dropdown(
+            options=["twilight", "twilight_shifted", "hsv", "RdBu_r", "seismic"],
+            value="twilight",
+            description="cmap ph:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+        controls["cmap_combined"] = widgets.Dropdown(
+            options=["RdBu_r", "coolwarm", "seismic", "PiYG", "PRGn"],
+            value="RdBu_r",
+            description="cmap cmb:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+
+        controls["freq_index"] = widgets.IntSlider(
+            value=max(self._closest_freq_index(self._current_frequency_ghz), 0),
+            min=0,
+            max=max(int(self._filtered_frequencies_ghz.size) - 1, 0),
+            step=1,
+            description="frame:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["play"] = widgets.Play(
+            value=controls["freq_index"].value,
+            min=controls["freq_index"].min,
+            max=controls["freq_index"].max,
+            step=1,
+            interval=80,
+            description="sweep",
+            disabled=False,
+        )
+        widgets.jslink((controls["play"], "value"), (controls["freq_index"], "value"))
+        controls["anim_frames"] = widgets.IntSlider(
+            value=180,
+            min=20,
+            max=600,
+            step=10,
+            description="frames:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["anim_fps"] = widgets.IntSlider(
+            value=24,
+            min=5,
+            max=60,
+            step=1,
+            description="fps:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+            continuous_update=False,
+        )
+        controls["anim_format"] = widgets.Dropdown(
+            options=[("gif", "gif"), ("mp4", "mp4")],
+            value="gif",
+            description="format:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+        controls["save_animation"] = widgets.Button(
+            description="Save sweep",
+            button_style="warning",
+            layout=widgets.Layout(width="100%"),
+        )
+
+        controls["refresh"] = widgets.Button(
+            description="Refresh",
+            button_style="success",
+            layout=widgets.Layout(width="48%"),
+        )
+        controls["reset"] = widgets.Button(
+            description="Reset",
+            button_style="",
+            layout=widgets.Layout(width="48%"),
+        )
+
+        controls["status"] = widgets.HTML(
+            value="<small>Left-click spectrum to select frequency, right-click to snap to nearest peak.</small>",
+        )
+        controls["preset_select"] = widgets.Dropdown(
+            options=[("-- load preset --", "")],
+            value="",
+            description="preset:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+        controls["preset_name"] = widgets.Text(
+            value="",
+            placeholder="name...",
+            description="save:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+        controls["preset_save"] = widgets.Button(
+            description="Save preset",
+            button_style="",
+            layout=widgets.Layout(width="49%"),
+        )
+        controls["preset_delete"] = widgets.Button(
+            description="Delete preset",
+            button_style="",
+            layout=widgets.Layout(width="49%"),
+        )
+
+        # Callbacks
+        observe_keys = [
+            "components",
+            "z_layer",
+            "fmin",
+            "fmax",
+            "smooth_filter",
+            "smooth_window",
+            "smooth_sigma",
+            "baseline_mode",
+            "clip_low",
+            "clip_high",
+            "soft_threshold",
+            "normalize",
+            "log_scale",
+            "show_peaks",
+            "peak_prom",
+            "peak_dist",
+            "mode_view",
+            "cmap_mag",
+            "cmap_phase",
+            "cmap_combined",
+        ]
+        for key in observe_keys:
+            controls[key].observe(self._on_controls_changed, names="value")
+
+        controls["freq_index"].observe(self._on_frequency_index_changed, names="value")
+        controls["refresh"].on_click(self._on_refresh_clicked)
+        controls["reset"].on_click(self._on_reset_clicked)
+        controls["save_animation"].on_click(self._on_save_animation_clicked)
+        controls["preset_save"].on_click(self._on_save_preset_clicked)
+        controls["preset_delete"].on_click(self._on_delete_preset_clicked)
+        controls["preset_select"].observe(self._on_load_preset_changed, names="value")
+
+        self._widget_output = widgets.Output(
+            layout=widgets.Layout(width="100%", height="auto")
+        )
+
+        preset_box = widgets.VBox(
+            [
+                controls["preset_select"],
+                controls["preset_name"],
+                widgets.HBox([controls["preset_save"], controls["preset_delete"]]),
+            ]
+        )
+
+        sections = widgets.Accordion(
+            children=[
+                widgets.VBox(
+                    [
+                        controls["components"],
+                        controls["z_layer"],
+                        controls["mode_view"],
+                        controls["cmap_mag"],
+                        controls["cmap_phase"],
+                        controls["cmap_combined"],
+                    ]
+                ),
+                widgets.VBox(
+                    [
+                        controls["fmin"],
+                        controls["fmax"],
+                        controls["normalize"],
+                        controls["log_scale"],
+                        controls["show_peaks"],
+                        controls["peak_prom"],
+                        controls["peak_dist"],
+                    ]
+                ),
+                widgets.VBox(
+                    [
+                        controls["smooth_filter"],
+                        controls["smooth_window"],
+                        controls["smooth_sigma"],
+                        controls["baseline_mode"],
+                        controls["clip_low"],
+                        controls["clip_high"],
+                        controls["soft_threshold"],
+                    ]
+                ),
+                widgets.VBox(
+                    [
+                        widgets.HBox([controls["play"], controls["freq_index"]]),
+                        controls["anim_frames"],
+                        controls["anim_fps"],
+                        controls["anim_format"],
+                        controls["save_animation"],
+                    ]
+                ),
+            ],
+            selected_index=0,
+            layout=widgets.Layout(width="100%"),
+        )
+        sections.set_title(0, "Display")
+        sections.set_title(1, "Spectrum")
+        sections.set_title(2, "Filters")
+        sections.set_title(3, "Animation")
+
+        control_panel = widgets.VBox(
+            [
+                widgets.HTML("<b>FMR Spectrum Toolbar</b>"),
+                preset_box,
+                sections,
+                widgets.HBox([controls["refresh"], controls["reset"]]),
+                controls["status"],
+            ],
+            layout=widgets.Layout(width="330px", border="1px solid #ddd", padding="8px"),
+        )
+
+        right_panel = widgets.VBox(
+            [self._widget_output],
+            layout=widgets.Layout(width="calc(100% - 350px)", min_width="680px"),
+        )
+
+        self._widget_root = widgets.HBox(
+            [control_panel, right_panel],
+            layout=widgets.Layout(width="100%"),
+        )
+
+        self._controls = controls
+        self._refresh_preset_options()
+
+    def _guess_layer_bounds(self) -> tuple[int, int]:
+        """Best-effort z-layer slider bounds."""
+        try:
+            if self.analyzer is not None and getattr(self.analyzer, "modes_path", None):
+                modes_path = self.analyzer.modes_path
+                shape = self.analyzer.zarr_file[modes_path].shape
+                n_layers = int(shape[1])
+                if n_layers > 0:
+                    return -n_layers, n_layers - 1
         except Exception:
             pass
-        
-        # Normalize component names
-        components = self._normalize_components(components)
-        
-        # Load spectrum data - prefer spectrum_result from FFT.spectrum()
-        if self.spectrum_result is not None:
-            # Use pre-computed spectrum from FFT (respects slice_context!)
-            self._frequencies = self.spectrum_result.frequencies
-            self._spectrum = self.spectrum_result.spectrum
-            self._power = self.spectrum_result.power
-            component_label = self._component_label or self.spectrum_result.component_label
-            
-            # Extract peaks from spectrum_result if available
-            if self.spectrum_result.peaks_info:
-                # peaks_info contains Peak objects with .freq and .amplitude attributes
-                self._peaks = []
-                for p in self.spectrum_result.peaks_info:
-                    if hasattr(p, 'freq'):
-                        # Peak dataclass object
-                        self._peaks.append((p.freq, getattr(p, 'amplitude', getattr(p, 'power', 1.0))))
-                    elif isinstance(p, dict):
-                        # Dict format (fallback)
-                        self._peaks.append((p.get('frequency', p.get('freq', 0)), p.get('amplitude', p.get('power', 1.0))))
-                    elif isinstance(p, (list, tuple)) and len(p) >= 2:
-                        # Tuple format
-                        self._peaks.append((p[0], p[1]))
-            log.debug(f"Using spectrum from FFT: {len(self._frequencies)} points, {len(self._peaks)} peaks")
-        elif self.data_loader is not None:
-            # Fallback: load spectrum via data_loader
-            self._frequencies, self._spectrum, component_label = self.data_loader.load_spectrum()
-            log.debug(f"Loaded spectrum via data_loader: {len(self._frequencies)} points")
-        else:
-            raise ValueError("Either spectrum_result or data_loader must be provided")
-        
-        # Create figure with GridSpec
-        self._fig = plt.figure(figsize=self.figsize, dpi=self.dpi)
-        gs = GridSpec(3, 4, figure=self._fig, width_ratios=[1.5, 1, 1, 1])
-        
-        # Left panel: Spectrum (spans all 3 rows)
-        self._ax_spectrum = self._fig.add_subplot(gs[:, 0])
-        
-        # Right panel: 3x3 mode grid
-        # Rows: magnitude, phase, combined
-        # Cols: mx, my, mz (or selected component)
-        self._mode_axes = np.empty((3, 3), dtype=object)
-        row_labels = ["Magnitude", "Phase", "Combined"]
-        
-        for row in range(3):
-            for col in range(3):
-                ax = self._fig.add_subplot(gs[row, col + 1])
-                self._mode_axes[row, col] = ax
-                
-                # Set labels
-                if row == 0:
-                    ax.set_title(f"{COMPONENT_LABELS[col]}")
-                if col == 0:
-                    ax.set_ylabel(row_labels[row])
-        
-        # Plot spectrum
-        self._plot_spectrum(log_scale, normalize, freq_unit, show_peaks, title, component_label)
-        
-        # Detect peaks
-        if show_peaks:
-            self._detect_peaks()
-        
-        # Set initial frequency
-        if initial_frequency is not None:
-            self._current_frequency = initial_frequency
-        elif self._peaks:
-            # Use highest peak as initial
-            self._current_frequency = self._peaks[0][0]
-        elif len(self._frequencies) > 0:
-            # Use middle frequency
-            self._current_frequency = self._frequencies[len(self._frequencies) // 2]
-        
-        # Draw initial frequency line and modes
-        if self._current_frequency is not None:
-            self._draw_frequency_line()
-            self._update_mode_plots(components, z_layer)
-        
-        # Connect click event
-        self._fig.canvas.mpl_connect('button_press_event', 
-            lambda event: self._on_click(event, components, z_layer))
-        
-        # Add help text
-        self._ax_spectrum.text(
-            0.02, 0.02, 
-            "Click: select freq | Right-click: snap to peak",
-            transform=self._ax_spectrum.transAxes,
-            fontsize=8, alpha=0.7, verticalalignment='bottom'
-        )
-        
-        plt.tight_layout()
-        plt.show()
-        # Do not return figure to avoid double display in notebooks
-        return None
-    
-    def _normalize_components(self, components: List[Union[int, str]]) -> List[str]:
-        """Normalize component names to 'x', 'y', 'z'."""
-        result = []
-        for c in components:
-            if isinstance(c, int):
-                result.append(COMPONENT_NAMES[c])
-            elif isinstance(c, str):
-                c = c.lower().replace('m', '').replace('_', '')
-                if c in COMPONENT_NAMES:
-                    result.append(c)
-                else:
-                    result.append('z')  # fallback
+        return -10, 10
+
+    def _on_controls_changed(self, _change: Any) -> None:
+        if self._internal_update:
+            return
+
+        self._read_controls()
+        self._recompute_filtered_spectrum()
+
+        # Clamp currently selected frequency to filtered range.
+        if self._filtered_frequencies_ghz.size:
+            idx = self._closest_freq_index(self._current_frequency_ghz)
+            self._current_frequency_ghz = float(self._filtered_frequencies_ghz[idx])
+
+        self._refresh_freq_slider_bounds()
+        self._render_figure()
+
+    def _on_frequency_index_changed(self, change: Any) -> None:
+        if self._internal_update:
+            return
+        if change.get("name") != "value":
+            return
+
+        if self._filtered_frequencies_ghz.size == 0:
+            return
+
+        idx = int(change["new"])
+        idx = max(0, min(idx, self._filtered_frequencies_ghz.size - 1))
+        self._current_frequency_ghz = float(self._filtered_frequencies_ghz[idx])
+        self._update_frequency_selection(redraw_canvas=True)
+
+    def _on_refresh_clicked(self, _btn: Any) -> None:
+        self._read_controls()
+        self._recompute_filtered_spectrum()
+        self._refresh_freq_slider_bounds()
+        self._render_figure()
+
+    def _on_reset_clicked(self, _btn: Any) -> None:
+        if not self._controls:
+            return
+
+        self._internal_update = True
+        try:
+            fmin = float(np.nanmin(self._raw_frequencies_ghz))
+            fmax = float(np.nanmax(self._raw_frequencies_ghz))
+            self._controls["fmin"].value = fmin
+            self._controls["fmax"].value = fmax
+            self._controls["smooth_filter"].value = "none"
+            self._controls["smooth_window"].value = 7
+            self._controls["smooth_sigma"].value = 1.0
+            self._controls["baseline_mode"].value = "none"
+            self._controls["clip_low"].value = 0.0
+            self._controls["clip_high"].value = 100.0
+            self._controls["soft_threshold"].value = 0.0
+            self._controls["normalize"].value = True
+            self._controls["log_scale"].value = False
+            self._controls["show_peaks"].value = True
+            self._controls["peak_prom"].value = 0.05
+            self._controls["peak_dist"].value = 5
+            self._controls["mode_view"].value = "all"
+            self._controls["components"].value = tuple(self._available_components)
+            self._controls["z_layer"].value = -1
+        finally:
+            self._internal_update = False
+
+        self._on_refresh_clicked(_btn)
+
+    def _on_save_animation_clicked(self, _btn: Any) -> None:
+        """Save frequency sweep animation of the current interactive view."""
+        if self._is_saving_animation:
+            return
+        if self._fig is None or self._filtered_frequencies_ghz.size == 0:
+            self._set_status("No data to animate", color="crimson")
+            return
+        if "save_animation" not in self._controls:
+            return
+
+        try:
+            from matplotlib.animation import FuncAnimation, PillowWriter
+            try:
+                from matplotlib.animation import FFMpegWriter
+            except Exception:  # pragma: no cover - optional backend
+                FFMpegWriter = None  # type: ignore[assignment]
+        except Exception as exc:  # pragma: no cover - optional backend
+            self._set_status(f"Animation backend unavailable: {exc}", color="crimson")
+            return
+
+        frame_count = max(2, int(self._controls["anim_frames"].value))
+        fps = max(1, int(self._controls["anim_fps"].value))
+        fmt = str(self._controls["anim_format"].value).lower()
+
+        max_idx = int(self._filtered_frequencies_ghz.size) - 1
+        if max_idx <= 0:
+            self._set_status("Need at least two frequency points for sweep", color="crimson")
+            return
+
+        # Sample evenly over available frequency points.
+        frame_count = min(frame_count, max_idx + 1)
+        frame_indices = np.linspace(0, max_idx, frame_count, dtype=int)
+
+        old_frequency = self._current_frequency_ghz
+        button = self._controls["save_animation"]
+        old_desc = button.description
+
+        self._is_saving_animation = True
+        button.disabled = True
+        button.description = "Saving..."
+        self._set_status("Saving animation...", color="#0F766E")
+
+        try:
+            def _update(frame_number: int) -> list[Any]:
+                idx = int(frame_indices[frame_number])
+                self._current_frequency_ghz = float(self._filtered_frequencies_ghz[idx])
+                self._internal_update = True
+                try:
+                    if "freq_index" in self._controls:
+                        self._controls["freq_index"].value = idx
+                    if "play" in self._controls:
+                        self._controls["play"].value = idx
+                finally:
+                    self._internal_update = False
+
+                self._update_frequency_selection(redraw_canvas=False)
+                return []
+
+            animation = FuncAnimation(
+                self._fig,
+                _update,
+                frames=len(frame_indices),
+                interval=1000.0 / float(fps),
+                blit=False,
+                repeat=False,
+            )
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = Path.cwd() / f"fmr_sweep_{timestamp}.{fmt}"
+
+            if fmt == "mp4":
+                if FFMpegWriter is None:
+                    raise RuntimeError("FFmpeg writer unavailable; select GIF format")
+                writer = FFMpegWriter(fps=fps, bitrate=3000)
             else:
-                result.append('z')
-        return result
-    
-    def _plot_spectrum(
-        self, 
-        log_scale: bool, 
-        normalize: bool, 
-        freq_unit: str, 
-        show_peaks: bool,
-        title: Optional[str],
-        component_label: Optional[str],
-    ):
-        """Plot spectrum on left panel."""
-        ax = self._ax_spectrum
-        
-        # Frequency scaling
-        freq_scales = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
-        freq_scale = freq_scales.get(freq_unit, 1e9)
-        
-        # Use frequencies as-is (already in GHz from loader)
-        freqs = self._frequencies
-        
-        # Power spectrum
-        if np.iscomplexobj(self._spectrum):
-            power = np.abs(self._spectrum) ** 2
-        else:
-            power = self._spectrum ** 2 if self._spectrum.min() >= 0 else np.abs(self._spectrum) ** 2
-        
-        if normalize and power.max() > 0:
-            power = power / power.max()
-        
-        # Store for peak detection
-        self._power = power
-        
-        # Plot based on shape
-        if power.ndim == 1:
-            label = component_label or "Power"
-            ax.plot(freqs, power, label=label, linewidth=1.5, color='steelblue')
-            ax.legend(loc="upper right")
-        elif power.ndim == 2 and power.shape[-1] == 3:
-            colors = ['#e74c3c', '#2ecc71', '#3498db']  # red, green, blue
-            for i in range(3):
-                ax.plot(freqs, power[:, i], label=COMPONENT_LABELS[i], 
-                       linewidth=1.5, color=colors[i])
-            ax.legend(loc="upper right")
-        else:
-            ax.plot(freqs, power.flatten(), label="Power", linewidth=1.5)
-        
-        ax.set_xlabel(f"Frequency ({freq_unit})")
-        ax.set_ylabel("Power" + (" (normalized)" if normalize else ""))
-        ax.set_title(title or "FFT Power Spectrum")
-        ax.grid(True, alpha=0.3)
-        
-        if log_scale:
-            ax.set_yscale("log")
-    
-    def _detect_peaks(self, min_prominence: float = 0.1):
-        """Detect peaks in spectrum."""
-        try:
-            from scipy.signal import find_peaks as scipy_find_peaks
-        except ImportError:
-            log.warning("SciPy not available for peak detection")
-            return
-        
-        # Use 1D power
-        if self._power.ndim > 1:
-            power_1d = np.mean(self._power, axis=-1)
-        else:
-            power_1d = self._power
-        
-        # Normalize
-        if power_1d.max() > 0:
-            norm_power = power_1d / power_1d.max()
-        else:
-            return
-        
-        try:
-            peak_indices, props = scipy_find_peaks(
-                norm_power,
-                height=min_prominence,
-                distance=5,
+                writer = PillowWriter(fps=fps)
+
+            animation.save(str(output_path), writer=writer, dpi=self.dpi)
+            size_mb = output_path.stat().st_size / (1024 * 1024)
+            self._set_status(
+                f"Saved animation: {output_path.name} ({size_mb:.1f} MB)",
+                color="seagreen",
             )
-        except Exception as e:
-            log.debug(f"Peak detection failed: {e}")
+        except Exception as exc:
+            self._set_status(f"Animation save failed: {exc}", color="crimson")
+        finally:
+            self._current_frequency_ghz = old_frequency
+            self._internal_update = True
+            try:
+                idx = self._closest_freq_index(old_frequency)
+                if "freq_index" in self._controls:
+                    self._controls["freq_index"].value = idx
+                if "play" in self._controls:
+                    self._controls["play"].value = idx
+            finally:
+                self._internal_update = False
+
+            self._update_frequency_selection(redraw_canvas=True)
+            button.disabled = False
+            button.description = old_desc
+            self._is_saving_animation = False
+
+    def _read_controls(self) -> None:
+        """Read widget values into internal state."""
+        if not self._controls:
             return
-        
-        if len(peak_indices) == 0:
-            return
-        
-        # Store peaks sorted by power (highest first)
-        peak_freqs = self._frequencies[peak_indices]
-        peak_powers = power_1d[peak_indices]
-        sorted_indices = np.argsort(peak_powers)[::-1]
-        
-        self._peaks = [(peak_freqs[i], peak_powers[i]) for i in sorted_indices]
-        
-        # Plot peaks on spectrum
-        ax = self._ax_spectrum
-        ax.scatter(peak_freqs, peak_powers, color='red', s=50, zorder=5, marker='v')
-    
-    def _draw_frequency_line(self):
-        """Draw vertical line at current frequency."""
-        if self._current_frequency is None:
-            return
-        
-        ax = self._ax_spectrum
-        
-        # Remove old line
-        if self._frequency_line is not None:
-            self._frequency_line.remove()
-        
-        # Draw new line
-        self._frequency_line = ax.axvline(
-            x=self._current_frequency,
-            color='red',
-            linestyle='--',
-            linewidth=2,
-            alpha=0.8
+
+        freq_min = float(self._controls["fmin"].value)
+        freq_max = float(self._controls["fmax"].value)
+
+        if freq_min > freq_max:
+            freq_min, freq_max = freq_max, freq_min
+
+        self._filter_state = SpectrumFilterState(
+            freq_min=freq_min,
+            freq_max=freq_max,
+            smooth_filter=str(self._controls["smooth_filter"].value),
+            smooth_window=int(self._controls["smooth_window"].value),
+            smooth_sigma=float(self._controls["smooth_sigma"].value),
+            baseline_mode=str(self._controls["baseline_mode"].value),
+            clip_percentile_low=float(self._controls["clip_low"].value),
+            clip_percentile_high=float(self._controls["clip_high"].value),
+            soft_threshold_percentile=float(self._controls["soft_threshold"].value),
+            normalize=bool(self._controls["normalize"].value),
+            log_scale=bool(self._controls["log_scale"].value),
         )
-        
-        # Update title with frequency
-        ax.set_title(f"FFT Power Spectrum - f = {self._current_frequency:.3f} GHz")
-    
-    def _update_mode_plots(self, components: List[str], z_layer: int):
-        """Update 3x3 mode grid for current frequency."""
-        if self._current_frequency is None:
+
+        selected_components = list(self._controls["components"].value)
+        self._current_components = normalize_component_selection(
+            selected_components,
+            available=self._available_components,
+        )
+
+        self._current_z_layer = int(self._controls["z_layer"].value)
+        self._show_peaks = bool(self._controls["show_peaks"].value)
+        self._peak_prominence = float(self._controls["peak_prom"].value)
+        self._peak_distance = int(self._controls["peak_dist"].value)
+        self._mode_row_types = self._resolve_mode_rows(str(self._controls["mode_view"].value))
+
+    def _refresh_freq_slider_bounds(self) -> None:
+        if not self._controls:
             return
-        
+
+        slider = self._controls["freq_index"]
+        play = self._controls["play"]
+
+        self._internal_update = True
         try:
-            mode_data, actual_freq, metadata = self.data_loader.load_mode_at_frequency(
-                self._current_frequency, z_layer
-            )
-        except Exception as e:
-            print(f"⚠️ Error loading mode data: {e}")
-            log.warning(f"Could not load mode at {self._current_frequency:.3f} GHz: {e}")
-            # Clear mode plots
-            for row in range(3):
-                for col in range(3):
-                    self._mode_axes[row, col].clear()
-                    self._mode_axes[row, col].text(
-                        0.5, 0.5, "No data",
-                        ha='center', va='center',
-                        transform=self._mode_axes[row, col].transAxes
-                    )
+            max_idx = max(int(self._filtered_frequencies_ghz.size) - 1, 0)
+            slider.max = max_idx
+            play.max = max_idx
+            idx = self._closest_freq_index(self._current_frequency_ghz)
+            slider.value = idx
+            play.value = idx
+        finally:
+            self._internal_update = False
+
+    # ---------------------------------------------------------------------
+    # Figure rendering and interaction
+    # ---------------------------------------------------------------------
+    def _resolve_mode_rows(self, mode_view: str) -> list[str]:
+        view = (mode_view or "all").lower()
+        if view == "magnitude":
+            return ["magnitude"]
+        if view == "phase":
+            return ["phase"]
+        if view == "combined":
+            return ["combined"]
+        return ["magnitude", "phase", "combined"]
+
+    def _render_figure(self) -> None:
+        """Render spectrum + mode figure (in output widget or directly)."""
+        n_components = max(len(self._current_components), 1)
+        n_rows = max(len(self._mode_row_types), 1)
+
+        if self._toolbar_enabled and self._widget_output is not None:
+            with self._widget_output:
+                clear_output(wait=True)
+                self._create_figure(n_rows=n_rows, n_components=n_components)
+                self._draw_spectrum()
+                self._update_mode_plots()
+                plt.show()
+        else:
+            self._create_figure(n_rows=n_rows, n_components=n_components)
+            self._draw_spectrum()
+            self._update_mode_plots()
+
+    def _create_figure(self, n_rows: int, n_components: int) -> None:
+        """Create matplotlib figure and axes layout."""
+        self._cleanup_figure_connections()
+
+        self._fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=False)
+        gs = GridSpec(
+            n_rows,
+            n_components + 1,
+            figure=self._fig,
+            width_ratios=[1.6] + [1.0] * n_components,
+        )
+
+        self._ax_spectrum = self._fig.add_subplot(gs[:, 0])
+
+        axes = []
+        for row in range(n_rows):
+            row_axes = []
+            for col in range(n_components):
+                row_axes.append(self._fig.add_subplot(gs[row, col + 1]))
+            axes.append(row_axes)
+        self._mode_axes = np.asarray(axes, dtype=object)
+
+        # Reconnect click handler.
+        if self._fig is not None:
+            self._fig.canvas.mpl_connect("button_press_event", self._on_click)
+
+    def _draw_spectrum(self) -> None:
+        """Draw filtered spectrum traces and peak markers."""
+        if self._ax_spectrum is None:
             return
-        
-        # mode_data shape: (ny, nx, 3) or (ny, nx) if single component
-        if mode_data.ndim == 2:
-            # Single component - expand to 3D for consistency
-            mode_data = mode_data[:, :, np.newaxis]
-        
-        row_labels = ["Magnitude", "Phase", "Combined"]
-        
-        for col_idx, comp in enumerate(components):
-            comp_idx = COMPONENT_NAMES.index(comp) if comp in COMPONENT_NAMES else col_idx
-            
-            if comp_idx >= mode_data.shape[-1]:
-                # Component not available
-                for row in range(3):
-                    self._mode_axes[row, col_idx].clear()
-                    self._mode_axes[row, col_idx].text(
-                        0.5, 0.5, f"No {COMPONENT_LABELS[comp_idx]}",
-                        ha='center', va='center'
-                    )
+
+        ax = self._ax_spectrum
+        ax.clear()
+
+        if self._filtered_frequencies_ghz.size == 0:
+            ax.text(0.5, 0.5, "No spectrum data", ha="center", va="center", transform=ax.transAxes)
+            return
+
+        freq_scale = self._get_freq_scale(self._freq_unit)
+        freqs_plot = self._filtered_frequencies_ghz * freq_scale
+
+        color_map = {"x": "#E76F51", "y": "#2A9D8F", "z": "#457B9D"}
+
+        for comp in self._current_components:
+            trace = self._filtered_component_power.get(comp)
+            if trace is None or trace.size == 0:
                 continue
-            
-            # Get component data
-            comp_data = mode_data[:, :, comp_idx]
-            
-            # Calculate magnitude and phase
-            magnitude = np.abs(comp_data)
-            phase = np.angle(comp_data)
-            combined = magnitude * np.cos(phase)  # Real part visualization
-            
-            # Row 0: Magnitude
-            ax_mag = self._mode_axes[0, col_idx]
-            ax_mag.clear()
-            im_mag = ax_mag.imshow(
-                magnitude,
-                aspect='equal',
-                origin='lower',
-                cmap='viridis',
-                interpolation='bilinear'
+            ax.plot(
+                freqs_plot,
+                trace,
+                color=color_map.get(comp, "#4C78A8"),
+                linewidth=1.8,
+                alpha=0.95,
+                label=COMPONENT_LABELS[_COMPONENT_INDEX.get(comp, 2)],
             )
-            ax_mag.set_title(f"{COMPONENT_LABELS[comp_idx]} @ {actual_freq:.3f} GHz")
-            if col_idx == 0:
-                ax_mag.set_ylabel("Magnitude")
-            ax_mag.set_xticks([])
-            ax_mag.set_yticks([])
-            
-            # Row 1: Phase
-            ax_phase = self._mode_axes[1, col_idx]
-            ax_phase.clear()
-            im_phase = ax_phase.imshow(
-                phase,
-                aspect='equal',
-                origin='lower',
-                cmap='twilight',
-                vmin=-np.pi,
-                vmax=np.pi,
-                interpolation='bilinear'
-            )
-            if col_idx == 0:
-                ax_phase.set_ylabel("Phase")
-            ax_phase.set_xticks([])
-            ax_phase.set_yticks([])
-            
-            # Row 2: Combined (magnitude * cos(phase))
-            ax_comb = self._mode_axes[2, col_idx]
-            ax_comb.clear()
-            vmax = np.abs(combined).max() or 1
-            im_comb = ax_comb.imshow(
-                combined,
-                aspect='equal',
-                origin='lower',
-                cmap='RdBu_r',
-                vmin=-vmax,
-                vmax=vmax,
-                interpolation='bilinear'
-            )
-            if col_idx == 0:
-                ax_comb.set_ylabel("Combined")
-            ax_comb.set_xticks([])
-            ax_comb.set_yticks([])
-        
-        self._fig.canvas.draw()
-    
-    def _on_click(self, event, components: List[str], z_layer: int):
-        """Handle click events on spectrum."""
-        if event.inaxes != self._ax_spectrum:
+
+        if self._show_peaks and self._peaks:
+            for freq_ghz, amp in self._peaks:
+                x_val = freq_ghz * freq_scale
+                ax.plot(
+                    [x_val],
+                    [amp],
+                    marker="o",
+                    markersize=5,
+                    color="#D62828",
+                    markeredgecolor="white",
+                    markeredgewidth=1.0,
+                    zorder=6,
+                )
+
+        self._draw_frequency_line()
+
+        label = self._title or "FMR Spectrum"
+        ax.set_title(f"{label} (click to select frequency)")
+        ax.set_xlabel(f"Frequency ({self._freq_unit})")
+        ax.set_ylabel("log10(Power)" if self._filter_state.log_scale else "Power")
+        ax.grid(True, alpha=0.25, linestyle="--")
+        if len(self._current_components) > 1:
+            ax.legend(loc="upper right", frameon=True, framealpha=0.9)
+
+        ax.text(
+            0.02,
+            0.02,
+            "left click: select, right click: snap to peak",
+            transform=ax.transAxes,
+            fontsize=8,
+            alpha=0.75,
+            va="bottom",
+        )
+
+    def _draw_frequency_line(self) -> None:
+        """Draw or update current frequency indicator line."""
+        if self._ax_spectrum is None or self._current_frequency_ghz is None:
             return
-        
+
+        scale = self._get_freq_scale(self._freq_unit)
+        x_value = self._current_frequency_ghz * scale
+
+        # Remove previous line if any.
+        if self._frequency_line is not None:
+            try:
+                self._frequency_line.remove()
+            except Exception:
+                pass
+
+        self._frequency_line = self._ax_spectrum.axvline(
+            x_value,
+            color="#D62828",
+            linestyle="--",
+            linewidth=1.8,
+            alpha=0.85,
+        )
+
+    def _load_mode(self, frequency_ghz: float, z_layer: int) -> tuple[np.ndarray, float, tuple[float, float, float, float]]:
+        """Load mode array and metadata at selected frequency."""
+        if self.analyzer is not None:
+            mode_data = self.analyzer.get_mode(frequency_ghz, z_layer)
+            mode_array = np.asarray(mode_data.mode_array)
+            extent = tuple(mode_data.extent)
+            actual = float(mode_data.frequency)
+            return mode_array, actual, extent
+
+        if self.data_loader is not None:
+            mode_array, actual, _meta = self.data_loader.load_mode_at_frequency(frequency_ghz, z_layer)
+            arr = np.asarray(mode_array)
+            if arr.ndim == 2:
+                arr = arr[:, :, np.newaxis]
+            ny, nx = arr.shape[:2]
+            extent = (0.0, float(nx), 0.0, float(ny))
+            return arr, float(actual), extent
+
+        raise RuntimeError("No analyzer/data loader available for mode visualization")
+
+    def _update_mode_plots(self) -> None:
+        """Render mode maps for selected frequency."""
+        if self._mode_axes is None or self._current_frequency_ghz is None:
+            return
+
+        for cbar in self._mode_colorbars:
+            try:
+                cbar.remove()
+            except Exception:
+                pass
+        self._mode_colorbars = []
+
+        try:
+            mode_array, actual_freq, extent = self._load_mode(
+                self._current_frequency_ghz,
+                self._current_z_layer,
+            )
+            self._current_frequency_ghz = actual_freq
+        except Exception as exc:
+            for ax in self._mode_axes.flatten():
+                ax.clear()
+                ax.text(
+                    0.5,
+                    0.5,
+                    f"Mode load error:\n{exc}",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                    fontsize=9,
+                    color="crimson",
+                )
+            if self._fig is not None:
+                self._fig.canvas.draw_idle()
+            return
+
+        if mode_array.ndim == 2:
+            mode_array = mode_array[:, :, np.newaxis]
+
+        cmap_mag = self._controls.get("cmap_mag", None)
+        cmap_phase = self._controls.get("cmap_phase", None)
+        cmap_combined = self._controls.get("cmap_combined", None)
+
+        cmap_mag_name = str(cmap_mag.value) if cmap_mag is not None else "viridis"
+        cmap_phase_name = str(cmap_phase.value) if cmap_phase is not None else "twilight"
+        cmap_combined_name = str(cmap_combined.value) if cmap_combined is not None else "RdBu_r"
+
+        row_images: list[Any] = [None] * len(self._mode_row_types)
+
+        for row_idx, row_type in enumerate(self._mode_row_types):
+            for col_idx, comp in enumerate(self._current_components):
+                ax = self._mode_axes[row_idx, col_idx]
+                ax.clear()
+
+                comp_idx = _COMPONENT_INDEX.get(comp)
+                if comp_idx is None or comp_idx >= mode_array.shape[-1]:
+                    ax.text(0.5, 0.5, f"No m_{comp}", ha="center", va="center", transform=ax.transAxes)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    continue
+
+                comp_data = mode_array[:, :, comp_idx]
+                magnitude = np.abs(comp_data)
+                phase = np.angle(comp_data)
+
+                if row_type == "magnitude":
+                    plot_data = magnitude
+                    cmap_name = cmap_mag_name
+                    vmin = None
+                    vmax = None
+                    row_title = "|m|"
+                elif row_type == "phase":
+                    plot_data = phase
+                    cmap_name = cmap_phase_name
+                    vmin = -np.pi
+                    vmax = np.pi
+                    row_title = "phase"
+                else:
+                    plot_data = magnitude * np.cos(phase)
+                    vmax_val = float(np.nanmax(np.abs(plot_data))) if plot_data.size else 1.0
+                    if vmax_val <= 0:
+                        vmax_val = 1.0
+                    cmap_name = cmap_combined_name
+                    vmin = -vmax_val
+                    vmax = vmax_val
+                    row_title = "combined"
+
+                img = ax.imshow(
+                    plot_data,
+                    origin="lower",
+                    extent=extent,
+                    aspect="equal",
+                    cmap=cmap_name,
+                    interpolation="nearest",
+                    vmin=vmin,
+                    vmax=vmax,
+                )
+
+                if row_images[row_idx] is None:
+                    row_images[row_idx] = img
+
+                if row_idx == 0:
+                    ax.set_title(f"m_{comp} @ {actual_freq:.3f} GHz", fontsize=10)
+                if col_idx == 0:
+                    ax.set_ylabel(row_title, fontsize=9)
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+        for row_idx, img in enumerate(row_images):
+            if img is None:
+                continue
+            try:
+                cbar = self._fig.colorbar(
+                    img,
+                    ax=list(self._mode_axes[row_idx, :]),
+                    fraction=0.035,
+                    pad=0.02,
+                )
+                self._mode_colorbars.append(cbar)
+            except Exception:
+                continue
+
+        if self._fig is not None:
+            self._fig.suptitle(
+                f"FMR modes at {self._current_frequency_ghz:.3f} GHz (z={self._current_z_layer})",
+                fontsize=12,
+            )
+            self._fig.tight_layout()
+            self._fig.canvas.draw_idle()
+
+        self._update_status_text()
+
+    def _update_status_text(self) -> None:
+        if not self._controls:
+            return
+        n_peaks = len(self._peaks)
+        if self._current_frequency_ghz is None:
+            freq_text = "n/a"
+        else:
+            freq_text = f"{self._current_frequency_ghz:.3f} GHz"
+        self._set_status(
+            f"f={freq_text}, "
+            f"components={','.join(self._current_components)}, "
+            f"peaks={n_peaks}",
+            color="#334155",
+        )
+
+    def _set_status(self, message: str, color: str = "#334155") -> None:
+        """Set status message in toolbar or fallback to logger."""
+        if self._controls and "status" in self._controls:
+            self._controls["status"].value = (
+                f"<small style='color:{color}'>{message}</small>"
+            )
+        else:
+            log.info(message)
+
+    def _update_frequency_selection(self, redraw_canvas: bool = True) -> None:
+        """Update vertical line and mode maps after frequency change."""
+        self._draw_frequency_line()
+        self._update_mode_plots()
+
+        if redraw_canvas and self._fig is not None:
+            self._fig.canvas.draw_idle()
+
+    def _on_click(self, event: Any) -> None:
+        """Handle spectrum click interactions."""
+        if self._ax_spectrum is None or event.inaxes != self._ax_spectrum:
+            return
         if event.xdata is None:
             return
-        
-        if event.button == 3:  # Right click - snap to peak
-            if self._peaks:
-                peak_freqs = [p[0] for p in self._peaks]
-                closest_idx = np.argmin(np.abs(np.array(peak_freqs) - event.xdata))
-                self._current_frequency = peak_freqs[closest_idx]
-            else:
-                self._current_frequency = event.xdata
-        else:  # Left click - exact frequency
-            self._current_frequency = event.xdata
-        
-        # Update visualization
-        self._draw_frequency_line()
-        self._update_mode_plots(components, z_layer)
-        self._fig.canvas.draw()
+
+        clicked_freq_ghz = float(event.xdata) / self._get_freq_scale(self._freq_unit)
+
+        if event.button == 3 and self._peaks:
+            peak_freqs = np.array([p[0] for p in self._peaks], dtype=float)
+            idx = int(np.argmin(np.abs(peak_freqs - clicked_freq_ghz)))
+            selected = float(peak_freqs[idx])
+        else:
+            selected = clicked_freq_ghz
+
+        self._current_frequency_ghz = selected
+
+        if self._controls and "freq_index" in self._controls:
+            idx = self._closest_freq_index(selected)
+            self._internal_update = True
+            try:
+                self._controls["freq_index"].value = idx
+                self._controls["play"].value = idx
+            finally:
+                self._internal_update = False
+
+        self._update_frequency_selection(redraw_canvas=True)
+
+    def _closest_freq_index(self, freq_ghz: Optional[float]) -> int:
+        if self._filtered_frequencies_ghz.size == 0:
+            return 0
+        if freq_ghz is None:
+            return int(self._filtered_frequencies_ghz.size // 2)
+        idx = int(np.argmin(np.abs(self._filtered_frequencies_ghz - float(freq_ghz))))
+        return max(0, min(idx, self._filtered_frequencies_ghz.size - 1))
+
+    def _cleanup_figure_connections(self) -> None:
+        """Clean up previous figure resources before re-render."""
+        if self._fig is None:
+            return
+        try:
+            plt.close(self._fig)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _get_freq_scale(freq_unit: str) -> float:
+        """Convert GHz to display unit scaling factor."""
+        mapping = {
+            "hz": 1e9,
+            "khz": 1e6,
+            "mhz": 1e3,
+            "ghz": 1.0,
+            "thz": 1e-3,
+        }
+        return float(mapping.get(str(freq_unit).lower(), 1.0))
 
 
-# Alias for backward compatibility
+# Backward-compatible alias
+
 def plot(
-    data_loader,
+    data_loader: Any,
     log_scale: bool = False,
     normalize: bool = True,
     freq_unit: str = "GHz",
     show_peaks: bool = True,
+    freq_min: Optional[float] = None,
+    freq_max: Optional[float] = None,
+    smooth_filter: str = "none",
+    smooth_window: int = 7,
+    smooth_sigma: float = 1.0,
+    baseline_mode: str = "none",
+    clip_percentile_low: float = 0.0,
+    clip_percentile_high: float = 100.0,
+    soft_threshold_percentile: float = 0.0,
+    peak_prominence: float = 0.05,
+    peak_distance: int = 5,
     title: Optional[str] = None,
     dpi: int = 100,
-    figsize: Tuple[float, float] = (12, 6),
+    figsize: Tuple[float, float] = (12.0, 6.0),
 ) -> Figure:
-    """Simple spectrum plot without mode panels."""
-    if not MATPLOTLIB_AVAILABLE:
+    """Simple static spectrum plot compatibility helper."""
+    if not _HAS_MATPLOTLIB:
         raise ImportError("Matplotlib required")
-    
+
     frequencies, spectrum, component_label = data_loader.load_spectrum()
-    
+    freqs_ghz = _to_ghz(np.asarray(frequencies, dtype=float))
+    power = collapse_spectrum_components(_to_power(np.asarray(spectrum)), _component_from_label(component_label))
+
+    data_fmin = float(np.nanmin(freqs_ghz))
+    data_fmax = float(np.nanmax(freqs_ghz))
+    init_fmin = data_fmin if freq_min is None else float(freq_min)
+    init_fmax = data_fmax if freq_max is None else float(freq_max)
+    init_fmin = float(np.clip(init_fmin, data_fmin, data_fmax))
+    init_fmax = float(np.clip(init_fmax, data_fmin, data_fmax))
+    if init_fmin > init_fmax:
+        init_fmin, init_fmax = init_fmax, init_fmin
+
+    state = SpectrumFilterState(
+        freq_min=init_fmin,
+        freq_max=init_fmax,
+        smooth_filter=str(smooth_filter),
+        smooth_window=int(smooth_window),
+        smooth_sigma=float(smooth_sigma),
+        baseline_mode=str(baseline_mode),
+        clip_percentile_low=float(clip_percentile_low),
+        clip_percentile_high=float(clip_percentile_high),
+        soft_threshold_percentile=float(soft_threshold_percentile),
+        normalize=bool(normalize),
+        log_scale=bool(log_scale),
+    )
+    freqs_filtered, traces = apply_spectrum_filters(freqs_ghz, power, state)
+
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-    
-    # Power
-    if np.iscomplexobj(spectrum):
-        power = np.abs(spectrum) ** 2
-    else:
-        power = spectrum ** 2 if spectrum.min() >= 0 else np.abs(spectrum) ** 2
-    
-    if normalize and power.max() > 0:
-        power = power / power.max()
-    
-    # Plot
-    if power.ndim == 1:
-        ax.plot(frequencies, power, label=component_label or "Power", linewidth=1.5)
-        ax.legend()
-    elif power.ndim == 2 and power.shape[-1] == 3:
-        for i in range(3):
-            ax.plot(frequencies, power[:, i], label=COMPONENT_LABELS[i], linewidth=1.5)
-        ax.legend()
-    else:
-        ax.plot(frequencies, power.flatten(), label="Power", linewidth=1.5)
-    
+
+    scale = InteractiveSpectrum._get_freq_scale(freq_unit)
+    x = freqs_filtered * scale
+
+    color_map = {"x": "#E76F51", "y": "#2A9D8F", "z": "#457B9D"}
+    for comp, trace in traces.items():
+        ax.plot(x, trace, linewidth=1.6, color=color_map.get(comp, "#4C78A8"), label=f"m_{comp}")
+
+    if show_peaks:
+        stacked = np.vstack(list(traces.values()))
+        peaks = detect_spectrum_peaks(
+            freqs_filtered,
+            np.mean(stacked, axis=0),
+            min_prominence=float(peak_prominence),
+            min_distance=int(peak_distance),
+        )
+        for freq_ghz, amp in peaks:
+            ax.plot(freq_ghz * scale, amp, "o", color="#D62828", markersize=4)
+
     ax.set_xlabel(f"Frequency ({freq_unit})")
-    ax.set_ylabel("Power" + (" (normalized)" if normalize else ""))
+    ax.set_ylabel("log10(Power)" if log_scale else "Power")
     ax.set_title(title or "FFT Power Spectrum")
-    ax.grid(True, alpha=0.3)
-    
-    if log_scale:
-        ax.set_yscale("log")
-    
-    plt.tight_layout()
+    ax.grid(True, alpha=0.25, linestyle="--")
+    if len(traces) > 1:
+        ax.legend(loc="upper right")
+
+    fig.tight_layout()
     return fig
