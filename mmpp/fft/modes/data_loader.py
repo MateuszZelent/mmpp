@@ -146,7 +146,7 @@ class ModeDataLoader:
                 freqs_path = f"{base}/freqs"
                 break
         
-        # Spectrum path candidates
+        # Spectrum path candidates - start with exact matches
         spectrum_candidates = [
             f"fft/{dset}_z-1_m1/spectrum",
             f"fft/{dset}_z0_m1/spectrum",
@@ -158,11 +158,31 @@ class ModeDataLoader:
         ]
         
         spectrum_path = None
+        
+        # First try exact matches
         for path in spectrum_candidates:
             if path in self.zarr_file:
                 spectrum_path = path
                 log.debug(f"Found spectrum at: {path}")
                 break
+        
+        # If not found and we have slice_info, search for paths with slice hash
+        if spectrum_path is None and self.context.slice_info is not None:
+            try:
+                # Scan fft/ directory for any paths matching dataset with slice hash
+                # Pattern: fft/{dset}_z{z}_m{m}_s{hash}/spectrum
+                fft_keys = [k for k in self.zarr_file.keys() if k.startswith('fft/')]
+                
+                for key in fft_keys:
+                    # Check if key starts with our dataset and ends with /spectrum
+                    if key.startswith(f'fft/{dset}_z') and key.endswith('/spectrum'):
+                        # Check if it contains slice hash marker '_s'
+                        if '_s' in key:
+                            spectrum_path = key
+                            log.info(f"Found sliced spectrum at: {spectrum_path}")
+                            break
+            except Exception as e:
+                log.debug(f"Error scanning for sliced spectrum paths: {e}")
         
         return modes_path, freqs_path, spectrum_path
     
@@ -222,6 +242,16 @@ class ModeDataLoader:
                         frequencies = freqs_candidate
                         log.debug(f"Using FFT frequencies from {path}")
                         break
+            
+            # If still not found and spectrum_path contains slice hash, 
+            # try frequencies from same directory
+            if frequencies is None and spectrum_path and '_s' in spectrum_path:
+                freq_path_from_spectrum = spectrum_path.replace('/spectrum', '/frequencies')
+                if freq_path_from_spectrum in self.zarr_file:
+                    freqs_candidate = np.array(self.zarr_file[freq_path_from_spectrum])
+                    if len(freqs_candidate) == spec_len:
+                        frequencies = freqs_candidate
+                        log.debug(f"Using frequencies from sliced FFT: {freq_path_from_spectrum}")
         
         # Option 3: Generate synthetic frequencies if nothing matches
         if frequencies is None:

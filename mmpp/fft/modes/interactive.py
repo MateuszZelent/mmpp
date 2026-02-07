@@ -524,6 +524,18 @@ class InteractiveSpectrum:
         self._internal_update = False
         self._presets_dir: Optional[Path] = None
         self._is_saving_animation = False
+        
+        # Layout configuration
+        self._mode_aspect: str = "equal"
+        self._xlim: Optional[Tuple[float, float]] = None
+        self._ylim: Optional[Tuple[float, float]] = None
+        self._layout_mode: str = "vertical"  # "vertical" or "horizontal"
+        
+        # Animation state (matching dispersion module pattern)
+        self._animation: Any = None
+        self._is_animating: bool = False
+        self._geometry_contour: Optional[np.ndarray] = None  # For overlay on mode plots
+        self._mode_type: str = "combined"  # real, imag, abs, phase, combined, ampl_phase
 
     # ---------------------------------------------------------------------
     # Public API
@@ -552,6 +564,11 @@ class InteractiveSpectrum:
         peak_distance: int = 5,
         mode_view: str = "all",
         show: bool = True,
+        # New layout parameters
+        aspect: str = "equal",
+        xlim: Optional[Tuple[float, float]] = None,
+        ylim: Optional[Tuple[float, float]] = None,
+        layout: str = "vertical",
         **_ignored: Any,
     ) -> Any:
         """Create interactive spectrum with mode visualization.
@@ -569,6 +586,12 @@ class InteractiveSpectrum:
             components,
             available=self._available_components or COMPONENT_NAMES,
         )
+        
+        # Store layout configuration
+        self._mode_aspect = str(aspect)
+        self._xlim = tuple(xlim) if xlim else None
+        self._ylim = tuple(ylim) if ylim else None
+        self._layout_mode = str(layout)
 
         data_fmin = float(np.nanmin(self._raw_frequencies_ghz))
         data_fmax = float(np.nanmax(self._raw_frequencies_ghz))
@@ -605,12 +628,14 @@ class InteractiveSpectrum:
             self._render_figure()
             if show:
                 display(self._widget_root)
+                return None  # Avoid double display in Jupyter (display + auto-return)
             return self._widget_root
 
         self._toolbar_enabled = False
         self._render_figure()
         if show:
             plt.show()
+            return None  # Avoid double display in Jupyter (plt.show + auto-return)
         return self._fig
 
     # ---------------------------------------------------------------------
@@ -1181,27 +1206,54 @@ class InteractiveSpectrum:
             layout=widgets.Layout(width="100%"),
             style={"description_width": "55px"},
         )
+        controls["aspect"] = widgets.Dropdown(
+            options=["equal", "auto", "0.5", "1.0", "2.0"],
+            value=self._mode_aspect if self._mode_aspect in ["equal", "auto"] else "equal",
+            description="aspect:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
+        controls["layout"] = widgets.Dropdown(
+            options=["vertical", "horizontal"],
+            value=self._layout_mode,
+            description="layout:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
+        )
 
         controls["freq_index"] = widgets.IntSlider(
             value=max(self._closest_freq_index(self._current_frequency_ghz), 0),
             min=0,
             max=max(int(self._filtered_frequencies_ghz.size) - 1, 0),
             step=1,
-            description="frame:",
+            description="freq:",
             layout=widgets.Layout(width="100%"),
             style={"description_width": "55px"},
             continuous_update=False,
         )
-        controls["play"] = widgets.Play(
-            value=controls["freq_index"].value,
-            min=controls["freq_index"].min,
-            max=controls["freq_index"].max,
+        # Phase animation slider (0-359 degrees / frames)
+        n_anim_frames = 60  # Default frame count for phase animation
+        controls["phase_index"] = widgets.IntSlider(
+            value=0,
+            min=0,
+            max=n_anim_frames - 1,
             step=1,
-            interval=80,
-            description="sweep",
+            description="φ:",
+            layout=widgets.Layout(width="100%"),
+            style={"description_width": "30px"},
+            continuous_update=True,
+        )
+        controls["play"] = widgets.Play(
+            value=0,
+            min=0,
+            max=n_anim_frames - 1,
+            step=1,
+            interval=42,  # ~24 fps
+            description="phase",
             disabled=False,
         )
-        widgets.jslink((controls["play"], "value"), (controls["freq_index"], "value"))
+        # Link Play to phase_index (NOT freq_index!)
+        widgets.jslink((controls["play"], "value"), (controls["phase_index"], "value"))
         controls["anim_frames"] = widgets.IntSlider(
             value=180,
             min=20,
@@ -1230,9 +1282,27 @@ class InteractiveSpectrum:
             style={"description_width": "55px"},
         )
         controls["save_animation"] = widgets.Button(
-            description="Save sweep",
+            description="💾 Save Mode",
             button_style="warning",
+            layout=widgets.Layout(width="49%"),
+        )
+        controls["animate"] = widgets.Button(
+            description="🎬 Animate",
+            button_style="warning",
+            layout=widgets.Layout(width="49%"),
+        )
+        controls["mode_type"] = widgets.Dropdown(
+            options=[
+                ("Real (oscillating)", "real"),
+                ("Imaginary", "imag"),
+                ("Amplitude |M|", "abs"),
+                ("Phase φ", "phase"),
+                ("Combined Re[M]", "combined"),
+            ],
+            value="combined",
+            description="viz:",
             layout=widgets.Layout(width="100%"),
+            style={"description_width": "55px"},
         )
 
         controls["refresh"] = widgets.Button(
@@ -1304,6 +1374,9 @@ class InteractiveSpectrum:
         controls["refresh"].on_click(self._on_refresh_clicked)
         controls["reset"].on_click(self._on_reset_clicked)
         controls["save_animation"].on_click(self._on_save_animation_clicked)
+        controls["animate"].on_click(self._on_animate_clicked)
+        controls["mode_type"].observe(self._on_mode_type_changed, names="value")
+        controls["phase_index"].observe(self._on_phase_index_changed, names="value")
         controls["preset_save"].on_click(self._on_save_preset_clicked)
         controls["preset_delete"].on_click(self._on_delete_preset_clicked)
         controls["preset_select"].observe(self._on_load_preset_changed, names="value")
@@ -1327,6 +1400,8 @@ class InteractiveSpectrum:
                         controls["components"],
                         controls["z_layer"],
                         controls["mode_view"],
+                        controls["aspect"],
+                        controls["layout"],
                         controls["cmap_mag"],
                         controls["cmap_phase"],
                         controls["cmap_combined"],
@@ -1356,11 +1431,13 @@ class InteractiveSpectrum:
                 ),
                 widgets.VBox(
                     [
-                        widgets.HBox([controls["play"], controls["freq_index"]]),
+                        controls["freq_index"],  # Frequency selection (separate)
+                        widgets.HBox([controls["play"], controls["phase_index"]]),  # Phase animation
+                        controls["mode_type"],
                         controls["anim_frames"],
                         controls["anim_fps"],
                         controls["anim_format"],
-                        controls["save_animation"],
+                        widgets.HBox([controls["save_animation"], controls["animate"]]),
                     ]
                 ),
             ],
@@ -1475,11 +1552,16 @@ class InteractiveSpectrum:
         self._on_refresh_clicked(_btn)
 
     def _on_save_animation_clicked(self, _btn: Any) -> None:
-        """Save frequency sweep animation of the current interactive view."""
+        """Save phase oscillation animation of the FMR mode at selected frequency.
+        
+        Animates mode through one full period (0-360° phase) at the currently
+        selected frequency, similar to dispersion module animation.
+        Uses: mode * exp(-i*omega*t) for time evolution.
+        """
         if self._is_saving_animation:
             return
-        if self._fig is None or self._filtered_frequencies_ghz.size == 0:
-            self._set_status("No data to animate", color="crimson")
+        if self._fig is None or self._current_frequency_ghz is None:
+            self._set_status("No mode selected to animate", color="crimson")
             return
         if "save_animation" not in self._controls:
             return
@@ -1494,55 +1576,137 @@ class InteractiveSpectrum:
             self._set_status(f"Animation backend unavailable: {exc}", color="crimson")
             return
 
-        frame_count = max(2, int(self._controls["anim_frames"].value))
+        n_frames = max(2, int(self._controls["anim_frames"].value))
         fps = max(1, int(self._controls["anim_fps"].value))
         fmt = str(self._controls["anim_format"].value).lower()
 
-        max_idx = int(self._filtered_frequencies_ghz.size) - 1
-        if max_idx <= 0:
-            self._set_status("Need at least two frequency points for sweep", color="crimson")
-            return
-
-        # Sample evenly over available frequency points.
-        frame_count = min(frame_count, max_idx + 1)
-        frame_indices = np.linspace(0, max_idx, frame_count, dtype=int)
-
-        old_frequency = self._current_frequency_ghz
         button = self._controls["save_animation"]
         old_desc = button.description
 
         self._is_saving_animation = True
         button.disabled = True
-        button.description = "Saving..."
-        self._set_status("Saving animation...", color="#0F766E")
+        button.description = "Loading mode..."
+        self._set_status("Loading mode data...", color="#0F766E")
 
         try:
-            def _update(frame_number: int) -> list[Any]:
-                idx = int(frame_indices[frame_number])
-                self._current_frequency_ghz = float(self._filtered_frequencies_ghz[idx])
-                self._internal_update = True
-                try:
-                    if "freq_index" in self._controls:
-                        self._controls["freq_index"].value = idx
-                    if "play" in self._controls:
-                        self._controls["play"].value = idx
-                finally:
-                    self._internal_update = False
+            # ============================================================
+            # LOAD COMPLEX MODE AT SELECTED FREQUENCY
+            # ============================================================
+            freq_ghz = self._current_frequency_ghz
+            mode_array, actual_freq, extent = self._load_mode(freq_ghz, self._current_z_layer)
+            
+            # mode_array is (ny, nx, n_components) complex
+            # actual_freq is in GHz
+            freq_hz = actual_freq * 1e9  # Convert to Hz
+            omega = 2 * np.pi * freq_hz  # Angular frequency
+            period_s = 1.0 / freq_hz  # One full oscillation period
+            
+            # Time array for one complete cycle (0 to 2π phase)
+            time_array = np.linspace(0, period_s, n_frames, endpoint=False)
+            
+            button.description = "Pre-computing..."
+            self._set_status(f"Pre-computing {n_frames} frames...", color="#0F766E")
+            
+            # ============================================================
+            # PRE-COMPUTE ALL FRAMES (mode * exp(-i*omega*t))
+            # ============================================================
+            precomputed_frames = []
+            for i, t in enumerate(time_array):
+                # Phase evolution: multiply by exp(-i*omega*t)
+                phase_factor = np.exp(-1j * omega * t)
+                mode_at_t = mode_array * phase_factor  # Still complex
+                precomputed_frames.append(mode_at_t)
+                
+                if i % max(1, n_frames // 10) == 0:
+                    button.description = f"Frame {i+1}/{n_frames}"
+            
+            button.description = "Rendering..."
+            self._set_status("Rendering animation...", color="#0F766E")
+            
+            # ============================================================
+            # SETUP FIGURE FOR ANIMATION (get image references)
+            # ============================================================
+            mode_images = []
+            mode_titles = []
+            
+            if self._mode_axes is not None:
+                for row_idx, row_type in enumerate(self._mode_row_types):
+                    row_images = []
+                    row_titles = []
+                    for col_idx in range(self._mode_axes.shape[1]):
+                        ax = self._mode_axes[row_idx, col_idx]
+                        # Find the imshow AxesImage
+                        for child in ax.get_children():
+                            from matplotlib.image import AxesImage
+                            if isinstance(child, AxesImage):
+                                row_images.append(child)
+                                break
+                        else:
+                            row_images.append(None)
+                        row_titles.append(ax.title)
+                    mode_images.append(row_images)
+                    mode_titles.append(row_titles)
+            
+            # ============================================================
+            # ANIMATION UPDATE FUNCTION
+            # ============================================================
+            def _update_frame(frame_idx: int) -> list[Any]:
+                mode_at_t = precomputed_frames[frame_idx]
+                t = time_array[frame_idx]
+                phase_deg = (t / period_s) * 360  # Phase in degrees
+                
+                artists = []
+                
+                for row_idx, row_type in enumerate(self._mode_row_types):
+                    for col_idx, comp in enumerate(self._current_components):
+                        if row_idx >= len(mode_images) or col_idx >= len(mode_images[row_idx]):
+                            continue
+                        img = mode_images[row_idx][col_idx]
+                        if img is None:
+                            continue
+                        
+                        comp_idx = _COMPONENT_INDEX.get(comp, 0)
+                        if comp_idx >= mode_at_t.shape[2]:
+                            continue
+                        
+                        comp_data = mode_at_t[:, :, comp_idx]
+                        
+                        # Select visualization based on row type
+                        if row_type == "magnitude":
+                            # Magnitude is constant over time (envelope)
+                            plot_data = np.abs(comp_data)
+                        elif row_type == "phase":
+                            # Phase evolves linearly with time
+                            plot_data = np.angle(comp_data)
+                        else:  # combined - this shows the oscillation!
+                            # Real part shows the actual oscillating magnetization
+                            plot_data = np.real(comp_data)
+                        
+                        img.set_data(plot_data)
+                        artists.append(img)
+                        
+                        # Update title with phase info
+                        if row_idx == 0 and row_idx < len(mode_titles):
+                            title_obj = mode_titles[row_idx][col_idx]
+                            title_obj.set_text(f"m_{comp} @ {actual_freq:.3f} GHz (φ={phase_deg:.0f}°)")
+                            artists.append(title_obj)
+                
+                return artists
 
-                self._update_frequency_selection(redraw_canvas=False)
-                return []
-
+            # ============================================================
+            # CREATE ANIMATION WITH BLIT=TRUE
+            # ============================================================
             animation = FuncAnimation(
                 self._fig,
-                _update,
-                frames=len(frame_indices),
+                _update_frame,
+                frames=n_frames,
                 interval=1000.0 / float(fps),
-                blit=False,
+                blit=True,
                 repeat=False,
             )
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = Path.cwd() / f"fmr_sweep_{timestamp}.{fmt}"
+            output_path = Path.cwd() / f"fmr_mode_{actual_freq:.2f}GHz_{timestamp}.{fmt}"
 
             if fmt == "mp4":
                 if FFMpegWriter is None:
@@ -1554,27 +1718,308 @@ class InteractiveSpectrum:
             animation.save(str(output_path), writer=writer, dpi=self.dpi)
             size_mb = output_path.stat().st_size / (1024 * 1024)
             self._set_status(
-                f"Saved animation: {output_path.name} ({size_mb:.1f} MB)",
+                f"Saved: {output_path.name} ({size_mb:.1f} MB)",
                 color="seagreen",
             )
         except Exception as exc:
-            self._set_status(f"Animation save failed: {exc}", color="crimson")
+            import traceback
+            traceback.print_exc()
+            self._set_status(f"Animation failed: {exc}", color="crimson")
         finally:
-            self._current_frequency_ghz = old_frequency
-            self._internal_update = True
-            try:
-                idx = self._closest_freq_index(old_frequency)
-                if "freq_index" in self._controls:
-                    self._controls["freq_index"].value = idx
-                if "play" in self._controls:
-                    self._controls["play"].value = idx
-            finally:
-                self._internal_update = False
-
-            self._update_frequency_selection(redraw_canvas=True)
             button.disabled = False
             button.description = old_desc
             self._is_saving_animation = False
+
+    def _on_animate_clicked(self, _btn: Any) -> None:
+        """Toggle live animation of the selected mode (phase oscillation).
+        
+        Matches dispersion module's _on_animate() pattern.
+        """
+        if self._fig is None or self._current_frequency_ghz is None:
+            self._set_status("No mode selected to animate", color="crimson")
+            return
+        
+        # Toggle animation on/off
+        if self._is_animating:
+            self._stop_animation()
+            if "animate" in self._controls:
+                self._controls["animate"].description = "🎬 Animate"
+                self._controls["animate"].button_style = "warning"
+            self._set_status("Animation stopped", color="seagreen")
+            # Restore static view
+            self._update_mode_plots()
+            return
+        
+        try:
+            from matplotlib.animation import FuncAnimation
+            
+            # Get parameters
+            freq_ghz = self._current_frequency_ghz
+            mode_array, actual_freq, extent = self._load_mode(freq_ghz, self._current_z_layer)
+            
+            freq_hz = actual_freq * 1e9
+            omega = 2 * np.pi * freq_hz
+            period_s = 1.0 / freq_hz
+            
+            n_frames = int(self._controls.get("anim_frames", {}).value if hasattr(self._controls.get("anim_frames"), "value") else 60)
+            fps = int(self._controls.get("anim_fps", {}).value if hasattr(self._controls.get("anim_fps"), "value") else 24)
+            
+            # Time array for one complete cycle
+            time_array = np.linspace(0, period_s, n_frames, endpoint=False)
+            
+            # Pre-compute all frames
+            precomputed_frames = []
+            for t in time_array:
+                phase_factor = np.exp(-1j * omega * t)
+                mode_at_t = mode_array * phase_factor
+                precomputed_frames.append(mode_at_t)
+            
+            # Get image references from mode axes
+            mode_images = []
+            mode_titles = []
+            
+            if self._mode_axes is not None:
+                for row_idx, row_type in enumerate(self._mode_row_types):
+                    row_images = []
+                    row_titles = []
+                    for col_idx in range(self._mode_axes.shape[1]):
+                        ax = self._mode_axes[row_idx, col_idx]
+                        for child in ax.get_children():
+                            from matplotlib.image import AxesImage
+                            if isinstance(child, AxesImage):
+                                row_images.append(child)
+                                break
+                        else:
+                            row_images.append(None)
+                        row_titles.append(ax.title)
+                    mode_images.append(row_images)
+                    mode_titles.append(row_titles)
+            
+            # Get selected mode type
+            mode_type = self._mode_type
+            
+            def _update_frame(frame_idx: int) -> list[Any]:
+                mode_at_t = precomputed_frames[frame_idx]
+                t = time_array[frame_idx]
+                phase_deg = (t / period_s) * 360
+                t_ns = t * 1e9
+                
+                artists = []
+                
+                for row_idx, row_type in enumerate(self._mode_row_types):
+                    for col_idx, comp in enumerate(self._current_components):
+                        if row_idx >= len(mode_images) or col_idx >= len(mode_images[row_idx]):
+                            continue
+                        img = mode_images[row_idx][col_idx]
+                        if img is None:
+                            continue
+                        
+                        comp_idx = _COMPONENT_INDEX.get(comp, 0)
+                        if comp_idx >= mode_at_t.shape[2]:
+                            continue
+                        
+                        comp_data = mode_at_t[:, :, comp_idx]
+                        
+                        # Use mode type for first row, row_type for others
+                        viz_type = mode_type if row_idx == 0 else row_type
+                        
+                        if viz_type in ["magnitude", "abs"]:
+                            plot_data = np.abs(comp_data)
+                        elif viz_type == "phase":
+                            plot_data = np.angle(comp_data)
+                        elif viz_type == "real":
+                            plot_data = np.real(comp_data)
+                        elif viz_type == "imag":
+                            plot_data = np.imag(comp_data)
+                        else:  # combined
+                            plot_data = np.real(comp_data)
+                        
+                        img.set_data(plot_data)
+                        artists.append(img)
+                        
+                        if row_idx == 0 and row_idx < len(mode_titles):
+                            title_obj = mode_titles[row_idx][col_idx]
+                            title_obj.set_text(f"m_{comp} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°")
+                            artists.append(title_obj)
+                
+                return artists
+            
+            # Create animation
+            self._animation = FuncAnimation(
+                self._fig,
+                _update_frame,
+                frames=n_frames,
+                interval=1000.0 / float(fps),
+                blit=True,
+                repeat=True,  # Loop continuously for live preview
+            )
+            
+            self._is_animating = True
+            if "animate" in self._controls:
+                self._controls["animate"].description = "⏸️ Stop"
+                self._controls["animate"].button_style = "danger"
+            
+            self._set_status(
+                f"Animating: {n_frames} frames, T={period_s*1e9:.2f}ns (1 period)",
+                color="seagreen",
+            )
+            
+            # Redraw
+            self._fig.canvas.draw_idle()
+            
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self._set_status(f"Animation error: {exc}", color="crimson")
+            self._is_animating = False
+            if "animate" in self._controls:
+                self._controls["animate"].description = "🎬 Animate"
+                self._controls["animate"].button_style = "warning"
+    
+    def _stop_animation(self) -> None:
+        """Stop any running animation."""
+        if self._animation is not None:
+            try:
+                self._animation.event_source.stop()
+            except Exception:
+                pass
+            self._animation = None
+        self._is_animating = False
+    
+    def _on_mode_type_changed(self, change: Any) -> None:
+        """Handle mode visualization type change."""
+        if self._internal_update:
+            return
+        new_type = change.get("new", "combined")
+        self._mode_type = new_type
+        
+        # If animating, restart with new mode type
+        if self._is_animating:
+            self._stop_animation()
+            self._on_animate_clicked(None)
+        else:
+            # Update static view
+            self._update_mode_plots()
+
+    def _on_phase_index_changed(self, change: Any) -> None:
+        """Handle phase index slider change - animate FMR mode through phase.
+        
+        This is the core of phase animation: multiplies mode by exp(-i*omega*t).
+        Includes zoom preservation and stable colorbar limits.
+        """
+        if self._internal_update:
+            return
+        if self._fig is None or self._current_frequency_ghz is None:
+            return
+        if self._mode_axes is None:
+            return
+        
+        phase_idx = change.get("new", 0)
+        n_frames = 60  # Matches the phase_index slider max
+        
+        # Calculate phase for this frame (0 to 2π)
+        phase_rad = (phase_idx / n_frames) * 2 * np.pi
+        phase_deg = (phase_idx / n_frames) * 360
+        
+        try:
+            # Load current mode (complex)
+            mode_array, actual_freq, extent = self._load_mode(
+                self._current_frequency_ghz, 
+                self._current_z_layer
+            )
+            
+            # Pre-compute fixed vmin/vmax from amplitude (prevents flickering)
+            # Same for all frames since amplitude is constant
+            max_amplitude = float(np.nanmax(np.abs(mode_array)))
+            if max_amplitude <= 0:
+                max_amplitude = 1.0
+            
+            # Apply phase evolution: mode * exp(-i * phase)
+            phase_factor = np.exp(-1j * phase_rad)
+            mode_at_phase = mode_array * phase_factor
+            
+            # Get mode type
+            mode_type = self._mode_type
+            
+            print(f"DEBUG: Starting loop with row_types={self._mode_row_types}, components={self._current_components}")
+            print(f"DEBUG: mode_axes shape = {self._mode_axes.shape if hasattr(self._mode_axes, 'shape') else 'no shape'}")
+            print(f"DEBUG: mode_at_phase shape = {mode_at_phase.shape}")
+            
+            # Update each subplot
+            for row_idx, row_type in enumerate(self._mode_row_types):
+                for col_idx, comp in enumerate(self._current_components):
+                    print(f"DEBUG: Processing row={row_idx}, col={col_idx}, row_type={row_type}, comp={comp}")
+                    if row_idx >= self._mode_axes.shape[0] or col_idx >= self._mode_axes.shape[1]:
+                        print(f"  → Skipped: out of bounds")
+                        continue
+                    
+                    ax = self._mode_axes[row_idx, col_idx]
+                    
+                    # ZOOM PRESERVATION: Save current view limits before update
+                    xlim_saved = ax.get_xlim()
+                    ylim_saved = ax.get_ylim()
+                    
+                    # Find the AxesImage
+                    img = None
+                    for child in ax.get_children():
+                        from matplotlib.image import AxesImage
+                        if isinstance(child, AxesImage):
+                            img = child
+                            break
+                    
+                    if img is None:
+                        print(f"  → Skipped: no AxesImage found in ax")
+                        continue
+                    
+                    comp_idx = _COMPONENT_INDEX.get(comp, 0)
+                    if comp_idx >= mode_at_phase.shape[2]:
+                        print(f"  → Skipped: comp_idx={comp_idx} >= shape[2]={mode_at_phase.shape[2]}")
+                        continue
+                    
+                    comp_data = mode_at_phase[:, :, comp_idx]
+                    comp_amplitude = float(np.nanmax(np.abs(comp_data)))
+                    if comp_amplitude <= 0:
+                        comp_amplitude = 1.0
+                    
+                    # Use mode_type for visualization + FIXED CLIM
+                    if row_type == "magnitude" or mode_type == "abs":
+                        plot_data = np.abs(comp_data)
+                        # Amplitude is constant, use fixed range
+                        img.set_clim(0, comp_amplitude)
+                    elif row_type == "phase":
+                        plot_data = np.angle(comp_data)
+                        # Phase is always -π to π
+                        img.set_clim(-np.pi, np.pi)
+                    elif mode_type == "real" or row_type == "combined":
+                        plot_data = np.real(comp_data)
+                        # Symmetric range based on amplitude
+                        img.set_clim(-comp_amplitude, comp_amplitude)
+                    elif mode_type == "imag":
+                        plot_data = np.imag(comp_data)
+                        img.set_clim(-comp_amplitude, comp_amplitude)
+                    else:
+                        plot_data = np.real(comp_data)
+                        img.set_clim(-comp_amplitude, comp_amplitude)
+                    
+                    img.set_data(plot_data)
+                    
+                    # ZOOM PRESERVATION: Restore view limits
+                    ax.set_xlim(xlim_saved)
+                    ax.set_ylim(ylim_saved)
+                    
+                    # Update title with phase info
+                    if row_idx == 0:
+                        freq_hz = actual_freq * 1e9
+                        t_ns = (phase_idx / n_frames) * (1.0 / freq_hz) * 1e9
+                        ax.set_title(f"m_{comp} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°", fontsize=10)
+            
+            # Redraw
+            if self._fig is not None:
+                self._fig.canvas.draw_idle()
+                
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
 
     def _read_controls(self) -> None:
         """Read widget values into internal state."""
@@ -1612,6 +2057,12 @@ class InteractiveSpectrum:
         self._peak_prominence = float(self._controls["peak_prom"].value)
         self._peak_distance = int(self._controls["peak_dist"].value)
         self._mode_row_types = self._resolve_mode_rows(str(self._controls["mode_view"].value))
+        
+        # Layout controls
+        if "aspect" in self._controls:
+            self._mode_aspect = str(self._controls["aspect"].value)
+        if "layout" in self._controls:
+            self._layout_mode = str(self._controls["layout"].value)
 
     def _refresh_freq_slider_bounds(self) -> None:
         if not self._controls:
@@ -1655,6 +2106,8 @@ class InteractiveSpectrum:
                 self._create_figure(n_rows=n_rows, n_components=n_components)
                 self._draw_spectrum()
                 self._update_mode_plots()
+                # Show figure in widget output (this doesn't cause double display
+                # because output is captured by the widget, not returned to Jupyter)
                 plt.show()
         else:
             self._create_figure(n_rows=n_rows, n_components=n_components)
@@ -1662,30 +2115,67 @@ class InteractiveSpectrum:
             self._update_mode_plots()
 
     def _create_figure(self, n_rows: int, n_components: int) -> None:
-        """Create matplotlib figure and axes layout."""
+        """Create matplotlib figure and axes layout.
+        
+        Supports two layout modes:
+        - "vertical": spectrum on top (row 0), modes below in 1-3 columns
+        - "horizontal": spectrum on left, modes on right (original layout)
+        """
         self._cleanup_figure_connections()
+        
+        # Disable interactive mode during figure creation to prevent
+        # duplicate display (matches dispersion module pattern)
+        plt.ioff()
+        
+        try:
+            if self._layout_mode == "vertical":
+                # Vertical layout: spectrum takes first row, modes below
+                total_rows = 1 + n_rows  # 1 for spectrum + n_rows for modes
+                self._fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=False)
+                gs = GridSpec(
+                    total_rows,
+                    n_components,
+                    figure=self._fig,
+                    height_ratios=[1.2] + [1.0] * n_rows,
+                )
+                
+                # Spectrum spans full top row
+                self._ax_spectrum = self._fig.add_subplot(gs[0, :])
+                
+                # Mode axes in rows 1+ (each row is magnitude/phase/combined)
+                axes = []
+                for row in range(n_rows):
+                    row_axes = []
+                    for col in range(n_components):
+                        row_axes.append(self._fig.add_subplot(gs[row + 1, col]))
+                    axes.append(row_axes)
+                self._mode_axes = np.asarray(axes, dtype=object)
+            else:
+                # Horizontal layout (original): spectrum on left, modes on right
+                self._fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=False)
+                gs = GridSpec(
+                    n_rows,
+                    n_components + 1,
+                    figure=self._fig,
+                    width_ratios=[1.6] + [1.0] * n_components,
+                )
 
-        self._fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=False)
-        gs = GridSpec(
-            n_rows,
-            n_components + 1,
-            figure=self._fig,
-            width_ratios=[1.6] + [1.0] * n_components,
-        )
+                self._ax_spectrum = self._fig.add_subplot(gs[:, 0])
 
-        self._ax_spectrum = self._fig.add_subplot(gs[:, 0])
+                axes = []
+                for row in range(n_rows):
+                    row_axes = []
+                    for col in range(n_components):
+                        row_axes.append(self._fig.add_subplot(gs[row, col + 1]))
+                    axes.append(row_axes)
+                self._mode_axes = np.asarray(axes, dtype=object)
 
-        axes = []
-        for row in range(n_rows):
-            row_axes = []
-            for col in range(n_components):
-                row_axes.append(self._fig.add_subplot(gs[row, col + 1]))
-            axes.append(row_axes)
-        self._mode_axes = np.asarray(axes, dtype=object)
-
-        # Reconnect click handler.
-        if self._fig is not None:
-            self._fig.canvas.mpl_connect("button_press_event", self._on_click)
+            # Reconnect click handler.
+            if self._fig is not None:
+                self._fig.canvas.mpl_connect("button_press_event", self._on_click)
+        finally:
+            # Always re-enable interactive mode after figure creation
+            plt.ion()
 
     def _draw_spectrum(self) -> None:
         """Draw filtered spectrum traces and peak markers."""
@@ -1884,12 +2374,18 @@ class InteractiveSpectrum:
                     plot_data,
                     origin="lower",
                     extent=extent,
-                    aspect="equal",
+                    aspect=self._mode_aspect,
                     cmap=cmap_name,
                     interpolation="nearest",
                     vmin=vmin,
                     vmax=vmax,
                 )
+                
+                # Apply xlim/ylim if specified (crop large structures)
+                if self._xlim:
+                    ax.set_xlim(*self._xlim)
+                if self._ylim:
+                    ax.set_ylim(*self._ylim)
 
                 if row_images[row_idx] is None:
                     row_images[row_idx] = img
@@ -1898,8 +2394,32 @@ class InteractiveSpectrum:
                     ax.set_title(f"m_{comp} @ {actual_freq:.3f} GHz", fontsize=10)
                 if col_idx == 0:
                     ax.set_ylabel(row_title, fontsize=9)
-                ax.set_xticks([])
-                ax.set_yticks([])
+                
+                # Add axis labels with units (matching dispersion style)
+                # Only show x-axis label on bottom row
+                if row_idx == len(self._mode_row_types) - 1:
+                    ax.set_xlabel("x [μm]", fontsize=9)
+                else:
+                    ax.set_xlabel("")
+                
+                # Y-axis label only on first column (already set as row_title above)
+                # Enable tick labels with proper formatting
+                ax.tick_params(labelsize=8)
+                ax.grid(True, alpha=0.2, linestyle=":")
+                
+                # Add geometry contour overlay if available (matching dispersion pattern)
+                if self._geometry_contour is not None:
+                    try:
+                        geom = self._geometry_contour
+                        # Create coordinate arrays that match the extent
+                        geom_y = np.linspace(extent[2], extent[3], geom.shape[0])
+                        geom_x = np.linspace(extent[0], extent[1], geom.shape[1])
+                        # White contour for visibility on dark backgrounds
+                        ax.contour(geom_x, geom_y, geom, levels=[0.5], colors=['white'], linewidths=[1.5])
+                        # Black outline for visibility on light backgrounds
+                        ax.contour(geom_x, geom_y, geom, levels=[0.5], colors=['black'], linewidths=[0.5])
+                    except Exception:
+                        pass  # Skip if contour fails
 
         for row_idx, img in enumerate(row_images):
             if img is None:
@@ -1920,7 +2440,16 @@ class InteractiveSpectrum:
                 f"FMR modes at {self._current_frequency_ghz:.3f} GHz (z={self._current_z_layer})",
                 fontsize=12,
             )
-            self._fig.tight_layout()
+            # Use tight_layout with rect to avoid suptitle overlap
+            # Suppress warning for complex GridSpec layouts
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*not compatible with tight_layout.*")
+                try:
+                    self._fig.tight_layout(rect=[0, 0, 1, 0.97])
+                except Exception:
+                    pass  # Fallback: skip tight_layout if it fails
+            
             self._fig.canvas.draw_idle()
 
         self._update_status_text()
@@ -2098,5 +2627,10 @@ def plot(
     if len(traces) > 1:
         ax.legend(loc="upper right")
 
-    fig.tight_layout()
+    # Apply tight_layout with error handling
+    try:
+        fig.tight_layout()
+    except Exception:
+        pass  # Skip if layout adjustment fails
+    
     return fig

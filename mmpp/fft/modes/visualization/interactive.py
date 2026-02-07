@@ -1065,12 +1065,12 @@ Interactive Spectrum Controls:
 
     log.info(log_message)
 
-    # Control figure display to avoid double showing
-    # Control figure display
+    # Control figure display to avoid double showing in Jupyter
     if show:
         plt.show()
+        return None  # Return None to prevent Jupyter auto-display after plt.show()
     
-    # Return figure and axes for user customization
+    # Return figure and axes for user customization when show=False
     # Returns: (fig, ax_spectrum, mode_axes)
     return analyzer._interactive_fig, ax_spectrum, analyzer._mode_axes
 

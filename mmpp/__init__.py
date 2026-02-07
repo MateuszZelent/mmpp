@@ -8,6 +8,10 @@ __version__ = "0.5.3"
 __author__ = "Mateusz Zelent"
 __email__ = "mateusz.zelent@amu.edu.pl"
 
+# Import analytical module (no external dependencies required)
+from . import analytical
+
+
 # Import main classes with error handling for missing dependencies
 try:
     from .core import MMPP, ScanResult, ZarrJobResult
@@ -404,6 +408,7 @@ __all__ = [
     "check_fonts",  # Font diagnostic
     "install_ffmpeg",  # FFmpeg installation
     "check_dependencies",  # Dependency checker
+    "analytical",  # Analytical models module
 ]
 
 # Feature availability flags

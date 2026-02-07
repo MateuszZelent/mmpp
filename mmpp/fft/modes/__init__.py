@@ -432,12 +432,18 @@ class FMRModeAnalyzer:
 
     @property
     def modes_available(self) -> bool:
-        """Check if mode data is available."""
-        return (
-            self.modes_path is not None
-            and self.freqs_path is not None
-            and self.spectrum_path is not None
-        )
+        """Check if mode data is available.
+        
+        Modes are considered available if we have the complex mode array and frequencies.
+        The spectrum can be derived from modes power data (power_sum or power_max).
+        """
+        # Core requirement: modes and frequencies
+        if self.modes_path is None or self.freqs_path is None:
+            return False
+        
+        # Spectrum can come from multiple sources, not required for modes_available
+        # because we can compute it from modes/power_sum if needed
+        return True
 
     @property
     def last_fwhm(self) -> Optional[PeakWidth]:
@@ -969,6 +975,7 @@ class FMRModeAnalyzer:
         window: bool = True,
         save: bool = True,
         force: bool = False,
+        t_slice: slice = slice(None),
     ) -> None:
         """
         Compute FMR modes from magnetization data.
@@ -983,6 +990,8 @@ class FMRModeAnalyzer:
             Save results to zarr
         force : bool
             Force recomputation even if data exists
+        t_slice : slice
+            Time slice to process (default: all timesteps)
         """
         if not force and f"modes/{self.dataset_name}/arr" in self.zarr_file:
             log.info("Mode data already exists, use force=True to recompute")
@@ -1021,12 +1030,31 @@ class FMRModeAnalyzer:
 
         dset = self.zarr_file[self.dataset_name]
 
+        # Normalize time slice and determine number of selected samples.
+        total_samples = int(dset.shape[0])
+        if isinstance(t_slice, slice):
+            t_slice_norm = t_slice
+        else:
+            raise TypeError(
+                f"t_slice must be slice, got {type(t_slice).__name__}"
+            )
+
+        start, stop, step = t_slice_norm.indices(total_samples)
+        if step <= 0:
+            raise ValueError("t_slice step must be positive")
+        num_samples = len(range(start, stop, step))
+
         # Determine sampling interval dt
         dt: Optional[float] = None
         t_array: Optional[np.ndarray] = None
         try:
             raw_t = dset.attrs["t"][:]
-            t_array = np.asarray(raw_t, dtype=float)
+            t_full = np.asarray(raw_t, dtype=float)
+            if t_full.size == total_samples:
+                t_array = np.asarray(t_full[t_slice_norm], dtype=float)
+            else:
+                # Mismatched metadata length - fallback to full metadata array.
+                t_array = t_full
             if t_array.size > 1:
                 diffs = np.diff(t_array)
                 positive_diffs = diffs[diffs > 0]
@@ -1089,20 +1117,26 @@ class FMRModeAnalyzer:
             )
 
         if t_array is None:
-            num_samples = dset.shape[0]
             t_array = np.arange(num_samples, dtype=float) * dt
         else:
             num_samples = t_array.size
 
         # Calculate frequencies using number of time samples
         if num_samples < 2:
-            raise ValueError("Mode computation requires at least two time samples")
+            raise ValueError(
+                f"Mode computation requires at least two time samples, got {num_samples} for t_slice={t_slice_norm}"
+            )
 
         freqs = np.fft.rfftfreq(num_samples, dt) * 1e-9  # Convert to GHz
 
         # Load and process data
-        log.info(f"Loading magnetization data: {dset.shape}")
-        arr = np.asarray(dset[:, z_slice])
+        log.info(
+            "Loading magnetization data: full_shape=%s, t_slice=%s, z_slice=%s",
+            dset.shape,
+            t_slice_norm,
+            z_slice,
+        )
+        arr = np.asarray(dset[t_slice_norm, z_slice])
         log.info("Loading magnetization data finished")
 
         # Remove DC component
@@ -1197,6 +1231,7 @@ class FMRModeAnalyzer:
             modes_group.attrs["computed_at"] = str(datetime.now())
             modes_group.attrs["window_applied"] = window
             modes_group.attrs["z_slice"] = str(z_slice)
+            modes_group.attrs["t_slice"] = str(t_slice_norm)
             modes_group.attrs["dt"] = dt
 
             # zarr groups don't have close() method, just let it go out of scope

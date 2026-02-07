@@ -120,6 +120,20 @@ class DataAccessMixin:
                 spectrum_path = path
                 log.debug(f"Found spectrum at: {spectrum_path}")
                 break
+        
+        # If not found, try scanning for paths with slice hash (from sliced FFT calls)
+        # Pattern: fft/{dataset}_z{z}_m{m}_s{hash}/spectrum
+        if spectrum_path is None:
+            try:
+                fft_keys = [k for k in self.zarr_file.keys() if k.startswith('fft/')]
+                for key in fft_keys:
+                    if key.startswith(f'fft/{self.dataset_name}_z') and key.endswith('/spectrum'):
+                        if '_s' in key:  # Check for slice hash marker
+                            spectrum_path = key
+                            log.info(f"Found sliced spectrum at: {spectrum_path}")
+                            break
+            except Exception as e:
+                log.debug(f"Error scanning for sliced spectrum paths: {e}")
 
         return modes_path, freqs_path, spectrum_path
 

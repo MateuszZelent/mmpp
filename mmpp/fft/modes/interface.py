@@ -5,12 +5,19 @@ Provides FFTModeInterface for elegant job[0].fft.modes syntax.
 Integrates with DatasetAwareWrapper for slice propagation.
 """
 
+import copy
+import hashlib
+import json
+import math
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 import logging
 import numpy as np
 
 log = logging.getLogger("mmpp.fft.modes")
+
+# Cache schema version - bump when cached results are no longer compatible
+SPECTRUM_CACHE_SCHEMA_VERSION = 1
 
 # Lazy imports to avoid circular dependencies
 def _get_data_loader():
@@ -331,6 +338,14 @@ class FFTModeInterfaceNew:
         self._data_loader = None
         self._mode_analyzer = None
         self._interactive_filters: dict[str, Any] = {}
+        self._auto_compute_checked = False
+        
+        # Configuration (like dispersion module)
+        self._tmax: Optional[int] = None
+        self._filters_config: Optional[dict[str, Any]] = None
+        self._cache_dir: Optional[str] = None
+        self._memory_cache: dict[str, Any] = {}
+        self._last_result: Optional[Any] = None
     
     @property
     def zarr_path(self) -> str:
@@ -365,6 +380,143 @@ class FFTModeInterfaceNew:
         idx = self.component_index
         if idx is not None:
             return labels[idx]
+        return None
+    
+    @property
+    def last_result(self) -> Optional[Any]:
+        """Get the result from the most recent computation."""
+        return self._last_result
+    
+    def configure(
+        self,
+        *,
+        tmax: Optional[int] = None,
+        filters: Optional[dict[str, Any]] = None,
+        cache_dir: Optional[str] = None,
+    ) -> "FFTModeInterfaceNew":
+        """
+        Configure interface settings (fluent API).
+        
+        Returns a new interface instance with updated configuration.
+        
+        Parameters
+        ----------
+        tmax : int, optional
+            Maximum number of timesteps to use for FFT. 
+            None means use all available timesteps.
+        filters : dict, optional
+            Filter configuration dict with stage keys (pre/post/live)
+        cache_dir : str, optional
+            External cache directory for results
+            
+        Returns
+        -------
+        FFTModeInterfaceNew
+            Configured interface (for method chaining)
+            
+        Examples
+        --------
+        >>> job[0].fft.modes.configure(tmax=500).interactive_spectrum()
+        >>> job[0].fft.modes.configure(filters={"normalize": True}).spectrum()
+        """
+        # Clone to avoid mutating original
+        clone = self._clone()
+        
+        if tmax is not None:
+            clone._tmax = tmax
+        if filters is not None:
+            clone._filters_config = copy.deepcopy(filters)
+        if cache_dir is not None:
+            clone._cache_dir = cache_dir
+            
+        return clone
+    
+    def _clone(self) -> "FFTModeInterfaceNew":
+        """Create a shallow clone preserving configuration."""
+        clone = FFTModeInterfaceNew(self.fft_result_index, self.parent_fft)
+        clone._dataset_context = self._dataset_context
+        clone._slice_context = self._slice_context
+        clone._tmax = self._tmax
+        clone._filters_config = copy.deepcopy(self._filters_config) if self._filters_config else None
+        clone._cache_dir = self._cache_dir
+        clone._memory_cache = self._memory_cache  # Share memory cache
+        return clone
+    
+    def _determine_tmax(self, default: int = 100) -> Optional[int]:
+        """
+        Determine number of time steps to load (dispersion-style priority).
+        
+        Priority order:
+        1. Explicit slice from user (e.g., [:1000,...,2]) - ALWAYS respected
+        2. Configured tmax via .configure(tmax=X)
+        3. Default tmax=100 (only if no slice and no config)
+        
+        Returns
+        -------
+        int or None
+            Number of timesteps, or None to use ALL available timesteps
+        """
+        # Check if user provided explicit time slice
+        slice_length = self._infer_time_length_from_slice()
+        
+        if slice_length is not None:
+            log.debug("Using EXPLICIT time slice from user: %d timesteps", slice_length)
+            return slice_length
+        
+        # slice_length is None - could be:
+        # A) User used [:] (slice with no stop) → wants ALL timesteps → return None
+        # B) No slice at all → wants default optimization → use tmax
+        
+        if self._slice_context is not None:
+            # Case A: User DID provide a slice, but it's [:] (no stop)
+            log.debug("User provided [:] slice - using ALL available timesteps")
+            return None
+        
+        # Case B: No slice at all - use configured tmax or default
+        if self._tmax is not None:
+            log.debug("No user slice - using configured tmax: %d timesteps", self._tmax)
+            return int(self._tmax)
+        
+        log.debug("No slice or config - using default tmax: %d timesteps", default)
+        return default
+    
+    def _infer_time_length_from_slice(self) -> Optional[int]:
+        """
+        Infer desired time window length from dataset slice info.
+        
+        For 5D data (t,z,y,x,c): data[:1000,...,2] → returns 1000
+        
+        Returns
+        -------
+        Optional[int]
+            - None if no slice info, or slice is [:] (meaning "all timesteps")
+            - Positive int if explicit time range specified
+        """
+        if self._slice_context is None:
+            return None
+
+        candidate = self._slice_context
+        if isinstance(candidate, tuple) and candidate:
+            for item in candidate:
+                if item is Ellipsis:
+                    continue
+                candidate = item
+                break
+
+        if isinstance(candidate, slice):
+            start = 0 if candidate.start is None else candidate.start
+            stop = candidate.stop
+            
+            # If stop is None → [:] or [start:] → user wants ALL timesteps
+            if stop is None:
+                return None
+            
+            step = 1 if candidate.step is None else candidate.step
+            if step == 0:
+                return None
+            length = math.ceil((stop - start) / step)
+            return max(0, length)
+
         return None
     
     @property
@@ -420,6 +572,7 @@ class FFTModeInterfaceNew:
         clone._data_loader = self._data_loader
         clone._mode_analyzer = self._mode_analyzer
         clone._interactive_filters = dict(self._interactive_filters)
+        clone._auto_compute_checked = self._auto_compute_checked
         return clone
 
     def filters(
@@ -728,7 +881,58 @@ class FFTModeInterfaceNew:
                 zarr_path=self.zarr_path,
                 dataset_name=dataset,
             )
+        self._ensure_modes_ready()
         return self._mode_analyzer
+
+    def _ensure_modes_ready(self) -> None:
+        """Auto-bootstrap mode computation when mode datasets are missing."""
+        if self._mode_analyzer is None or self._auto_compute_checked:
+            return
+
+        self._auto_compute_checked = True
+        analyzer = self._mode_analyzer
+        if getattr(analyzer, "modes_available", False):
+            return
+        if not hasattr(analyzer, "compute_modes"):
+            # Lightweight/dummy analyzers may provide direct get_mode only.
+            return
+
+        dataset = self._dataset_context or self.dataset_name
+        t_slice = self._extract_time_slice_from_context()
+        log.info(
+            "No precomputed FMR modes for dataset '%s' at '%s'. Running compute_modes() automatically.",
+            dataset,
+            self.zarr_path,
+        )
+        if t_slice is not None:
+            log.info("Auto mode computation will use time slice: %s", t_slice)
+        try:
+            compute_kwargs: dict[str, Any] = {"save": True, "force": False}
+            if t_slice is not None:
+                compute_kwargs["t_slice"] = t_slice
+            analyzer.compute_modes(**compute_kwargs)
+            # Ensure analyzer refreshes its internal pointers if compute modified zarr.
+            if hasattr(analyzer, "_load_data"):
+                analyzer._load_data()
+            if not getattr(analyzer, "modes_available", False):
+                raise RuntimeError("Mode computation finished but modes are still unavailable")
+            log.info("Auto mode computation completed for dataset '%s'.", dataset)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Automatic mode computation failed for dataset '{dataset}'. "
+                "Run `job[0].fft.modes.compute_modes()` manually and retry."
+            ) from exc
+
+    def _extract_time_slice_from_context(self) -> Optional[slice]:
+        """Extract time slice from dataset wrapper context."""
+        if not isinstance(self._slice_context, tuple) or not self._slice_context:
+            return None
+
+        first = self._slice_context[0]
+        if isinstance(first, slice):
+            return first
+        # For scalar time selection there are not enough samples for FFT.
+        return None
 
     def _default_mode_frequency(self) -> float:
         """Resolve default mode frequency from peaks or maximum spectrum power."""
