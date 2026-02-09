@@ -123,6 +123,11 @@ def kalinikos(
     B. A. Kalinikos & A. N. Slavin, J. Phys. C 19, 7013 (1986).
     """
     k = np.atleast_1d(np.asarray(k, dtype=float))
+    B = float(B)
+    Ms = float(Ms)
+    d = float(d)
+    Aex = float(Aex)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     # Exchange length squared
@@ -220,6 +225,11 @@ def kalinikos_no_approx(
     B. A. Kalinikos & A. N. Slavin, J. Phys. C 19, 7013 (1986).
     """
     k = np.atleast_1d(np.asarray(k, dtype=float))
+    B = float(B)
+    Ms = float(Ms)
+    d = float(d)
+    Aex = float(Aex)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     if n == 0:
@@ -424,6 +434,10 @@ def forward_volume(
     >>> fv.plt.plot(title="Forward Volume Mode")
     """
     k = np.atleast_1d(np.asarray(k, dtype=float))
+    B = float(B)
+    Ms = float(Ms)
+    d = float(d)
+    Aex = float(Aex)
     gamma_val = gamma(g)
     
     P = _dipolar_factor_P(k, d)
@@ -491,6 +505,11 @@ def bottcher(
     T. Böttcher et al., IEEE Trans. Magn. 57, 9427561 (2021).
     """
     k = np.atleast_1d(np.asarray(k, dtype=float))
+    B = float(B)
+    Ms = float(Ms)
+    d = float(d)
+    Aex = float(Aex)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     # Form factor g(x) = 1 - (1 - exp(-|x|)) / |x|
@@ -590,6 +609,12 @@ def kim(
     J.-V. Kim et al., Phys. Rev. Lett. 117, 197204 (2016).
     """
     k = np.atleast_1d(np.asarray(k, dtype=float))
+    B = float(B)
+    Ms = float(Ms)
+    d = float(d)
+    Aex = float(Aex)
+    D = float(D)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     theta = phi  # Angle for consistency with paper convention
@@ -691,6 +716,12 @@ def cortes_ortuno(
     D. Cortés-Ortuño & P. Landeros, J. Phys.: Condens. Matter 25, 156001 (2013).
     """
     k = np.atleast_1d(np.asarray(k, dtype=float))
+    B = float(B)
+    Ms = float(Ms)
+    d = float(d)
+    Aex = float(Aex)
+    D = float(D)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     theta = phi

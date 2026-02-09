@@ -438,6 +438,101 @@ class BatchDatasetWrapper:
         return batch_fft
 
 
+class BatchNumpyDatasetWrapper:
+    """Wrapper that returns stacked numpy arrays from multiple jobs.
+    
+    Used by job[:].get.dataset_name[slice] to return 6D numpy arrays
+    with shape [n_jobs, t, z, y, x, c] (or appropriate dimensions based on data).
+    
+    Example
+    -------
+    >>> arr = job[:].get.m[:]  # Returns 6D array [n_jobs, t, z, y, x, c]
+    >>> arr = job[:].get.m[0:100, ...]  # Sliced stacked array
+    """
+    
+    def __init__(self, results: list, mmpp_ref, dataset_name: str):
+        self._results = results
+        self._mmpp_ref = mmpp_ref
+        self._dataset_name = dataset_name
+    
+    def __getitem__(self, key) -> np.ndarray:
+        """Return stacked sliced data as numpy array from all jobs.
+        
+        Returns array with shape [n_jobs, ...original_dims...]
+        """
+        arrays = []
+        for result in self._results:
+            result._ensure_zarr_loaded()
+            try:
+                member = result._get_zarr_member(self._dataset_name)
+                arrays.append(np.asarray(member[key]))
+            except (NameError, KeyError) as e:
+                log.warning(f"Dataset '{self._dataset_name}' not found in {result.path}: {e}")
+                continue
+        
+        if not arrays:
+            raise ValueError(f"Dataset '{self._dataset_name}' not found in any job")
+        
+        # Stack all arrays along new first axis [n_jobs, ...]
+        return np.stack(arrays, axis=0)
+    
+    @property
+    def shape(self):
+        """Shape of dataset from first result (all should match)."""
+        if self._results:
+            self._results[0]._ensure_zarr_loaded()
+            try:
+                member = self._results[0]._get_zarr_member(self._dataset_name)
+                return (len(self._results),) + member.shape
+            except (NameError, KeyError):
+                pass
+        return None
+    
+    def __repr__(self):
+        return f"BatchNumpyDatasetWrapper({self._dataset_name}, n_jobs={len(self._results)}, shape={self.shape})"
+
+
+class BatchNumpyGetter:
+    """Helper providing direct numpy access for batch operations.
+    
+    Returns stacked numpy arrays from all jobs with shape [n_jobs, t, z, y, x, c].
+    
+    Example
+    -------
+    >>> # Batch access - returns 6D stacked array
+    >>> arr = job[:].get.m[:]  # shape: [n_jobs, t, z, y, x, c]
+    >>> arr = job[:].get.m[0:100, :, :, :, 0]  # sliced stack
+    >>> 
+    >>> # Works with any dataset name
+    >>> arr = job[:].get.m_layer13[:]
+    >>> arr = job[:].get["m_layer13"][:]
+    """
+    
+    def __init__(self, results: list, mmpp_ref):
+        self._results = results
+        self._mmpp_ref = mmpp_ref
+    
+    def __getattr__(self, name: str) -> BatchNumpyDatasetWrapper:
+        """Get BatchNumpyDatasetWrapper for dataset by attribute access."""
+        # Check that at least one result has this dataset
+        for result in self._results:
+            result._ensure_zarr_loaded()
+            if name in result._z:
+                return BatchNumpyDatasetWrapper(self._results, self._mmpp_ref, name)
+        raise AttributeError(f"Dataset '{name}' not found in any job")
+    
+    def __getitem__(self, key: str) -> BatchNumpyDatasetWrapper:
+        """Get BatchNumpyDatasetWrapper for dataset by item access."""
+        return self.__getattr__(key)
+    
+    def __repr__(self):
+        if self._results:
+            self._results[0]._ensure_zarr_loaded()
+            datasets = list(self._results[0]._z.array_keys())
+            return f"BatchNumpyGetter(n_jobs={len(self._results)}, datasets={datasets[:3]}{'...' if len(datasets) > 3 else ''})"
+        return "BatchNumpyGetter(empty)"
+
+
 class BatchOperations:
     """
     Main batch operations class that provides access to batch FFT and mode operations.
@@ -447,6 +542,7 @@ class BatchOperations:
     - `op[:].fft.modes.compute_modes()` (auto-selects optimal dataset)
     - `op[:].fft.compute_all()`
     - `op[:].m_layer13[:,...,0].fft.transmission(...)` (dataset-aware)
+    - `op[:].get.m[:]` (direct numpy access, returns stacked array)
     """
 
     def __init__(self, results: list[Any], mmpp_ref: Any):
@@ -469,6 +565,30 @@ class BatchOperations:
     def fft(self) -> BatchFFT:
         """Get batch FFT operations handler."""
         return BatchFFT(self.results, self.mmpp_ref)
+
+    @property
+    def get(self) -> BatchNumpyGetter:
+        """Access datasets with direct numpy output (batch version).
+        
+        Returns a BatchNumpyGetter that provides direct stacked numpy array
+        access when slicing datasets. Returns arrays with shape [n_jobs, ...]
+        where the first dimension corresponds to the number of jobs in batch.
+        
+        Returns
+        -------
+        BatchNumpyGetter
+            Helper object for numpy-direct batch dataset access
+        
+        Example
+        -------
+        >>> # Batch numpy access - returns 6D array [n_jobs, t, z, y, x, c]
+        >>> arr = job[:].get.m[:]
+        >>> arr = job[:].get.m[0:100, :, :, :, 0]
+        >>> 
+        >>> # Shape will be [n_jobs, ...original_dims...]
+        >>> arr.shape  # e.g. (10, 443, 1, 94, 7520, 3) for 10 jobs
+        """
+        return BatchNumpyGetter(self.results, self.mmpp_ref)
     
     def __getattr__(self, name: str):
         """Intercept dataset names to enable dataset-aware batch operations.

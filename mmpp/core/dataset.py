@@ -550,3 +550,80 @@ class DatasetAwareWrapper:
         return (
             f"DatasetAwareWrapper({self.dataset_name}{slice_str}, shape={self.shape})"
         )
+
+
+class NumpyDatasetWrapper:
+    """Wrapper that returns numpy array directly on slicing.
+    
+    Used by job[0].get.dataset_name[slice] to return numpy arrays directly.
+    
+    Example
+    -------
+    >>> arr = job[0].get.m[:]  # Returns numpy array directly
+    >>> arr = job[0].get.m[0:100, ...]  # Sliced numpy array
+    """
+    
+    def __init__(self, job_result, dataset_name: str, zarr_array):
+        self._job_result = job_result
+        self._dataset_name = dataset_name
+        self._zarr_array = zarr_array
+    
+    def __getitem__(self, key) -> np.ndarray:
+        """Return sliced data as numpy array."""
+        return np.asarray(self._zarr_array[key])
+    
+    @property
+    def shape(self):
+        """Shape of the underlying dataset."""
+        return self._zarr_array.shape
+    
+    @property
+    def dtype(self):
+        """Data type of the underlying dataset."""
+        return self._zarr_array.dtype
+    
+    def __repr__(self):
+        return f"NumpyDatasetWrapper({self._dataset_name}, shape={self.shape}, dtype={self.dtype})"
+
+
+class NumpyGetter:
+    """Helper providing direct numpy access via job[0].get.dataset_name[slice].
+    
+    This provides an explicit way to get numpy arrays directly from zarr datasets
+    without returning a DatasetAwareWrapper.
+    
+    Example
+    -------
+    >>> # Single job - returns numpy array
+    >>> arr = job[0].get.m[:]
+    >>> arr = job[0].get.m[0:100, :, :, :, 0]
+    >>> 
+    >>> # Works with any dataset name
+    >>> arr = job[0].get.m_layer13[:]
+    >>> arr = job[0].get["m_layer13"][:]  # Alternative syntax for special names
+    """
+    
+    def __init__(self, job_result):
+        self._job_result = job_result
+    
+    def __getattr__(self, name: str) -> NumpyDatasetWrapper:
+        """Get NumpyDatasetWrapper for dataset by attribute access."""
+        self._job_result._ensure_zarr_loaded()
+        try:
+            member = self._job_result._get_zarr_member(name)
+        except NameError:
+            raise AttributeError(f"Dataset '{name}' not found in zarr file")
+        
+        if isinstance(member, zarr.Array):
+            return NumpyDatasetWrapper(self._job_result, name, member)
+        raise AttributeError(f"'{name}' is not a dataset (it's a group)")
+    
+    def __getitem__(self, key: str) -> NumpyDatasetWrapper:
+        """Get NumpyDatasetWrapper for dataset by item access (for special names)."""
+        return self.__getattr__(key)
+    
+    def __repr__(self):
+        self._job_result._ensure_zarr_loaded()
+        datasets = list(self._job_result._z.array_keys())
+        return f"NumpyGetter(datasets={datasets[:5]}{'...' if len(datasets) > 5 else ''})"
+

@@ -75,6 +75,8 @@ def kittel(
     C. Kittel, *Phys. Rev.* **73**, 155 (1948).
     """
     B = np.atleast_1d(np.asarray(B, dtype=float))
+    Ms = float(Ms)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     # Effective field including anisotropy
@@ -147,6 +149,8 @@ def kittel_oop(
     B. A. Kalinikos & A. N. Slavin, J. Phys. C 19, 7013 (1986).
     """
     B = np.atleast_1d(np.asarray(B, dtype=float))
+    Ms = float(Ms)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     # Effective frequency (linear in B for OOP)
@@ -217,6 +221,9 @@ def kittel_exchange(
     >>> sw.plt.plot()
     """
     B = np.atleast_1d(np.asarray(B, dtype=float))
+    Ms = float(Ms)
+    Aex = float(Aex)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     # Exchange field contribution

@@ -647,6 +647,32 @@ class ZarrJobResult:
         return self.mpl
 
     @property
+    def get(self):
+        """Access datasets with direct numpy output.
+        
+        Returns a NumpyGetter that provides direct numpy array access
+        when slicing datasets. Unlike regular dataset access which returns
+        DatasetAwareWrapper, this returns numpy arrays directly.
+        
+        Returns
+        -------
+        NumpyGetter
+            Helper object for numpy-direct dataset access
+        
+        Example
+        -------
+        >>> # Direct numpy access
+        >>> arr = job[0].get.m[:]  # Returns numpy.ndarray
+        >>> arr = job[0].get.m[0:100, :, :, :, 0]
+        >>> 
+        >>> # Compare to regular access
+        >>> wrapper = job[0].m[:]  # Returns DatasetAwareWrapper
+        >>> arr = job[0].m[:].numpy()  # Explicit conversion
+        """
+        from .dataset import NumpyGetter
+        return NumpyGetter(self)
+
+    @property
     def fft(self):
         """Get FFT analyzer for this single result."""
         if not FFT_AVAILABLE:
