@@ -84,8 +84,12 @@ class DatasetSpecificFFT:
             # Check if method accepts dataset (via 'dset' or 'dataset_name')
             has_dataset_param = "dset" in params or "dataset_name" in params
             has_slice_param = "slice_info" in params
+            has_kwargs_param = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in params.values()
+            )
 
-            if has_dataset_param or has_slice_param:
+            if has_dataset_param or has_slice_param or has_kwargs_param:
                 def wrapper(*args, **kwargs):
                     # Inject dataset name
                     if "dset" in params and "dset" not in kwargs:
@@ -96,7 +100,7 @@ class DatasetSpecificFFT:
                     # Inject slice_info
                     if (
                         self.slice_info is not None
-                        and "slice_info" in params
+                        and (has_slice_param or has_kwargs_param)
                         and "slice_info" not in kwargs
                     ):
                         kwargs["slice_info"] = self.slice_info
@@ -626,4 +630,3 @@ class NumpyGetter:
         self._job_result._ensure_zarr_loaded()
         datasets = list(self._job_result._z.array_keys())
         return f"NumpyGetter(datasets={datasets[:5]}{'...' if len(datasets) > 5 else ''})"
-

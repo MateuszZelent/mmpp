@@ -91,6 +91,26 @@ class FFTPlotter:
 
         return os.path.basename(result.path)
 
+    @staticmethod
+    def _format_slice_identifier(slice_info: Optional[Any]) -> Optional[str]:
+        """Create deterministic identifier for slice-aware FFT save/cache names."""
+        if slice_info is None:
+            return None
+
+        def _format_item(item: Any) -> str:
+            if isinstance(item, slice):
+                return f"{item.start}:{item.stop}:{item.step}"
+            if item is Ellipsis:
+                return "..."
+            if isinstance(item, tuple):
+                return "(" + ",".join(_format_item(sub) for sub in item) + ")"
+            if isinstance(item, np.integer):
+                return str(int(item))
+            return repr(item)
+
+        slice_tuple = slice_info if isinstance(slice_info, tuple) else (slice_info,)
+        return "slice=" + ",".join(_format_item(part) for part in slice_tuple)
+
     def power_spectrum(
         self,
         dataset_name: Optional[str] = None,
@@ -105,6 +125,8 @@ class FFTPlotter:
         figsize: Optional[tuple[float, float]] = None,
         save_path: Optional[str] = None,
         tmax: Optional[int] = None,
+        slice_info: Optional[Any] = None,
+        slice_identifier: Optional[str] = None,
         **kwargs,
     ) -> tuple[Any, Any]:
         """
@@ -134,6 +156,10 @@ class FFTPlotter:
             Path to save figure
         tmax : int, optional
             Maximum number of time steps to use for FFT calculation (default: None, use all)
+        slice_info : Any, optional
+            Optional slicing applied before FFT data loading.
+        slice_identifier : str, optional
+            Optional deterministic identifier for slice-aware save/cache naming.
         \\*\\*kwargs : Any
             Additional FFT configuration options. Recognised keys include
             ``peak_width``/``fwhh``/``fwhm``/``hwfh`` (bool or str) to add a
@@ -166,6 +192,9 @@ class FFTPlotter:
             peak_width_option
         )
 
+        if slice_identifier is None and slice_info is not None:
+            slice_identifier = self._format_slice_identifier(slice_info)
+
         # Initialize scale tracking
         global_scale_text = ""
 
@@ -187,6 +216,8 @@ class FFTPlotter:
                     save=save,
                     force=force,
                     save_dataset_name=save_dataset_name,
+                    slice_info=slice_info,
+                    slice_identifier=slice_identifier,
                     tmax=tmax,
                     **kwargs,
                 )

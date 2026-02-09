@@ -1282,6 +1282,8 @@ class FFT:
         save: bool = True,
         force: bool = False,
         save_dataset_name: Optional[str] = None,
+        slice_info: Optional[Any] = None,
+        slice_identifier: Optional[str] = None,
         **kwargs,
     ) -> tuple[Any, Any]:
         """
@@ -1307,6 +1309,11 @@ class FFT:
             Force recalculation and overwrite existing (default: False)
         save_dataset_name : str, optional
             Custom name for saved dataset (default: auto-generated)
+        slice_info : Any, optional
+            Optional slicing applied before FFT calculation.
+        slice_identifier : str, optional
+            Optional deterministic slice identifier used in save/cache naming.
+            If omitted and slice_info is provided, it is derived automatically.
         **kwargs : Any
             Additional plotting options
 
@@ -1315,6 +1322,11 @@ class FFT:
         tuple
             (figure, axes) matplotlib objects
         """
+        if slice_identifier is None and slice_info is not None:
+            resolved_identifier = self._format_slice_identifier(slice_info)
+            if resolved_identifier != "slice=None":
+                slice_identifier = resolved_identifier
+
         return self.plotter.power_spectrum(
             dataset_name=dset,
             ax=ax,
@@ -1325,6 +1337,8 @@ class FFT:
             save=save,
             force=force,
             save_dataset_name=save_dataset_name,
+            slice_info=slice_info,
+            slice_identifier=slice_identifier,
             **kwargs,
         )
 

@@ -2067,7 +2067,9 @@ class BatchTransmission:
                 transmission_interface = fft_analyzer.transmission
 
                 # Apply dataset/slice context if provided
-                if active_dataset_name is not None:
+                # NOTE: slice_info may be provided even when dataset_name is None
+                # (e.g. default dataset auto-selection with explicit sub-slice).
+                if active_dataset_name is not None or active_slice_info is not None:
                     transmission_interface = transmission_interface.clone_for_dataset(
                         active_dataset_name, active_slice_info
                     )
