@@ -684,6 +684,13 @@ class ZarrJobResult:
         from ..fft import FFT
         return FFT(self, self._mmpp_ref)
 
+    @property
+    def solitons(self):
+        """Get soliton analyzer for this single result."""
+        from ..solitons import SolitonInterface
+
+        return SolitonInterface(self, self._mmpp_ref)
+
     def calculate_fft_data(self, **kwargs):
         """Direct method for FFT calculation."""
         return self.fft._compute_fft(**kwargs)

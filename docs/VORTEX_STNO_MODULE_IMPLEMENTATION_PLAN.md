@@ -1,11 +1,12 @@
 # Plan wdrożenia modułu `mmpp.solitons.vortex` — Post-processing dynamiki worteksów STNO
 
 > **Autor:** AI Copilot + Mateusz Zelent  
-> **Data:** 2026-02-10 (aktualizacja v3: 2026-02-10)  
-> **Wersja:** 3.0  
+> **Data:** 2026-02-10 (aktualizacja v3.1: 2026-02-10)  
+> **Wersja:** 3.1  
 > **Bazuje na:** architekturze MMPP v0.5.3, module `mmpp.fft`, `mmpp.analytical`  
 > **Zmiany w v2.0:** shortcut aliasy, batch API, `average_magnetization`, G/C-state, reservoir computing (Shreya et al. 2023), coupled vortex (Hamadeh et al.)  
-> **Zmiany w v3.0:** korekty fizyczne wg audytu — Berg-Lüscher topology, konwencje znaków (p/w/C/Q), SI (γμ₀M_s), faza z z(t)=x+iy, CW/CCW spectrum, events/energy/signals submoduły, zarys `solitons.skyrmion`, shared topology engine (Jenkins 2021, Wittrock 2024, multi-vortex dynamics Nat. Commun. 2025)
+> **Zmiany w v3.0:** korekty fizyczne wg audytu — Berg-Lüscher topology, konwencje znaków (p/w/C/Q), SI (γμ₀M_s), faza z z(t)=x+iy, CW/CCW spectrum, events/energy/signals submoduły, zarys `solitons.skyrmion`, shared topology engine (Jenkins 2021, Wittrock 2024, multi-vortex dynamics Nat. Commun. 2025)  
+> **Zmiany w v3.1:** review wykonawczy — `XYConvention` (konwencja osi, „load-bearing"), Faza 1 rozbita na 3 PR-y z AC, normalizacja `m̂` w topology, `arctan2` w Berg-Lüscher, winding z fazy zespolonej, chirality confidence, Gauss-fit fallback + confidence w tracking, polarity time series z `m_z`, cache key standard z hash+version, 3 syntetyczne testy krytyczne (Q-sign, CW/CCW z(t), gaussian fallback), shared `_topology.py` mini-wersja przeniesiona do Fazy 1
 
 ---
 
@@ -95,6 +96,75 @@ Plik `mmpp/fft/vortex_classifier.py` (629 linii) zawiera **prototypowy klasyfika
 - ❌ monolityczny — cała logika w jednym pliku
 
 → **Decyzja:** Przenieść i zrefaktoryzować do nowego modułu `solitons.vortex`.
+
+### 2.4 Konwencja osi — `XYConvention` (v3.1 — LOAD-BEARING)
+
+> **⚠️ To jest najbardziej „load-bearing" detal implementacyjny z całego planu.**
+
+W micromagnetyce **prawie wszystkie** znaki (CW/CCW, `C`, a nawet `Q` z finite-diff) potrafią
+„odwrócić się" tylko dlatego, że tablica `m[y, x, :]` ma indeks `y` rosnący „w dół ekranu",
+a fizycznie zwykle przyjmujemy `y` rosnące „w górę" (prawoskrętny układ XYZ).
+
+Jeśli w kodzie bezrefleksyjnie przyjmiemy `y = i*dy`, to w praktyce możemy dostać **lewoskrętny**
+układ (x w prawo, y w dół ⇒ x×y = −z), co odwróci:
+
+* znak $\omega(t)$ z $\arg(z(t))$ (CW/CCW),
+* znak $Q$ w metodach różnicowych,
+* znak $C$ z $m_\varphi$.
+
+**Rozwiązanie — jedno źródło prawdy w `solitons/vortex/_utils.py`:**
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+
+@dataclass(frozen=True)
+class XYConvention:
+    """Defines mapping from array indices (i,j) to physical (x,y) with right-handedness.
+    
+    Default: y_axis="up" — right-handed coordinate system with z out of plane.
+    Array row index i maps to physical y = (Ny-1-i)*dy (top of array = high y).
+    """
+    y_axis: Literal["up", "down"] = "up"
+
+
+def grid_xy(
+    Nx: int, Ny: int, 
+    dx: float, dy: float, 
+    *, 
+    convention: XYConvention = XYConvention(),
+) -> tuple[np.ndarray, np.ndarray]:
+    """Create physical (X, Y) meshgrid from array dimensions.
+    
+    For y_axis="up": Y = (Ny-1-i - cy)*dy  (right-handed, z out of plane)
+    For y_axis="down": Y = (i - cy)*dy      (image convention)
+    
+    Returns X, Y meshgrids in meters.
+    """
+    cx = (Nx - 1) / 2.0
+    cy = (Ny - 1) / 2.0
+    
+    j = np.arange(Nx)
+    i = np.arange(Ny)
+    
+    X_1d = (j - cx) * dx
+    if convention.y_axis == "up":
+        Y_1d = (Ny - 1 - i - cy) * dy  # row 0 = top = max y
+    else:
+        Y_1d = (i - cy) * dy            # row 0 = top = min y (image)
+    
+    X, Y = np.meshgrid(X_1d, Y_1d)
+    return X, Y
+```
+
+**Kontrakt:** Wszystkie funkcje w `solitons/` (topologia, tracking, faza, spectrum) operują
+na fizycznym (X, Y) zwróconym przez `grid_xy()` z jawnie przekazaną konwencją. Nigdy nie
+używamy surowych indeksów tablicowych `(i, j)` jako współrzędnych fizycznych bez konwersji.
+
+**Testy konwencji** (wymagane w Fazie 1, PR2):
+1. Worteks z p=+1, w=+1 → Q ≈ +0.5 zarówno dla `y_axis="up"` jak i `y_axis="down"`
+2. CCW orbita → `mean(dφ/dt) > 0` w obu konwencjach
+3. Przełączenie konwencji → te same fizyczne rezultaty (Q, p, w, C)
 
 ---
 
@@ -303,11 +373,14 @@ job[0].m.solitons.vortex
 mmpp/solitons/
 ├── __init__.py                       # Eksport: SolitonInterface
 ├── _base.py                          # Bazowe klasy (SolitonResult, SolitonConfig)
+├── _topology.py                      # v3.1: Shared topology (mini-wersja od Fazy 1 PR2)
+│                                     # topological_density_fd, berg_luscher_Q, guiding_center
 │
 └── vortex/
     ├── __init__.py                   # Eksport: VortexInterface, VortexConfig
     ├── interface.py                  # VortexInterface — główny entry point
     ├── config.py                     # VortexConfig, TrackingConfig, ...
+    ├── _utils.py                     # v3.1: XYConvention, grid_xy() — jedno źródło prawdy
     │
     ├── topology/
     │   ├── __init__.py
@@ -413,13 +486,12 @@ mmpp/solitons/
     │       └── signal_plots.py       # SignalPlotAccessor
     │
     ├── _cache.py                     # Cache zarr + memory (wzorzec z FFT)
-    ├── _utils.py                     # Współdzielone utility
     └── _constants.py                 # Stałe fizyczne specyficzne dla worteksów
 
-# v3.0 — Shared topology engine (vortex + skyrmion reuse)
+# v3.0/v3.1 — Shared topology engine (created in Phase 1 PR2, extended in Phase 9)
 mmpp/solitons/
-├── _topology.py                      # Shared: Berg-Lüscher, guiding_center, topological_density
-│                                     # Importowane przez vortex/topology/ i skyrmion/topology/
+├── _topology.py                      # Already listed above — mini-version from PR2
+│                                     # Full version: Berg-Lüscher map, multi-Q, edge handling (Phase 9)
 │
 # v3.0 — Skyrmion module (parallel to vortex)
 ├── skyrmion/
@@ -472,6 +544,16 @@ mmpp/solitons/
 
 #### 5.1.2 Gęstość ładunku topologicznego $q(\mathbf{r})$
 
+> **v3.1 — Normalizacja magnetyzacji na wejściu** (wymagane w `detect_topology()`):
+>
+> Dane z symulacji mogą mieć $|\mathbf{m}| \neq 1$ (artefakty numeryczne, nienormalizowane wyjście).
+> Przed jakimikolwiek obliczeniami topologicznymi **zawsze** normalizuj:
+> ```python
+> norm = np.linalg.norm(m, axis=-1, keepdims=True)
+> m_hat = m / np.clip(norm, 1e-12, None)  # bezpieczne dzielenie
+> ```
+> Nigdy nie zakładaj, że dane wejściowe są znormalizowane.
+
 $$
 q(\mathbf{r}) = \frac{1}{4\pi} \hat{m} \cdot \left(\frac{\partial \hat{m}}{\partial x} \times \frac{\partial \hat{m}}{\partial y}\right)
 $$
@@ -485,6 +567,14 @@ $$
 | `"finite_diff"` | Różnice centralne $\partial_x \hat{m} \approx (\hat{m}_{i+1,j} - \hat{m}_{i-1,j})/2dx$ | Dobra dla vorteksu | ⚡⚡⚡ | Default dla trackingu |
 | `"berg_luscher"` | Triangulacja: $q_\triangle$ z iloczynu na trójkątach | Doskonała ($Q \in \mathbb{Z}/2$ dokładnie) | ⚡⚡ | **Wymagane** dla skyrmionów, rekomendowane do $Q$ |
 
+> **v3.1 — Finite-diff: konwencja osi**
+>
+> Najstabilniejsza implementacja: `np.gradient(m_hat, dx, axis=1)` dla $\partial_x$ i `np.gradient(m_hat, dy, axis=0)` dla $\partial_y$.
+> **Krytyczne:** upewnij się, że osie gradientu odpowiadają `XYConvention` — jeśli `y_axis="up"`,
+> `dm_dy` z `np.gradient` po osi 0 ma **odwrócony znak** (bo indeks rośnie w dół).
+> Rozwiązanie: `dm_dy = np.gradient(m_hat, dy, axis=0)` a następnie `if convention.y_axis == "up": dm_dy = -dm_dy`.
+> Dopiero potem: `q = (1/(4π)) * dot(m_hat, cross(dm_dx, dm_dy))`.
+
 **Algorytm Berg-Lüscher:**
 
 Dla każdego trójkąta $(m_1, m_2, m_3)$ sieci kwadratowej (2 trójkąty per komórka):
@@ -495,7 +585,18 @@ $$
 
 Daje **dokładne** $Q \in \{0, \pm 1/2, \pm 1\}$ nawet przy dużych gradientach — kluczowe dla przerzutów polaryzacji i skyrmionów.
 
-#### 5.1.3 Chirality — stabilny estymator pierścieniowy (v3.0)
+> **v3.1 — Implementacja: używaj `arctan2`** zamiast `arctan` dla stabilności numerycznej i poprawności znaku:
+> ```python
+> num = np.einsum('...i,...i', m1, np.cross(m2, m3))
+> denom = 1.0 + (np.einsum('...i,...i', m1, m2)
+>              + np.einsum('...i,...i', m2, m3)
+>              + np.einsum('...i,...i', m3, m1))
+> omega = 2.0 * np.arctan2(num, denom)
+> ```
+> `arctan2(num, denom)` gwarantuje poprawny znak w pełnym zakresie $(-\pi, \pi]$ — kluczowe
+> gdy trójkąt otacza biegun (skyrmion core, polarity switching).
+
+#### 5.1.3 Chirality — stabilny estymator pierścieniowy (v3.0, rozszerzony v3.1)
 
 Zamiast niestabilnego konturem z iloczynem wektorowym, stosujemy **estymator annulusowy**:
 
@@ -506,14 +607,54 @@ Zamiast niestabilnego konturem z iloczynem wektorowym, stosujemy **estymator ann
 
 **Zalety:** szybkie, odporne na szum, współdzielone z `modes.azimuthal` (ten sam preprocessing).
 
-#### 5.1.4 Algorytm detekcji rdzenia
+> **v3.1 — Chirality confidence:**
+>
+> Przy dużej deformacji (C-state, antivortex, szum termiczny) średnie $\langle m_\varphi \rangle$ może być
+> bliskie zeru. Dlatego oprócz `C = ±1` raportuj confidence:
+>
+> $$\text{conf}_C = \text{clip}\left(\frac{|\langle m_\varphi \rangle|}{\langle |m_\varphi| \rangle},\; 0,\; 1\right)$$
+>
+> * `conf_C ≈ 1` — czysta chirality (curling state)
+> * `conf_C ≈ 0` — brak dominującej chirality (mixed/C-state/szum)
+>
+> Gdy `conf_C < 0.3`: ustaw `chirality = 0` (undefined) lub `±1` z flagą `low_confidence=True`.
+> Wykorzystane potem w `GCState` i `events/`.
+
+#### 5.1.4 Vorticity (winding number) — metoda fazowa z sygnału zespolonego (v3.1)
+
+> **Rekomendacja v3.1:** Winding number `w` liczymy z fazy in-plane magnetyzacji
+> na pierścieniu — ale **nie z $m_\varphi$** (to jest chirality), lecz z fazy wektora in-plane:
+
+Metoda:
+1. Na pierścieniu o $r = R_{\text{ring}}$ wokół rdzenia, zbierz $N$ punktów $(m_x, m_y)$
+2. Zbuduj sygnał zespolony: $u_k = m_x(\varphi_k) + i\,m_y(\varphi_k)$
+3. Oblicz fazę: $\theta_k = \arg(u_k)$
+4. Unwrap: $\theta_k^{\text{unwrap}} = \text{unwrap}(\theta_k)$
+5. Winding: $w = \text{round}\left(\frac{\theta_N^{\text{unwrap}} - \theta_0^{\text{unwrap}}}{2\pi}\right)$
+
+To jasno rozdziela `w` (ile razy faza in-plane się nawija wokół rdzenia) od `C` (cyrkulacja — czy nawija się CW czy CCW).
+
+```python
+def winding_number_ring(
+    m_hat: np.ndarray,      # (Ny, Nx, 3)
+    core_pos: tuple[float, float],  # (x, y) [m]
+    R_ring: float,           # [m]
+    X: np.ndarray,           # meshgrid X
+    Y: np.ndarray,           # meshgrid Y
+    N_samples: int = 64,
+) -> int:
+    """Compute winding number w from in-plane phase on a ring."""
+    ...
+```
+
+#### 5.1.5 Algorytm detekcji rdzenia
 
 1. Oblicz $|m_z|$ — rdzeń ma ekstremalny $m_z$ ($\pm 1$ idealnie)
 2. Próg: $|m_z| > 0.9 \cdot \max(|m_z|)$ — maska rdzenia
 3. Centroid ważony: $(x_c, y_c) = \sum w_i (x_i, y_i) / \sum w_i$, $w_i = |m_z(x_i, y_i)|^2$
 4. Sub-pikselowa precyzja: dopasowanie Gaussa 2D do $|m_z|$ w okolicy rdzenia
 
-#### 5.1.5 Implementacja — `topology/detection.py`
+#### 5.1.6 Implementacja — `topology/detection.py`
 
 ```python
 @dataclass
@@ -521,7 +662,7 @@ class TopologyResult:
     """Complete topological characterization of a soliton."""
     polarity: int                       # p = ±1 (sign of m_z at core)
     vorticity: int                      # w = ±1 (+1=vortex, -1=antivortex)
-    chirality: int                      # C = ±1 (+1=CCW, -1=CW in-plane)
+    chirality: int                      # C = ±1 (+1=CCW, -1=CW in-plane), 0 if undefined
     Q: float                            # topological charge (integrated q)
     helicity: float | None              # γ₀ [rad] — only for skyrmions
     core_position: tuple[float, float]  # (x, y) [m]
@@ -529,6 +670,8 @@ class TopologyResult:
     state: str                          # "vortex" | "antivortex" | "meron" | "skyrmion"
     method: str                         # "finite_diff" | "berg_luscher"
     confidence: float                   # 0-1 (|Q_measured - Q_expected| < threshold)
+    chirality_confidence: float         # 0-1 (v3.1: |⟨mφ⟩|/⟨|mφ|⟩)
+    convention: "XYConvention"          # v3.1: coordinate convention used
     
     @property
     def is_consistent(self) -> bool:
@@ -538,17 +681,27 @@ class TopologyResult:
         return abs(abs(self.Q) - 1) < 0.1
 
 def detect_topology(
-    m: np.ndarray,          # shape (Ny, Nx, 3) — MUST be unit-normalized
+    m: np.ndarray,          # shape (Ny, Nx, 3) — normalized internally (v3.1)
     dx: float, dy: float,   # cell size [m] — SI!
     *,
     method: str = "finite_diff",  # or "berg_luscher"
+    convention: "XYConvention" = XYConvention(),  # v3.1: explicit axis convention
     polarity_threshold: float = 0.5,
     chirality_ring_r: tuple[float, float] | None = None,  # (r_min, r_max) [m]
 ) -> TopologyResult:
-    """Detect topological state from single magnetization snapshot."""
+    """Detect topological state from single magnetization snapshot.
+    
+    v3.1: m is normalized internally (safe for |m|≠1).
+    v3.1: convention controls y-axis mapping for correct signs.
+    """
 ```
 
 ### 5.2 Core Tracking — śledzenie rdzenia w czasie
+
+> **v3.1 — Wspólny kontrakt koordynatowy:**
+> Wszystkie metody trackingu **zawsze** zwracają `(x, y)` w metrach, w tym samym
+> układzie współrzędnych co topologia (`XYConvention`). To jest klucz do spójności
+> `z(t) = x + iy` i poprawnego CW/CCW.
 
 **Metody śledzenia rdzenia:**
 
@@ -611,6 +764,49 @@ gdzie $q(\mathbf{r})$ to gęstość topologiczna — **fizycznie najbardziej pop
 2. Wytnij ROI $7 \times 7$ wokół
 3. Dopasuj: $m_z(x,y) = A \exp\left(-\frac{(x-x_0)^2 + (y-y_0)^2}{2\sigma^2}\right) + B$
 4. $(x_0, y_0)$ dają pozycję sub-pikselową
+
+> **v3.1 — Gaussian fallback + confidence:**
+>
+> W praktyce dopasowanie Gaussa potrafi się wysypać:
+> * rdzeń przy krawędzi dysku (ucięty Gauss)
+> * clipping / artefakty numeryczne
+> * słaby kontrast $m_z$ (np. cienki dysk, $L \ll R$)
+>
+> **Wymagane:**
+> * Jeśli `curve_fit` rzuca wyjątek **lub** zwróci bezsensowne $\sigma$ (np. $\sigma > 5 \cdot dx$
+>   lub $\sigma < 0.1 \cdot dx$) → **automatyczny fallback do centroidu**
+> * `confidence[t] = 0` (lub niska wartość z SNR) w krokach z fallbackiem
+> * Raportuj `method_used[t]` per-frame (np. `"gaussian"` vs `"centroid_fallback"`)
+>
+> ```python
+> try:
+>     popt, pcov = curve_fit(gaussian_2d, ...)
+>     x0, y0, sigma = popt[1], popt[2], popt[3]
+>     if sigma < 0.1*dx or sigma > 5*dx:
+>         raise ValueError("unreasonable sigma")
+>     confidence[t] = 1.0 / (1.0 + np.sqrt(pcov[1,1] + pcov[2,2]) / dx)
+> except (RuntimeError, ValueError):
+>     x0, y0 = centroid_weighted(roi)
+>     confidence[t] = 0.0  # lub SNR-based estimate
+> ```
+
+> **v3.1 — Polarity time series w `TrajectoryResult`:**
+>
+> Jeśli tracking na $|m_z|$, polarity odzyskujemy z **znaku** $m_z$ w pobliżu rdzenia:
+> * Weź np. 3×3 ROI wokół $(x_0, y_0)$ i uśrednij $m_z$
+> * `p[t] = sign(mean(m_z_roi))` z hysterezą (deadband ±0.1 żeby uniknąć flicker)
+> * To jest baza do `events.polarity_switches()`
+>
+> ```python
+> def extract_polarity_series(
+>     m_z: np.ndarray,           # (Nt, Ny, Nx)
+>     positions: np.ndarray,     # (Nt, 2) pixel coords
+>     roi_half: int = 1,         # 3x3 ROI
+>     hysteresis: float = 0.1,
+> ) -> np.ndarray:
+>     """Extract p(t) from m_z sign near core position with hysteresis."""
+>     ...
+> ```
 
 **Implementacja — `core/tracking.py`:**
 
@@ -970,6 +1166,64 @@ class STParametersResult:
 > zawiera stochastyczne pole termiczne. Dla T=0 mumax³/OOMMF, mierzony Δf jest artefaktem
 > rozdzielczości FFT lub numerycznego szumu. MMPP automatycznie dodaje flagę
 > `linewidth_resolution_limited: bool` i warning w `_repr_html_()` gdy Δf ≤ 2/T_sim.
+
+#### 5.6.1 Moduł analityczny: `mmpp.analytical.thiele` (v3.0 — ZAIMPLEMENTOWANE)
+
+> **Status: ✅ Zaimplementowane** w `mmpp/analytical/thiele.py`.
+
+Równanie Thiele'a zostało zaimplementowane jako moduł analityczny z dwoma wariantami:
+
+**Wariant A — CIP (Current-In-Plane), `CIPThieleModel`:**
+
+Za Moon et al. (arXiv:0809.0952):
+
+$$
+\mathbf{G}(p)\times(\mathbf{u} - \dot{\mathbf{r}}) = -\nabla U(\mathbf{r}) - \alpha \mathbf{D}\dot{\mathbf{r}} + \beta \mathbf{D}\mathbf{u}
+$$
+
+z adiabatycznym ($\alpha$) i nieadiabatycznym ($\beta$) STT (Zhang–Li).
+
+**Wariant B — CPP (Current-Perpendicular-to-Plane), `CPPThieleModel`:**
+
+Za Guslienko et al. (Phys. Rev. B 89, 2014 / PMC 4134337) — nieliniowy auto-oscylator:
+
+$$
+\dot{\mathbf{s}} = \bigl[\chi(J) - d(u)\omega(u)\bigr]\mathbf{s} + \omega(u)(\hat{\mathbf{z}} \times \mathbf{s})
+$$
+
+z nieliniową częstością $\omega(u) = \omega_0(1 + Nu^2)$ i tłumieniem $d(u) = d_0 + d_1 u^2$.
+
+**API:**
+
+```python
+from mmpp.analytical import (
+    MaterialParams, DiskGeometry,
+    CIPThieleModel, CPPThieleModel,
+    current_dc, current_ac, current_pulse,
+    omega0_novosad, f0_novosad_ghz,
+)
+
+# CPP vortex STNO — auto-oscillation
+mat = MaterialParams(Ms=8e5, alpha=0.01, P=0.4)
+geo = DiskGeometry(R=75e-9, L=10e-9)
+omega0 = omega0_novosad(mat, geo)
+model = CPPThieleModel(material=mat, geom=geo, omega0=omega0, N=0.25)
+
+result = model.simulate(t_span=(0, 200e-9), s0=(1e-3, 0), J_func=current_dc(8e10))
+result.plt.overview()     # 4-panel: orbit, X/Y(t), radius(t), f(t)
+result.plt.orbit()        # 2D orbit plot with disk outline
+result.steady_state_frequency_ghz   # f_ss
+result.rotation_sense     # 'CW' or 'CCW'
+
+# CIP — AC-driven resonance
+model_cip = CIPThieleModel(material=mat, geom=geo, omega0=omega0, polarity=+1)
+result_cip = model_cip.simulate(t_span=(0, 50e-9), r0=(1e-9, 0),
+                                J_func=current_ac(J_amp=1e11, f_hz=f0_novosad_ghz(mat, geo)*1e9))
+```
+
+**Klasy danych:** `MaterialParams`, `DiskGeometry`, `ThieleTrajectoryResult` (z `.z`, `.r`, `.phi`, `.instantaneous_frequency_ghz`, `.velocity`, `.plt.*`).
+
+**Referencje:** Thiele (1973), Moon et al. (arXiv:0809.0952), Guslienko et al. (PMC 4134337), Novosad et al. (cond-mat/0503632), Khvalkovskiy et al. (arXiv:0904.1751) — ograniczenia modelu.
 
 ### 5.7 Klasyfikacja G-state vs C-state (v2.0 — Wittrock et al.)
 
@@ -1544,6 +1798,44 @@ class VortexCache:
     def invalidate(self, namespace: str = None) -> None: ...
 ```
 
+### 7.3 Minimalny standard cache key (v3.1 — od Fazy 1)
+
+> **Z doświadczenia:** Cache w zarr/JSON bez wersjonowania i hashów configu kończy się „dziwnymi wynikami".
+> Implementuj poniższy standard **od samego początku** (Faza 1, PR3).
+
+**Cache key formula:**
+
+```python
+key = f"{method}_{hashlib.sha256(config_json.encode()).hexdigest()[:12]}"
+```
+
+gdzie `config_json` zawiera:
+
+* `mmpp_version` — wersja pakietu MMPP (np. `"0.5.3"`)
+* `module_version` — wersja submodułu (np. `"solitons.vortex=0.1"`)
+* `dataset_name` — nazwa datasetu (np. `"m"`, `"m_layer13"`)
+* `slice_info` — użyty slice (np. `"[:500, ...]"`)
+* `dx`, `dy`, `dt`, `Nx`, `Ny` — parametry siatki (guard: jeśli zmienią się dane, cache inwalidowany)
+* parametry metody (ROI size, thresholdy, convention, ...)
+
+**Metadata JSON** (zapisywane obok wyników cache):
+
+```json
+{
+  "mmpp_version": "0.5.3",
+  "module_version": "solitons.vortex=0.1",
+  "dataset_name": "m_layer13",
+  "slice_info": "[:500, ...]",
+  "grid": {"dx": 2.5e-9, "dy": 2.5e-9, "dt": 5e-12, "Nx": 128, "Ny": 128},
+  "method": "gaussian",
+  "params": {"roi_half": 3, "threshold": 0.5},
+  "convention": "y_up",
+  "created_at": "2026-02-10T14:32:00Z"
+}
+```
+
+**Reguła:** Jeśli metadata nie zgadza się z bieżącymi parametrami → automatyczny re-compute + overwrite.
+
 ---
 
 ## 8. Wizualizacja — wzorce plotowania
@@ -1608,28 +1900,98 @@ class VortexInterface:
 
 ## 9. Plan wdrożenia — fazy
 
-### Faza 1: Fundament (Sprint 1-2, ~2 tyg.)
+### Faza 1: Fundament (Sprint 1-2, ~2 tyg.) — 3 PR-y
+
+> **v3.1:** Faza 1 rozbita na **3 małe, niezależne PR-y** z jasnymi acceptance criteria (AC).
+> Każdy PR jest mergowalny osobno i natychmiast daje działające API.
+
+#### PR1 — Scaffolding + wiring (bez fizyki)
+
+**Cel:** Postawić kompletny szkielet modułu z wiring do istniejącego MMPP.
+Żaden algorytm nie musi jeszcze działać — wystarczy `NotImplementedError` w core methods.
 
 | # | Zadanie | Pliki | Priorytet |
 |---|---------|-------|-----------|
 | 1.1 | Utworzenie struktury katalogów `mmpp/solitons/` | `__init__.py` na każdym poziomie | P0 |
 | 1.2 | `_base.py` — `SolitonConfig`, `SolitonResult` bazowe | 1 plik | P0 |
-| 1.3 | `vortex/config.py` — `VortexConfig`, `TrackingConfig` dataclasses | 1 plik | P0 |
-| 1.4 | `vortex/topology/detection.py` — `detect_topology()` (z $q(\mathbf{r})$) | 1 plik, ~200 LOC | P0 |
-| 1.5 | `vortex/topology/invariants.py` — `polarity()`, `chirality()`, `winding_number()` | 1 plik, ~150 LOC | P0 |
-| 1.6 | `vortex/topology/models.py` — `TopologyResult` dataclass | 1 plik | P0 |
-| 1.7 | `vortex/core/tracking.py` — `core_track()` z 3 metodami (max, centroid, gaussian) | 1 plik, ~300 LOC | P0 |
-| 1.8 | `vortex/core/models.py` — `TrajectoryResult` z propertiami (r, phi, velocity) | 1 plik, ~150 LOC | P0 |
-| 1.9 | `vortex/interface.py` — `VortexInterface` (wiring sub-modułów) | 1 plik, ~200 LOC | P0 |
-| 1.10 | Integracja z `DatasetAwareWrapper.solitons.vortex` | Edycja `dataset.py`, `job.py` | P0 |
-| 1.11 | Testy: `tests/test_vortex_topology.py`, `tests/test_vortex_tracking.py` | 2 pliki | P0 |
+| 1.3 | `vortex/__init__.py`, `config.py`, `interface.py` — VortexInterface z lazy sub-interfaces | 3 pliki | P0 |
+| 1.4 | `vortex/_utils.py` — **`XYConvention`**, `grid_xy()` (patrz §2.4) | 1 plik, ~60 LOC | P0 |
+| 1.5 | Integracja w `DatasetAwareWrapper.solitons` i `ZarrJobResult.solitons` | Edycja `dataset.py`, `job.py` | P0 |
+| 1.6 | Alias `DatasetAwareWrapper.vortex` → `.solitons.vortex` | Edycja `dataset.py` | P0 |
+| 1.7 | Shortcuty `VortexInterface.track()` / `.detect()` (delegujące, mogą rzucać `NotImplementedError`) | Edycja `interface.py` | P0 |
+| 1.8 | `_repr_html_()` w VortexInterface (karta z dostępnymi sub-modułami) | w `interface.py` | P1 |
 
-**Deliverable Fazy 1:**
+**AC (acceptance criteria) PR1:**
+
 ```python
-job[0].m.solitons.vortex.topology.detect()    # → TopologyResult
-job[0].m.solitons.vortex.core.track()          # → TrajectoryResult
-job[0].m.solitons.vortex.core.track().plt.xy() # → matplotlib Axes
+job[0].m.solitons.vortex         # istnieje i ma repr
+job[0].m.vortex                  # alias działa
+job[0].m.vortex.track            # metoda istnieje (NotImplementedError OK)
+job[0].m.vortex.detect           # metoda istnieje (NotImplementedError OK)
+repr(job[0].m.solitons.vortex)   # czytelny HTML w Jupyter
 ```
+
+#### PR2 — Topology (single snapshot)
+
+**Cel:** `detect_topology()` na pojedynczym snapshot (t=0) — minimum: finite_diff + core position + p + w + C + Q.
+Opcjonalnie Berg-Lüscher *tylko do Q* (gęstość mapy może poczekać).
+
+| # | Zadanie | Pliki | Priorytet |
+|---|---------|-------|-----------|
+| 1.9 | `solitons/_topology.py` — **shared** mini-wersja: `topological_density_fd()`, `berg_luscher_Q()`, `guiding_center()` | 1 plik, ~200 LOC | P0 |
+| 1.10 | `vortex/topology/models.py` — `TopologyResult` dataclass (z `chirality_confidence`, `convention`) | 1 plik | P0 |
+| 1.11 | `vortex/topology/detection.py` — `detect_topology()`: normalizacja m̂, FD q(r), core detection, p, w (ring), C (annulus + confidence) | 1 plik, ~250 LOC | P0 |
+| 1.12 | `vortex/topology/invariants.py` — thin wrappers: `polarity()`, `chirality()`, `winding_number()`, `topological_charge()` | 1 plik, ~150 LOC | P0 |
+| 1.13 | Test syntetyczny #1: Q(BL) ≈ +0.5 dla vorteksu p=+1, w=+1 (obie konwencje osi) | w `tests/test_vortex_topology.py` | P0 |
+
+**AC (acceptance criteria) PR2:**
+
+```python
+topo = job[0].m.vortex.topology.detect(t=0)
+topo.polarity in (-1, +1)
+topo.vorticity in (-1, +1)
+topo.chirality in (-1, 0, +1)
+topo.chirality_confidence >= 0.0
+topo.Q  # float, ≈ ±0.5 for vortex
+topo.is_consistent  # True
+```
+
+#### PR3 — Core tracking (time series)
+
+**Cel:** `core.track()` z 3 metodami (maximum, centroid, gaussian + fallback) → `TrajectoryResult` z pełnymi properties.
+1 podstawowy plot (`plt.xy()`).
+
+| # | Zadanie | Pliki | Priorytet |
+|---|---------|-------|-----------|
+| 1.14 | `vortex/core/models.py` — `TrajectoryResult` + properties: z, r, phi, phi_unwrapped, velocity, instantaneous_frequency, rotation_sense, plt | 1 plik, ~200 LOC | P0 |
+| 1.15 | `vortex/core/tracking.py` — `core_track()` z `maximum`, `centroid`, `gaussian` (+ automatic fallback + confidence per frame, patrz §5.2 v3.1) | 1 plik, ~350 LOC | P0 |
+| 1.16 | `vortex/core/methods.py` — `TrackingMethod` enum + registry | 1 plik, ~50 LOC | P1 |
+| 1.17 | `vortex/core/_plotting/core_plots.py` — `TrajectoryPlotAccessor.xy()` (1 plot na start) | 1 plik, ~80 LOC | P0 |
+| 1.18 | `vortex/_cache.py` — cache z cache key standard (§7.3): namespace + hash(config) + metadata JSON | 1 plik, ~150 LOC | P0 |
+| 1.19 | Test syntetyczny #2: CW/CCW z `z(t)` → poprawny `rotation_sense` | w `tests/test_vortex_tracking.py` | P0 |
+| 1.20 | Test syntetyczny #3: gaussian fallback → confidence spadek przy krawędziowym ROI | w `tests/test_vortex_tracking.py` | P0 |
+
+**AC (acceptance criteria) PR3:**
+
+```python
+traj = job[0].m.vortex.track(method="centroid")
+traj.z                     # complex trajectory
+traj.r                     # radial distance
+traj.rotation_sense        # "CW" or "CCW"
+traj.instantaneous_frequency  # ω(t) array
+traj.confidence            # per-frame confidence array
+traj.plt.xy()              # matplotlib Axes with X(t), Y(t)
+```
+
+**Deliverable Fazy 1 (po scaleniu 3 PR-ów):**
+```python
+job[0].m.solitons.vortex.topology.detect()     # → TopologyResult
+job[0].m.solitons.vortex.core.track()           # → TrajectoryResult
+job[0].m.vortex.track()                          # → alias → TrajectoryResult
+job[0].m.vortex.track().plt.xy()                 # → matplotlib Axes
+```
+
+Daje to **natychmiast** działające API bez czekania na trajectory/spectrum/modes.
 
 ### Faza 2: Trajectory + Spectrum (Sprint 3-4, ~2 tyg.)
 
@@ -1801,12 +2163,16 @@ sig.plt.voltage_vs_time()
 sig.plt.power_vs_frequency()
 ```
 
-### Faza 9: Skyrmion Module + Shared Topology (Sprint 14-15, ~2 tyg.) — v3.0
+### Faza 9: Skyrmion Module + Shared Topology rozszerzenie (Sprint 14-15, ~2 tyg.) — v3.0
+
+> **v3.1 nota:** Mini-wersja `solitons/_topology.py` (z `topological_density_fd`, `berg_luscher_Q`, `guiding_center`)
+> jest tworzona **już w Faza 1 PR2** (task 1.9). Faza 9 rozszerza ten plik do pełnej wersji
+> i buduje moduł skyrmion reusing tych samych funkcji.
 
 | # | Zadanie | Pliki | Priorytet |
 |---|---------|-------|-----------|
-| 9.1 | `solitons/_topology.py` — shared Berg-Lüscher, guiding_center | 1 plik, ~300 LOC | P0 |
-| 9.2 | Refactor `vortex/topology/` to import from `_topology.py` | Edycja | P0 |
+| 9.1 | Rozszerzenie `solitons/_topology.py` — pełna gęstość BL (mapa), multi-Q, edge handling | Edycja, +~100 LOC | P0 |
+| 9.2 | ~~Refactor vortex/topology/ to import from _topology.py~~ — **już zrobione w PR2** | — | — |
 | 9.3 | `skyrmion/__init__.py`, `interface.py`, `config.py` | 3 pliki | P1 |
 | 9.4 | `skyrmion/topology/detection.py` — Q=±1 verification | 1 plik, ~150 LOC | P1 |
 | 9.5 | `skyrmion/topology/helicity.py` — γ₀ (Néel/Bloch) | 1 plik, ~100 LOC | P1 |
@@ -1885,6 +2251,52 @@ def create_synthetic_vortex(
     ...
 ```
 
+### 11.2.1 Helpery syntetyczne (v3.1 — spec implementacyjny)
+
+Helpery używane przez testy z §11.4 MUSZĄ być dostarczone jako współdzielony moduł:
+
+- Lokalizacja: `tests/fixtures/synthetic_vortex.py`
+- Cel: jedno źródło prawdy dla generatorów danych vortex (bez duplikacji kodu między testami)
+
+Minimalny kontrakt API:
+
+```python
+def generate_synthetic_vortex(
+    Nx: int,
+    Ny: int,
+    *,
+    p: int = +1,
+    w: int = +1,
+    core_radius_px: float = 4.0,
+    center_pix: tuple[float, float] | None = None,
+) -> np.ndarray:
+    """Return normalized magnetization map with shape (Ny, Nx, 3)."""
+
+def generate_vortex_mz_near_edge(
+    Nx: int,
+    Ny: int,
+    *,
+    core_pix: tuple[float, float],
+    core_radius_px: float = 4.0,
+) -> np.ndarray:
+    """Return vortex map with core clipped by sample edge (stress-test for fallback)."""
+
+def generate_vortex_mz_centered(
+    Nx: int,
+    Ny: int,
+    *,
+    core_pix: tuple[float, float],
+    core_radius_px: float = 4.0,
+) -> np.ndarray:
+    """Return reference centered vortex map for confidence baseline."""
+```
+
+Wymagania:
+
+1. Generator MUSI zwracać dane znormalizowane (`|m| ≈ 1` dla każdego piksela).
+2. `p` i `w` MUSZĄ kontrolować znak `m_z` i kierunek in-plane winding.
+3. Helpery mają być współdzielone przez `tests/test_vortex_topology.py` i `tests/test_vortex_tracking.py`.
+
 ### 11.3 Testy specyficzne v3.0
 
 > **Berg-Lüscher Q stability tests:**
@@ -1903,6 +2315,103 @@ def create_synthetic_vortex(
 > - Rotational: rotation siatki o 90° → Q, p bez zmian; C i w mogą się odwrócić jeśli rotacja odwraca handedness (test konsystencji)
 > - phase(z(t)) CCW vortex: ω > 0; CW vortex: ω < 0 — test znaku
 > - Directional spectrum: synthetic CCW orbit → S₊ ≫ S₋; CW orbit → S₋ ≫ S₊
+
+### 11.4 Trzy krytyczne testy syntetyczne (v3.1 — wymagane w Faza 1)
+
+> **Rekomendacja:** Te 3 testy najlepiej amortyzują ryzyko błędów znaków i fallbacków.
+> Padają jako pierwsze, jeśli coś jest nie tak w implementacji. **Muszą** być gotowe w Faza 1.
+>  
+> **Nota dot. snippetów:** `...` oznacza skróty prezentacyjne. W implementacji testów
+> należy używać pełnych sygnatur konstruktorów i wywołań (bez placeholderów).
+
+#### Test 1: Q(Berg-Lüscher) dla vorteksu — poprawność znaku
+
+```python
+def test_berg_luscher_q_sign():
+    """Q ≈ +0.5 for vortex with p=+1, w=+1. Test both axis conventions."""
+    for y_axis in ("up", "down"):
+        conv = XYConvention(y_axis=y_axis)
+        m = generate_synthetic_vortex(Nx=64, Ny=64, p=+1, w=+1)
+        X, Y = grid_xy(64, 64, dx=2.5e-9, dy=2.5e-9, convention=conv)
+        
+        Q_bl = berg_luscher_Q(m, conv)
+        Q_fd = topological_charge_fd(m, dx=2.5e-9, dy=2.5e-9, conv)
+        
+        assert abs(Q_bl - 0.5) < 0.01, f"BL Q={Q_bl}, expected ~0.5 ({y_axis})"
+        assert abs(Q_fd - 0.5) < 0.05, f"FD Q={Q_fd}, expected ~0.5 ({y_axis})"
+    
+    # p=-1, w=+1 → Q ≈ -0.5
+    m_neg = generate_synthetic_vortex(Nx=64, Ny=64, p=-1, w=+1)
+    Q_neg = berg_luscher_Q(m_neg, XYConvention())
+    assert abs(Q_neg + 0.5) < 0.01
+```
+
+#### Test 2: CW/CCW z `z(t)` — poprawny `rotation_sense`
+
+```python
+def test_cwccw_from_complex_trajectory():
+    """CCW: mean(dφ/dt) > 0, CW: mean(dφ/dt) < 0."""
+    t = np.linspace(0, 100e-9, 10000)
+    R = 5e-9
+    omega = 2 * np.pi * 1e9  # 1 GHz
+    
+    # CCW orbit: x=R cos(ωt), y=R sin(ωt)
+    x_ccw, y_ccw = R * np.cos(omega * t), R * np.sin(omega * t)
+    traj_ccw = TrajectoryResult(
+        time=t,
+        x=x_ccw,
+        y=y_ccw,
+        polarity=np.ones_like(t, dtype=int),
+        method="synthetic",
+        confidence=np.ones_like(t, dtype=float),
+        metadata={},
+    )
+    assert traj_ccw.rotation_sense == "CCW"
+    assert np.mean(traj_ccw.instantaneous_frequency) > 0
+    
+    # CW orbit: x=R cos(ωt), y=-R sin(ωt)
+    x_cw, y_cw = R * np.cos(omega * t), -R * np.sin(omega * t)
+    traj_cw = TrajectoryResult(
+        time=t,
+        x=x_cw,
+        y=y_cw,
+        polarity=np.ones_like(t, dtype=int),
+        method="synthetic",
+        confidence=np.ones_like(t, dtype=float),
+        metadata={},
+    )
+    assert traj_cw.rotation_sense == "CW"
+    assert np.mean(traj_cw.instantaneous_frequency) < 0
+```
+
+#### Test 3: Core tracking — Gaussian fallback + confidence
+
+```python
+def test_gaussian_fallback_at_edge():
+    """Gaussian fit at disk edge should fallback to centroid with low confidence."""
+    # Create m_z with vortex core at (x=R-2dx, y=0) — near edge, clipped
+    m_z = generate_vortex_mz_near_edge(Nx=64, Ny=64, core_pix=(60, 32))
+    
+    # Track with gaussian method
+    result = core_track_single_frame(m_z, method="gaussian", dx=2.5e-9, dy=2.5e-9)
+    
+    # Should still return a position (fallback to centroid)
+    assert result.x is not None
+    assert result.y is not None
+    
+    # Confidence should be low (fallback triggered)
+    assert result.confidence < 0.5
+    
+    # Compare: core NOT at edge should have high confidence
+    m_z_center = generate_vortex_mz_centered(Nx=64, Ny=64, core_pix=(32, 32))
+    result_center = core_track_single_frame(
+        m_z_center,
+        method="gaussian",
+        dx=2.5e-9,
+        dy=2.5e-9,
+    )
+    assert result_center.confidence > 0.8
+```
 
 ---
 
@@ -2070,28 +2579,32 @@ class VortexInterface:
 | **Estymowany LOC** | ~8000-10000 |
 | **Sub-modułów vortex** | 12 (topology, core, trajectory, spectrum, modes, nonlinear, reservoir, coupled, events, energy, signals, _cache) |
 | **Sub-modułów skyrmion** | 4 (topology, tracking, dynamics, _plotting) |
-| **Shared engine** | 1 (`_topology.py` — Berg-Lüscher, guiding_center) |
-| **Fazy wdrożenia** | 9 (fundamenty → trajectory → modes → nonlinear → polish → RC → coupled → events/energy/signals → skyrmion) |
+| **Shared engine** | 1 (`_topology.py` — Berg-Lüscher, guiding_center — mini-wersja od Fazy 1) |
+| **Fazy wdrożenia** | 9 (fundamenty [3 PR-y] → trajectory → modes → nonlinear → polish → RC → coupled → events/energy/signals → skyrmion) |
 | **Czas estymowany** | 14–15 sprintów (~15 tygodni) |
 | **Kompatybilność wsteczna** | 100% — nowy namespace `solitons`, zero breaking changes |
 | **Reuse istniejącego kodu** | `fft.compute_fft`, `analytical.constants`, `core.dataset` |
 | **Nowe w v2.0** | aliasy skrótowe, batch API, `average_magnetization`, G/C-state, RC, coupled |
 | **Nowe w v3.0** | Sign conventions (p,w,C,Q,γ₀), Berg-Lüscher, z(t) phase, CW/CCW spectrum, core-centered modes, Thiele decomp, F_Oe, events/, energy/, signals/, skyrmion module, shared _topology |
+| **Nowe w v3.1** | `XYConvention` (load-bearing), Faza1→3PR, normalizacja m̂, arctan2 BL, winding z fazy, chirality confidence, Gauss fallback, polarity p(t), cache key hash+version, 3 krytyczne testy syntetyczne, _topology mini-wersja w Faza 1 |
 
 ### Kolejne kroki
 
 1. ✅ Plan wdrożenia v1.0 (ten dokument)
 2. ✅ Review + aktualizacja do v2.0 (aliasy, batch, avg_m, G/C-state, RC, coupled)
 3. ✅ Audyt fizyczny + aktualizacja do v3.0 (konwencje znaków, Berg-Lüscher, z(t) faza, CW/CCW, events, energy, signals, skyrmion)
-4. ⬜ Faza 1: Utworzenie struktury + topology + core tracking
-5. ⬜ Faza 2: Trajectory + Spectrum
-6. ⬜ Faza 3: Mode Classification (migracja vortex_classifier.py)
-7. ⬜ Faza 4: Nonlinear Analysis
-8. ⬜ Faza 5: Polish + Docs + Examples
-9. ⬜ Faza 6: Reservoir Computing (Shreya et al. 2023)
-10. ⬜ Faza 7: Coupled Vortex Analysis (Hamadeh et al.)
-11. ⬜ Faza 8: Events + Energy + Signals (v3.0)
-12. ⬜ Faza 9: Skyrmion Module + Shared Topology (v3.0)
+4. ✅ Review wykonawczy + aktualizacja do v3.1 (XYConvention, 3 PR-y, algorytmy, cache, testy)
+5. ⬜ **Faza 1 PR1:** Scaffolding + wiring + aliasy + `XYConvention` + `_repr_html_()`
+6. ⬜ **Faza 1 PR2:** Topology (single snapshot) — FD + BL Q + `_topology.py` mini
+7. ⬜ **Faza 1 PR3:** Core tracking (3 metody + fallback + cache key standard + `plt.xy()`)
+8. ⬜ Faza 2: Trajectory + Spectrum
+9. ⬜ Faza 3: Mode Classification (migracja vortex_classifier.py)
+10. ⬜ Faza 4: Nonlinear Analysis
+11. ⬜ Faza 5: Polish + Docs + Examples
+12. ⬜ Faza 6: Reservoir Computing (Shreya et al. 2023)
+13. ⬜ Faza 7: Coupled Vortex Analysis (Hamadeh et al.)
+14. ⬜ Faza 8: Events + Energy + Signals (v3.0)
+15. ⬜ Faza 9: Skyrmion Module + Shared Topology rozszerzenie (v3.0)
 
 ---
 

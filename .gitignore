@@ -63,7 +63,17 @@ coverage.xml
 # ignores, but allow tracking a small curated set of unit tests under `tests/`.
 !tests/
 tests/**
+!tests/fixtures/
+!tests/fixtures/__init__.py
+!tests/fixtures/synthetic_vortex.py
 !tests/test_dispersion_mode_extraction.py
+!tests/test_vortex_topology.py
+!tests/test_vortex_tracking.py
+!tests/test_vortex_trajectory.py
+!tests/test_vortex_spectrum.py
+!tests/test_vortex_modes.py
+!tests/test_vortex_nonlinear.py
+!tests/test_vortex_events.py
 
 # Translations
 *.mo

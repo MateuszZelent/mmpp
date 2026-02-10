@@ -339,6 +339,7 @@ class DatasetAwareWrapper:
         self.zarr_array = zarr_array
         self.slice_info = slice_info  # Store slicing information
         self._fft = None
+        self._solitons = None
 
     def _resolve_source(self):
         """Return underlying data respecting the stored slice."""
@@ -453,6 +454,25 @@ class DatasetAwareWrapper:
                 slice_info=self.slice_info,
             )
         return self._fft
+
+    @property
+    def solitons(self):
+        """Return soliton analysis interface with this dataset pre-selected."""
+        if self._solitons is None:
+            from ..solitons import DatasetSpecificSolitons
+
+            self._solitons = DatasetSpecificSolitons(
+                self.job_result,
+                self.dataset_name,
+                getattr(self.job_result, "_mmpp_ref", None),
+                slice_info=self.slice_info,
+            )
+        return self._solitons
+
+    @property
+    def vortex(self):
+        """Shortcut alias for ``self.solitons.vortex``."""
+        return self.solitons.vortex
 
     @property
     def shape(self):
