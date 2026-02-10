@@ -201,6 +201,46 @@ fig, ax = trans_batch.plot_transmission_crosssection_heatmap(
   - `BatchOperations.fft.spectrum.compute_all(...)` / `BatchOperations.fft.spectrum(...)`
   - `BatchOperations.fft.transmission.compute_all(...)` / `BatchOperations.fft.transmission(...)`
 
+## FFT Refactor Status
+
+Current refactor status:
+
+- Phase 1 complete: shared FFT filtering infrastructure.
+- Phase 2 started: refactored `SpectrumResult` moved to `mmpp/fft/spectrum/`.
+- Phase 3 started: `SpectrumHelper` moved to `mmpp/fft/spectrum/helpers.py` and `core.py` reduced.
+- Phase 4 started: added `mmpp/fft/spectrum/batch/` shim namespace for batch decomposition.
+- Phase 4 progress: `SpectrumEntry` + `BatchSpectrumResult` moved to `mmpp/fft/spectrum/batch/result.py`.
+- Phase 4 progress: `BatchSpectrum` moved to `mmpp/fft/spectrum/batch/compute.py`.
+- Phase 4 progress: plotting methods extracted to `mmpp/fft/spectrum/batch/plotting.py`.
+- Phase 4 progress: `FFTCompute` internals split into helper modules:
+  - `mmpp/fft/_compute_engines.py` (engine selection + FFT backends),
+  - `mmpp/fft/_compute_methods.py` (method1/method2 execution + metadata),
+  - `mmpp/fft/_compute_loading.py` (zarr loading + z-layer normalization + profiled loading metrics),
+  - `mmpp/fft/_compute_cache.py` (cache load + parameter matching).
+
+Phase 1 introduced:
+
+- `mmpp/fft/filters/config.py`
+- `mmpp/fft/filters/pipeline.py`
+- `mmpp/fft/filters/preprocess.py`
+- `mmpp/fft/filters/postprocess.py`
+- `mmpp/fft/filters/windows.py`
+
+Integrated modules now delegating to shared filters:
+
+- `mmpp/fft/compute_fft.py` (window + pre-FFT filters),
+- `mmpp/fft/modes/filter_utils.py` (compatibility shim),
+- `mmpp/fft/modes/interactive.py` (post-filter wrappers + delegated toolbar helpers),
+- `mmpp/fft/modes/_interactive/presets.py`, `mmpp/fft/modes/_interactive/controls.py`, `mmpp/fft/modes/_interactive/data.py`, `mmpp/fft/modes/_interactive/callbacks.py`, `mmpp/fft/modes/_interactive/widgets.py`, `mmpp/fft/modes/_interactive/rendering.py`, `mmpp/fft/modes/_interactive/interactions.py`, `mmpp/fft/modes/_interactive/mode_plots.py`, `mmpp/fft/modes/_interactive/mode_layout.py`, `mmpp/fft/modes/_interactive/status.py`, and `mmpp/fft/modes/_interactive/compat.py`,
+- `mmpp/fft/spectrum/modes/bridge.py` and `mmpp/fft/spectrum/modes/accessor.py` (SpectrumResult -> modes bridge split),
+- `mmpp/fft/dispersion/modes/_interactive/state.py`, `mmpp/fft/dispersion/modes/_interactive/presets.py`, `mmpp/fft/dispersion/modes/_interactive/callbacks.py`, `mmpp/fft/dispersion/modes/_interactive/layout.py`, and `mmpp/fft/dispersion/modes/_interactive/filters.py` (runtime state, presets, animation callbacks, layout, and filter-config builders extracted from `interactive.py`),
+- `mmpp/fft/dispersion/_interface/k0_filtering.py` (shared smoothing path).
+
+Planned next steps:
+
+- move remaining `FFT` helper internals from `core.py` into `spectrum/*` modules,
+- clean/trim legacy imports and typing debt in refactored batch modules.
+
 ## Documentation
 
 Full documentation is in `docs/` and includes:

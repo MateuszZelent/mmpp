@@ -12,13 +12,13 @@ from typing import Optional, Tuple
 import numpy as np
 
 try:
-    from scipy.signal import savgol_filter
     from scipy.stats import median_abs_deviation as mad
     _SCIPY_AVAILABLE = True
 except ImportError:
     _SCIPY_AVAILABLE = False
-    savgol_filter = None  # type: ignore
     mad = None  # type: ignore
+
+from ...filters.postprocess import apply_smoothing as _shared_apply_smoothing
 
 logger = logging.getLogger(__name__)
 
@@ -288,17 +288,17 @@ class K0Filter:
                         PSD_compressed[f_idx, k_idx] = signal * gain
                         gain_map[f_idx, i] = gain
         
-        # Smooth gain map if scipy available
-        if _SCIPY_AVAILABLE and smooth_win is not None and F > smooth_win:
+        # Smooth gain map with shared postprocess implementation.
+        if smooth_win is not None and F > 3:
             win = _odd(smooth_win)
             if F >= win:
                 for i in range(len(idx0)):
                     try:
-                        gain_map[:, i] = savgol_filter(
+                        gain_map[:, i] = _shared_apply_smoothing(
                             gain_map[:, i],
-                            window_length=win,
+                            smooth_filter="savgol",
+                            smooth_window=win,
                             polyorder=min(smooth_poly, win - 1),
-                            mode='nearest',
                         )
                     except Exception:
                         pass

@@ -18,6 +18,7 @@ from .static_plots import (
     update_single_mode_plot,
     add_scale_bar,
 )
+from .interactive import interactive_spectrum
 
 __all__ = [
     # Animation functions
@@ -30,6 +31,7 @@ __all__ = [
     'plot_modes',
     'update_single_mode_plot',
     'add_scale_bar',
+    # Interactive
+    'interactive_spectrum',
 ]
-
 

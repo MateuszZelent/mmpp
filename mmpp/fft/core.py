@@ -12,6 +12,7 @@ import numpy as np
 # Import from our own modules
 from .compute_fft import FFTCompute, FFTComputeResult
 from .plot import FFTPlotter
+from .spectrum.compute import build_cache_key, compute_fft_cached, format_slice_identifier
 from .transmission.interface import FFTTransmissionInterface
 from ..cli.logging_config import get_mmpp_logger
 
@@ -40,556 +41,7 @@ except ImportError:
     DISPERSION_AVAILABLE = False
     find_peaks_1d = None  # type: ignore
 
-# Optional matplotlib
-try:
-    import matplotlib.pyplot as plt
-    from matplotlib.axes import Axes
-    from matplotlib.colors import to_rgba
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
-    Axes = Any  # type: ignore
-    to_rgba = None  # type: ignore
-
-
-def _try_enable_widget_backend():
-    """Try to enable widget backend for interactive plots in Jupyter.
-    
-    Silently tries to switch to widget backend if running in IPython/Jupyter.
-    Does nothing if not in IPython or if widget is unavailable.
-    """
-    try:
-        from IPython import get_ipython
-        ipython = get_ipython()
-        if ipython is None:
-            return
-        
-        # Check current backend
-        current_backend = plt.get_backend().lower()
-        
-        # Already using widget/ipympl - do nothing
-        if "widget" in current_backend or "ipympl" in current_backend:
-            return
-        
-        # Try to switch to widget
-        try:
-            ipython.run_line_magic("matplotlib", "widget")
-            log.debug("Switched to matplotlib widget backend")
-        except Exception:
-            pass  # Widget not available, continue with current backend
-            
-    except Exception:
-        pass  # Not in IPython or other error
-
-
-def generate_pastel_colors(n: int):
-    """Generate n pastel colors using the Accent colormap.
-    
-    Parameters
-    ----------
-    n : int
-        Number of colors to generate
-        
-    Returns
-    -------
-    list
-        List of RGBA color tuples
-        
-    Examples
-    --------
-    >>> colors = generate_pastel_colors(3)  # For mx, my, mz
-    >>> ax.plot(x, y, color=colors[0])
-    """
-    if not MATPLOTLIB_AVAILABLE:
-        # Fallback colors if matplotlib not available
-        return [(0.4, 0.6, 0.8, 1.0)] * n
-    
-    colors = plt.cm.Accent(np.linspace(0, 1, max(n, 3)))
-    return [to_rgba(c) for c in colors[:n]]
-
-
-
-class SpectrumHelper:
-    """Callable helper wrapper for FFT.spectrum() with rich display.
-    
-    When accessed as property (job.fft.spectrum), displays helpful usage info.
-    When called (job.fft.spectrum(...)), delegates to actual spectrum method.
-    """
-    
-    def __init__(self, fft_instance):
-        self._fft = fft_instance
-        self._spectrum_method = fft_instance._spectrum_impl
-    
-    def __call__(self, *args, **kwargs):
-        """Delegate to actual spectrum method."""
-        return self._spectrum_method(*args, **kwargs)
-    
-    def __repr__(self):
-        return self._rich_display()
-    
-    def _repr_html_(self):
-        """For Jupyter notebook display."""
-        return None  # Let rich handle it
-    
-    def _rich_display(self) -> str:
-        """Generate rich help display for spectrum method."""
-        try:
-            from rich.console import Console
-            from rich.panel import Panel
-            from rich.table import Table
-            from rich.text import Text
-            from rich.syntax import Syntax
-            from io import StringIO
-            
-            capture = StringIO()
-            console = Console(file=capture, force_terminal=True, width=100)
-            
-            # Title
-            title = Text()
-            title.append("📊 FFT Spectrum Analysis\n", style="bold blue")
-            title.append(f"Path: {self._fft.job_result.path}", style="dim")
-            
-            console.print(Panel(title, border_style="blue"))
-            
-            # Parameters table
-            params_table = Table(show_header=True, header_style="bold green")
-            params_table.add_column("Parameter", style="yellow")
-            params_table.add_column("Description", style="white")
-            params_table.add_column("Default", style="cyan")
-            
-            params = [
-                ("dset", "Dataset name", "'m'"),
-                ("z_layer", "Z-layer index", "-1"),
-                ("tmin/tmax", "Time range (indices)", "None"),
-                ("fmin/fmax", "Frequency filter (Hz)", "None"),
-                ("find_peaks", "Peak detection config", "None"),
-                ("force", "Force recalculation", "False"),
-                ("save", "Save to zarr", "False"),
-            ]
-            for p, d, v in params:
-                params_table.add_row(p, d, v)
-            
-            console.print(params_table)
-            console.print("")
-            
-            # Examples
-            example_code = '''# Basic spectrum
-result = job[0].fft.spectrum()
-freqs, spec = result  # Tuple unpacking
-
-# With time slicing using slice notation
-result = job[0].m[:200,...,1].fft.spectrum()
-
-# Or with tmin/tmax parameters
-result = job[0].fft.spectrum(tmin=0, tmax=200)
-
-# Fluent plotting API
-job[0].fft.spectrum(find_peaks={'min_prominence': 0.1}).plot_spectrum(
-    freq_unit="GHz",
-    log_scale=True,
-    dpi=150
-)
-
-# Access properties
-result.power       # |FFT|²
-result.magnitude   # |FFT|
-result.frequencies
-result.peaks_info  # If find_peaks was used'''
-            
-            syntax = Syntax(example_code, "python", theme="monokai", line_numbers=False)
-            console.print(Panel(syntax, title="[bold magenta]Usage Examples[/bold magenta]", border_style="magenta"))
-            
-            return capture.getvalue()
-        except ImportError:
-            return "FFT.spectrum(...) - Call with parameters to compute FFT spectrum. Use help(job[0].fft.spectrum) for details."
-
-
-# Import metadata utilities for auto-labeling
-try:
-    from ..core.metadata_diff import generate_auto_labels
-    METADATA_DIFF_AVAILABLE = True
-except ImportError:
-    METADATA_DIFF_AVAILABLE = False
-    generate_auto_labels = None
-
-
-class MultiSpectrumResult:
-    """Collection of SpectrumResult objects with overlay plotting.
-    
-    Enables plotting multiple spectra on a single figure with
-    auto-generated labels based on metadata differences.
-    """
-    
-    def __init__(self, spectra: list["SpectrumResult"]):
-        self.spectra = spectra
-        self._labels: Optional[list[str]] = None
-    
-    def __len__(self):
-        return len(self.spectra)
-    
-    def __iter__(self):
-        return iter(self.spectra)
-    
-    def __getitem__(self, index):
-        return self.spectra[index]
-    
-    def __repr__(self):
-        return f"MultiSpectrumResult({len(self.spectra)} spectra)"
-    
-    def plot(
-        self,
-        ax: Optional[Any] = None,
-        labels: Optional[list[str]] = None,
-        auto_label: bool = True,
-        legend: bool = True,  # Set to False to skip all legend/auto-label code
-        freq_unit: str = "GHz",
-        log_scale: bool = True,
-        normalize: bool = False,
-        title: Optional[str] = None,
-        dpi: int = 100,
-        figsize: tuple = (10, 6),
-        colors: Optional[list] = None,
-        **kwargs,
-    ):
-        """Plot all spectra overlaid on single axes."""
-        if not MATPLOTLIB_AVAILABLE:
-            raise ImportError("Matplotlib required for plotting")
-        
-        # Try to enable widget backend for interactivity
-        _try_enable_widget_backend()
-        
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-        else:
-            fig = ax.figure
-        
-        # Generate labels from metadata diff - SKIP if legend=False
-        if legend and labels is None and auto_label:
-            jobs = [s._source_job for s in self.spectra if s._source_job is not None]
-            if METADATA_DIFF_AVAILABLE and len(jobs) == len(self.spectra):
-                labels = generate_auto_labels(jobs)
-            else:
-                labels = [f"Spectrum {i+1}" for i in range(len(self.spectra))]
-        elif labels is None:
-            labels = [None] * len(self.spectra)
-        
-        if colors is None:
-            colors = generate_pastel_colors(len(self.spectra))
-        
-        freq_scale = {"Hz": 1, "kHz": 1e-3, "MHz": 1e-6, "GHz": 1e-9, "THz": 1e-12}
-        scale = freq_scale.get(freq_unit, 1e-9)
-        
-        for spectrum, label, color in zip(self.spectra, labels, colors):
-            freqs = spectrum.frequencies * scale
-            power = np.abs(spectrum.spectrum) ** 2
-            if power.ndim > 1:
-                power = np.mean(power, axis=tuple(range(1, power.ndim)))
-            if normalize:
-                power = power / np.max(power) if np.max(power) > 0 else power
-            ax.plot(freqs, power, color=color, label=label, **kwargs)
-        
-        ax.set_xlabel(f"Frequency ({freq_unit})")
-        ax.set_ylabel("Power (arb. u.)" if not normalize else "Power (normalized)")
-        if log_scale:
-            ax.set_yscale("log")
-        ax.set_title(title or f"Spectrum Comparison ({len(self.spectra)} jobs)")
-        
-        # Only add legend if legend=True and we have labels
-        if legend and any(l is not None for l in labels):
-            ax.legend(loc='best', fontsize=9)
-            
-        plt.tight_layout()
-        
-        # Collect peaks_info from all spectra
-        peaks_list = [s.peaks_info for s in self.spectra]
-        return fig, ax, peaks_list
-    
-    # Alias for consistency with SpectrumResult API
-    def plot_spectrum(self, **kwargs):
-        """Alias for plot() - for API consistency with SpectrumResult."""
-        return self.plot(**kwargs)
-
-
-class SpectrumResult:
-    """Result of FFT spectrum computation with fluent plotting API.
-    
-    Provides both tuple-like access (frequencies, spectrum) and 
-    method chaining for plotting.
-    
-    Examples
-    --------
-    >>> # Fluent API
-    >>> job[0].m[:100,...].fft.spectrum().plot_spectrum(log_scale=True)
-    >>> 
-    >>> # Tuple unpacking still works
-    >>> freqs, spec = job[0].fft.spectrum()
-    """
-    
-    def __init__(
-        self,
-        frequencies: np.ndarray,
-        spectrum: np.ndarray,
-        peaks_info: Optional[dict] = None,
-        component_label: Optional[str] = None,
-        source_job: Optional[Any] = None,
-    ):
-        self.frequencies = frequencies
-        self.spectrum = spectrum
-        self.peaks_info = peaks_info
-        self.component_label = component_label
-        self._source_job = source_job  # Reference to originating job for auto-labeling
-        self._single_component = False  # Set to True if user selected specific component
-    
-    @property
-    def power(self) -> np.ndarray:
-        """Power spectrum |FFT|²"""
-        return np.abs(self.spectrum) ** 2
-    
-    @property
-    def magnitude(self) -> np.ndarray:
-        """Magnitude spectrum |FFT|"""
-        return np.abs(self.spectrum)
-    
-    def __iter__(self):
-        """Enable tuple unpacking: freqs, spec = result"""
-        yield self.frequencies
-        yield self.spectrum
-        if self.peaks_info is not None:
-            yield self.peaks_info
-    
-    def __getitem__(self, index: int):
-        """Enable indexed access: result[0] for frequencies, result[1] for spectrum"""
-        items = [self.frequencies, self.spectrum]
-        if self.peaks_info is not None:
-            items.append(self.peaks_info)
-        return items[index]
-    
-    def __len__(self):
-        """Length for tuple-like behavior"""
-        return 3 if self.peaks_info is not None else 2
-    
-    def __repr__(self):
-        label_info = f", label='{self.component_label}'" if self.component_label else ""
-        return (
-            f"SpectrumResult(frequencies={len(self.frequencies)}, "
-            f"spectrum_shape={self.spectrum.shape}, "
-            f"peaks={len(self.peaks_info['indices']) if self.peaks_info else 'None'}"
-            f"{label_info})"
-        )
-    
-    def plot_spectrum(
-        self,
-        ax: Optional[Any] = None,
-        freq_unit: str = "GHz",
-        log_scale: bool = True,
-        normalize: bool = False,
-        show_peaks: bool = True,
-        title: Optional[str] = None,
-        dpi: Optional[int] = None,
-        **kwargs,
-    ):
-        """Plot power spectrum.
-        
-        Parameters
-        ----------
-        ax : matplotlib.axes.Axes, optional
-            Existing axes to plot on (creates new figure if None)
-        freq_unit : str
-            Frequency unit: "Hz", "kHz", "MHz", "GHz", "THz"
-        log_scale : bool
-            Use logarithmic Y-scale (default: True)
-        normalize : bool
-            Normalize to maximum value (default: False)
-        show_peaks : bool
-            Show detected peaks if available (default: True)
-        title : str, optional
-            Custom plot title
-        dpi : int, optional
-            Resolution in dots per inch (default: None)
-        **kwargs
-            Additional matplotlib plot arguments
-            
-        Returns
-        -------
-        Tuple[Figure, Axes, Optional[dict]]
-            Matplotlib figure, axes, and peaks_info dict (or None if no peaks detected)
-        """
-        if not MATPLOTLIB_AVAILABLE:
-            raise ImportError("Matplotlib required for plotting")
-        
-        # Try to enable widget backend for interactivity
-        _try_enable_widget_backend()
-        
-        # Frequency scaling
-        freq_scales = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
-        freq_scale = freq_scales.get(freq_unit, 1e9)
-        freqs_display = self.frequencies / freq_scale
-        
-        # Power spectrum
-        power = self.power
-        if normalize:
-            power = power / np.max(power)
-        
-        # Create figure if needed
-        if ax is None:
-            fig, ax = plt.subplots(figsize=(10, 5), dpi=dpi)
-        else:
-            fig = ax.figure
-            if dpi is not None:
-                fig.set_dpi(dpi)
-        
-        # Handle multidimensional power spectrum
-        # If we have (Freqs, ..., 3), we want to plot 3 lines (mx, my, mz)
-        # BUT: if user selected specific component via slicing, only plot that component
-        if power.ndim > 1 and power.shape[-1] == 3 and not getattr(self, '_single_component', False):
-            # Multiple components available and NOT single-component selection
-            # Check if last dimension is 3 (components)
-            # Average over any spatial dimensions in between (Freqs, [Space], 3) -> (Freqs, 3)
-            if power.ndim > 2:
-                spatial_axes = tuple(range(1, power.ndim - 1))
-                power_to_plot = np.mean(power, axis=spatial_axes)
-            else:
-                power_to_plot = power
-
-            # Plot with component labels and pastel colors
-            component_labels = [r"$m_x$", r"$m_y$", r"$m_z$"]
-            colors = generate_pastel_colors(3)
-            for i in range(3):
-                ax.plot(freqs_display, power_to_plot[:, i], 
-                       label=component_labels[i], color=colors[i], **kwargs)
-            ax.legend()
-        elif power.ndim > 1:
-            # Treat as multiple spatial points or other dimensions
-            # Just flatten the rest or average?
-            # Default behavior: average everything else to get 1D
-            spatial_axes = tuple(range(1, power.ndim))
-            power_to_plot = np.mean(power, axis=spatial_axes)
-            
-            # Use component label if available and not overridden
-            if "label" not in kwargs and self.component_label:
-                kwargs["label"] = self.component_label
-            elif "label" not in kwargs:
-                kwargs["label"] = "Average Power"
-            
-            ax.plot(freqs_display, power_to_plot, **kwargs)
-            ax.legend()
-        else:
-            # 1D case
-            # Use component label if available and not overridden
-            if "label" not in kwargs and self.component_label:
-                kwargs["label"] = self.component_label
-            
-            ax.plot(freqs_display, power, **kwargs)
-            if "label" in kwargs:
-                ax.legend()
-
-        ax.set_xlabel(f"Frequency ({freq_unit})")
-        
-        # Professional Y-axis label with exponent
-        if not normalize and not log_scale:
-            # Get max value to determine exponent
-            if "power_to_plot" in dir():
-                max_val = np.max(power_to_plot)
-            else:
-                max_val = np.max(power)
-            
-            if max_val > 0:
-                exponent = int(np.floor(np.log10(max_val)))
-                if abs(exponent) >= 2:
-                    # Scale data and update label
-                    scale_factor = 10 ** exponent
-                    for line in ax.get_lines():
-                        ydata = line.get_ydata()
-                        line.set_ydata(ydata / scale_factor)
-                    ax.set_ylabel(f"Power (×10$^{{{exponent}}}$ arb. u.)")
-                    ax.relim()
-                    ax.autoscale_view()
-                else:
-                    ax.set_ylabel("Power (arb. u.)")
-            else:
-                ax.set_ylabel("Power (arb. u.)")
-        elif normalize:
-            ax.set_ylabel("Power (normalized)")
-        else:
-            ax.set_ylabel("Power (arb. u.)")
-        
-        if log_scale:
-            ax.set_yscale("log")
-        
-        if title:
-            ax.set_title(title)
-        else:
-            ax.set_title("FFT Power Spectrum")
-        
-        # Professional peak markers
-        if show_peaks and self.peaks_info is not None and len(self.peaks_info["indices"]) > 0:
-            peak_freqs = self.peaks_info["frequencies"] / freq_scale
-            peak_powers = self.peaks_info["amplitudes"] ** 2
-            if normalize:
-                peak_powers = peak_powers / np.max(self.power)
-            
-            # Scale peak powers if we scaled the data
-            if not normalize and not log_scale and 'scale_factor' in dir():
-                peak_powers = peak_powers / scale_factor
-            
-            # Plot peaks as subtle markers (not scatter)
-            ax.plot(peak_freqs, peak_powers, 'o', 
-                   color='#E74C3C', markersize=6, markeredgecolor='white', 
-                   markeredgewidth=1.5, zorder=5, label='Peaks')
-            
-            # Find top 3 peaks for annotation
-            sorted_indices = np.argsort(peak_powers)[::-1]
-            n_annotate = min(3, len(peak_freqs))
-            
-            for i in range(n_annotate):
-                idx = sorted_indices[i]
-                freq = peak_freqs[idx]
-                power_val = peak_powers[idx]
-                
-                # Only add vertical line for the highest peak
-                if i == 0:
-                    # Draw line from y=0 to the peak value
-                    ax.vlines(x=freq, ymin=0, ymax=power_val, 
-                             color='#E74C3C', linestyle=':', alpha=0.6, linewidth=1.2)
-                
-                # Format frequency label
-                freq_text = f"{freq:.2f}" if 0.01 < freq < 100 else f"{freq:.2e}"
-                
-                # Add annotation with arrow
-                ax.annotate(
-                    f"{freq_text} {freq_unit}",
-                    xy=(freq, power_val),
-                    xytext=(8, 8 + i * 12),  # Offset to avoid overlap
-                    textcoords='offset points',
-                    fontsize=9,
-                    color='#2C3E50',
-                    fontweight='medium',
-                    arrowprops=dict(
-                        arrowstyle='-',
-                        color='#E74C3C',
-                        alpha=0.6,
-                        lw=0.8
-                    ) if i == 0 else None,
-                    bbox=dict(
-                        boxstyle='round,pad=0.3',
-                        facecolor='white',
-                        edgecolor='#E74C3C',
-                        alpha=0.9,
-                        linewidth=0.8
-                    ) if i == 0 else None,
-                    zorder=10
-                )
-        
-        # Style improvements
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.tick_params(axis='both', which='major', labelsize=10)
-        ax.legend(frameon=True, fancybox=True, shadow=False, 
-                 framealpha=0.9, edgecolor='lightgray', fontsize=9)
-        
-        fig.tight_layout()
-        
-        return fig, ax, self.peaks_info
+from .spectrum import MultiSpectrumResult, SpectrumFilterChain, SpectrumHelper, SpectrumResult
 
 
 class FFT:
@@ -652,23 +104,7 @@ class FFT:
 
     def _format_slice_identifier(self, slice_info: Optional[Any]) -> str:
         """Create a deterministic identifier for slice_info for caching/saving."""
-        if slice_info is None:
-            return "slice=None"
-
-        def format_item(item: Any) -> str:
-            if isinstance(item, slice):
-                return f"{item.start}:{item.stop}:{item.step}"
-            if item is Ellipsis:
-                return "..."
-            if isinstance(item, tuple):
-                return "(" + ",".join(format_item(sub) for sub in item) + ")"
-            if isinstance(item, (int, np.integer)):
-                return str(int(item))
-            return repr(item)
-
-        slice_tuple = slice_info if isinstance(slice_info, tuple) else (slice_info,)
-        formatted = ",".join(format_item(part) for part in slice_tuple)
-        return f"slice={formatted}"
+        return format_slice_identifier(slice_info)
 
     def _get_cache_key(
         self,
@@ -679,15 +115,13 @@ class FFT:
         **kwargs,
     ) -> str:
         """Generate cache key for FFT results."""
-        # Normalize z_layer for consistent cache keys
-        # For cache purposes, we use the raw z_layer value since the actual normalization
-        # happens in calculate_fft_data and we want consistent caching behavior
-        key_parts = [dataset_name, str(z_layer), str(method)]
-        if slice_identifier:
-            key_parts.append(slice_identifier)
-        for k, v in sorted(kwargs.items()):
-            key_parts.append(f"{k}={v}")
-        return "|".join(key_parts)
+        return build_cache_key(
+            dataset_name,
+            z_layer,
+            method,
+            slice_identifier=slice_identifier,
+            **kwargs,
+        )
 
     def _compute_fft(
         self,
@@ -730,49 +164,20 @@ class FFT:
         FFTComputeResult
             FFT computation result
         """
-        # Auto-select largest m dataset if none specified
-        if dataset_name is None:
-            dataset_name = self.job_result.get_largest_m_dataset()
-
-        if not isinstance(dataset_name, str):
-            dataset_name = str(dataset_name)
-
-        slice_identifier = self._format_slice_identifier(slice_info)
-        cache_key = self._get_cache_key(
-            dataset_name, z_layer, method, slice_identifier=slice_identifier, **kwargs
+        return compute_fft_cached(
+            compute_engine=self._compute,
+            job_result=self.job_result,
+            cache=self._cache,
+            dataset_name=dataset_name,
+            z_layer=z_layer,
+            method=method,
+            use_cache=use_cache,
+            save=save,
+            force=force,
+            save_dataset_name=save_dataset_name,
+            slice_info=slice_info,
+            **kwargs,
         )
-
-        # Check memory cache only if not forcing and not saving
-        if use_cache and not force and not save and cache_key in self._cache:
-            return self._cache[cache_key]
-
-        try:
-            result = self._compute.calculate_fft_data(
-                self.job_result.path,
-                dataset_name,
-                z_layer,
-                method,
-                save=save,
-                force=force,
-                save_dataset_name=save_dataset_name,
-                slice_info=slice_info,
-                slice_identifier=(
-                    None if slice_identifier == "slice=None" else slice_identifier
-                ),
-                **kwargs,
-            )
-        except OSError as e:
-            if "directory not empty" in str(e).lower():
-                print(
-                    "Warning: FFT directory already exists and is not empty. Use force=True to overwrite."
-                )
-            raise
-
-        # Cache result only if not forcing
-        if use_cache and not force:
-            self._cache[cache_key] = result
-
-        return result
 
     @property
     def spectrum(self) -> SpectrumHelper:
@@ -787,6 +192,16 @@ class FFT:
         >>> job[0].fft.spectrum()  # Computes spectrum
         """
         return SpectrumHelper(self)
+
+    def filters(self, **filters: Any) -> SpectrumFilterChain:
+        """Create fluent filter chain for spectrum calculations.
+
+        Examples
+        --------
+        >>> job[0].fft.filters(remove_static=True).spectrum()
+        >>> job[0].fft.filters(post={"normalize": True, "log_transform": True}).spectrum()
+        """
+        return SpectrumFilterChain(self.spectrum, filters)
 
     def _spectrum_impl(
         self,
@@ -941,7 +356,18 @@ class FFT:
                          component_label = r"$m_z$"
         
         # Mark the spectrum result to indicate single-component selection
-        result = SpectrumResult(frequencies, spectrum, peaks_info, component_label=component_label)
+        result = SpectrumResult(
+            frequencies,
+            spectrum,
+            peaks_info,
+            component_label=component_label,
+            source_job=self.job_result,
+            source_fft=self,
+            mode_context={
+                "dset": dset,
+                "slice_info": slice_info,
+            },
+        )
         result._single_component = component_selected
         return result
 

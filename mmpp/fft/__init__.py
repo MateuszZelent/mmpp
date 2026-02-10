@@ -6,7 +6,9 @@ Main entry point through the FFT class.
 """
 
 from .compute_fft import FFTCompute, FFTComputeResult
-from .core import FFT, SpectrumResult, MultiSpectrumResult
+from .core import FFT
+from .filters import FilterConfig, FilterPipeline, PostprocessConfig, PreprocessConfig
+from .spectrum import MultiSpectrumResult, SpectrumFilterChain, SpectrumResult
 from .transmission import (
     TransmissionConfig,
     TransmissionResult,
@@ -38,6 +40,11 @@ try:
         "FFTComputeResult",
         "SpectrumResult",
         "MultiSpectrumResult",
+        "SpectrumFilterChain",
+        "FilterConfig",
+        "PreprocessConfig",
+        "PostprocessConfig",
+        "FilterPipeline",
         "FFTTransmissionInterface",
         "FMRModeAnalyzer",
         "FFTModeInterface",
@@ -47,7 +54,7 @@ try:
         "ModeCharacterizationResult",
         "SpinWaveAnalyzer",
         "DispersionResult1D",
-        "DispersionResult2D", 
+        "DispersionResult2D",
         "DispersionBranch",
         "DispersionConfig",
         "TransmissionConfig",
@@ -60,6 +67,11 @@ except ImportError:
         "FFT",
         "FFTCompute",
         "FFTComputeResult",
+        "SpectrumFilterChain",
+        "FilterConfig",
+        "PreprocessConfig",
+        "PostprocessConfig",
+        "FilterPipeline",
         "FFTTransmissionInterface",
         "TransmissionConfig",
         "TransmissionResult",

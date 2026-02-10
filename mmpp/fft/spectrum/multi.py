@@ -1,0 +1,142 @@
+"""Collection wrapper for overlaying multiple spectrum results."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+
+try:
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgba
+
+    _HAS_MATPLOTLIB = True
+except ImportError:  # pragma: no cover - optional dependency
+    plt = None  # type: ignore[assignment]
+    to_rgba = None  # type: ignore[assignment]
+    _HAS_MATPLOTLIB = False
+
+try:
+    from ...core.metadata_diff import generate_auto_labels
+
+    _HAS_METADATA_DIFF = True
+except ImportError:  # pragma: no cover - optional dependency
+    generate_auto_labels = None
+    _HAS_METADATA_DIFF = False
+
+
+def _try_enable_widget_backend() -> None:
+    if not _HAS_MATPLOTLIB:
+        return
+    try:
+        from IPython import get_ipython
+
+        ipython = get_ipython()
+        if ipython is None:
+            return
+        current_backend = str(plt.get_backend()).lower()
+        if "widget" in current_backend or "ipympl" in current_backend:
+            return
+        try:
+            ipython.run_line_magic("matplotlib", "widget")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _generate_pastel_colors(n: int) -> list[Any]:
+    if not _HAS_MATPLOTLIB:
+        return [(0.4, 0.6, 0.8, 1.0)] * max(1, int(n))
+    colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
+    return [to_rgba(c) for c in colors[: int(n)]]
+
+
+class MultiSpectrumResult:
+    """Collection of spectrum results with overlay plotting."""
+
+    def __init__(self, spectra: list[Any]):
+        self.spectra = spectra
+        self._labels: list[str] | None = None
+
+    def __len__(self):
+        return len(self.spectra)
+
+    def __iter__(self):
+        return iter(self.spectra)
+
+    def __getitem__(self, index):
+        return self.spectra[index]
+
+    def __repr__(self):
+        return f"MultiSpectrumResult({len(self.spectra)} spectra)"
+
+    def plot(
+        self,
+        ax: Any | None = None,
+        labels: list[str] | None = None,
+        auto_label: bool = True,
+        legend: bool = True,
+        freq_unit: str = "GHz",
+        log_scale: bool = True,
+        normalize: bool = False,
+        title: str | None = None,
+        dpi: int = 100,
+        figsize: tuple[float, float] = (10, 6),
+        colors: list[Any] | None = None,
+        **kwargs,
+    ):
+        """Plot all spectra overlaid on a single figure."""
+        if not _HAS_MATPLOTLIB:
+            raise ImportError("Matplotlib required for plotting")
+
+        _try_enable_widget_backend()
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        else:
+            fig = ax.figure
+
+        if legend and labels is None and auto_label:
+            jobs = [s._source_job for s in self.spectra if getattr(s, "_source_job", None) is not None]
+            if _HAS_METADATA_DIFF and generate_auto_labels is not None and len(jobs) == len(self.spectra):
+                labels = generate_auto_labels(jobs)
+            else:
+                labels = [f"Spectrum {i + 1}" for i in range(len(self.spectra))]
+        elif labels is None:
+            labels = [None] * len(self.spectra)
+
+        if colors is None:
+            colors = _generate_pastel_colors(len(self.spectra))
+
+        freq_scale = {"Hz": 1, "kHz": 1e-3, "MHz": 1e-6, "GHz": 1e-9, "THz": 1e-12}
+        scale = freq_scale.get(freq_unit, 1e-9)
+
+        for spectrum, label, color in zip(self.spectra, labels, colors):
+            freqs = np.asarray(spectrum.frequencies, dtype=float) * scale
+            power = np.asarray(spectrum.power, dtype=float)
+            if power.ndim > 1:
+                power = np.mean(power, axis=tuple(range(1, power.ndim)))
+            if normalize and power.size:
+                vmax = float(np.nanmax(power))
+                if vmax > 0:
+                    power = power / vmax
+            ax.plot(freqs, power, color=color, label=label, **kwargs)
+
+        ax.set_xlabel(f"Frequency ({freq_unit})")
+        ax.set_ylabel("Power (arb. u.)" if not normalize else "Power (normalized)")
+        if log_scale:
+            ax.set_yscale("log")
+        ax.set_title(title or f"Spectrum Comparison ({len(self.spectra)} jobs)")
+
+        if legend and any(label is not None for label in labels):
+            ax.legend(loc="best", fontsize=9)
+
+        plt.tight_layout()
+        peaks_list = [getattr(s, "peaks_info", None) for s in self.spectra]
+        return fig, ax, peaks_list
+
+    def plot_spectrum(self, **kwargs):
+        """Alias for :meth:`plot` (compatibility)."""
+        return self.plot(**kwargs)
+

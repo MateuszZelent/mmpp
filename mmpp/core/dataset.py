@@ -111,6 +111,21 @@ class DatasetSpecificFFT:
 
         return attr
 
+    def filters(self, **filters):
+        """Create fluent filter chain bound to current dataset and slice context.
+
+        Examples
+        --------
+        >>> job[0].m_layer13[:1000, ..., 2].fft.filters(remove_static=True).spectrum()
+        >>> job[0].m_layer13.fft.filters(post={"normalize": True, "log_transform": True}).spectrum()
+        """
+        if self._fft is None:
+            raise ImportError("FFT functionality not available. Install with: pip install mmpp[fft]")
+
+        from ..fft.spectrum import SpectrumFilterChain
+
+        return SpectrumFilterChain(self.spectrum, filters)
+
     def __repr__(self):
         """Concise text representation."""
         dataset = self.dataset_name
@@ -244,6 +259,7 @@ job[0].fft.modes  # Shows mode analysis options'''
 
         methods = [
             ("spectrum(dset=None, **opts)", "Compute FFT spectrum (dataset pre-selected)"),
+            ("filters(**opts).spectrum(...)", "Compute spectrum through fluent filter chain"),
             ("frequencies(dset=None, **opts)", "Frequency axis in Hz"),
             ("power(dset=None, **opts)", "Power spectrum |FFT|^2"),
             ("phase(dset=None, **opts)", "Phase spectrum (radians)"),
@@ -268,6 +284,7 @@ job[0].fft.modes  # Shows mode analysis options'''
             [
                 f"fft = {prefix}",
                 "spec = fft.spectrum()",
+                "spec_f = fft.filters(remove_static=True).spectrum()",
                 "spec.plot_spectrum(log_scale=True)",
                 "fft.dispersion.plot_dispersion(axis='x')",
                 "fft.transmission.plot_transmission()",

@@ -1,0 +1,475 @@
+"""Widget-construction helpers for :mod:`mmpp.fft.modes.interactive`."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+
+
+def build_toolbar(explorer: Any, widgets_module: Any) -> None:
+    """Build ipywidgets toolbar UI."""
+    widgets = widgets_module
+
+    fmin = float(np.nanmin(explorer._raw_frequencies_ghz))
+    fmax = float(np.nanmax(explorer._raw_frequencies_ghz))
+
+    z_min, z_max = explorer._guess_layer_bounds()
+
+    controls: dict[str, Any] = {}
+    controls["components"] = widgets.SelectMultiple(
+        options=[(f"m_{name}", name) for name in explorer._available_components],
+        value=tuple(explorer._current_components),
+        description="Comp:",
+        layout=widgets.Layout(width="100%", height="90px"),
+        style={"description_width": "55px"},
+    )
+    controls["z_layer"] = widgets.IntSlider(
+        value=explorer._current_z_layer,
+        min=z_min,
+        max=z_max,
+        step=1,
+        description="z:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+
+    controls["fmin"] = widgets.FloatSlider(
+        value=explorer._filter_state.freq_min,
+        min=fmin,
+        max=fmax,
+        step=max((fmax - fmin) / 400.0, 1e-4),
+        description="f min:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+    controls["fmax"] = widgets.FloatSlider(
+        value=explorer._filter_state.freq_max,
+        min=fmin,
+        max=fmax,
+        step=max((fmax - fmin) / 400.0, 1e-4),
+        description="f max:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+
+    controls["smooth_filter"] = widgets.Dropdown(
+        options=[
+            ("none", "none"),
+            ("moving average", "moving_average"),
+            ("gaussian", "gaussian"),
+            ("savitzky-golay", "savgol"),
+        ],
+        value=explorer._filter_state.smooth_filter,
+        description="smooth:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["smooth_window"] = widgets.IntSlider(
+        value=explorer._filter_state.smooth_window,
+        min=3,
+        max=61,
+        step=2,
+        description="window:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+    controls["smooth_sigma"] = widgets.FloatSlider(
+        value=explorer._filter_state.smooth_sigma,
+        min=0.0,
+        max=8.0,
+        step=0.1,
+        description="sigma:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+    controls["baseline_mode"] = widgets.Dropdown(
+        options=[
+            ("none", "none"),
+            ("mean", "mean"),
+            ("median", "median"),
+            ("linear", "linear"),
+        ],
+        value=explorer._filter_state.baseline_mode,
+        description="baseline:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["clip_low"] = widgets.FloatSlider(
+        value=explorer._filter_state.clip_percentile_low,
+        min=0.0,
+        max=50.0,
+        step=0.5,
+        description="clip lo:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+    controls["clip_high"] = widgets.FloatSlider(
+        value=explorer._filter_state.clip_percentile_high,
+        min=50.0,
+        max=100.0,
+        step=0.5,
+        description="clip hi:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+    controls["soft_threshold"] = widgets.FloatSlider(
+        value=explorer._filter_state.soft_threshold_percentile,
+        min=0.0,
+        max=100.0,
+        step=1.0,
+        description="soft thr:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+
+    controls["normalize"] = widgets.Checkbox(
+        value=explorer._filter_state.normalize,
+        description="normalize",
+        layout=widgets.Layout(width="100%"),
+    )
+    controls["log_scale"] = widgets.Checkbox(
+        value=explorer._filter_state.log_scale,
+        description="log10",
+        layout=widgets.Layout(width="100%"),
+    )
+    controls["show_peaks"] = widgets.Checkbox(
+        value=explorer._show_peaks,
+        description="show peaks",
+        layout=widgets.Layout(width="100%"),
+    )
+    controls["peak_prom"] = widgets.FloatSlider(
+        value=explorer._peak_prominence,
+        min=0.0,
+        max=1.0,
+        step=0.01,
+        description="prom:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+    controls["peak_dist"] = widgets.IntSlider(
+        value=explorer._peak_distance,
+        min=1,
+        max=200,
+        step=1,
+        description="dist:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+
+    controls["mode_view"] = widgets.Dropdown(
+        options=[
+            ("all", "all"),
+            ("magnitude", "magnitude"),
+            ("phase", "phase"),
+            ("combined", "combined"),
+        ],
+        value=(
+            "all"
+            if len(explorer._mode_row_types) > 1
+            else explorer._mode_row_types[0]
+        ),
+        description="rows:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+
+    controls["cmap_mag"] = widgets.Dropdown(
+        options=["viridis", "inferno", "plasma", "cividis", "magma"],
+        value="viridis",
+        description="cmap |m|:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["cmap_phase"] = widgets.Dropdown(
+        options=["twilight", "twilight_shifted", "hsv", "RdBu_r", "seismic"],
+        value="twilight",
+        description="cmap ph:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["cmap_combined"] = widgets.Dropdown(
+        options=["RdBu_r", "coolwarm", "seismic", "PiYG", "PRGn"],
+        value="RdBu_r",
+        description="cmap cmb:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["aspect"] = widgets.Dropdown(
+        options=["equal", "auto", "0.5", "1.0", "2.0"],
+        value=explorer._mode_aspect if explorer._mode_aspect in ["equal", "auto"] else "equal",
+        description="aspect:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["layout"] = widgets.Dropdown(
+        options=["vertical", "horizontal"],
+        value=explorer._layout_mode,
+        description="layout:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+
+    controls["freq_index"] = widgets.IntSlider(
+        value=max(explorer._closest_freq_index(explorer._current_frequency_ghz), 0),
+        min=0,
+        max=max(int(explorer._filtered_frequencies_ghz.size) - 1, 0),
+        step=1,
+        description="freq:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+
+    n_anim_frames = 60
+    controls["phase_index"] = widgets.IntSlider(
+        value=0,
+        min=0,
+        max=n_anim_frames - 1,
+        step=1,
+        description="φ:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "30px"},
+        continuous_update=True,
+    )
+    controls["play"] = widgets.Play(
+        value=0,
+        min=0,
+        max=n_anim_frames - 1,
+        step=1,
+        interval=42,
+        description="phase",
+        disabled=False,
+    )
+    widgets.jslink((controls["play"], "value"), (controls["phase_index"], "value"))
+
+    controls["anim_frames"] = widgets.IntSlider(
+        value=180,
+        min=20,
+        max=600,
+        step=10,
+        description="frames:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+    controls["anim_fps"] = widgets.IntSlider(
+        value=24,
+        min=5,
+        max=60,
+        step=1,
+        description="fps:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+        continuous_update=False,
+    )
+    controls["anim_format"] = widgets.Dropdown(
+        options=[("gif", "gif"), ("mp4", "mp4")],
+        value="gif",
+        description="format:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["save_animation"] = widgets.Button(
+        description="💾 Save Mode",
+        button_style="warning",
+        layout=widgets.Layout(width="49%"),
+    )
+    controls["animate"] = widgets.Button(
+        description="🎬 Animate",
+        button_style="warning",
+        layout=widgets.Layout(width="49%"),
+    )
+    controls["mode_type"] = widgets.Dropdown(
+        options=[
+            ("Real (oscillating)", "real"),
+            ("Imaginary", "imag"),
+            ("Amplitude |M|", "abs"),
+            ("Phase φ", "phase"),
+            ("Combined Re[M]", "combined"),
+        ],
+        value="combined",
+        description="viz:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+
+    controls["refresh"] = widgets.Button(
+        description="Refresh",
+        button_style="success",
+        layout=widgets.Layout(width="48%"),
+    )
+    controls["reset"] = widgets.Button(
+        description="Reset",
+        button_style="",
+        layout=widgets.Layout(width="48%"),
+    )
+
+    controls["status"] = widgets.HTML(
+        value="<small>Left-click spectrum to select frequency, right-click to snap to nearest peak.</small>",
+    )
+    controls["preset_select"] = widgets.Dropdown(
+        options=[("-- load preset --", "")],
+        value="",
+        description="preset:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["preset_name"] = widgets.Text(
+        value="",
+        placeholder="name...",
+        description="save:",
+        layout=widgets.Layout(width="100%"),
+        style={"description_width": "55px"},
+    )
+    controls["preset_save"] = widgets.Button(
+        description="Save preset",
+        button_style="",
+        layout=widgets.Layout(width="49%"),
+    )
+    controls["preset_delete"] = widgets.Button(
+        description="Delete preset",
+        button_style="",
+        layout=widgets.Layout(width="49%"),
+    )
+
+    observe_keys = [
+        "components",
+        "z_layer",
+        "fmin",
+        "fmax",
+        "smooth_filter",
+        "smooth_window",
+        "smooth_sigma",
+        "baseline_mode",
+        "clip_low",
+        "clip_high",
+        "soft_threshold",
+        "normalize",
+        "log_scale",
+        "show_peaks",
+        "peak_prom",
+        "peak_dist",
+        "mode_view",
+        "cmap_mag",
+        "cmap_phase",
+        "cmap_combined",
+    ]
+    for key in observe_keys:
+        controls[key].observe(explorer._on_controls_changed, names="value")
+
+    controls["freq_index"].observe(explorer._on_frequency_index_changed, names="value")
+    controls["refresh"].on_click(explorer._on_refresh_clicked)
+    controls["reset"].on_click(explorer._on_reset_clicked)
+    controls["save_animation"].on_click(explorer._on_save_animation_clicked)
+    controls["animate"].on_click(explorer._on_animate_clicked)
+    controls["mode_type"].observe(explorer._on_mode_type_changed, names="value")
+    controls["phase_index"].observe(explorer._on_phase_index_changed, names="value")
+    controls["preset_save"].on_click(explorer._on_save_preset_clicked)
+    controls["preset_delete"].on_click(explorer._on_delete_preset_clicked)
+    controls["preset_select"].observe(explorer._on_load_preset_changed, names="value")
+
+    explorer._widget_output = widgets.Output(
+        layout=widgets.Layout(width="100%", height="auto")
+    )
+
+    preset_box = widgets.VBox(
+        [
+            controls["preset_select"],
+            controls["preset_name"],
+            widgets.HBox([controls["preset_save"], controls["preset_delete"]]),
+        ]
+    )
+
+    sections = widgets.Accordion(
+        children=[
+            widgets.VBox(
+                [
+                    controls["components"],
+                    controls["z_layer"],
+                    controls["mode_view"],
+                    controls["aspect"],
+                    controls["layout"],
+                    controls["cmap_mag"],
+                    controls["cmap_phase"],
+                    controls["cmap_combined"],
+                ]
+            ),
+            widgets.VBox(
+                [
+                    controls["fmin"],
+                    controls["fmax"],
+                    controls["normalize"],
+                    controls["log_scale"],
+                    controls["show_peaks"],
+                    controls["peak_prom"],
+                    controls["peak_dist"],
+                ]
+            ),
+            widgets.VBox(
+                [
+                    controls["smooth_filter"],
+                    controls["smooth_window"],
+                    controls["smooth_sigma"],
+                    controls["baseline_mode"],
+                    controls["clip_low"],
+                    controls["clip_high"],
+                    controls["soft_threshold"],
+                ]
+            ),
+            widgets.VBox(
+                [
+                    controls["freq_index"],
+                    widgets.HBox([controls["play"], controls["phase_index"]]),
+                    controls["mode_type"],
+                    controls["anim_frames"],
+                    controls["anim_fps"],
+                    controls["anim_format"],
+                    widgets.HBox([controls["save_animation"], controls["animate"]]),
+                ]
+            ),
+        ],
+        selected_index=0,
+        layout=widgets.Layout(width="100%"),
+    )
+    sections.set_title(0, "Display")
+    sections.set_title(1, "Spectrum")
+    sections.set_title(2, "Filters")
+    sections.set_title(3, "Animation")
+
+    control_panel = widgets.VBox(
+        [
+            widgets.HTML("<b>FMR Spectrum Toolbar</b>"),
+            preset_box,
+            sections,
+            widgets.HBox([controls["refresh"], controls["reset"]]),
+            controls["status"],
+        ],
+        layout=widgets.Layout(width="330px", border="1px solid #ddd", padding="8px"),
+    )
+
+    right_panel = widgets.VBox(
+        [explorer._widget_output],
+        layout=widgets.Layout(width="calc(100% - 350px)", min_width="680px"),
+    )
+
+    explorer._widget_root = widgets.HBox(
+        [control_panel, right_panel],
+        layout=widgets.Layout(width="100%"),
+    )
+
+    explorer._controls = controls
+    explorer._refresh_preset_options()
+
+
+__all__ = ["build_toolbar"]
