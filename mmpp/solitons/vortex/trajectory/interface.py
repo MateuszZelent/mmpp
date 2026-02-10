@@ -63,3 +63,60 @@ class TrajectoryInterface:
     def phase(self) -> PhaseAnalyzer:
         """Phase analysis namespace."""
         return PhaseAnalyzer(self.raw)
+
+    def _repr_html_(self) -> str:
+        from html import escape as _esc
+
+        methods = [
+            (".raw", "Raw tracked trajectory (TrajectoryResult)"),
+            (".filtered(method=..., window=...)", "Low-pass / smoothed trajectory"),
+            (".steady_state(threshold=...)", "Extract steady-state portion"),
+            (".orbit", "Orbit fitting namespace (ellipse, radius, etc.)"),
+            (".phase", "Phase analysis namespace (instantaneous φ(t))"),
+        ]
+        method_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for m, d in methods
+        )
+        example = (
+            "# Get raw trajectory\n"
+            "traj = vortex.trajectory.raw\n"
+            "traj.plt.trajectory()  # x(t), y(t)\n"
+            "traj.plt.orbit()       # x vs y\n"
+            "\n"
+            "# Filtered trajectory\n"
+            "smooth = vortex.trajectory.filtered(method='savgol')\n"
+            "\n"
+            "# Steady-state extraction\n"
+            "ss = vortex.trajectory.steady_state()\n"
+            "\n"
+            "# Orbit fitting\n"
+            "orbit = vortex.trajectory.orbit\n"
+            "orbit.fit()  # fit elliptical orbit\n"
+            "\n"
+            "# Phase analysis\n"
+            "phase = vortex.trajectory.phase"
+        )
+        return (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            "Trajectory Interface</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
+            "Orbit, phase, and filtering tools for tracked core trajectory</div>"
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods &amp; Properties</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{method_rows}</table></div>"
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
+            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{example}</code></pre></div>"
+            "</div>"
+        )

@@ -190,6 +190,63 @@ class EventsInterface:
         """Plot accessor."""
         return EventsPlotAccessor(self)
 
+    def _repr_html_(self) -> str:
+        from html import escape as _esc
+
+        methods = [
+            (".polarity_switches(threshold=0.5)", "Detect p=+1 ↔ −1 switching events"),
+            (".state_switches(radius_threshold=0.6)", "Detect G-state ↔ C-state transitions"),
+            (".core_expulsions(expulsion_ratio=0.95)", "Detect core expulsion near disk boundary"),
+            (".dwell_times(state='G-state')", "Dwell-time statistics for selected state"),
+            (".plt.event_timeline()", "Plot trajectory with event markers"),
+            (".plt.dwell_histogram(state=...)", "Plot dwell-time histogram"),
+        ]
+        method_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for m, d in methods
+        )
+        example = (
+            "# Detect polarity switches\n"
+            "switches = vortex.events.polarity_switches()\n"
+            "print(f'{len(switches)} polarity switches detected')\n"
+            "\n"
+            "# Detect state transitions\n"
+            "states = vortex.events.state_switches()\n"
+            "\n"
+            "# Core expulsion events\n"
+            "expulsions = vortex.events.core_expulsions()\n"
+            "\n"
+            "# Dwell-time statistics\n"
+            "dwell = vortex.events.dwell_times(state='G-state')\n"
+            "\n"
+            "# Plot event timeline\n"
+            "vortex.events.plt.event_timeline()\n"
+            "vortex.events.plt.dwell_histogram()"
+        )
+        return (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            "Events Interface</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
+            "Polarity switches, state transitions, core expulsion, dwell times</div>"
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{method_rows}</table></div>"
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
+            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{example}</code></pre></div>"
+            "</div>"
+        )
+
 
 class EventsPlotAccessor:
     """Plotting facade for :class:`EventsInterface`."""

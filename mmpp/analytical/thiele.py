@@ -342,19 +342,104 @@ class ThieleTrajectoryResult(AnalyticalResult):
         )
 
     def _repr_html_(self) -> str:
+        from html import escape as _esc
+
         n = len(self.t)
         r_ss = self.steady_state_radius_m * 1e9 if n > 0 else 0.0
         f_ss = self.steady_state_frequency_ghz if n > 0 else 0.0
         t_ns = self.t[-1] * 1e9 if n > 0 else 0.0
+        rot = self.rotation_sense if n > 0 else "N/A"
+        model = _esc(str(self.model_name))
+
+        summary_items = [
+            ("Points", str(n)),
+            ("Duration", f"{t_ns:.1f} ns"),
+            ("Steady-state radius", f"{r_ss:.1f} nm"),
+            ("Steady-state freq", f"{f_ss:.3f} GHz"),
+            ("Rotation", str(rot)),
+        ]
+        summary_row = "".join(
+            f"<div><span style='color:#94a3b8;'>{k}:</span> "
+            f"<span style='color:#cbd5e1;'>{v}</span></div>"
+            for k, v in summary_items
+        )
+
+        properties = [
+            (".z", "Complex trajectory z(t) = x + i·y [m]"),
+            (".r", "Radial distance from disk centre [m]"),
+            (".u", "Normalized radius u = r/R ∈ [0, 1)"),
+            (".phi", "Azimuthal angle φ(t) [rad]"),
+            (".phi_unwrapped", "Unwrapped azimuthal angle [rad]"),
+            (".velocity", "Velocity (vx, vy) [m/s]"),
+            (".speed", "Speed |v| [m/s]"),
+            (".instantaneous_frequency_ghz", "Instantaneous frequency [GHz]"),
+            (".dominant_frequency_ghz", "Peak frequency from power spectrum [GHz]"),
+            (".linewidth_ghz", "Estimated linewidth (FWHM) [GHz]"),
+            (".power_spectrum", "Power spectrum |FFT(x(t))|²"),
+        ]
+        prop_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(p)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for p, d in properties
+        )
+        plot_methods = [
+            (".plt.trajectory()", "Plot x,y trajectory"),
+            (".plt.spectrum()", "Plot power spectrum"),
+            (".plt.radius()", "Plot radius vs time"),
+            (".plt.phase()", "Plot azimuthal angle vs time"),
+        ]
+        plot_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for m, d in plot_methods
+        )
+        example = (
+            "# Inspect trajectory\n"
+            "result.plt.trajectory()\n"
+            "result.plt.spectrum()\n"
+            "\n"
+            "# Access properties\n"
+            "print(f'Frequency: {result.dominant_frequency_ghz:.3f} GHz')\n"
+            "print(f'Linewidth: {result.linewidth_ghz:.3f} GHz')\n"
+            "print(f'Rotation: {result.rotation_sense}')"
+        )
         return (
-            '<div style="padding:8px; border:1px solid #ccc; border-radius:6px; '
-            'max-width:500px; font-family:monospace; font-size:13px;">'
-            f"<b>🌀 {self.model_name}</b><br/>"
-            f"<b>Points:</b> {n}<br/>"
-            f"<b>Duration:</b> {t_ns:.1f} ns<br/>"
-            f"<b>Steady-state radius:</b> {r_ss:.1f} nm<br/>"
-            f"<b>Steady-state frequency:</b> {f_ss:.3f} GHz<br/>"
-            f"<b>Rotation:</b> {self.rotation_sense}<br/>"
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            f"<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            f"🌀 Thiele Trajectory — {model}</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
+            "Vortex core trajectory from Thiele equation integration</div>"
+            # Summary
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Results</div>"
+            f"<div style='display:flex;flex-wrap:wrap;gap:12px;font-size:0.9em;'>"
+            f"{summary_row}</div></div>"
+            # Properties
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Properties</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            "<thead><tr style='text-align:left;background:rgba(51,65,85,0.6);'>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Accessor</th>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
+            f"<tbody>{prop_rows}</tbody></table></div>"
+            # Plotting
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Plotting</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{plot_rows}</table></div>"
+            # Examples
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
+            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{example}</code></pre></div>"
             "</div>"
         )
 

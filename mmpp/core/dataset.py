@@ -69,6 +69,12 @@ class DatasetSpecificFFT:
                         kwargs["slice_info"] = self._slice_info
                     return self._spectrum_helper(*args, **kwargs)
                 
+                @property
+                def plot(self):
+                    """Quick-plot proxy with dataset context pre-injected."""
+                    from ..fft.spectrum.helpers import _SpectrumQuickPlot
+                    return _SpectrumQuickPlot(self)
+                
                 def __repr__(self):
                     return repr(self._spectrum_helper)
                 
@@ -257,39 +263,70 @@ job[0].fft.modes  # Shows mode analysis options'''
         else:
             prefix = f"job[0][{self.dataset_name!r}]{slice_label}.fft"
 
-        methods = [
-            ("spectrum(dset=None, **opts)", "Compute FFT spectrum (dataset pre-selected)"),
-            ("filters(**opts).spectrum(...)", "Compute spectrum through fluent filter chain"),
-            ("frequencies(dset=None, **opts)", "Frequency axis in Hz"),
-            ("power(dset=None, **opts)", "Power spectrum |FFT|^2"),
-            ("phase(dset=None, **opts)", "Phase spectrum (radians)"),
-            ("magnitude(dset=None, **opts)", "Magnitude spectrum"),
-            ("plot_spectrum(dset=None, **opts)", "Plot FFT power spectrum"),
-            ("dispersion", "Dispersion analysis interface"),
-            ("modes", "Mode analysis interface"),
-            ("transmission", "Transmission analysis interface"),
-            ("plot_modes(**opts)", "Plot mode map from modes interface"),
-            ("interactive_spectrum(**opts)", "Interactive mode spectrum viewer"),
+        # ── method groups ───────────────────────────────────────
+        section_style = (
+            "padding:4px 8px; font-weight:600; color:#f1f5f9; "
+            "background:rgba(51,65,85,0.8); text-align:left;"
+        )
+        row_html = ""
+
+        groups: list[tuple[str, list[tuple[str, str]]]] = [
+            ("Compute", [
+                ("spectrum()", "FFT spectrum → SpectrumResult"),
+                ("filters(**f).spectrum()", "Fluent filter chain → SpectrumResult"),
+                ("power()", "Power spectrum |FFT|²"),
+                ("frequencies()", "Frequency axis (Hz)"),
+                ("magnitude()", "Magnitude spectrum |FFT|"),
+                ("phase()", "Phase spectrum (radians)"),
+            ]),
+            ("Analysis", [
+                ("dispersion", "Dispersion relation analysis"),
+                ("modes", "FMR mode analysis interface"),
+                ("transmission", "Transmission / absorption analysis"),
+            ]),
+            ("Plotting", [
+                ("plot_spectrum()", "Quick-look power spectrum plot"),
+                ("interactive_spectrum()", "Interactive mode spectrum viewer"),
+            ]),
         ]
 
-        method_rows = "".join(
-            "<tr>"
-            f"<td style='padding:6px 8px; font-family:monospace; color:#93c5fd;'>{_html_escape(name)}</td>"
-            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
-            "</tr>"
-            for name, desc in methods
-        )
+        for group_name, methods in groups:
+            row_html += (
+                f"<tr><td colspan='2' style='{section_style}'>"
+                f"{_html_escape(group_name)}</td></tr>"
+            )
+            for name, desc in methods:
+                row_html += (
+                    "<tr>"
+                    f"<td style='padding:5px 8px 5px 16px; font-family:monospace; "
+                    f"color:#93c5fd; white-space:nowrap;'>{_html_escape(name)}</td>"
+                    f"<td style='padding:5px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
+                    "</tr>"
+                )
 
-        example_code = "\n".join(
-            [
-                f"fft = {prefix}",
-                "spec = fft.spectrum()",
-                "spec_f = fft.filters(remove_static=True).spectrum()",
-                "spec.plot_spectrum(log_scale=True)",
-                "fft.dispersion.plot_dispersion(axis='x')",
-                "fft.transmission.plot_transmission()",
-            ]
-        )
+        # ── context-aware examples ──────────────────────────────
+        example_code = "\n".join([
+            f"data = {prefix.rsplit('.fft', 1)[0]}",
+            "",
+            "# Compute spectrum (dataset & slice are pre-set)",
+            "result = data.fft.spectrum()",
+            "",
+            "# Plot power spectrum",
+            "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
+            "",
+            "# Fluent filter chain",
+            "data.fft.filters(remove_static=True).spectrum()",
+            "",
+            "# Frequency range",
+            "result = data.fft.spectrum(fmin=1e9, fmax=20e9)",
+            "",
+            "# Peak detection",
+            "result = data.fft.spectrum(find_peaks={'min_prominence': 0.1})",
+            "",
+            "# Analysis sub-interfaces",
+            "data.fft.modes.interactive_spectrum(dpi=150)",
+            "data.fft.dispersion.plot_dispersion(axis='x')",
+        ])
 
         html = f"""
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
@@ -301,13 +338,12 @@ job[0].fft.modes  # Shows mode analysis options'''
 
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
             <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
-              <div><span style="color:#94a3b8;">Dataset:</span> <span style="color:#cbd5e1;">{_html_escape(dataset_access)}</span></div>
-              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or 'full')}</span></div>
+              <div><span style="color:#94a3b8;">Dataset:</span> <code style="color:#93c5fd;">{_html_escape(dataset_access)}</code></div>
+              <div><span style="color:#94a3b8;">Slice:</span> <code style="color:#93c5fd;">{_html_escape(slice_label or 'full')}</code></div>
             </div>
           </div>
 
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
-            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Available Methods</div>
             <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
               <thead>
                 <tr style="text-align:left; background: rgba(51,65,85,0.6);">
@@ -316,14 +352,14 @@ job[0].fft.modes  # Shows mode analysis options'''
                 </tr>
               </thead>
               <tbody>
-                {method_rows}
+                {row_html}
               </tbody>
             </table>
           </div>
 
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
             <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
-            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto;"><code>{_html_escape(example_code)}</code></pre>
+            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto; font-size:0.85em;"><code>{_html_escape(example_code)}</code></pre>
           </div>
         </div>
         """

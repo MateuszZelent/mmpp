@@ -167,22 +167,85 @@ class VortexInterface:
 
     def _repr_html_(self) -> str:
         """Compact notebook card with available vortex submodules."""
-        dataset = self.dataset_name
-        slice_label = self._slice_info if self._slice_info is not None else "full"
-        modules = [
-            "topology",
-            "core",
-            "trajectory",
-            "spectrum",
-            "modes",
-            "nonlinear",
-            "events",
+        from html import escape as _esc
+
+        dataset = _esc(str(self.dataset_name))
+        slice_label = _esc(str(self._slice_info)) if self._slice_info is not None else "full"
+        namespaces = [
+            (".topology", "Topological charge & winding number detection"),
+            (".core", "Vortex core position tracking (Gaussian, CoM, ...)"),
+            (".trajectory", "Core trajectory analysis & statistics"),
+            (".spectrum", "Gyration frequency spectrum (FFT of core motion)"),
+            (".modes", "Mode classification & identification"),
+            (".nonlinear", "Nonlinear dynamics analysis"),
+            (".events", "Event detection (switching, nucleation, ...)"),
         ]
-        module_list = "".join(f"<li><code>{item}</code></li>" for item in modules)
+        ns_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for n, d in namespaces
+        )
+        shortcuts = [
+            (".track(method='gaussian', **kw)", "Shortcut → core.track()"),
+            (".detect(**kw)", "Shortcut → topology.detect()"),
+        ]
+        sc_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for m, d in shortcuts
+        )
+        example = (
+            "# Quick vortex core tracking\n"
+            "vortex = job[0].vortex\n"
+            "trajectory = vortex.track(method='gaussian')\n"
+            "trajectory.plt.trajectory()\n"
+            "\n"
+            "# Topology analysis\n"
+            "topo = vortex.topology.detect()\n"
+            "\n"
+            "# Gyration spectrum\n"
+            "vortex.spectrum.compute()\n"
+            "vortex.spectrum.plot()"
+        )
         return (
-            "<div style='border:1px solid #d0d7de;padding:10px;border-radius:8px;'>"
-            "<b>VortexInterface</b><br>"
-            f"<span>dataset=<code>{dataset}</code>, slice=<code>{slice_label}</code></span>"
-            "<br><span>Namespaces:</span><ul style='margin:6px 0 0 16px;'>"
-            f"{module_list}</ul></div>"
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            "Vortex Dynamics Interface</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
+            "Comprehensive vortex analysis namespace</div>"
+            # Context
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='display:flex;flex-wrap:wrap;gap:12px;font-size:0.9em;'>"
+            f"<div><span style='color:#94a3b8;'>Dataset:</span> "
+            f"<code style='color:#cbd5e1;'>{dataset}</code></div>"
+            f"<div><span style='color:#94a3b8;'>Slice:</span> "
+            f"<code style='color:#cbd5e1;'>{slice_label}</code></div>"
+            "</div></div>"
+            # Namespaces
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Namespaces</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            "<thead><tr style='text-align:left;background:rgba(51,65,85,0.6);'>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Accessor</th>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
+            f"<tbody>{ns_rows}</tbody></table></div>"
+            # Shortcuts
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Shortcuts</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{sc_rows}</table></div>"
+            # Examples
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
+            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{example}</code></pre></div>"
+            "</div>"
         )

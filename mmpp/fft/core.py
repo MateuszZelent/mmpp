@@ -792,42 +792,72 @@ class FFT:
         job_path = getattr(job_result, "path", "")
         cache_size = len(self._cache)
 
-        methods = [
-            ("spectrum(dset='m', z_layer=-1, **opts)", "Compute FFT spectrum (returns SpectrumResult)"),
-            ("frequencies(dset='m', **opts)", "Frequency axis in Hz"),
-            ("power(dset='m', **opts)", "Power spectrum |FFT|^2"),
-            ("phase(dset='m', **opts)", "Phase spectrum (radians)"),
-            ("magnitude(dset='m', **opts)", "Magnitude spectrum"),
-            ("plot_spectrum(dset='m', **opts)", "Plot FFT power spectrum"),
-            ("dispersion", "Dispersion analysis interface"),
-            ("modes", "Mode analysis interface"),
-            ("transmission", "Transmission analysis interface"),
-            ("plot_modes(**opts)", "Plot mode map from modes interface"),
-            ("interactive_spectrum(**opts)", "Interactive mode spectrum viewer"),
-            ("plotter", "Low-level FFTPlotter instance"),
-            ("clear_cache()", "Clear in-memory FFT cache"),
+        # ── method groups ───────────────────────────────────────
+        section_style = (
+            "padding:4px 8px; font-weight:600; color:#f1f5f9; "
+            "background:rgba(51,65,85,0.8); text-align:left;"
+        )
+        row_html = ""
+
+        groups: list[tuple[str, list[tuple[str, str]]]] = [
+            ("Compute", [
+                ("spectrum()", "FFT spectrum → SpectrumResult"),
+                ("filters(**f).spectrum()", "Fluent filter chain → SpectrumResult"),
+                ("power()", "Power spectrum |FFT|²"),
+                ("frequencies()", "Frequency axis (Hz)"),
+                ("magnitude()", "Magnitude spectrum |FFT|"),
+                ("phase()", "Phase spectrum (radians)"),
+            ]),
+            ("Analysis", [
+                ("dispersion", "Dispersion relation analysis"),
+                ("modes", "FMR mode analysis interface"),
+                ("transmission", "Transmission / absorption analysis"),
+            ]),
+            ("Plotting", [
+                ("plot_spectrum()", "Quick-look power spectrum plot"),
+                ("interactive_spectrum()", "Interactive mode spectrum viewer"),
+            ]),
+            ("Utilities", [
+                ("clear_cache()", "Clear in-memory FFT cache"),
+                ("plotter", "Low-level FFTPlotter instance"),
+            ]),
         ]
 
-        method_rows = "".join(
-            "<tr>"
-            f"<td style='padding:6px 8px; font-family:monospace; color:#93c5fd;'>{_html_escape(name)}</td>"
-            f"<td style='padding:6px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
-            "</tr>"
-            for name, desc in methods
-        )
+        for group_name, methods in groups:
+            row_html += (
+                f"<tr><td colspan='2' style='{section_style}'>"
+                f"{_html_escape(group_name)}</td></tr>"
+            )
+            for name, desc in methods:
+                row_html += (
+                    "<tr>"
+                    f"<td style='padding:5px 8px 5px 16px; font-family:monospace; "
+                    f"color:#93c5fd; white-space:nowrap;'>{_html_escape(name)}</td>"
+                    f"<td style='padding:5px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
+                    "</tr>"
+                )
 
-        example_code = "\n".join(
-            [
-                "fft = job[0].fft",
-                "spec = fft.spectrum(dset='m', z_layer=-1)",
-                "spec.plot_spectrum(log_scale=True)",
-                "freqs = fft.frequencies(dset='m')",
-                "power = fft.power(dset='m')",
-                "fft.dispersion.plot_dispersion(axis='x')",
-                "fft.modes.interactive_spectrum(dpi=150)",
-                "fft.transmission.plot_transmission()",
-            ]
-        )
+        # ── examples ────────────────────────────────────────────
+        example_code = "\n".join([
+            "# Preferred: access FFT through a dataset",
+            "data = job[0].m_layer13[:200, ...]",
+            "result = data.fft.spectrum()",
+            "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
+            "",
+            "# Job-level FFT (auto-selects largest m dataset)",
+            "result = job[0].fft.spectrum()",
+            "",
+            "# Fluent filter chain",
+            "job[0].fft.filters(remove_static=True).spectrum()",
+            "",
+            "# Frequency range & peak detection",
+            "result = job[0].fft.spectrum(fmin=1e9, fmax=20e9,",
+            "                            find_peaks={'min_prominence': 0.1})",
+            "",
+            "# Analysis sub-interfaces",
+            "job[0].fft.modes.interactive_spectrum(dpi=150)",
+            "job[0].fft.dispersion.plot_dispersion(axis='x')",
+        ])
 
         html = f"""
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
@@ -846,7 +876,6 @@ class FFT:
           </div>
 
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
-            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Available Methods</div>
             <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
               <thead>
                 <tr style="text-align:left; background: rgba(51,65,85,0.6);">
@@ -855,14 +884,14 @@ class FFT:
                 </tr>
               </thead>
               <tbody>
-                {method_rows}
+                {row_html}
               </tbody>
             </table>
           </div>
 
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
             <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
-            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto;"><code>{_html_escape(example_code)}</code></pre>
+            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto; font-size:0.85em;"><code>{_html_escape(example_code)}</code></pre>
           </div>
         </div>
         """

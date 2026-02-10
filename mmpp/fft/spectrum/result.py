@@ -97,11 +97,16 @@ class SpectrumResult:
         return peaks
 
     @property
-    def plt(self):
+    def plot(self):
         """Fluent plotting namespace."""
         from ._plotting.accessor import SpectrumPlotAccessor
 
         return SpectrumPlotAccessor(self)
+
+    @property
+    def plt(self):
+        """Deprecated alias for :attr:`plot`."""
+        return self.plot
 
     @property
     def modes(self):
@@ -206,13 +211,13 @@ class SpectrumResult:
         return 3 if self.peaks_info is not None else 2
 
     def plot_spectrum(self, **kwargs):
-        """Deprecated alias for ``spec.plt.spectrum(...)``."""
+        """Deprecated alias for ``spec.plot.spectrum(...)``."""
         warnings.warn(
-            "SpectrumResult.plot_spectrum() is deprecated. Use spec.plt.spectrum().",
+            "SpectrumResult.plot_spectrum() is deprecated. Use spec.plot.spectrum().",
             DeprecationWarning,
             stacklevel=2,
         )
-        return self.plt.spectrum(**kwargs)
+        return self.plot.spectrum(**kwargs)
 
     def __repr__(self):
         label = f", label='{self.component_label}'" if self.component_label else ""
@@ -224,32 +229,95 @@ class SpectrumResult:
         )
 
     def _repr_html_(self) -> str:
+        from html import escape as _esc
+
         fmin = float(self.frequencies_ghz[0]) if self.frequencies.size else float("nan")
         fmax = float(self.frequencies_ghz[-1]) if self.frequencies.size else float("nan")
         n_points = int(self.frequencies.size)
         n_peaks = len(self.peaks)
         filtered_badge = (
-            "<span style='background:#166534;color:#86efac;padding:2px 8px;border-radius:4px;font-size:0.8em;margin-left:8px;'>filtered</span>"
+            "<span style='background:#166534;color:#86efac;padding:2px 8px;"
+            "border-radius:4px;font-size:0.8em;margin-left:8px;'>filtered</span>"
             if self._filter_config
             else ""
         )
-        comp = self.component_label or "all"
-        return f"""
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-                    border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;
-                    background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);
-                    color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">
-          <div style="font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:8px;">
-            SpectrumResult {filtered_badge}
-          </div>
-          <div style="font-size:0.9em;color:#94a3b8;margin-bottom:8px;">
-            {fmin:.2f} - {fmax:.2f} GHz, {n_points} points, component: {comp}, peaks: {n_peaks}
-          </div>
-          <table style="border-collapse:collapse;margin:4px 0;width:100%;">
-            <tr><td style="padding:4px 8px;font-family:monospace;color:#93c5fd;">.plt.spectrum(...)</td><td style="padding:4px 8px;color:#cbd5e1;">Static spectrum plot</td></tr>
-            <tr><td style="padding:4px 8px;font-family:monospace;color:#93c5fd;">.plt.interactive(...)</td><td style="padding:4px 8px;color:#cbd5e1;">Interactive spectrum view</td></tr>
-            <tr><td style="padding:4px 8px;font-family:monospace;color:#93c5fd;">.modes.at(f=...)</td><td style="padding:4px 8px;color:#cbd5e1;">Mode profile at frequency [GHz]</td></tr>
-            <tr><td style="padding:4px 8px;font-family:monospace;color:#93c5fd;">.filtered(...)</td><td style="padding:4px 8px;color:#cbd5e1;">Non-destructive postprocessing</td></tr>
-          </table>
-        </div>
-        """
+        comp = _esc(self.component_label or "all")
+
+        methods = [
+            (".plot.spectrum(...)", "Static matplotlib spectrum plot"),
+            (".plot.interactive(...)", "Interactive spectrum explorer"),
+            (".modes.at(f=...)", "Mode profile at frequency [GHz]"),
+            (".modes.at_peak(i)", "Mode profile at detected peak index"),
+            (".modes.interactive()", "Full interactive modes explorer"),
+            (".filtered(...)", "Non-destructive postprocessing (returns new result)"),
+        ]
+        method_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for m, d in methods
+        )
+        filter_params = [
+            ("normalize", "False", "Normalize spectrum amplitudes to [0, 1]"),
+            ("log_scale", "False", "Apply logarithmic transform"),
+            ("gamma", "None", "Gamma correction factor (float)"),
+            ("percentile_clip", "None", "Clip range as (low, high) percentiles"),
+            ("soft_threshold", "None", "Soft threshold by percentile"),
+            ("baseline", "None", "Baseline removal ('none', 'median', ...)"),
+            ("smooth", "None", "Smoothing: 'gaussian', 'savgol', 'moving_average'"),
+            ("smooth_window", "7", "Smoothing window size"),
+            ("smooth_sigma", "1.0", "Gaussian smooth sigma"),
+        ]
+        fp_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
+            f"<td style='padding:4px 8px;color:#a5b4fc;'>{_esc(d)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(desc)}</td></tr>"
+            for n, d, desc in filter_params
+        )
+        example = (
+            "# Plot spectrum with peak markers\n"
+            "spec.plot.spectrum(show_peaks=True)\n"
+            "\n"
+            "# Apply post-processing filters\n"
+            "filtered = spec.filtered(normalize=True, gamma=0.5)\n"
+            "filtered.plot.spectrum()\n"
+            "\n"
+            "# Mode analysis at peak\n"
+            "mode = spec.modes.at_peak(0)\n"
+            "mode.plot.imshow(component='z')"
+        )
+        return (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            f"<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            f"SpectrumResult {filtered_badge}</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
+            f"{fmin:.2f} – {fmax:.2f} GHz · {n_points} points · "
+            f"component: {comp} · peaks: {n_peaks}</div>"
+            # Methods
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{method_rows}</table></div>"
+            # Filter params
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>"
+            "Parameters <span style='color:#94a3b8;font-weight:400;'>(.filtered)</span></div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            "<thead><tr style='text-align:left;background:rgba(51,65,85,0.6);'>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Arg</th>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Default</th>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
+            f"<tbody>{fp_rows}</tbody></table></div>"
+            # Examples
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
+            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{example}</code></pre></div>"
+            "</div>"
+        )

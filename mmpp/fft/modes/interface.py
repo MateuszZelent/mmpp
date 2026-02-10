@@ -63,9 +63,14 @@ class ModeResult:
         return tuple(ext)
 
     @property
-    def plt(self) -> "ModePlotAccessor":
+    def plot(self) -> "ModePlotAccessor":
         """Plot helper namespace."""
         return ModePlotAccessor(self)
+
+    @property
+    def plt(self) -> "ModePlotAccessor":
+        """Deprecated alias for :attr:`plot`."""
+        return self.plot
 
     def get_component(
         self,
@@ -104,6 +109,106 @@ class ModeResult:
         return (
             f"ModeResult(f={self.frequency:.3f} GHz, z={self.z_layer}, "
             f"shape={shape})"
+        )
+
+    def _repr_html_(self) -> str:
+        from html import escape as _esc
+
+        freq = self.frequency
+        z = self.z_layer
+        try:
+            shape = self.data.shape
+            shape_str = " × ".join(str(s) for s in shape)
+        except Exception:
+            shape_str = "N/A"
+
+        props = [
+            (".frequency", f"{freq:.3f} GHz"),
+            (".z_layer", str(z)),
+            (".data", f"np.ndarray ({shape_str})"),
+            (".extent", "Spatial extent (x_min, x_max, y_min, y_max)"),
+        ]
+        prop_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(v)}</td></tr>"
+            for n, v in props
+        )
+        methods = [
+            (".get_component(component, value)", "Extract component with transform"),
+            (".plot.imshow(...)", "Render mode as 2D image"),
+            (".plot.interactive(...)", "Interactive explorer at this frequency"),
+        ]
+        method_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for m, d in methods
+        )
+        imshow_params = [
+            ("component", "'z'", "'x', 'y', 'z' or 0, 1, 2"),
+            ("value", "'magnitude'", "'magnitude', 'phase', 'real', 'imag', 'combined'"),
+            ("cmap", "auto", "Colormap (auto: viridis/twilight/RdBu_r)"),
+            ("colorbar", "False", "Show colorbar"),
+            ("ax", "None", "Existing matplotlib Axes"),
+        ]
+        param_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
+            f"<td style='padding:4px 8px;color:#a5b4fc;'>{_esc(d)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(desc)}</td></tr>"
+            for n, d, desc in imshow_params
+        )
+        example = (
+            f"# Plot magnitude of mz\n"
+            f"mode.plot.imshow(component='z')\n"
+            f"\n"
+            f"# Plot phase with colorbar\n"
+            f"mode.plot.imshow(component='z', value='phase', colorbar=True)\n"
+            f"\n"
+            f"# Plot combined (magnitude × cos(phase))\n"
+            f"mode.plot.imshow(component='z', value='combined')\n"
+            f"\n"
+            f"# Get raw data as numpy array\n"
+            f"arr = mode.get_component('z', value='magnitude')"
+        )
+        return (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            f"ModeResult</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
+            f"FMR eigenmode at {freq:.3f} GHz · z-layer: {z} · shape: {shape_str}</div>"
+            # Properties
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Properties</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{prop_rows}</table></div>"
+            # Methods
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{method_rows}</table></div>"
+            # imshow params
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>"
+            "Parameters <span style='color:#94a3b8;font-weight:400;'>(.plot.imshow)</span></div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            "<thead><tr style='text-align:left;background:rgba(51,65,85,0.6);'>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Arg</th>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Default</th>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
+            f"<tbody>{param_rows}</tbody></table></div>"
+            # Examples
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
+            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{example}</code></pre></div>"
+            "</div>"
         )
 
 
@@ -177,6 +282,89 @@ class ModePlotAccessor:
             toolbar=toolbar,
             show=show,
             **kwargs,
+        )
+
+    def _repr_html_(self) -> str:
+        from html import escape as _esc
+
+        freq = self._mode.frequency
+        z = self._mode.z_layer
+
+        methods = [
+            (".imshow(component, value, ...)", "Render mode as 2D matplotlib image"),
+            (".interactive(toolbar=True)", "Open interactive explorer at this frequency"),
+        ]
+        method_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for m, d in methods
+        )
+        imshow_params = [
+            ("component", "'z'", "'x', 'y', 'z' or 0, 1, 2"),
+            ("value", "'magnitude'", "'magnitude', 'phase', 'real', 'imag', 'combined'"),
+            ("cmap", "auto", "Colormap (auto-selected by value type)"),
+            ("colorbar", "False", "Show colorbar alongside plot"),
+            ("ax", "None", "Existing matplotlib Axes to draw on"),
+            ("origin", "'lower'", "Image origin ('lower' or 'upper')"),
+            ("interpolation", "'nearest'", "Pixel interpolation method"),
+            ("aspect", "'equal'", "Axes aspect ratio"),
+        ]
+        param_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
+            f"<td style='padding:4px 8px;color:#a5b4fc;'>{_esc(d)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(desc)}</td></tr>"
+            for n, d, desc in imshow_params
+        )
+        example = (
+            f"# Plot mz magnitude (default)\n"
+            f"mode.plot.imshow()\n"
+            f"\n"
+            f"# Plot phase with colorbar\n"
+            f"mode.plot.imshow(component='z', value='phase', colorbar=True)\n"
+            f"\n"
+            f"# Plot all components\n"
+            f"import matplotlib.pyplot as plt\n"
+            f"fig, axes = plt.subplots(1, 3, figsize=(15, 4))\n"
+            f"for ax, c in zip(axes, ['x', 'y', 'z']):\n"
+            f"    mode.plot.imshow(component=c, ax=ax)\n"
+            f"\n"
+            f"# Open interactive explorer\n"
+            f"mode.plot.interactive()"
+        )
+        return (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            "Mode Plot Accessor</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
+            f"Plotting helpers for FMR mode at {freq:.3f} GHz · z-layer: {z}</div>"
+            # Methods
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{method_rows}</table></div>"
+            # imshow params
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>"
+            "Parameters <span style='color:#94a3b8;font-weight:400;'>(.imshow)</span></div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            "<thead><tr style='text-align:left;background:rgba(51,65,85,0.6);'>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Arg</th>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Default</th>"
+            "<th style='padding:4px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
+            f"<tbody>{param_rows}</tbody></table></div>"
+            # Examples
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
+            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{example}</code></pre></div>"
+            "</div>"
         )
 
 
@@ -980,8 +1168,8 @@ class FFTModeInterfaceNew:
         Examples
         --------
         >>> mode = job[0].fft.modes.mode(f=20.0)
-        >>> mode.plt.imshow()
-        >>> mode.plt.interactive()
+        >>> mode.plot.imshow()
+        >>> mode.plot.interactive()
         """
         target_freq = frequency if frequency is not None else f
         if target_freq is None:
@@ -1184,7 +1372,7 @@ class FFTModeInterfaceNew:
             
             methods.add_row("filters(...)", "Clone interface with FMR spectrum filters")
             methods.add_row("plot(...)", "Plot filtered FMR spectrum")
-            methods.add_row("mode(f=...)", "Direct mode data access with .plt helpers")
+            methods.add_row("mode(f=...)", "Direct mode data access with .plot helpers")
             methods.add_row("interactive_spectrum(dpi=100)", "Interactive toolbar spectrum+mode view")
             methods.add_row("plot_modes(frequency)", "Visualize mode at frequency")
             methods.add_row("characterize_mode(frequency)", "Classify mode type")
@@ -1212,8 +1400,8 @@ job[0].fft.modes.filters(
 
 # Direct mode access:
 mode = job[0].fft.modes.mode(f=9.5)
-mode.plt.imshow(component="z", value="phase")
-mode.plt.interactive()
+mode.plot.imshow(component="z", value="phase")
+mode.plot.interactive()
 
 # Mode visualization:
 job[0].fft.modes.plot_modes(frequency=9.5)

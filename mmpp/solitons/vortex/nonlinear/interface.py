@@ -200,6 +200,64 @@ class NonlinearInterface:
         """Convenience plotting namespace."""
         return NonlinearInterfacePlotAccessor(self)
 
+    def _repr_html_(self) -> str:
+        from html import escape as _esc
+
+        methods = [
+            (".amplitude_equation()", "Compute c(t), p(t), ω(t) from orbit"),
+            (".slavin_tiberkevich()", "Extract ST parameters (Q, Γ+, Γ−, N)"),
+            (".slavin_tiberkevich_batch(jobs, currents)", "ST parameters across current sweep"),
+            (".thiele", "Thiele equation analysis namespace"),
+            (".force_balance(**kw)", "Shortcut → thiele.force_balance()"),
+            (".interactive_dashboard(**kw)", "Shortcut → thiele.interactive_dashboard()"),
+            (".plt.power_vs_current()", "Plot P(I) from batch results"),
+            (".plt.linewidth_vs_current()", "Plot Δf(I) from batch results"),
+            (".plt.force_balance()", "Plot Thiele force decomposition"),
+        ]
+        method_rows = "".join(
+            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            for m, d in methods
+        )
+        example = (
+            "# Slavin-Tiberkevich parameters\n"
+            "st = vortex.nonlinear.slavin_tiberkevich()\n"
+            "print(f'Q={st.Q:.1f}, N={st.N:.2e}')\n"
+            "\n"
+            "# Batch across current sweep\n"
+            "batch = vortex.nonlinear.slavin_tiberkevich_batch(\n"
+            "    jobs=[job1, job2, job3],\n"
+            "    currents=[1e-3, 2e-3, 3e-3]\n"
+            ")\n"
+            "vortex.nonlinear.plt.power_vs_current()\n"
+            "\n"
+            "# Thiele force balance\n"
+            "vortex.nonlinear.force_balance()\n"
+            "vortex.nonlinear.thiele.interactive_dashboard()"
+        )
+        return (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            "Nonlinear Dynamics Interface</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
+            "Slavin-Tiberkevich, Thiele equation, and amplitude analysis</div>"
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+            f"{method_rows}</table></div>"
+            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
+            "border:1px solid rgba(148,163,184,0.2);'>"
+            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
+            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{example}</code></pre></div>"
+            "</div>"
+        )
+
 
 class NonlinearInterfacePlotAccessor:
     """Plotting facade for :class:`NonlinearInterface`."""
