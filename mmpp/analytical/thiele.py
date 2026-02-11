@@ -149,6 +149,49 @@ class DiskGeometry:
         return 5e-9  # safe fallback ≈ Py exchange length
 
 
+@dataclass(frozen=True)
+class ExternalField:
+    """
+    External magnetic field applied to the sample.
+
+    All components are in Tesla.  Use ``Bz_T`` for an out-of-plane field
+    and ``Bx_T`` / ``By_T`` for in-plane components.
+    """
+
+    Bx_T: float = 0.0
+    By_T: float = 0.0
+    Bz_T: float = 0.0
+
+
+@dataclass(frozen=True)
+class FieldCalibration:
+    """
+    Phenomenological calibration for external-field effects on vortex dynamics.
+
+    Parameters are meant to be **fitted from micromagnetic simulations** (e.g.
+    MuMax3) rather than calculated from first principles and capture how the
+    gyrotropic mode responds to the applied field.
+
+    Parameters
+    ----------
+    domega0_dBz : float
+        Linear shift of the gyrotropic eigenfrequency with out-of-plane field
+        [rad/(s·T)].  Fitted from ω₀(Bz) sweeps in MuMax3.
+    seq_per_T : float
+        Equilibrium-position shift of the normalized core coordinate per unit
+        in-plane field [1/T].  Maps |B_∥| to |s_eq| via
+        ``s_eq = chirality · seq_per_T · ẑ × B_∥``.
+    chirality : int
+        Sign convention for the in-plane equilibrium shift direction (±1).
+        Depends on vortex chirality and polarity convention used in the
+        simulation.
+    """
+
+    domega0_dBz: float = 0.0
+    seq_per_T: float = 0.0
+    chirality: int = 1
+
+
 # ---------------------------------------------------------------------------
 # Result data classes
 # ---------------------------------------------------------------------------
@@ -794,11 +837,13 @@ class CIPThieleModel:
         omega0: float,
         polarity: int = 1,
         current_dir: tuple[float, float] = (1.0, 0.0),
+        B_ext: float = 0.0,
     ) -> None:
         self.material = material
         self.geom = geom
         self.omega0 = omega0
         self.polarity = int(polarity)
+        self.B_ext = float(B_ext)
         assert self.polarity in (1, -1), "polarity must be +1 or -1"
 
         # normalise current direction
@@ -833,7 +878,9 @@ class CIPThieleModel:
         self._beta = mat.beta
         self._dG = self._d_over_G0
         self._p = p
-        self._omega0 = self.omega0
+        # Apply Zeeman shift: ω₀_eff = ω₀ + p·γ₀·B_ext
+        gamma0 = mat.gamma * MU0
+        self._omega0 = self.omega0 + self.polarity * gamma0 * self.B_ext
 
     def _rhs(self, t: float, state: np.ndarray, J_func: Callable) -> np.ndarray:
         """Right-hand side of the CIP Thiele ODE for solve_ivp."""
@@ -946,6 +993,7 @@ class CIPThieleModel:
                 "omega0": self.omega0,
                 "polarity": self.polarity,
                 "current_dir": self.current_dir,
+                "B_ext": self.B_ext,
             },
             metadata={
                 "mode": "CIP",
@@ -1015,6 +1063,7 @@ class CPPThieleModel:
         N: float = 0.25,
         polarity: int = 1,
         omega0_Oe_per_J: float = 0.0,
+        B_ext: float = 0.0,
     ) -> None:
         self.material = material
         self.geom = geom
@@ -1022,6 +1071,7 @@ class CPPThieleModel:
         self.N = N
         self.polarity = int(polarity)
         self.omega0_Oe_per_J = float(omega0_Oe_per_J)
+        self.B_ext = float(B_ext)
         assert self.polarity in (1, -1), "polarity must be +1 or -1"
 
         self._setup()
@@ -1054,9 +1104,15 @@ class CPPThieleModel:
         """Nonlinear damping d(u) [dimensionless]."""
         return self._d0 + self._d1 * u**2
 
+    @property
+    def _zeeman_shift(self) -> float:
+        """Zeeman frequency shift p·γ₀·B_ext [rad/s]."""
+        gamma0 = self.material.gamma * MU0
+        return self.polarity * gamma0 * self.B_ext
+
     def omega0_eff(self, J: float) -> float:
-        """Effective linear frequency ω₀(J) = ω₀ + (dω₀/dJ)·J [rad/s]."""
-        return self.omega0 + self.omega0_Oe_per_J * float(J)
+        """Effective linear frequency ω₀(J) = ω₀ + p·γ₀·B_ext + (dω₀/dJ)·J [rad/s]."""
+        return self.omega0 + self._zeeman_shift + self.omega0_Oe_per_J * float(J)
 
     def omega(self, u: float, J: float = 0.0) -> float:
         """Nonlinear gyrotropic frequency ω(u, J) [rad/s]."""
@@ -1065,8 +1121,8 @@ class CPPThieleModel:
     @property
     def J_threshold(self) -> float:
         """Threshold current density for self-oscillation [A/m²]."""
-        # χ(J_th) = d₀ · ω₀  →  J_th = 2 d₀ ω₀ / (γ σ)
-        return self._d0 * self.omega0 / self._chi_prefactor
+        # χ(J_th) = d₀ · ω₀_eff(0)  →  J_th = 2 d₀ ω₀_eff / (γ σ)
+        return self._d0 * self.omega0_eff(0.0) / self._chi_prefactor
 
     def threshold_current_dc(self) -> float:
         """Threshold DC current density for auto-oscillation [A/m²]."""
@@ -1350,6 +1406,7 @@ class CPPThieleModel:
                 "sigma": self._sigma,
                 "J_threshold": self.J_threshold,
                 "polarity": self.polarity,
+                "B_ext": self.B_ext,
             },
             metadata={
                 "mode": "CPP",
@@ -1461,6 +1518,7 @@ class CPPThieleModel:
                 "sigma": self._sigma,
                 "J_threshold": self.J_threshold,
                 "polarity": self.polarity,
+                "B_ext": self.B_ext,
             },
             metadata={
                 "mode": "CPP-SDE",

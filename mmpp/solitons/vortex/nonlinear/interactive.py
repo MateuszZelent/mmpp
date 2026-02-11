@@ -165,6 +165,7 @@ class ThieleInteractiveDashboard:
         cos_theta_eff: float = 0.5,
         angle_deg: float = 20.0,
         current_mA: float = 8.0,
+        b_ext_mt: float = 0.0,
         omega0_ghz: float = 0.9,
         N: float = 0.25,
         temperature_k: float = 300.0,
@@ -219,6 +220,7 @@ class ThieleInteractiveDashboard:
         w_cos = widgets.FloatSlider(description="cosθ_eff", value=cos_theta_eff, min=-1.0, max=1.0, step=0.01)
         w_angle = widgets.FloatSlider(description="angle [deg]", value=angle_deg, min=-180.0, max=180.0, step=1.0)
         w_current = widgets.FloatSlider(description="I [mA]", value=current_mA, min=-30.0, max=30.0, step=0.1)
+        w_bext = widgets.FloatSlider(description="B_ext [mT]", value=b_ext_mt, min=-500.0, max=500.0, step=1.0)
 
         # Model controls
         w_omega0 = widgets.FloatSlider(description="omega0 [GHz]", value=omega0_ghz, min=0.1, max=20.0, step=0.05)
@@ -352,6 +354,7 @@ class ThieleInteractiveDashboard:
                     "R": radius_eq,
                     "L": w_thick.value * 1e-9,
                 }
+                b_ext_tesla = w_bext.value * 1e-3
 
                 omega0 = 2.0 * math.pi * w_omega0.value * 1e9
                 j_th = self.analyzer.threshold_current_dc(
@@ -359,6 +362,7 @@ class ThieleInteractiveDashboard:
                     geometry=geometry,
                     omega0=omega0,
                     N=w_n.value,
+                    B_ext=b_ext_tesla,
                 )
                 f_pred = self.analyzer.predict_frequency_dc(
                     current_density,
@@ -367,6 +371,7 @@ class ThieleInteractiveDashboard:
                     omega0=omega0,
                     N=w_n.value,
                     allow_edge=True,
+                    B_ext=b_ext_tesla,
                 )
                 f_target = f_pred if f_pred is not None else abs(w_omega0.value * 1e9)
                 opt = self.analyzer.optimize_current_for_target_frequency(
@@ -377,6 +382,7 @@ class ThieleInteractiveDashboard:
                     N=w_n.value,
                     J_bounds=(1.01 * j_th, 8.0 * j_th),
                     allow_edge=True,
+                    B_ext=b_ext_tesla,
                 )
 
                 # ── Fast mode ────────────────────────────────────
@@ -397,6 +403,7 @@ class ThieleInteractiveDashboard:
                                 omega0=omega0,
                                 N=w_n.value,
                                 allow_edge=True,
+                                B_ext=b_ext_tesla,
                             )
                             for val in j_grid
                         ],
@@ -416,6 +423,7 @@ class ThieleInteractiveDashboard:
                         f"Geometry: {geom_desc}",
                         f"Area: {area:.3e} m²",
                         f"R_eq: {radius_eq*1e9:.2f} nm",
+                        f"B_ext: {w_bext.value:.1f} mT",
                         f"P_eff: {peff:.4f}",
                         f"J_dc: {current_density*1e-9:.3f} GA/m²",
                         f"J_th: {j_th*1e-9:.3f} GA/m²",
@@ -448,6 +456,7 @@ class ThieleInteractiveDashboard:
                         noise_scale=w_noise.value,
                         seed=int(w_seed.value),
                         s0=(0.0, 0.0),
+                        B_ext=b_ext_tesla,
                     )
                 else:
                     traj = self.analyzer.simulate_cpp(
@@ -459,6 +468,7 @@ class ThieleInteractiveDashboard:
                         t_span=t_span,
                         dt=dt,
                         s0=(1e-3, 0.0),
+                        B_ext=b_ext_tesla,
                     )
 
                 signal = proxy_signal_from_trajectory(
@@ -496,6 +506,7 @@ class ThieleInteractiveDashboard:
                 # Update suptitle
                 info = (
                     f"{geom_desc}  "
+                    f"B_ext={w_bext.value:.1f} mT  "
                     f"J_dc={current_density*1e-9:.3f} GA/m²  "
                     f"J_th={j_th*1e-9:.3f} GA/m²  "
                     f"f_pred={('n/a' if f_pred is None else f'{f_pred*1e-9:.3f} GHz')}  "
@@ -519,6 +530,7 @@ class ThieleInteractiveDashboard:
             w_cos,
             w_angle,
             w_current,
+            w_bext,
             w_omega0,
             w_n,
             w_temp,
@@ -537,7 +549,7 @@ class ThieleInteractiveDashboard:
         controls = widgets.VBox(
             [
                 widgets.HBox([w_geom_mode, w_disk_d, w_size_x, w_size_y, w_thick]),
-                widgets.HBox([w_ms, w_alpha]),
+                widgets.HBox([w_ms, w_alpha, w_bext]),
                 widgets.HBox([w_pol, w_lambda, w_cos, w_angle, w_current]),
                 widgets.HBox([w_omega0, w_n, w_temp, w_noise, w_seed]),
                 widgets.HBox([w_tend, w_dt, w_fast, w_sde]),

@@ -1720,55 +1720,54 @@ class BatchTransmissionResult:
                 f"    x_positions range: [{x_positions.min():.1f}, {x_positions.max():.1f}] nm"
             )
 
-        # Determine if x is in physical units or index
-        # Use 1e-6 as threshold (1 micrometer) - anything larger is definitely meters
-        dx = (
-            result.dx
-            if hasattr(result, "dx")
-            else result.config.metadata.get("dx", None)
-        )
-
-        if dx is not None and x > 1e-6:
-            # x is in physical units (meters) - convert to index
-            x_nm = x * 1e9  # Convert to nm for comparison with x_positions
-            # Find closest x_position
-            x_index = np.abs(x_positions - x_nm).argmin()
+        # Interpret x in the same way as TransmissionResult.plot_transmission_crosssection:
+        # - when dx exists: x<=1.0 means meters, x>1.0 means already in nm
+        # - without dx: x is index-like in the same space as x_positions
+        dx = result.dx if hasattr(result, "dx") else None
+        if dx is not None:
+            target_x = x * 1e9 if x <= 1.0 else x
             if verbose:
-                print(f"    x={x} m → x_nm={x_nm:.1f} nm → x_index={x_index}")
-                print(f"    actual x at index: {x_positions[x_index]:.1f} nm")
+                unit = "m→nm" if x <= 1.0 else "nm"
+                print(f"    x={x} ({unit}) → target_x={target_x:.3f} nm")
         else:
-            # x is an index
-            x_index = int(x)
+            target_x = x
             if verbose:
-                print(f"    x={x} (treated as index) → x_index={x_index}")
+                print(f"    x={x} (index space, dx unavailable)")
+
+        x_index = int(np.argmin(np.abs(x_positions - target_x)))
+        actual_x = float(x_positions[x_index])
+        if verbose:
+            print(f"    x_index={x_index}, actual_x={actual_x:.3f}")
 
         # Handle x_width averaging
-        if x_width is not None and not disable_averaging:
-            if dx is not None:
-                # x_width in meters
-                width_nm = x_width * 1e9
-                # Find indices within range
-                x_min = x_positions[x_index] - width_nm / 2
-                x_max = x_positions[x_index] + width_nm / 2
-                mask = (x_positions >= x_min) & (x_positions <= x_max)
-                indices = np.where(mask)[0]
+        if x_width is not None and x_width > 0 and not disable_averaging:
+            # Match TransmissionResult semantics: x_width is interpreted in the same
+            # coordinate system as x_positions (nm when dx is known).
+            width_in_nm = x_width
+            half_width = width_in_nm / 2.0
+            x_min = target_x - half_width
+            x_max = target_x + half_width
+            mask = (x_positions >= x_min) & (x_positions <= x_max)
+            num_points = int(np.sum(mask))
 
-                if len(indices) == 0:
-                    indices = [x_index]
+            if verbose:
+                print(f"    averaging in range [{x_min:.3f}, {x_max:.3f}]")
+                print(f"    points in range: {num_points}")
 
-                if verbose:
-                    print(f"    x_width={x_width} m → {width_nm:.1f} nm")
-                    print(
-                        f"    averaging over indices {indices[0]}..{indices[-1]} ({len(indices)} points)"
-                    )
+            if num_points == 0:
+                import warnings
 
-                cross_section = transmission[:, indices].mean(axis=1)
+                min_width = (result.dx * 1e9) if getattr(result, "dx", None) else 1.0
+                warnings.warn(
+                    f"x_width={x_width} nm is too small (no points in range). "
+                    f"Using single point at x={actual_x:.1f}. Try x_width >= {min_width:.1f} nm.",
+                    UserWarning,
+                )
+                cross_section = transmission[:, x_index]
+            elif num_points == 1:
+                cross_section = transmission[:, mask].flatten()
             else:
-                width_cells = int(x_width)
-                half_width = width_cells // 2
-                start_idx = max(0, x_index - half_width)
-                end_idx = min(transmission.shape[1], x_index + half_width + 1)
-                cross_section = transmission[:, start_idx:end_idx].mean(axis=1)
+                cross_section = transmission[:, mask].mean(axis=1)
         else:
             # Single column
             if x_index < 0 or x_index >= transmission.shape[1]:
@@ -1787,13 +1786,18 @@ class BatchTransmissionResult:
 
         # Trim low frequencies
         if trim_0f > 0:
-            frequencies = frequencies[trim_0f:]
-            cross_section = cross_section[trim_0f:]
+            trim_idx = min(trim_0f, len(frequencies) - 1)
+            frequencies = frequencies[trim_idx:]
+            cross_section = cross_section[trim_idx:]
             if verbose:
-                print(f"    trimmed {trim_0f} low-frequency points")
+                print(f"    trimmed {trim_idx} low-frequency points")
 
         # Get frequency scale
-        scale = FREQ_SCALE.get(freq_unit, 1.0)
+        if freq_unit not in FREQ_SCALE:
+            raise ValueError(
+                f"Unsupported frequency unit: {freq_unit}. Use one of {list(FREQ_SCALE.keys())}"
+            )
+        scale = FREQ_SCALE[freq_unit]
         freq_displayed = frequencies * scale
 
         # Apply frequency limits

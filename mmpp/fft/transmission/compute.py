@@ -166,6 +166,18 @@ class TransmissionConfig:
                     "component_weights must contain either one entry (for a sliced component) "
                     "or three entries for (mx, my, mz)"
                 )
+            if not np.all(np.isfinite(weights)):
+                raise ValueError("component_weights must be finite numbers")
+            if np.any(weights < 0):
+                raise ValueError(
+                    "component_weights must be non-negative (negative values produce non-physical power)"
+                )
+            if not np.any(weights > 0):
+                raise ValueError("At least one component weight must be > 0")
+        if self.method == "cpsd" and self.spatial_window_mode != "post_fft":
+            raise ValueError(
+                "method='cpsd' requires spatial_window_mode='post_fft' (window axis is needed)"
+            )
 
 
 @dataclass
@@ -871,61 +883,178 @@ def _compute_hann_weights(length: int, power: float) -> np.ndarray:
     return window
 
 
+def _edge_taper_weighted_average(
+    data: np.ndarray,
+    *,
+    axes: tuple[int, ...],
+    taper_power: float,
+) -> np.ndarray:
+    """Apply separable Hann taper over selected axes and reduce them."""
+    weighted = np.asarray(data, dtype=float)
+    norm = 1.0
+    for axis in axes:
+        axis_len = weighted.shape[axis]
+        axis_weights = _compute_hann_weights(axis_len, taper_power)
+        shape = [1] * weighted.ndim
+        shape[axis] = axis_len
+        weighted = weighted * axis_weights.reshape(shape)
+        norm *= axis_weights.sum()
+
+    if norm <= 0:
+        norm = 1.0
+    return weighted.sum(axis=axes) / norm
+
+
+def _apply_transmission_method(
+    spectrum: np.ndarray,
+    *,
+    component_weights: np.ndarray,
+    method: TransmissionMethod,
+    window_axis: Optional[int],
+) -> np.ndarray:
+    """Convert complex spectrum to real-valued transmission metric."""
+    if spectrum.ndim < 2:
+        raise ValueError(f"Spectrum must have at least 2 dims (..., comp), got {spectrum.shape}")
+
+    n_comp = spectrum.shape[-1]
+    if component_weights.size < n_comp:
+        raise ValueError(
+            f"Insufficient component_weights size={component_weights.size} for n_comp={n_comp}"
+        )
+
+    if method == "power_ratio":
+        metric = np.zeros(spectrum.shape[:-1], dtype=float)
+        for comp_idx in range(n_comp):
+            w = float(component_weights[comp_idx])
+            if w == 0.0:
+                continue
+            metric += np.abs(spectrum[..., comp_idx]) * w
+        return metric
+
+    if method == "circular":
+        if n_comp < 2:
+            raise ValueError("method='circular' requires at least 2 components (mx,my)")
+        mx = spectrum[..., 0] * float(component_weights[0])
+        my = spectrum[..., 1] * float(component_weights[1])
+        m_plus = (mx + 1j * my) / np.sqrt(2.0)
+        m_minus = (mx - 1j * my) / np.sqrt(2.0)
+        metric = 0.5 * (np.abs(m_plus) + np.abs(m_minus))
+        # Keep optional longitudinal/extra contributions explicit via weights.
+        for comp_idx in range(2, n_comp):
+            w = float(component_weights[comp_idx])
+            if w == 0.0:
+                continue
+            metric += np.abs(spectrum[..., comp_idx]) * w
+        return metric
+
+    if method == "cpsd":
+        if window_axis is None:
+            raise ValueError(
+                "method='cpsd' requires per-window spectrum. Use spatial_window_mode='post_fft'."
+            )
+        metric = np.zeros(spectrum.shape[:-1], dtype=float)
+        for comp_idx in range(n_comp):
+            w = float(component_weights[comp_idx])
+            if w == 0.0:
+                continue
+            comp_spec = spectrum[..., comp_idx]
+            ref = np.take(comp_spec, indices=0, axis=window_axis)
+            ref = np.expand_dims(ref, axis=window_axis)
+            metric += np.abs(comp_spec * np.conj(ref)) * w
+        return metric
+
+    raise ValueError(f"Unsupported transmission method: {method}")
+
+
+def _aggregate_pre_fft(
+    metric: np.ndarray,
+    mode: AverageMode,
+    edge_taper_power: float,
+) -> np.ndarray:
+    """Aggregate pre-FFT metric (freq,z) or (freq,z,y) to 1D freq profile."""
+    if metric.ndim == 2:
+        # (freq, z)
+        if mode == "none":
+            return metric[:, 0]
+        if mode == "mean":
+            return metric.mean(axis=1)
+        if mode == "median":
+            return np.median(metric, axis=1)
+        if mode == "edge_taper":
+            return _edge_taper_weighted_average(metric, axes=(1,), taper_power=edge_taper_power)
+        raise ValueError(f"Unsupported average mode: {mode}")
+
+    if metric.ndim == 3:
+        # (freq, z, y)
+        if mode == "none":
+            return metric[:, 0, 0]
+        if mode == "mean":
+            return metric.mean(axis=(1, 2))
+        if mode == "median":
+            return np.median(metric, axis=(1, 2))
+        if mode == "edge_taper":
+            return _edge_taper_weighted_average(metric, axes=(1, 2), taper_power=edge_taper_power)
+        raise ValueError(f"Unsupported average mode: {mode}")
+
+    raise ValueError(f"Expected pre-FFT metric with ndim 2 or 3, got shape {metric.shape}")
+
+
 def _aggregate_spatial(
     power: np.ndarray,
     mode: AverageMode,
     edge_taper_power: float,
 ) -> np.ndarray:
-    """Reduce spatial dimensions (z, window_x) of the local power map.
+    """Reduce local power map to 1D frequency profile.
 
-    NOTE: Y dimension is already summed before calling this function (physically correct for transmission).
+    Supported inputs:
+    - ``(freq, z, window_x)`` when y is already integrated
+    - ``(freq, z, y, window_x)`` when y is retained
 
     Parameters
     ----------
     power : np.ndarray
-        Power array with shape (freq, z, window) - y already summed!
+        Power array with shape (freq, z, window) or (freq, z, y, window)
     mode : AverageMode
         "mean" - simple average
         "median" - median (robust to outliers)
         "edge_taper" - weighted average with Hann window
-        "none" - no averaging, take only first slice (z=0), mean over window
+        "none" - take z=0 (and y=0 when present), mean over window
     """
 
-    if power.ndim != 3:
-        raise ValueError(
-            f"Expected power array with shape (freq, z, window), got {power.shape}"
-        )
+    arr = np.asarray(power, dtype=float)
+    if arr.ndim == 3:
+        # (freq, z, window)
+        if mode == "none":
+            return arr[:, 0, :].mean(axis=1)
+        if mode == "mean":
+            return arr.mean(axis=(1, 2))
+        if mode == "median":
+            return np.median(arr, axis=(1, 2))
+        if mode == "edge_taper":
+            return _edge_taper_weighted_average(
+                arr,
+                axes=(1, 2),
+                taper_power=edge_taper_power,
+            )
+        raise ValueError(f"Unsupported averaging mode: {mode}")
 
-    freq_axis = 0
-    z_axis = 1
-    x_axis = 2
+    if arr.ndim == 4:
+        # (freq, z, y, window)
+        if mode == "none":
+            return arr[:, 0, 0, :].mean(axis=1)
+        if mode == "mean":
+            return arr.mean(axis=(1, 2, 3))
+        if mode == "median":
+            return np.median(arr, axis=(1, 2, 3))
+        if mode == "edge_taper":
+            return _edge_taper_weighted_average(
+                arr,
+                axes=(1, 2, 3),
+                taper_power=edge_taper_power,
+            )
+        raise ValueError(f"Unsupported averaging mode: {mode}")
 
-    if mode == "none":
-        # Raw mode: no averaging - take only z=0, average over window_x
-        # After slicing [:, 0, :], we have (freq, window_x), so axis=1 for window_x
-        return power[:, 0, :].mean(axis=1)
-
-    if mode == "mean":
-        return power.mean(axis=(z_axis, x_axis))
-
-    if mode == "median":
-        return np.median(power, axis=(z_axis, x_axis))
-
-    if mode == "edge_taper":
-        n_z, n_w = power.shape[1:]
-        weights_z = np.ones((n_z,), dtype=float)
-        weights_z /= weights_z.sum() if weights_z.sum() > 0 else 1.0
-        weights_w = np.ones((n_w,), dtype=float)
-        weights_w /= weights_w.sum() if weights_w.sum() > 0 else 1.0
-
-        combined = weights_z[:, None] * weights_w[None, :]
-        weighted = power * combined[None, ...]
-        normalization = combined.sum()
-        if normalization <= 0:
-            normalization = 1.0
-        return weighted.sum(axis=(z_axis, x_axis)) / normalization
-
-    raise ValueError(f"Unsupported averaging mode: {mode}")
+    raise ValueError(f"Expected power array ndim 3 or 4, got shape {arr.shape}")
 
 
 class TransmissionCompute:
@@ -1202,6 +1331,11 @@ class TransmissionCompute:
         )
 
         n_time, n_z, n_y, n_x, n_comp = data.shape
+        if config.method == "circular" and n_comp < 2:
+            raise ValueError(
+                "method='circular' requires at least 2 components (mx,my); "
+                f"got n_comp={n_comp}"
+            )
 
         # 🐛 CRITICAL DEBUG: Log dimensional interpretation
         log.info(
@@ -1453,43 +1587,18 @@ class TransmissionCompute:
                     else:
                         window_spectrum = np.fft.rfft(window_data_summed, axis=0)
 
-                    # Compute power from all components
-                    # Shape: (freq, z, comp) or (freq, z, y, comp)
-                    power_components = None
-                    for comp_idx in range(n_comp):
-                        if component_weights[comp_idx] != 0:
-                            if config.y_integration_mode in ("sum_m", "sum_fft"):
-                                comp_fft = window_spectrum[..., comp_idx]  # (freq, z)
-                            else:
-                                comp_fft = window_spectrum[
-                                    ..., comp_idx
-                                ]  # (freq, z, y)
-                            comp_power = np.abs(comp_fft) * component_weights[comp_idx]
-                            if power_components is None:
-                                power_components = comp_power
-                            else:
-                                power_components += comp_power
-
-                    # Aggregate spatially (over z, and possibly y)
-                    if config.y_integration_mode in ("sum_m", "sum_fft"):
-                        # (freq, z) → aggregate over z
-                        if config.average_mode == "none":
-                            aggregated_local = power_components[:, 0]  # Just take z=0
-                        elif config.average_mode == "mean":
-                            aggregated_local = power_components.mean(axis=1)
-                        else:
-                            # Fallback to mean for unsupported modes in pre_fft
-                            aggregated_local = power_components.mean(axis=1)
-                    else:
-                        # (freq, z, y) → aggregate over z and y
-                        if config.average_mode == "none":
-                            aggregated_local = power_components[:, 0, :].mean(
-                                axis=1
-                            )  # z=0, mean over y
-                        elif config.average_mode == "mean":
-                            aggregated_local = power_components.mean(axis=(1, 2))
-                        else:
-                            aggregated_local = power_components.mean(axis=(1, 2))
+                    # Apply selected transmission metric, then aggregate spatial axes.
+                    metric_local = _apply_transmission_method(
+                        window_spectrum,
+                        component_weights=component_weights,
+                        method=config.method,
+                        window_axis=None,
+                    )
+                    aggregated_local = _aggregate_pre_fft(
+                        metric_local,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
 
                     return win_idx, aggregated_local
 
@@ -1555,43 +1664,18 @@ class TransmissionCompute:
                     else:
                         window_spectrum = np.fft.rfft(window_data_summed, axis=0)
 
-                    # Compute power from all components
-                    # Shape: (freq, z, comp) or (freq, z, y, comp)
-                    power_components = None
-                    for comp_idx in range(n_comp):
-                        if component_weights[comp_idx] != 0:
-                            if config.y_integration_mode in ("sum_m", "sum_fft"):
-                                comp_fft = window_spectrum[..., comp_idx]  # (freq, z)
-                            else:
-                                comp_fft = window_spectrum[
-                                    ..., comp_idx
-                                ]  # (freq, z, y)
-                            comp_power = np.abs(comp_fft) * component_weights[comp_idx]
-                            if power_components is None:
-                                power_components = comp_power
-                            else:
-                                power_components += comp_power
-
-                    # Aggregate spatially (over z, and possibly y)
-                    if config.y_integration_mode in ("sum_m", "sum_fft"):
-                        # (freq, z) → aggregate over z
-                        if config.average_mode == "none":
-                            aggregated = power_components[:, 0]  # Just take z=0
-                        elif config.average_mode == "mean":
-                            aggregated = power_components.mean(axis=1)
-                        else:
-                            # Fallback to mean
-                            aggregated = power_components.mean(axis=1)
-                    else:
-                        # (freq, z, y) → aggregate over z and y
-                        if config.average_mode == "none":
-                            aggregated = power_components[:, 0, :].mean(
-                                axis=1
-                            )  # z=0, mean over y
-                        elif config.average_mode == "mean":
-                            aggregated = power_components.mean(axis=(1, 2))
-                        else:
-                            aggregated = power_components.mean(axis=(1, 2))
+                    # Apply selected transmission metric, then aggregate spatial axes.
+                    metric = _apply_transmission_method(
+                        window_spectrum,
+                        component_weights=component_weights,
+                        method=config.method,
+                        window_axis=None,
+                    )
+                    aggregated = _aggregate_pre_fft(
+                        metric,
+                        config.average_mode,
+                        config.edge_taper_power,
+                    )
 
                     power_map[:, win_idx] = aggregated
 
@@ -1738,6 +1822,8 @@ class TransmissionCompute:
             )  # Only parallelize for many windows
             use_vectorized = (
                 config.average_mode == "none"
+                and y_already_integrated
+                and config.method == "power_ratio"
                 and not config.enable_circular_components
                 and not config.store_component_maps
                 and not use_parallel
@@ -1924,39 +2010,51 @@ class TransmissionCompute:
                         # Y already summed: (freq, z, x, comp) → extract window
                         # Result: (freq, z, window_x, comp)
                         spectrum = full_spectrum[:, :, window_slice, :]
+                        window_axis = 2
                     else:
-                        # Extract: (n_freq, n_z, n_y, window_x, n_comp)
+                        # Keep y dimension for y_integration_mode='none':
+                        # (freq, z, y, x, comp) -> (freq, z, y, window_x, comp)
                         spectrum = full_spectrum[:, :, :, window_slice, :]
-                        # Sum over y dimension (integrate across width) - physically correct!
-                        # Result: (n_freq, n_z, window_x, n_comp)
-                        spectrum = spectrum.sum(axis=2)
+                        window_axis = 3
 
-                    # Compute component-wise power for this window
-                    mx_fft = spectrum[..., 0]
-                    my_fft = spectrum[..., 1]
-                    power_components = np.abs(mx_fft) * component_weights[0]
-                    power_components += np.abs(my_fft) * component_weights[1]
-
-                    if n_comp > 2:
-                        mz_fft = spectrum[..., 2]
-                        power_components += np.abs(mz_fft) * component_weights[2]
+                    metric = _apply_transmission_method(
+                        spectrum,
+                        component_weights=component_weights,
+                        method=config.method,
+                        window_axis=window_axis,
+                    )
 
                     aggregated = _aggregate_spatial(
-                        power_components,
+                        metric,
                         config.average_mode,
                         config.edge_taper_power,
                     )
 
                     results = {"power": aggregated}
 
+                    mx_fft = spectrum[..., 0] if n_comp > 0 else None
+                    my_fft = spectrum[..., 1] if n_comp > 1 else None
+                    mz_fft = spectrum[..., 2] if n_comp > 2 else None
+
                     if transverse_map is not None:
+                        transverse_metric = None
+                        if mx_fft is not None:
+                            transverse_metric = np.abs(mx_fft)
+                        if my_fft is not None:
+                            my_metric = np.abs(my_fft)
+                            if transverse_metric is None:
+                                transverse_metric = my_metric
+                            else:
+                                transverse_metric += my_metric
+                        if transverse_metric is None:
+                            transverse_metric = np.zeros_like(metric)
                         results["transverse"] = _aggregate_spatial(
-                            np.abs(mx_fft) + np.abs(my_fft),
+                            transverse_metric,
                             config.average_mode,
                             config.edge_taper_power,
                         )
 
-                    if longitudinal_map is not None and n_comp > 2:
+                    if longitudinal_map is not None and mz_fft is not None:
                         results["longitudinal"] = _aggregate_spatial(
                             np.abs(mz_fft),
                             config.average_mode,
@@ -1964,18 +2062,31 @@ class TransmissionCompute:
                         )
 
                     if config.enable_circular_components:
-                        m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
-                        m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
-                        results["power_plus"] = _aggregate_spatial(
-                            np.abs(m_plus),
-                            config.average_mode,
-                            config.edge_taper_power,
-                        )
-                        results["power_minus"] = _aggregate_spatial(
-                            np.abs(m_minus),
-                            config.average_mode,
-                            config.edge_taper_power,
-                        )
+                        if mx_fft is not None and my_fft is not None:
+                            m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
+                            m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
+                            results["power_plus"] = _aggregate_spatial(
+                                np.abs(m_plus),
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
+                            results["power_minus"] = _aggregate_spatial(
+                                np.abs(m_minus),
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
+                        else:
+                            zeros_metric = np.zeros_like(metric)
+                            results["power_plus"] = _aggregate_spatial(
+                                zeros_metric,
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
+                            results["power_minus"] = _aggregate_spatial(
+                                zeros_metric,
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
 
                     return win_idx, results
 
@@ -2038,31 +2149,19 @@ class TransmissionCompute:
                         # Y already summed: (freq, z, x, comp) → extract window
                         # Result: (freq, z, window_x, comp)
                         spectrum = full_spectrum[:, :, window_slice, :]
+                        window_axis = 2
                     else:
                         # Extract window from pre-computed FFT spectrum
                         # Shape: (n_freq, n_z, n_y, window_x, n_comp)
                         spectrum = full_spectrum[:, :, :, window_slice, :]
-                        # Sum over y dimension (integrate across width) - physically correct!
-                        # Result: (n_freq, n_z, window_x, n_comp)
-                        spectrum = spectrum.sum(axis=2)
+                        window_axis = 3
 
-                    # Compute power - iterate only over active components
-                    power_components = None
-                    for comp_idx in range(n_comp):
-                        if component_weights[comp_idx] != 0:
-                            comp_fft = spectrum[..., comp_idx]
-                            comp_power = np.abs(comp_fft) * component_weights[comp_idx]
-                            if power_components is None:
-                                power_components = comp_power
-                            else:
-                                power_components += comp_power
-
-                    # Handle case where no components are active (shouldn't happen but be safe)
-                    # Note: y dimension already summed, so shape is (n_freq, n_z, window_x)
-                    if power_components is None:
-                        power_components = np.zeros(
-                            (n_freq, n_z, end - start), dtype=float
-                        )
+                    metric = _apply_transmission_method(
+                        spectrum,
+                        component_weights=component_weights,
+                        method=config.method,
+                        window_axis=window_axis,
+                    )
 
                     # Store longitudinal component map if requested
                     if (
@@ -2082,12 +2181,13 @@ class TransmissionCompute:
                     if complex_accum is not None:
                         for comp_idx in range(n_comp):
                             comp_spec = spectrum[..., comp_idx]
-                            # mean over z and the window dimension (note: block may be smaller than window_size at edges)
-                            comp_mean = comp_spec.mean(axis=(1, 2))  # axes: z, window_x
+                            # Mean over all spatial dims (z,[y],window_x), keep frequency axis.
+                            spatial_axes = tuple(range(1, comp_spec.ndim))
+                            comp_mean = comp_spec.mean(axis=spatial_axes)
                             complex_accum[:, comp_idx] += comp_mean
 
                     aggregated = _aggregate_spatial(
-                        power_components,
+                        metric,
                         config.average_mode,
                         config.edge_taper_power,
                     )

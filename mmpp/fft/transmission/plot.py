@@ -374,6 +374,9 @@ class TransmissionPlotter:
                 print(f"   Final 2D shape: {data.shape}")
                 print(f"   min={data.min():.3e}, max={data.max():.3e}")
 
+        # Keep plotting side effects local: trim_0f must not mutate stored result arrays.
+        data = np.array(data, copy=True)
+
         freq_unit = config.freq_unit
         if freq_unit not in FREQ_SCALE:
             raise ValueError(f"Unsupported frequency unit: {freq_unit}")

@@ -178,6 +178,7 @@ class ThieleAnalyzer:
         N: float,
         polarity: int | None,
         omega0_Oe_per_J: float = 0.0,
+        B_ext: float = 0.0,
     ) -> tuple[CPPThieleModel, MaterialParams, DiskGeometry]:
         mat = self._resolve_material(material)
         geo = self._resolve_geometry(geometry)
@@ -190,6 +191,7 @@ class ThieleAnalyzer:
             N=float(N),
             polarity=p,
             omega0_Oe_per_J=float(omega0_Oe_per_J),
+            B_ext=float(B_ext),
         )
         return model, mat, geo
 
@@ -305,6 +307,7 @@ class ThieleAnalyzer:
         t_span: tuple[float, float] = (0.0, 20.0e-9),
         s0: tuple[float, float] = (1.0e-3, 0.0),
         dt: float = 1.0e-11,
+        B_ext: float = 0.0,
         **simulate_kwargs,
     ) -> ThieleTrajectoryResult:
         """Run analytical CPP Thiele simulation and return trajectory result."""
@@ -314,6 +317,7 @@ class ThieleAnalyzer:
             omega0=omega0,
             N=N,
             polarity=polarity,
+            B_ext=B_ext,
         )
         j_func = current_waveform if current_waveform is not None else current_dc(float(current_density))
         result = model.simulate(t_span=t_span, s0=s0, J_func=j_func, dt=dt, **simulate_kwargs)
@@ -339,6 +343,7 @@ class ThieleAnalyzer:
         noise_scale: float = 1.0,
         seed: int | None = None,
         clamp_u: float = 0.999,
+        B_ext: float = 0.0,
     ) -> ThieleTrajectoryResult:
         """Run stochastic CPP Thiele simulation (Euler-Maruyama)."""
         model, _, _ = self._build_cpp_model(
@@ -347,6 +352,7 @@ class ThieleAnalyzer:
             omega0=omega0,
             N=N,
             polarity=polarity,
+            B_ext=B_ext,
         )
         j_func = current_waveform if current_waveform is not None else current_dc(float(current_density))
         result = model.simulate_sde(
@@ -372,6 +378,7 @@ class ThieleAnalyzer:
         omega0: float | None = None,
         N: float = 0.25,
         polarity: int | None = None,
+        B_ext: float = 0.0,
     ) -> float:
         """Return threshold DC current density for CPP model [A/m²]."""
         model, _, _ = self._build_cpp_model(
@@ -380,6 +387,7 @@ class ThieleAnalyzer:
             omega0=omega0,
             N=N,
             polarity=polarity,
+            B_ext=B_ext,
         )
         return float(model.threshold_current_dc())
 
@@ -394,6 +402,7 @@ class ThieleAnalyzer:
         polarity: int | None = None,
         allow_edge: bool = False,
         omega0_Oe_per_J: float = 0.0,
+        B_ext: float = 0.0,
     ) -> float | None:
         """Predict steady-state frequency for given DC current density [Hz]."""
         model, _, _ = self._build_cpp_model(
@@ -403,6 +412,7 @@ class ThieleAnalyzer:
             N=N,
             polarity=polarity,
             omega0_Oe_per_J=omega0_Oe_per_J,
+            B_ext=B_ext,
         )
         return model.predict_frequency_dc(
             J_dc,
@@ -453,6 +463,7 @@ class ThieleAnalyzer:
         allow_edge: bool = False,
         omega0_Oe_per_J: float = 0.0,
         n_grid: int = 300,
+        B_ext: float = 0.0,
     ) -> ThieleOptimizationResult:
         """Optimize DC current density to match target frequency."""
         model, _, _ = self._build_cpp_model(
@@ -462,6 +473,7 @@ class ThieleAnalyzer:
             N=N,
             polarity=polarity,
             omega0_Oe_per_J=omega0_Oe_per_J,
+            B_ext=B_ext,
         )
         return model.optimize_current_for_target_frequency(
             target_frequency_hz,
@@ -521,6 +533,7 @@ class ThieleAnalyzer:
         t_span: tuple[float, float] = (0.0, 20.0e-9),
         r0: tuple[float, float] = (1.0e-9, 0.0),
         dt: float = 1.0e-12,
+        B_ext: float = 0.0,
         **simulate_kwargs,
     ) -> ThieleTrajectoryResult:
         """Run analytical CIP Thiele simulation and return trajectory result."""
@@ -535,6 +548,7 @@ class ThieleAnalyzer:
             omega0=omega0_val,
             polarity=p,
             current_dir=current_dir,
+            B_ext=float(B_ext),
         )
         j_func = current_waveform if current_waveform is not None else current_dc(float(current_density))
         result = model.simulate(t_span=t_span, r0=r0, J_func=j_func, dt=dt, **simulate_kwargs)
