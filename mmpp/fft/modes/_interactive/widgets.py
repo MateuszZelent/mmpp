@@ -274,7 +274,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         continuous_update=False,
     )
     controls["anim_format"] = widgets.Dropdown(
-        options=[("gif", "gif"), ("mp4", "mp4")],
+        options=[("GIF (animated)", "gif"), ("MP4 (video)", "mp4")],
         value="gif",
         description="format:",
         layout=widgets.Layout(width="100%"),

@@ -61,6 +61,7 @@ class SpectrumModes:
 
     def interactive(self, **kwargs):
         """Launch interactive spectrum + mode explorer."""
+        kwargs.setdefault("spectrum_result", self._spectrum)
         return self._resolve_interface().interactive_spectrum(**kwargs)
 
     def interactive_spectrum(self, **kwargs):

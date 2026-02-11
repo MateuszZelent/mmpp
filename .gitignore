@@ -74,6 +74,7 @@ tests/**
 !tests/test_vortex_modes.py
 !tests/test_vortex_nonlinear.py
 !tests/test_vortex_events.py
+!tests/test_spectrum_modes_bridge.py
 
 # Translations
 *.mo

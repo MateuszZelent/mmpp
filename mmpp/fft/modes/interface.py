@@ -921,20 +921,27 @@ class FFTModeInterfaceNew:
         >>> # Start at specific frequency
         >>> job[0].fft.modes.interactive_spectrum(initial_frequency=9.5)
         """
-        # Get spectrum through parent FFT (respects slice_context!)
-        # This ensures identical data to job[0].m[...].fft.spectrum()
-        find_peaks_params = kwargs.pop('find_peaks', {'min_prominence': 0.01})
-        spectrum_result = self.parent_fft._spectrum_impl(
-            dset=self.dataset_name,
-            slice_info=self._slice_context,
-            find_peaks=find_peaks_params,
-        )
-        
-        log.info(
-            f"interactive_spectrum: using FFT spectrum with "
-            f"dataset={self.dataset_name}, slice={self._slice_context}, "
-            f"component={self.component_index}"
-        )
+        # Reuse an already computed spectrum when provided (e.g. SpectrumResult.plot.interactive()).
+        # Fallback to parent FFT computation to preserve legacy behavior.
+        spectrum_result = kwargs.pop("spectrum_result", None)
+        if spectrum_result is None:
+            find_peaks_params = kwargs.pop("find_peaks", {"min_prominence": 0.01})
+            spectrum_result = self.parent_fft._spectrum_impl(
+                dset=self.dataset_name,
+                slice_info=self._slice_context,
+                find_peaks=find_peaks_params,
+            )
+            log.info(
+                f"interactive_spectrum: using FFT spectrum with "
+                f"dataset={self.dataset_name}, slice={self._slice_context}, "
+                f"component={self.component_index}"
+            )
+        else:
+            log.info(
+                "interactive_spectrum: reusing provided SpectrumResult "
+                f"(dataset={self.dataset_name}, slice={self._slice_context}, "
+                f"component={self.component_index})"
+            )
         
         # Auto-select components based on slice context
         if components is None and self.component_index is not None:

@@ -40,6 +40,26 @@ def _collect_mode_images_and_titles(explorer: Any) -> tuple[list[list[Any]], lis
     return mode_images, mode_titles
 
 
+def _resolve_mode_viz(
+    comp_data: np.ndarray,
+    *,
+    viz_type: str,
+) -> tuple[np.ndarray, float | None, float | None]:
+    """Resolve frame data and clim values for a visualization mode."""
+    comp_amplitude = float(np.nanmax(np.abs(comp_data)))
+    if comp_amplitude <= 0:
+        comp_amplitude = 1.0
+
+    if viz_type in {"magnitude", "abs"}:
+        return np.abs(comp_data), 0.0, comp_amplitude
+    if viz_type == "phase":
+        return np.angle(comp_data), -np.pi, np.pi
+    if viz_type == "imag":
+        return np.imag(comp_data), -comp_amplitude, comp_amplitude
+    # "real" and "combined" are rendered as real part in time-domain animation
+    return np.real(comp_data), -comp_amplitude, comp_amplitude
+
+
 def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
     """Save phase oscillation animation of selected FMR mode."""
     if explorer._is_saving_animation:
@@ -57,6 +77,12 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
             from matplotlib.animation import FFMpegWriter
         except Exception:  # pragma: no cover - optional backend
             FFMpegWriter = None  # type: ignore[assignment]
+        try:
+            from matplotlib.animation import ImageMagickWriter
+            has_imagemagick = True
+        except Exception:  # pragma: no cover - optional backend
+            ImageMagickWriter = None  # type: ignore[assignment]
+            has_imagemagick = False
     except Exception as exc:  # pragma: no cover - optional backend
         explorer._set_status(f"Animation backend unavailable: {exc}", color="crimson")
         return
@@ -64,6 +90,8 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
     n_frames = max(2, int(explorer._controls["anim_frames"].value))
     fps = max(1, int(explorer._controls["anim_fps"].value))
     fmt = str(explorer._controls["anim_format"].value).lower()
+    if fmt not in {"gif", "mp4"}:
+        fmt = "gif"
 
     button = explorer._controls["save_animation"]
     old_desc = button.description
@@ -100,11 +128,13 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
         explorer._set_status("Rendering animation...", color="#0F766E")
 
         mode_images, mode_titles = _collect_mode_images_and_titles(explorer)
+        mode_type = str(getattr(explorer, "_mode_type", "combined"))
 
         def _update_frame(frame_idx: int) -> list[Any]:
             mode_at_t = precomputed_frames[frame_idx]
             t = time_array[frame_idx]
             phase_deg = (t / period_s) * 360
+            t_ns = t * 1e9
 
             artists = []
 
@@ -121,21 +151,18 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                         continue
 
                     comp_data = mode_at_t[:, :, comp_idx]
-
-                    if row_type == "magnitude":
-                        plot_data = np.abs(comp_data)
-                    elif row_type == "phase":
-                        plot_data = np.angle(comp_data)
-                    else:
-                        plot_data = np.real(comp_data)
+                    viz_type = mode_type if row_idx == 0 else row_type
+                    plot_data, vmin, vmax = _resolve_mode_viz(comp_data, viz_type=viz_type)
 
                     img.set_data(plot_data)
+                    if vmin is not None and vmax is not None:
+                        img.set_clim(vmin, vmax)
                     artists.append(img)
 
                     if row_idx == 0 and row_idx < len(mode_titles):
                         title_obj = mode_titles[row_idx][col_idx]
                         title_obj.set_text(
-                            f"m_{comp} @ {actual_freq:.3f} GHz (φ={phase_deg:.0f}°)"
+                            f"m_{comp} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°"
                         )
                         artists.append(title_obj)
 
@@ -146,24 +173,62 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
             _update_frame,
             frames=n_frames,
             interval=1000.0 / float(fps),
-            blit=True,
+            blit=False,
             repeat=False,
         )
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path.cwd() / f"fmr_mode_{actual_freq:.2f}GHz_{timestamp}.{fmt}"
+        output_path = Path.cwd() / f"fmr_mode_{actual_freq:.2f}GHz_{mode_type}_{timestamp}.{fmt}"
 
+        writer_name = ""
+        export_dpi = 150 if fmt == "gif" else explorer.dpi
         if fmt == "mp4":
             if FFMpegWriter is None:
                 raise RuntimeError("FFmpeg writer unavailable; select GIF format")
-            writer = FFMpegWriter(fps=fps, bitrate=3000)
+            writer = FFMpegWriter(
+                fps=fps,
+                bitrate=4000,
+                codec="libx264",
+                extra_args=["-pix_fmt", "yuv420p", "-preset", "slower", "-crf", "18"],
+            )
+            writer_name = "FFmpeg"
         else:
-            writer = PillowWriter(fps=fps)
+            if has_imagemagick and ImageMagickWriter is not None:
+                try:
+                    writer = ImageMagickWriter(
+                        fps=fps,
+                        metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
+                        bitrate=2000,
+                        extra_args=["-layers", "Optimize"],
+                    )
+                    writer_name = "ImageMagick"
+                except Exception:
+                    writer = PillowWriter(
+                        fps=fps,
+                        metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
+                    )
+                    writer_name = "Pillow (256 colors)"
+            else:
+                writer = PillowWriter(
+                    fps=fps,
+                    metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
+                )
+                writer_name = "Pillow (256 colors)"
 
-        animation.save(str(output_path), writer=writer, dpi=explorer.dpi)
+        explorer._set_status(f"Saving animation: {output_path.name}...", color="#0F766E")
+        animation.save(str(output_path), writer=writer, dpi=export_dpi)
         size_mb = output_path.stat().st_size / (1024 * 1024)
+
+        quality_hint = ""
+        if fmt == "gif" and writer_name == "Pillow (256 colors)":
+            quality_hint = " | tip: use MP4 for better color quality"
+
         explorer._set_status(
-            f"Saved: {output_path.name} ({size_mb:.1f} MB)",
+            (
+                f"Saved: {output_path.name} ({size_mb:.1f} MB) | "
+                f"{n_frames} frames @ {fps} fps, {export_dpi} dpi, writer={writer_name}"
+                f"{quality_hint}"
+            ),
             color="seagreen",
         )
     except Exception as exc:
