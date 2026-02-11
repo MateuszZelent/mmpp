@@ -325,7 +325,7 @@ figure.titleweight: normal   # weight of the figure title
 figure.labelsize: large    # size of the figure label
 figure.labelweight: normal    # weight of the figure label
 figure.figsize: 5,5    # figure size in inches
-figure.dpi: 200      # figure dots per inch
+figure.dpi: 100      # figure dots per inch
 figure.facecolor: white    # figure facecolor; 0.75 is scalar gray
 figure.edgecolor: white       # figure edgecolor
 figure.frameon: True

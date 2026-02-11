@@ -184,6 +184,8 @@ def plot_heatmap(
         fig, ax = plt.subplots(**fig_kwargs)
     else:
         fig = ax.figure
+        if dpi is not None:
+            fig.set_dpi(dpi)
 
     extent = [
         param_sorted[0],

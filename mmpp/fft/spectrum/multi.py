@@ -96,6 +96,7 @@ class MultiSpectrumResult:
             fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
             fig = ax.figure
+            fig.set_dpi(dpi)
 
         if legend and labels is None and auto_label:
             jobs = [s._source_job for s in self.spectra if getattr(s, "_source_job", None) is not None]

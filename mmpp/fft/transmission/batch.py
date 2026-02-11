@@ -552,6 +552,7 @@ class BatchTransmissionResult:
             fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
             fig = ax.figure
+            fig.set_dpi(dpi)
 
         # Prepare for imshow (transpose so frequency is on y-axis)
         plot_data = heatmap_data.T  # Now (n_frequencies, n_params)
@@ -1442,6 +1443,7 @@ class BatchTransmissionResult:
             fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
             fig = ax.figure
+            fig.set_dpi(dpi)
 
         extent = [
             param_values_scaled_a.min(),

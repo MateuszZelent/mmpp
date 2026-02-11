@@ -584,12 +584,14 @@ class TransmissionResult:
             )
 
         # Create figure if needed
+        _dpi = kwargs.pop("dpi", 100)
         if ax is None:
             fig, ax = plt.subplots(
-                figsize=kwargs.pop("figsize", (10, 6)), dpi=kwargs.pop("dpi", 100)
+                figsize=kwargs.pop("figsize", (10, 6)), dpi=_dpi
             )
         else:
             fig = ax.figure
+            fig.set_dpi(_dpi)
 
         # Remove log_scale from kwargs if passed (it's not a valid plot() kwarg)
         # User might mistakenly pass it as **kwargs

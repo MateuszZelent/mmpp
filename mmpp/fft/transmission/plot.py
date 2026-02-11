@@ -437,10 +437,12 @@ class TransmissionPlotter:
 
         mesh_data = np.ma.masked_invalid(data)
 
+        _dpi = kwargs.pop("dpi", 100)
         if ax is None:
-            fig, ax = plt.subplots(figsize=kwargs.pop("figsize", (10, 6)), dpi=kwargs.pop("dpi", 100))
+            fig, ax = plt.subplots(figsize=kwargs.pop("figsize", (10, 6)), dpi=_dpi)
         else:
             fig = ax.figure
+            fig.set_dpi(_dpi)
 
         vmin = config.vmin
         vmax = config.vmax
