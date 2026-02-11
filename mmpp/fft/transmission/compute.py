@@ -94,7 +94,7 @@ class TransmissionConfig:
     filter_type: Optional[FILTER_TYPES] = "remove_mean"  # None = no filtering
 
     # Spatial averaging controls
-    spatial_window: int = 5  # Set to 1 for no spatial averaging
+    spatial_window: int = 5  # Set to 1 for no spatial averaging (0/False are treated as 1)
     spatial_step: int = 1
     spatial_window_mode: SpatialWindowMode = (
         "post_fft"  # "pre_fft" = sum neighbors before FFT (slower, local), "post_fft" = extract from full FFT (faster)
@@ -132,8 +132,27 @@ class TransmissionConfig:
 
     def ensure_valid(self) -> None:
         """Validate configuration values."""
-        if self.spatial_window <= 0:
-            raise ValueError("spatial_window must be > 0")
+        # Backward-compatible aliases for "no x-averaging".
+        # Many users intuitively pass False/0 to disable window averaging.
+        if isinstance(self.spatial_window, bool):
+            if not self.spatial_window:
+                log.debug("spatial_window=False interpreted as 1 (no x-averaging)")
+            self.spatial_window = 1
+        else:
+            try:
+                spatial_window_int = int(self.spatial_window)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"spatial_window must be an integer-like value, got {self.spatial_window!r}"
+                ) from exc
+
+            if spatial_window_int == 0:
+                log.debug("spatial_window=0 interpreted as 1 (no x-averaging)")
+                spatial_window_int = 1
+            if spatial_window_int < 0:
+                raise ValueError("spatial_window must be >= 0 (0 is treated as 1)")
+            self.spatial_window = spatial_window_int
+
         if self.spatial_step <= 0:
             raise ValueError("spatial_step must be > 0")
         if self.reference_window is not None:

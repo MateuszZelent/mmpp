@@ -111,6 +111,10 @@ class FFTTransmissionInterface:
 
                 config = replace(config, dataset_name=self.dataset_name)
 
+        # Normalize/validate config early so cache keys are consistent for aliases
+        # like spatial_window=0/False (treated as 1).
+        config.ensure_valid()
+
         # Convert cache_path to Path if string
         cache_dir = Path(cache_path) if cache_path is not None else None
 
@@ -277,7 +281,11 @@ class FFTTransmissionInterface:
 
         # Detailed parameter documentation with options
         param_docs = [
-            ("spatial_window", "5", "int > 0 - Size of spatial analysis window"),
+            (
+                "spatial_window",
+                "5",
+                "int >= 0 (0/False => 1) - Size of spatial analysis window",
+            ),
             ("spatial_step", "1", "int ≥ 1 - Step for sliding window"),
             (
                 "reference_window",
@@ -397,7 +405,7 @@ fig, ax, m = result.plot_transmission(
 
         # Detailed parameter documentation
         param_info = [
-            ("spatial_window", "5", "int > 0"),
+            ("spatial_window", "5", "int >= 0 (0/False => 1)"),
             ("spatial_step", "1", "int ≥ 1"),
             ("reference_window", "None", "(int, int) or None"),
             ("normalize", "'reference'", "'reference' | 'max' | 'none'"),
