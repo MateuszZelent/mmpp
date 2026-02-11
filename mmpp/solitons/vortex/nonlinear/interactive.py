@@ -8,7 +8,14 @@ from typing import Any
 
 import numpy as np
 
-from mmpp.analytical import ellipse_area, slonczewski_mtj_efficiency
+from mmpp.analytical import (
+    ExternalField,
+    FieldCalibration,
+    ellipse_area,
+    field_ac,
+    field_dc,
+    slonczewski_mtj_efficiency,
+)
 
 from ..core.models import TrajectoryResult
 
@@ -166,6 +173,15 @@ class ThieleInteractiveDashboard:
         angle_deg: float = 20.0,
         current_mA: float = 8.0,
         b_ext_mt: float = 0.0,
+        bx_mt: float = 0.0,
+        by_mt: float = 0.0,
+        bz_mt: float = 0.0,
+        field_mode: str = "DC",
+        b_ac_freq_ghz: float = 1.0,
+        b_ac_phase_deg: float = 0.0,
+        field_cal: FieldCalibration | None = None,
+        domega0_dBz_ghz_per_T: float = 0.0,
+        seq_per_T: float = 0.0,
         omega0_ghz: float = 0.9,
         N: float = 0.25,
         temperature_k: float = 300.0,
@@ -220,7 +236,22 @@ class ThieleInteractiveDashboard:
         w_cos = widgets.FloatSlider(description="cosθ_eff", value=cos_theta_eff, min=-1.0, max=1.0, step=0.01)
         w_angle = widgets.FloatSlider(description="angle [deg]", value=angle_deg, min=-180.0, max=180.0, step=1.0)
         w_current = widgets.FloatSlider(description="I [mA]", value=current_mA, min=-30.0, max=30.0, step=0.1)
-        w_bext = widgets.FloatSlider(description="B_ext [mT]", value=b_ext_mt, min=-500.0, max=500.0, step=1.0)
+        w_bx = widgets.FloatSlider(description="Bx [mT]", value=bx_mt, min=-500.0, max=500.0, step=1.0)
+        w_by = widgets.FloatSlider(description="By [mT]", value=by_mt, min=-500.0, max=500.0, step=1.0)
+        w_bz = widgets.FloatSlider(description="Bz [mT]", value=bz_mt if bz_mt != 0.0 else b_ext_mt, min=-500.0, max=500.0, step=1.0)
+        w_field_mode = widgets.ToggleButtons(
+            description="B mode",
+            options=["DC", "AC"],
+            value=str(field_mode),
+        )
+        w_bac_freq = widgets.FloatSlider(description="f_B [GHz]", value=b_ac_freq_ghz, min=0.01, max=20.0, step=0.01)
+        w_bac_phase = widgets.FloatSlider(description="φ_B [deg]", value=b_ac_phase_deg, min=-180.0, max=180.0, step=1.0)
+
+        # Field calibration controls
+        init_domega = domega0_dBz_ghz_per_T if field_cal is None else field_cal.domega0_dBz / (2.0 * math.pi * 1e9)
+        init_seq = seq_per_T if field_cal is None else field_cal.seq_per_T
+        w_domega0_dBz = widgets.FloatSlider(description="dω₀/dBz [GHz/T]", value=init_domega, min=-10.0, max=10.0, step=0.1)
+        w_seq_per_T = widgets.FloatSlider(description="s_eq [1/T]", value=init_seq, min=-5.0, max=5.0, step=0.05)
 
         # Model controls
         w_omega0 = widgets.FloatSlider(description="omega0 [GHz]", value=omega0_ghz, min=0.1, max=20.0, step=0.05)
@@ -354,7 +385,24 @@ class ThieleInteractiveDashboard:
                     "R": radius_eq,
                     "L": w_thick.value * 1e-9,
                 }
-                b_ext_tesla = w_bext.value * 1e-3
+                b_x_T = w_bx.value * 1e-3
+                b_y_T = w_by.value * 1e-3
+                b_z_T = w_bz.value * 1e-3
+                ext_field = ExternalField(Bx_T=b_x_T, By_T=b_y_T, Bz_T=b_z_T)
+                fcal = FieldCalibration(
+                    domega0_dBz=w_domega0_dBz.value * 2.0 * math.pi * 1e9,
+                    seq_per_T=w_seq_per_T.value,
+                )
+
+                # Build B_func (DC or AC)
+                if w_field_mode.value == "AC":
+                    b_func = field_ac(
+                        ext_field,
+                        f_hz=w_bac_freq.value * 1e9,
+                        phase=math.radians(w_bac_phase.value),
+                    )
+                else:
+                    b_func = field_dc(ext_field)
 
                 omega0 = 2.0 * math.pi * w_omega0.value * 1e9
                 j_th = self.analyzer.threshold_current_dc(
@@ -362,7 +410,8 @@ class ThieleInteractiveDashboard:
                     geometry=geometry,
                     omega0=omega0,
                     N=w_n.value,
-                    B_ext=b_ext_tesla,
+                    field=ext_field,
+                    field_cal=fcal,
                 )
                 f_pred = self.analyzer.predict_frequency_dc(
                     current_density,
@@ -371,7 +420,8 @@ class ThieleInteractiveDashboard:
                     omega0=omega0,
                     N=w_n.value,
                     allow_edge=True,
-                    B_ext=b_ext_tesla,
+                    field=ext_field,
+                    field_cal=fcal,
                 )
                 f_target = f_pred if f_pred is not None else abs(w_omega0.value * 1e9)
                 opt = self.analyzer.optimize_current_for_target_frequency(
@@ -382,7 +432,8 @@ class ThieleInteractiveDashboard:
                     N=w_n.value,
                     J_bounds=(1.01 * j_th, 8.0 * j_th),
                     allow_edge=True,
-                    B_ext=b_ext_tesla,
+                    field=ext_field,
+                    field_cal=fcal,
                 )
 
                 # ── Fast mode ────────────────────────────────────
@@ -403,7 +454,8 @@ class ThieleInteractiveDashboard:
                                 omega0=omega0,
                                 N=w_n.value,
                                 allow_edge=True,
-                                B_ext=b_ext_tesla,
+                                field=ext_field,
+                                field_cal=fcal,
                             )
                             for val in j_grid
                         ],
@@ -423,7 +475,7 @@ class ThieleInteractiveDashboard:
                         f"Geometry: {geom_desc}",
                         f"Area: {area:.3e} m²",
                         f"R_eq: {radius_eq*1e9:.2f} nm",
-                        f"B_ext: {w_bext.value:.1f} mT",
+                        f"B = ({w_bx.value:.1f}, {w_by.value:.1f}, {w_bz.value:.1f}) mT  [{w_field_mode.value}]",
                         f"P_eff: {peff:.4f}",
                         f"J_dc: {current_density*1e-9:.3f} GA/m²",
                         f"J_th: {j_th*1e-9:.3f} GA/m²",
@@ -456,7 +508,9 @@ class ThieleInteractiveDashboard:
                         noise_scale=w_noise.value,
                         seed=int(w_seed.value),
                         s0=(0.0, 0.0),
-                        B_ext=b_ext_tesla,
+                        field=ext_field,
+                        field_cal=fcal,
+                        B_func=b_func,
                     )
                 else:
                     traj = self.analyzer.simulate_cpp(
@@ -468,7 +522,9 @@ class ThieleInteractiveDashboard:
                         t_span=t_span,
                         dt=dt,
                         s0=(1e-3, 0.0),
-                        B_ext=b_ext_tesla,
+                        field=ext_field,
+                        field_cal=fcal,
+                        B_func=b_func,
                     )
 
                 signal = proxy_signal_from_trajectory(
@@ -506,7 +562,7 @@ class ThieleInteractiveDashboard:
                 # Update suptitle
                 info = (
                     f"{geom_desc}  "
-                    f"B_ext={w_bext.value:.1f} mT  "
+                    f"B=({w_bx.value:.1f},{w_by.value:.1f},{w_bz.value:.1f}) mT [{w_field_mode.value}]  "
                     f"J_dc={current_density*1e-9:.3f} GA/m²  "
                     f"J_th={j_th*1e-9:.3f} GA/m²  "
                     f"f_pred={('n/a' if f_pred is None else f'{f_pred*1e-9:.3f} GHz')}  "
@@ -530,7 +586,14 @@ class ThieleInteractiveDashboard:
             w_cos,
             w_angle,
             w_current,
-            w_bext,
+            w_bx,
+            w_by,
+            w_bz,
+            w_field_mode,
+            w_bac_freq,
+            w_bac_phase,
+            w_domega0_dBz,
+            w_seq_per_T,
             w_omega0,
             w_n,
             w_temp,
@@ -546,10 +609,19 @@ class ThieleInteractiveDashboard:
         w_geom_mode.observe(lambda *_: _sync_geometry_controls(), names="value")
         w_sde.observe(lambda *_: _sync_sde_controls(), names="value")
 
+        def _sync_ac_controls(*_args):
+            is_ac = w_field_mode.value == "AC"
+            w_bac_freq.disabled = not is_ac
+            w_bac_phase.disabled = not is_ac
+
+        w_field_mode.observe(_sync_ac_controls, names="value")
+
         controls = widgets.VBox(
             [
                 widgets.HBox([w_geom_mode, w_disk_d, w_size_x, w_size_y, w_thick]),
-                widgets.HBox([w_ms, w_alpha, w_bext]),
+                widgets.HBox([w_ms, w_alpha]),
+                widgets.HBox([w_bx, w_by, w_bz, w_field_mode]),
+                widgets.HBox([w_bac_freq, w_bac_phase, w_domega0_dBz, w_seq_per_T]),
                 widgets.HBox([w_pol, w_lambda, w_cos, w_angle, w_current]),
                 widgets.HBox([w_omega0, w_n, w_temp, w_noise, w_seed]),
                 widgets.HBox([w_tend, w_dt, w_fast, w_sde]),
@@ -558,6 +630,7 @@ class ThieleInteractiveDashboard:
         root = widgets.VBox([controls, out])
         _sync_geometry_controls()
         _sync_sde_controls()
+        _sync_ac_controls()
         _render()
         return root
 

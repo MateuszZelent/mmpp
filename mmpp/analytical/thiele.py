@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, TypeAlias
 
 import numpy as np
 
@@ -162,6 +162,31 @@ class ExternalField:
     By_T: float = 0.0
     Bz_T: float = 0.0
 
+    @staticmethod
+    def from_any(value: object) -> ExternalField:
+        """Coerce float / tuple / list / ndarray / ExternalField → ExternalField.
+
+        Rules
+        -----
+        - ``None``          → zero field
+        - ``float`` / ``int`` → interpreted as Bz [T]
+        - length-3 sequence → ``(Bx, By, Bz)`` [T]
+        - ``ExternalField``  → returned as-is
+        """
+        if value is None:
+            return ExternalField()
+        if isinstance(value, ExternalField):
+            return value
+        if isinstance(value, (int, float)):
+            return ExternalField(0.0, 0.0, float(value))
+        if isinstance(value, (tuple, list, np.ndarray)):
+            arr = np.asarray(value, dtype=float).ravel()
+            if arr.size == 3:
+                return ExternalField(float(arr[0]), float(arr[1]), float(arr[2]))
+        raise TypeError(
+            "B_ext must be float (Bz), a length-3 (Bx, By, Bz), or ExternalField"
+        )
+
 
 @dataclass(frozen=True)
 class FieldCalibration:
@@ -175,8 +200,9 @@ class FieldCalibration:
     Parameters
     ----------
     domega0_dBz : float
-        Linear shift of the gyrotropic eigenfrequency with out-of-plane field
-        [rad/(s·T)].  Fitted from ω₀(Bz) sweeps in MuMax3.
+        Linear slope dω₀/dBz [rad/(s·T)].  The effective shift is
+        ``p · domega0_dBz · Bz`` (polarity-dependent).  Fitted from
+        ω₀(Bz) sweeps in MuMax3.
     seq_per_T : float
         Equilibrium-position shift of the normalized core coordinate per unit
         in-plane field [1/T].  Maps |B_∥| to |s_eq| via
@@ -190,6 +216,71 @@ class FieldCalibration:
     domega0_dBz: float = 0.0
     seq_per_T: float = 0.0
     chirality: int = 1
+
+    def omega0_shift(
+        self, *, field_state: ExternalField, polarity: int
+    ) -> float:
+        """Polarity-dependent Bz → ω₀ shift:  Δω₀ = p · (dω₀/dBz) · Bz."""
+        p = 1 if int(polarity) >= 0 else -1
+        return p * self.domega0_dBz * field_state.Bz_T
+
+    def s_eq(
+        self, *, field_state: ExternalField
+    ) -> tuple[float, float]:
+        """In-plane equilibrium core shift (normalised coords).
+
+        Returns ``(sx_eq, sy_eq) = c · χ_ip · (ẑ × B_∥)``.
+        """
+        c = 1 if int(self.chirality) >= 0 else -1
+        chi = float(self.seq_per_T)
+        return (
+            c * chi * (-field_state.By_T),
+            c * chi * field_state.Bx_T,
+        )
+
+
+# ---------------------------------------------------------------------------
+# External field waveform helpers
+# ---------------------------------------------------------------------------
+
+#: Callable ``(t) → ExternalField`` or coercible value.
+ExternalFieldLike: TypeAlias = float | tuple[float, float, float] | ExternalField | np.ndarray
+
+#: A function returning an :class:`ExternalField` (or coercible) at time *t*.
+FieldFunc: TypeAlias = Callable[[float], ExternalFieldLike]
+
+
+def field_dc(B_ext: ExternalFieldLike = 0.0) -> FieldFunc:
+    """Constant external field ``B(t) = const``."""
+    B = ExternalField.from_any(B_ext)
+
+    def _b(t: float) -> ExternalField:  # noqa: ARG001
+        return B
+
+    return _b
+
+
+def field_ac(
+    B_amp: ExternalFieldLike,
+    f_hz: float,
+    *,
+    B_offset: ExternalFieldLike = 0.0,
+    phase: float = 0.0,
+) -> FieldFunc:
+    """Sinusoidal field:  ``B(t) = B_offset + B_amp · sin(2π f t + φ)``."""
+    amp = ExternalField.from_any(B_amp)
+    off = ExternalField.from_any(B_offset)
+    omega = 2.0 * math.pi * float(f_hz)
+
+    def _b(t: float) -> ExternalField:
+        s = math.sin(omega * t + float(phase))
+        return ExternalField(
+            off.Bx_T + amp.Bx_T * s,
+            off.By_T + amp.By_T * s,
+            off.Bz_T + amp.Bz_T * s,
+        )
+
+    return _b
 
 
 # ---------------------------------------------------------------------------
@@ -837,13 +928,15 @@ class CIPThieleModel:
         omega0: float,
         polarity: int = 1,
         current_dir: tuple[float, float] = (1.0, 0.0),
-        B_ext: float = 0.0,
+        field: ExternalField | None = None,
+        field_cal: FieldCalibration | None = None,
     ) -> None:
         self.material = material
         self.geom = geom
         self.omega0 = omega0
         self.polarity = int(polarity)
-        self.B_ext = float(B_ext)
+        self.field = field if field is not None else ExternalField()
+        self.field_cal = field_cal if field_cal is not None else FieldCalibration()
         assert self.polarity in (1, -1), "polarity must be +1 or -1"
 
         # normalise current direction
@@ -878,11 +971,22 @@ class CIPThieleModel:
         self._beta = mat.beta
         self._dG = self._d_over_G0
         self._p = p
-        # Apply Zeeman shift: ω₀_eff = ω₀ + p·γ₀·B_ext
-        gamma0 = mat.gamma * MU0
-        self._omega0 = self.omega0 + self.polarity * gamma0 * self.B_ext
+        # Base ω₀ stored; Bz shift applied dynamically in _rhs via field_cal
+        self._omega0_base = float(self.omega0)
 
-    def _rhs(self, t: float, state: np.ndarray, J_func: Callable) -> np.ndarray:
+    def _field_at(self, t: float, B_func: FieldFunc | None) -> ExternalField:
+        """Resolve field at time *t* (static fallback when ``B_func`` is None)."""
+        if B_func is None:
+            return self.field
+        return ExternalField.from_any(B_func(float(t)))
+
+    def _rhs(
+        self,
+        t: float,
+        state: np.ndarray,
+        J_func: Callable,
+        B_func: FieldFunc | None,
+    ) -> np.ndarray:
         """Right-hand side of the CIP Thiele ODE for solve_ivp."""
         X, Y = state
         J = J_func(t)
@@ -890,29 +994,27 @@ class CIPThieleModel:
         ux = u0 * self.current_dir[0]
         uy = u0 * self.current_dir[1]
 
+        # Resolve field (possibly time-dependent)
+        B = self._field_at(t, B_func)
+        w0 = self._omega0_base + self.field_cal.omega0_shift(
+            field_state=B, polarity=self._p
+        )
+        # In-plane equilibrium shift (in real-space coords)
+        sx_eq, sy_eq = self.field_cal.s_eq(field_state=B)
+        X_eq = sx_eq * self.geom.R
+        Y_eq = sy_eq * self.geom.R
+        Xr = X - X_eq
+        Yr = Y - Y_eq
+
         p = self._p
         alpha = self._alpha
         beta = self._beta
         dG = self._dG
-        w0 = self._omega0
 
-        # After algebra the ODE ṙ = M⁻¹ · b, where:
-        # M = [[1 + α·dG,  p], [-p,  1 + α·dG]]   (invertible)
-        # b_x = ux(1 + β·dG) + p·uy − ω₀·X·(... see below)
-        # Full derivation — rewrite Moon eq. isolating ṙ:
-        #   (1+α dG) Ẋ + p Ẏ = ux (1 + β dG) + p uy − ω₀ X (... correction)
-        # Actually, the correct expansion from G×(u−ṙ) = −κr − αDṙ + βDu:
-        #
-        #   p(u_y − Ẏ) = −ω₀ X − α dG Ẋ + β dG u_x
-        #  −p(u_x − Ẋ) = −ω₀ Y − α dG Ẏ + β dG u_y
-        #
-        # Rearranging:
-        #   (α dG) Ẋ − p Ẏ = −ω₀ X + p u_y + β dG u_x     ... (I)
-        #   p Ẋ + (α dG) Ẏ = −ω₀ Y − p u_x + β dG u_y     ... (II)
-
+        # Moon ODE (see docstring algebra) using relative coordinates
         det = (alpha * dG) ** 2 + p**2  # always > 0
-        rhs_I = -w0 * X + p * uy + beta * dG * ux
-        rhs_II = -w0 * Y - p * ux + beta * dG * uy
+        rhs_I = -w0 * Xr + p * uy + beta * dG * ux
+        rhs_II = -w0 * Yr - p * ux + beta * dG * uy
 
         dXdt = (alpha * dG * rhs_I + p * rhs_II) / det
         dYdt = (-p * rhs_I + alpha * dG * rhs_II) / det
@@ -924,6 +1026,7 @@ class CIPThieleModel:
         t_span: tuple[float, float],
         r0: tuple[float, float] = (1e-9, 0.0),
         J_func: Callable[[float], float] | None = None,
+        B_func: FieldFunc | None = None,
         dt: float = 1e-12,
         method: str = "RK45",
         **ivp_kwargs: Any,
@@ -939,6 +1042,9 @@ class CIPThieleModel:
             Initial core position [m].
         J_func : callable(t) -> float
             Current-density waveform J(t) [A/m²].  If None, J = 0.
+        B_func : FieldFunc, optional
+            Time-dependent external field waveform ``B(t)``.  If None the
+            static ``self.field`` is used.  See :func:`field_dc`, :func:`field_ac`.
         dt : float
             Maximum time-step (and output sampling) [s].
         method : str
@@ -959,7 +1065,7 @@ class CIPThieleModel:
         t_eval = np.arange(t_span[0], t_span[1], dt)
 
         sol = solve_ivp(
-            fun=lambda t, y: self._rhs(t, y, J_func),
+            fun=lambda t, y: self._rhs(t, y, J_func, B_func),
             t_span=t_span,
             y0=np.array(r0, dtype=float),
             t_eval=t_eval,
@@ -993,7 +1099,8 @@ class CIPThieleModel:
                 "omega0": self.omega0,
                 "polarity": self.polarity,
                 "current_dir": self.current_dir,
-                "B_ext": self.B_ext,
+                "field": self.field,
+                "field_cal": self.field_cal,
             },
             metadata={
                 "mode": "CIP",
@@ -1063,7 +1170,8 @@ class CPPThieleModel:
         N: float = 0.25,
         polarity: int = 1,
         omega0_Oe_per_J: float = 0.0,
-        B_ext: float = 0.0,
+        field: ExternalField | None = None,
+        field_cal: FieldCalibration | None = None,
     ) -> None:
         self.material = material
         self.geom = geom
@@ -1071,7 +1179,8 @@ class CPPThieleModel:
         self.N = N
         self.polarity = int(polarity)
         self.omega0_Oe_per_J = float(omega0_Oe_per_J)
-        self.B_ext = float(B_ext)
+        self.field = field if field is not None else ExternalField()
+        self.field_cal = field_cal if field_cal is not None else FieldCalibration()
         assert self.polarity in (1, -1), "polarity must be +1 or -1"
 
         self._setup()
@@ -1104,15 +1213,42 @@ class CPPThieleModel:
         """Nonlinear damping d(u) [dimensionless]."""
         return self._d0 + self._d1 * u**2
 
-    @property
-    def _zeeman_shift(self) -> float:
-        """Zeeman frequency shift p·γ₀·B_ext [rad/s]."""
-        gamma0 = self.material.gamma * MU0
-        return self.polarity * gamma0 * self.B_ext
+    def omega0_eff(self, J: float, field_state: ExternalField | None = None) -> float:
+        """
+        Effective linear frequency [rad/s].
 
-    def omega0_eff(self, J: float) -> float:
-        """Effective linear frequency ω₀(J) = ω₀ + p·γ₀·B_ext + (dω₀/dJ)·J [rad/s]."""
-        return self.omega0 + self._zeeman_shift + self.omega0_Oe_per_J * float(J)
+        ω₀_eff(J, Bz) = ω₀ + (dω₀/dJ)·J + p·(dω₀/dBz)·Bz
+
+        The Bz dependence is **phenomenological** and must be calibrated
+        from micromagnetic simulations (``field_cal.domega0_dBz``).
+        The polarity factor ``p`` is applied automatically.
+        """
+        B = field_state if field_state is not None else self.field
+        return (
+            self.omega0
+            + self.omega0_Oe_per_J * float(J)
+            + self.field_cal.omega0_shift(field_state=B, polarity=self.polarity)
+        )
+
+    def _field_at(self, t: float, B_func: FieldFunc | None) -> ExternalField:
+        """Resolve field at time *t* (static fallback when ``B_func`` is None)."""
+        if B_func is None:
+            return self.field
+        return ExternalField.from_any(B_func(float(t)))
+
+    def s_eq(self, field_state: ExternalField | None = None) -> np.ndarray:
+        """
+        Equilibrium position of the vortex core in normalized coordinates.
+
+        An in-plane field (Bx, By) shifts the equilibrium via:
+            s_eq = chirality · seq_per_T · (ẑ × B_∥) = chirality · seq_per_T · (-By, Bx)
+
+        The coefficient ``seq_per_T`` [1/T] should be calibrated from
+        micromagnetic simulations.
+        """
+        B = field_state if field_state is not None else self.field
+        sx, sy = self.field_cal.s_eq(field_state=B)
+        return np.array([sx, sy], dtype=float)
 
     def omega(self, u: float, J: float = 0.0) -> float:
         """Nonlinear gyrotropic frequency ω(u, J) [rad/s]."""
@@ -1310,20 +1446,31 @@ class CPPThieleModel:
 
     # ── ODE integration ────────────────────────────────────────
 
-    def _rhs(self, t: float, state: np.ndarray, J_func: Callable) -> np.ndarray:
-        """Right-hand side for solve_ivp."""
-        sx, sy = state
-        u = math.hypot(sx, sy)
+    def _rhs(
+        self,
+        t: float,
+        state: np.ndarray,
+        J_func: Callable,
+        B_func: FieldFunc | None,
+    ) -> np.ndarray:
+        """Right-hand side for solve_ivp (with in-plane field equilibrium shift)."""
+        s = np.asarray(state, dtype=float)
+
+        # Resolve (possibly time-dependent) field
+        B = self._field_at(t, B_func)
+        s_eq = self.s_eq(field_state=B)
+        s_rel = s - s_eq
+        u = float(np.linalg.norm(s_rel))
         u = max(u, 1e-15)  # avoid division by zero
 
         J = float(J_func(t))
         chi_val = self.chi(J)
-        omega_val = self.omega(u, J)  # ω(u, J) — consistent with steady_state_u
+        omega_val = self.omega0_eff(J, field_state=B) * (1.0 + self.N * u**2)
         radial = chi_val - self.d(u) * omega_val
         p = self.polarity
 
-        dsx = radial * sx - p * omega_val * sy
-        dsy = radial * sy + p * omega_val * sx
+        dsx = radial * s_rel[0] - p * omega_val * s_rel[1]
+        dsy = radial * s_rel[1] + p * omega_val * s_rel[0]
 
         return np.array([dsx, dsy])
 
@@ -1332,6 +1479,7 @@ class CPPThieleModel:
         t_span: tuple[float, float],
         s0: tuple[float, float] = (1e-3, 0.0),
         J_func: Callable[[float], float] | None = None,
+        B_func: FieldFunc | None = None,
         dt: float = 1e-11,
         method: str = "RK45",
         **ivp_kwargs: Any,
@@ -1348,6 +1496,9 @@ class CPPThieleModel:
             (the model has no noise to kick it out of the origin).
         J_func : callable(t) -> float
             Current-density waveform J(t) [A/m²].  Default: J = 0.
+        B_func : FieldFunc, optional
+            Time-dependent external field waveform ``B(t)``.  If None the
+            static ``self.field`` is used.  See :func:`field_dc`, :func:`field_ac`.
         dt : float
             Maximum time-step / output sampling [s].
         method : str
@@ -1368,7 +1519,7 @@ class CPPThieleModel:
         t_eval = np.arange(t_span[0], t_span[1] + 0.5 * dt, dt)
 
         sol = solve_ivp(
-            fun=lambda t, y: self._rhs(t, y, J_func),
+            fun=lambda t, y: self._rhs(t, y, J_func, B_func),
             t_span=t_span,
             y0=np.array(s0, dtype=float),
             t_eval=t_eval,
@@ -1406,7 +1557,8 @@ class CPPThieleModel:
                 "sigma": self._sigma,
                 "J_threshold": self.J_threshold,
                 "polarity": self.polarity,
-                "B_ext": self.B_ext,
+                "field": self.field,
+                "field_cal": self.field_cal,
             },
             metadata={
                 "mode": "CPP",
@@ -1419,6 +1571,7 @@ class CPPThieleModel:
         t_span: tuple[float, float],
         s0: tuple[float, float] = (0.0, 0.0),
         J_func: Callable[[float], float] | None = None,
+        B_func: FieldFunc | None = None,
         dt: float = 1e-11,
         *,
         temperature_k: float = 300.0,
@@ -1433,6 +1586,12 @@ class CPPThieleModel:
         The noise term is isotropic in ``(s_x, s_y)`` and can be controlled by:
         - explicit ``diffusion`` [1/s], or
         - heuristic temperature scaling (``temperature_k``, ``noise_scale``).
+
+        Parameters
+        ----------
+        B_func : FieldFunc, optional
+            Time-dependent external field waveform ``B(t)``.  If None the
+            static ``self.field`` is used.
         """
         if J_func is None:
             J_func = current_dc(0.0)
@@ -1448,7 +1607,6 @@ class CPPThieleModel:
             t_eval = np.append(t_eval, t1)
 
         if diffusion is None:
-            # Practical default: weak thermal-like diffusion in reduced coordinates.
             thermal_factor = max(float(temperature_k), 0.0) / 300.0
             base = abs(self.omega0) * max(float(self.material.alpha), 1e-9) * 1e-4
             diffusion_eff = max(float(noise_scale), 0.0) * thermal_factor * base
@@ -1464,17 +1622,21 @@ class CPPThieleModel:
         for idx in range(1, t_eval.size):
             t_prev = float(t_eval[idx - 1])
             prev = state[idx - 1, :]
-            # Use exact local rotation+dilation for deterministic drift.
-            # Explicit Euler on the gyrotropic term is numerically unstable and
-            # can spuriously inflate orbit radius for omega*dt not << 1.
-            sx_prev = float(prev[0])
-            sy_prev = float(prev[1])
-            u_prev = float(math.hypot(sx_prev, sy_prev))
+
+            # Resolve field at this time-step
+            B = self._field_at(t_prev, B_func)
+            s_eq = self.s_eq(field_state=B)
+            s_eq_norm = float(np.linalg.norm(s_eq))
+
+            # Relative coordinates for gyrotropic dynamics
+            s_rel = prev - s_eq
+            u_prev = float(np.linalg.norm(s_rel))
             u_eff = max(u_prev, 1e-15)
 
             j_prev = float(J_func(t_prev))
             chi_val = self.chi(j_prev)
-            omega_val = self.omega(u_eff, j_prev)  # ω(u, J) — consistent
+            w0_eff = self.omega0_eff(j_prev, field_state=B)
+            omega_val = w0_eff * (1.0 + self.N * u_eff**2)
             radial = chi_val - self.d(u_eff) * omega_val
 
             theta = float(self.polarity) * omega_val * dt
@@ -1482,16 +1644,20 @@ class CPPThieleModel:
             cth = math.cos(theta)
             sth = math.sin(theta)
 
-            x_rot = cth * sx_prev - sth * sy_prev
-            y_rot = sth * sx_prev + cth * sy_prev
-            deterministic = grow * np.array([x_rot, y_rot], dtype=float)
+            # Rotate relative coordinates, then shift back
+            x_rot = cth * s_rel[0] - sth * s_rel[1]
+            y_rot = sth * s_rel[0] + cth * s_rel[1]
+            deterministic = s_eq + grow * np.array([x_rot, y_rot], dtype=float)
 
             noise = sigma * rng.standard_normal(2)
             proposal = deterministic + noise
 
-            u = float(np.linalg.norm(proposal))
-            if u >= clamp_u > 0.0:
-                proposal = proposal * (float(clamp_u) / max(u, 1e-30))
+            # Clamp: max radius accounting for shifted equilibrium
+            clamp_eff = max(0.0, float(clamp_u) - s_eq_norm)
+            u_rel = float(np.linalg.norm(proposal - s_eq))
+            if u_rel >= clamp_eff > 0.0:
+                s_rel_prop = proposal - s_eq
+                proposal = s_eq + s_rel_prop * (clamp_eff / max(u_rel, 1e-30))
 
             state[idx, :] = proposal
 
@@ -1518,7 +1684,8 @@ class CPPThieleModel:
                 "sigma": self._sigma,
                 "J_threshold": self.J_threshold,
                 "polarity": self.polarity,
-                "B_ext": self.B_ext,
+                "field": self.field,
+                "field_cal": self.field_cal,
             },
             metadata={
                 "mode": "CPP-SDE",
