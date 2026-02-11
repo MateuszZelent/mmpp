@@ -225,6 +225,7 @@ class TransmissionResult:
         x_width: Optional[float] = None,
         disable_averaging: bool = False,
         normalize: bool = False,
+        use_power_map: bool = False,
         verbose: bool = False,
         legend: Union[bool, dict] = False,
         **kwargs,
@@ -298,6 +299,11 @@ class TransmissionResult:
             If True, normalizes the transmission cross-section so that the maximum value is 1.
             This is useful for comparing transmission profiles with different amplitudes.
             Default is False (no normalization).
+        use_power_map : bool, optional
+            If True, use raw ``power_map`` instead of ``transmission`` as source data.
+            This is useful when ``result.config.normalize`` was set to ``"reference"`` or
+            ``"max"`` during computation and you want unnormalized amplitudes.
+            Default is False.
         verbose : bool, optional
             If True, prints detailed diagnostic information about x position selection,
             averaging behavior, and data extraction. Default is False.
@@ -340,6 +346,21 @@ class TransmissionResult:
 
         log = logging.getLogger(__name__)
 
+        source_data = self.power_map if use_power_map else self.transmission
+        source_label_base = "Power P(f)" if use_power_map else "Transmission T(f)"
+        result_norm_mode = str(getattr(self.config, "normalize", "none")).lower()
+        if not use_power_map and not normalize and result_norm_mode != "none":
+            msg = (
+                "TransmissionResult data was already normalized during compute() "
+                f"(config.normalize='{result_norm_mode}'). "
+                "plot_transmission_crosssection(normalize=False) disables only additional "
+                "per-curve max normalization. Use use_power_map=True or recompute with "
+                "normalize='none' for raw amplitudes."
+            )
+            log.warning(msg)
+            if verbose:
+                print(f"[VERBOSE] WARNING: {msg}")
+
         # Interpret requested x in the same units as x_positions
         if self.dx is not None:
             if x <= 1.0:
@@ -361,7 +382,7 @@ class TransmissionResult:
                 f"[VERBOSE] x_positions range: {self.x_positions.min():.1f} to {self.x_positions.max():.1f}"
             )
             print(f"[VERBOSE] x_positions shape: {self.x_positions.shape}")
-            print(f"[VERBOSE] transmission shape: {self.transmission.shape}")
+            print(f"[VERBOSE] source data shape: {source_data.shape}")
 
         # Find closest x-position index
         x_idx = np.argmin(np.abs(self.x_positions - target_x))
@@ -379,8 +400,8 @@ class TransmissionResult:
             # FORCE single point extraction - no averaging
             if verbose:
                 print(f"[VERBOSE] MODE: Single point (disable_averaging=True)")
-                print(f"[VERBOSE] Extracting transmission[:, {x_idx}]")
-            transmission_slice = self.transmission[:, x_idx]
+                print(f"[VERBOSE] Extracting source_data[:, {x_idx}]")
+            transmission_slice = source_data[:, x_idx]
 
         elif x_width is not None and x_width > 0:
             # Averaging mode
@@ -428,17 +449,17 @@ class TransmissionResult:
                 if verbose:
                     print(f"[VERBOSE] WARNING: {msg}")
                 warnings.warn(msg, UserWarning)
-                transmission_slice = self.transmission[:, x_idx]
+                transmission_slice = source_data[:, x_idx]
             elif num_points == 1:
                 # Exactly one point in range - extract it directly
                 if verbose:
                     print(f"[VERBOSE] Exactly 1 point in range, extracting directly")
-                transmission_slice = self.transmission[:, mask].flatten()
+                transmission_slice = source_data[:, mask].flatten()
             else:
                 # Multiple points - average transmission over all x positions in range
                 if verbose:
                     print(f"[VERBOSE] Averaging over {num_points} points")
-                transmission_slice = self.transmission[:, mask].mean(axis=1)
+                transmission_slice = source_data[:, mask].mean(axis=1)
                 # Update actual_x to reflect the center of the averaging range
                 actual_x = self.x_positions[mask].mean()
                 if verbose:
@@ -449,8 +470,8 @@ class TransmissionResult:
             # Single x position (no averaging)
             if verbose:
                 print(f"[VERBOSE] MODE: Single point (x_width not specified)")
-                print(f"[VERBOSE] Extracting transmission[:, {x_idx}]")
-            transmission_slice = self.transmission[:, x_idx]
+                print(f"[VERBOSE] Extracting source_data[:, {x_idx}]")
+            transmission_slice = source_data[:, x_idx]
 
         if verbose:
             print(f"[VERBOSE] transmission_slice shape: {transmission_slice.shape}")
@@ -573,7 +594,7 @@ class TransmissionResult:
 
         # Prepare axis labels
         transmission_label = (
-            "Normalized Transmission" if normalize else "Transmission T(f)"
+            f"Normalized {source_label_base}" if normalize else source_label_base
         )
 
         # Plot - choose orientation based on flip parameter
@@ -608,8 +629,9 @@ class TransmissionResult:
             else:
                 width_info = f" (±{x_width/2:.1f} cells avg)"
 
+        plot_title = "Transmission Cross-section" if not use_power_map else "Power Cross-section"
         ax.set_title(
-            f"Transmission Cross-section at x = {position_label}{width_info}"
+            f"{plot_title} at x = {position_label}{width_info}"
             + (f" (trimmed {trim_idx} pts)" if trim_idx > 0 else ""),
             fontsize=13,
             fontweight="bold",
@@ -803,7 +825,13 @@ class TransmissionResult:
                 )
                 minima_freqs = None
 
-        ax.legend(loc="best", framealpha=0.8)
+        minima_count = 0 if minima_freqs is None else len(minima_freqs)
+        if show_legend or minima_count > 0:
+            ax.legend(
+                loc=legend_kwargs.get("loc", "best"),
+                framealpha=legend_kwargs.get("framealpha", 0.8),
+                **{k: v for k, v in legend_kwargs.items() if k not in {"loc", "framealpha"}},
+            )
         if find_minima is not None:
             return fig, ax, minima_freqs
         else:
