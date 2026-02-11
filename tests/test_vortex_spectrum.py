@@ -88,8 +88,16 @@ def test_gyration_spectrum_peak_and_plot(tmp_path):
     assert spec.power.size > 0
     assert abs(peak - expected_freq) < 0.45e9
 
-    ax = spec.plt.power_spectrum(as_ghz=True)
+    ax = spec.plt.power_spectrum(
+        as_ghz=True,
+        figsize=(6, 3),
+        dpi=100,
+        title="Gyration PSD",
+        grid=True,
+        linewidth=1.2,
+    )
     assert hasattr(ax, "plot")
+    assert ax.get_title() == "Gyration PSD"
 
 
 def test_interface_spectrogram_and_direct_compute(tmp_path):
@@ -100,10 +108,19 @@ def test_interface_spectrogram_and_direct_compute(tmp_path):
     direct_spec = compute_gyration_spectrum(traj, method="periodogram")
 
     specgram = job.m.solitons.vortex.spectrum.spectrogram(component="x", nperseg=64)
-    ax = specgram.plt.spectrogram(as_ghz=True)
+    ax = specgram.plt.spectrogram(
+        as_ghz=True,
+        figsize=(7, 3),
+        dpi=100,
+        title="Spectrogram",
+        colorbar=True,
+        colorbar_kwargs={"label": "Power [dB]"},
+        cmap="viridis",
+    )
 
     assert direct_spec.frequencies.size > 0
     assert specgram.power.ndim == 2
     assert specgram.power.shape[0] == specgram.frequencies.size
     assert specgram.power.shape[1] == specgram.times.size
     assert hasattr(ax, "pcolormesh")
+    assert ax.get_title() == "Spectrogram"

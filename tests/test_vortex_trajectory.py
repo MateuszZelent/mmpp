@@ -97,12 +97,21 @@ def test_orbit_fit_phase_and_plot_accessors(tmp_path):
     freq_mean = float(np.mean(np.abs(freq_inst[10:])))
     assert abs(freq_mean - freq_hz) < 0.45e9
 
-    ax_orbit = traj.plt.orbit_2d()
+    ax_orbit = traj.plt.orbit_2d(
+        figsize=(5, 5),
+        dpi=90,
+        xlim=(-20e-9, 20e-9),
+        ylim=(-20e-9, 20e-9),
+        title="Orbit 2D",
+    )
     fig_overview = traj.plt.overview()
-    ax_phase = phase.plt.frequency_vs_time(unit="ghz")
+    ax_phase = phase.plt.frequency_vs_time(unit="ghz", figsize=(6, 3), dpi=100, grid=True)
+    ax_portrait = phase.plt.phase_portrait(figsize=(4, 4), dpi=90, aspect="equal")
 
     assert hasattr(ax_orbit, "plot")
     assert hasattr(ax_phase, "plot")
+    assert hasattr(ax_portrait, "plot")
+    assert ax_orbit.get_title() == "Orbit 2D"
     assert hasattr(fig_overview, "savefig")
 
 

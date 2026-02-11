@@ -8,6 +8,13 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
+
 
 @dataclass
 class TrajectoryResult:
@@ -83,19 +90,19 @@ class TrajectoryPlotAccessor:
 
     def xy(self, *, ax=None, component: str = "both", **kwargs):
         """Plot X(t), Y(t) or both components."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         component_norm = component.lower()
         if component_norm not in {"both", "x", "y"}:
             raise ValueError("component must be one of {'both', 'x', 'y'}")
 
         if component_norm in {"both", "x"}:
-            ax.plot(self._result.time, self._result.x, label="x", **kwargs)
+            ax.plot(self._result.time, self._result.x, label="x", **plot_kwargs)
         if component_norm in {"both", "y"}:
-            y_kwargs = dict(kwargs)
+            y_kwargs = dict(plot_kwargs)
             if component_norm == "both" and "linestyle" not in y_kwargs:
                 y_kwargs["linestyle"] = "--"
             ax.plot(self._result.time, self._result.y, label="y", **y_kwargs)
@@ -104,16 +111,17 @@ class TrajectoryPlotAccessor:
         ax.set_ylabel("Core position [m]")
         if component_norm == "both":
             ax.legend()
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def orbit_2d(self, *, ax=None, show_center: bool = True, **kwargs):
         """Plot orbit trajectory in XY plane."""
-        import matplotlib.pyplot as plt
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
-        if ax is None:
-            _, ax = plt.subplots()
-
-        ax.plot(self._result.x, self._result.y, **kwargs)
+        ax.plot(self._result.x, self._result.y, **plot_kwargs)
         if show_center:
             ax.scatter(
                 [float(np.mean(self._result.x))],
@@ -128,6 +136,7 @@ class TrajectoryPlotAccessor:
         ax.set_ylabel("Y [m]")
         ax.set_title("Core orbit (2D)")
         ax.set_aspect("equal")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def overview(self, *, fig=None):

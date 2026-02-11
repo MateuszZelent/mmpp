@@ -81,8 +81,15 @@ def test_events_polarity_switch_detection_and_timeline_plot(tmp_path):
     assert switches[0].to_p in {-1, 1}
     assert switches[0].from_p != switches[0].to_p
 
-    ax = job.m.solitons.vortex.events.plt.event_timeline(trajectory=traj)
+    ax = job.m.solitons.vortex.events.plt.event_timeline(
+        trajectory=traj,
+        figsize=(7, 3),
+        dpi=100,
+        title="Event timeline",
+        linewidth=1.0,
+    )
     assert hasattr(ax, "plot")
+    assert ax.get_title() == "Event timeline"
 
 
 def test_events_state_switches_and_dwell_times(tmp_path):
@@ -131,8 +138,15 @@ def test_events_state_switches_and_dwell_times(tmp_path):
     assert np.isfinite(dwell.mean_dwell_time)
     assert dwell.mean_dwell_time > 0.0
 
-    ax = dwell.plt.dwell_histogram()
+    ax = dwell.plt.dwell_histogram(
+        figsize=(5, 3),
+        dpi=90,
+        title="Dwell histogram",
+        color="tab:green",
+        alpha=0.7,
+    )
     assert hasattr(ax, "hist")
+    assert ax.get_title() == "Dwell histogram"
 
 
 def test_events_core_expulsion_detection(tmp_path):

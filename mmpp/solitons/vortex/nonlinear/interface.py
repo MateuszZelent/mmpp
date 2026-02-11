@@ -6,6 +6,12 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
 from ..config import VortexConfig
 from .amplitude_equation import compute_amplitude_equation
 from .models import (
@@ -277,27 +283,60 @@ class NonlinearInterfacePlotAccessor:
         if self._interface._last_batch is not None:
             return self._interface._last_batch.plt.linewidth_vs_current(**kwargs)
 
-        import matplotlib.pyplot as plt
-
         st = self._interface.slavin_tiberkevich()
-        ax = kwargs.pop("ax", None)
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(plot_kwargs.pop("ax", None), figure_kwargs=figure_kwargs)
 
         linewidth = float(st.linewidth_hz)
-        if kwargs.pop("as_mhz", True):
+        if plot_kwargs.pop("as_mhz", True):
             linewidth *= 1e-6
             ylabel = "Linewidth [MHz]"
         else:
             ylabel = "Linewidth [Hz]"
 
-        ax.plot([0.0], [linewidth], marker="o", **kwargs)
+        ax.plot([0.0], [linewidth], marker="o", **plot_kwargs)
         ax.set_xlabel("Index")
         ax.set_ylabel(ylabel)
         ax.set_title("Linewidth vs current")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def force_balance(self, **kwargs):
         """Plot Thiele force balance from current or provided trajectory."""
-        result = self._interface.thiele.force_balance(**kwargs)
-        return result.plt.force_balance()
+        all_kwargs = dict(kwargs)
+
+        nested_compute = all_kwargs.pop("compute_kwargs", None)
+        compute_kwargs: dict[str, Any] = {}
+        if isinstance(nested_compute, dict):
+            compute_kwargs.update(nested_compute)
+
+        compute_keys = {
+            "trajectory",
+            "polarity",
+            "vorticity",
+            "Ms",
+            "thickness",
+            "eta",
+            "gamma0",
+            "kappa",
+            "center",
+            "stt_force",
+            "oersted_force",
+        }
+
+        for key in list(all_kwargs.keys()):
+            if key in compute_keys:
+                compute_kwargs[key] = all_kwargs.pop(key)
+        if "thiele_alpha" in all_kwargs:
+            compute_kwargs["alpha"] = all_kwargs.pop("thiele_alpha")
+
+        plot_kwargs = dict(all_kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        plot_kwargs.update(style_kwargs)
+        plot_kwargs.update(figure_kwargs)
+
+        result = self._interface.thiele.force_balance(**compute_kwargs)
+        return result.plt.force_balance(**plot_kwargs)

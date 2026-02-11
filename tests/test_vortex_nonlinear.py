@@ -106,10 +106,17 @@ def test_amplitude_equation_outputs_and_plotting(tmp_path):
     assert np.all(np.isfinite(amp.power))
     assert np.all(amp.power >= 0.0)
 
-    ax_power = amp.plt.power_vs_time()
-    ax_complex = amp.plt.complex_plane()
+    ax_power = amp.plt.power_vs_time(figsize=(6, 3), dpi=100, title="Power(t)", color="tab:purple")
+    ax_complex = amp.plt.complex_plane(
+        figsize=(4, 4),
+        dpi=100,
+        title="Complex plane",
+        aspect="equal",
+    )
     assert hasattr(ax_power, "plot")
     assert hasattr(ax_complex, "plot")
+    assert ax_power.get_title() == "Power(t)"
+    assert ax_complex.get_title() == "Complex plane"
 
 
 def test_slavin_tiberkevich_parameters_and_single_point_plot(tmp_path):
@@ -133,8 +140,9 @@ def test_slavin_tiberkevich_parameters_and_single_point_plot(tmp_path):
     assert st.quality_factor > 0.0
     assert isinstance(st.linewidth_resolution_limited, bool)
 
-    ax = st.plt.power_vs_current()
+    ax = st.plt.power_vs_current(figsize=(5, 3), dpi=90, title="Single-point ST", color="tab:red")
     assert hasattr(ax, "plot")
+    assert ax.get_title() == "Single-point ST"
 
 
 def test_slavin_tiberkevich_batch_pipeline(tmp_path):
@@ -166,10 +174,17 @@ def test_slavin_tiberkevich_batch_pipeline(tmp_path):
     assert np.all(np.isfinite(batch.frequencies_hz))
     assert np.isfinite(batch.N)
 
-    ax_batch = batch.plt.power_vs_current()
-    ax_iface = jobs[0].m.solitons.vortex.nonlinear.plt.linewidth_vs_current()
+    ax_batch = batch.plt.power_vs_current(figsize=(5, 3), dpi=90, title="Batch power")
+    ax_iface = jobs[0].m.solitons.vortex.nonlinear.plt.linewidth_vs_current(
+        figsize=(5, 3),
+        dpi=90,
+        title="Batch linewidth",
+        color="tab:brown",
+    )
     assert hasattr(ax_batch, "plot")
     assert hasattr(ax_iface, "plot")
+    assert ax_batch.get_title() == "Batch power"
+    assert ax_iface.get_title() == "Batch linewidth"
 
 
 def test_thiele_force_balance_and_plot_accessor(tmp_path):
@@ -195,15 +210,22 @@ def test_thiele_force_balance_and_plot_accessor(tmp_path):
     assert np.all(np.isfinite(force.residual_ratio))
     assert force.polarity in {-1, 1}
 
-    ax_force = force.plt.force_balance()
+    ax_force = force.plt.force_balance(figsize=(7, 3), dpi=100, title="Force balance", linewidth=1.0)
     ax_iface = job.m.solitons.vortex.nonlinear.plt.force_balance(
         trajectory=traj,
         Ms=8.0e5,
         thickness=20e-9,
-        alpha=0.01,
+        thiele_alpha=0.01,
+        figsize=(7, 3),
+        dpi=100,
+        title="Force balance iface",
+        linestyle="-",
+        alpha=0.9,
     )
     assert hasattr(ax_force, "plot")
     assert hasattr(ax_iface, "plot")
+    assert ax_force.get_title() == "Force balance"
+    assert ax_iface.get_title() == "Force balance iface"
 
 
 def test_thiele_cpp_and_cip_simulation_wrappers(tmp_path):

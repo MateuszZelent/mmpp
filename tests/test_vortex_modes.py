@@ -100,10 +100,18 @@ def test_modes_plot_accessor_and_mode_table(tmp_path):
     data, _, _, dx, dy, dt = _make_mode_rich_orbit_data(nt=512)
     job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
 
-    ax = job.m.solitons.vortex.modes.plt.mode_map()
+    ax = job.m.solitons.vortex.modes.plt.mode_map(
+        figsize=(6, 3),
+        dpi=100,
+        title="Mode map",
+        color="tab:blue",
+        edgecolor="black",
+        alpha=0.8,
+    )
     rows = job.m.solitons.vortex.modes.plt.mode_table()
 
     assert hasattr(ax, "bar")
+    assert ax.get_title() == "Mode map"
     assert isinstance(rows, list)
     if rows:
         assert "mode" in rows[0]

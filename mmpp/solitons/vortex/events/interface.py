@@ -6,6 +6,12 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
 from ..config import VortexConfig
 from ..core.models import TrajectoryResult
 from .core_expulsion import detect_core_expulsions
@@ -254,16 +260,24 @@ class EventsPlotAccessor:
     def __init__(self, interface: EventsInterface):
         self._interface = interface
 
-    def event_timeline(self, *, trajectory: TrajectoryResult | None = None, ax=None):
+    def event_timeline(self, *, trajectory: TrajectoryResult | None = None, ax=None, **kwargs):
         """Plot trajectory with event markers."""
-        import matplotlib.pyplot as plt
-
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
         traj = self._interface._resolve_trajectory(trajectory)
-        if ax is None:
-            _, ax = plt.subplots()
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
-        ax.plot(traj.time, traj.x, label="x(t)", color="#1f77b4")
-        ax.plot(traj.time, traj.y, label="y(t)", color="#ff7f0e", linestyle="--")
+        x_kwargs = dict(plot_kwargs)
+        y_kwargs = dict(plot_kwargs)
+        x_kwargs.pop("label", None)
+        y_kwargs.pop("label", None)
+        x_kwargs.setdefault("color", "#1f77b4")
+        y_kwargs.setdefault("color", "#ff7f0e")
+        y_kwargs.setdefault("linestyle", "--")
+
+        ax.plot(traj.time, traj.x, label="x(t)", **x_kwargs)
+        ax.plot(traj.time, traj.y, label="y(t)", **y_kwargs)
 
         for event in self._interface.polarity_switches(trajectory=traj):
             ax.axvline(event.time, color="red", linestyle=":", alpha=0.6)
@@ -276,6 +290,7 @@ class EventsPlotAccessor:
         ax.set_ylabel("Position [m]")
         ax.set_title("Event timeline")
         ax.legend()
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def dwell_histogram(

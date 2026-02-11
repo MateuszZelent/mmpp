@@ -7,6 +7,13 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
+
 
 @dataclass
 class VortexSpectrumResult:
@@ -67,10 +74,10 @@ class VortexSpectrumPlotAccessor:
 
     def power_spectrum(self, *, ax=None, as_ghz: bool = True, log_scale: bool = False, **kwargs):
         """Plot power spectrum."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         x = self._result.frequencies * (1e-9 if as_ghz else 1.0)
         y = np.asarray(self._result.power, dtype=float)
@@ -81,10 +88,11 @@ class VortexSpectrumPlotAccessor:
         else:
             ylabel = "Power [a.u.]"
 
-        ax.plot(x, y, **kwargs)
+        ax.plot(x, y, **plot_kwargs)
         ax.set_xlabel("Frequency [GHz]" if as_ghz else "Frequency [Hz]")
         ax.set_ylabel(ylabel)
         ax.set_title(f"Vortex {self._result.component} spectrum")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
 
@@ -96,19 +104,24 @@ class VortexSpectrogramPlotAccessor:
 
     def spectrogram(self, *, ax=None, as_ghz: bool = True, db_scale: bool = True, **kwargs):
         """Plot time-frequency spectrogram."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        mesh_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(mesh_kwargs)
+        figure_kwargs = pop_figure_kwargs(mesh_kwargs)
+        colorbar = bool(mesh_kwargs.pop("colorbar", True))
+        colorbar_options = mesh_kwargs.pop("colorbar_kwargs", {})
+        colorbar_kwargs = {} if colorbar_options is None else dict(colorbar_options)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         freqs = self._result.frequencies * (1e-9 if as_ghz else 1.0)
         power = np.asarray(self._result.power, dtype=float)
         if db_scale:
             power = 10.0 * np.log10(np.clip(power, 1e-30, None))
 
-        mesh = ax.pcolormesh(self._result.times, freqs, power, shading="auto", **kwargs)
+        mesh = ax.pcolormesh(self._result.times, freqs, power, shading="auto", **mesh_kwargs)
         ax.set_xlabel("Time [s]")
         ax.set_ylabel("Frequency [GHz]" if as_ghz else "Frequency [Hz]")
         ax.set_title("Vortex spectrogram")
-        ax.figure.colorbar(mesh, ax=ax)
+        if colorbar:
+            ax.figure.colorbar(mesh, ax=ax, **colorbar_kwargs)
+        apply_axes_style(ax, style_kwargs)
         return ax

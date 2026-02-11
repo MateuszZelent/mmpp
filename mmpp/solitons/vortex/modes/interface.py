@@ -6,6 +6,12 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
 from ..config import VortexConfig
 from .classifier import VortexModesClassifier
 from .models import VortexModeResult
@@ -158,25 +164,29 @@ class VortexModesPlotAccessor:
     def __init__(self, interface: VortexModesInterface):
         self._interface = interface
 
-    def mode_map(self, f: float | None = None, *, unit: str = "ghz", ax=None):
+    def mode_map(self, f: float | None = None, *, unit: str = "ghz", ax=None, **kwargs):
         """Plot detected modes as frequency-power bars."""
-        import matplotlib.pyplot as plt
+        bar_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(bar_kwargs)
+        figure_kwargs = pop_figure_kwargs(bar_kwargs)
 
         modes = self._interface.classify_all()
-        if ax is None:
-            _, ax = plt.subplots()
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         if not modes:
             ax.set_title("No modes detected")
             ax.set_xlabel("Frequency [GHz]")
             ax.set_ylabel("Power [a.u.]")
+            apply_axes_style(ax, style_kwargs)
             return ax
 
         freqs = np.array([item.frequency_ghz for item in modes], dtype=float)
         power = np.array([item.power for item in modes], dtype=float)
         labels = [item.mode_type for item in modes]
 
-        ax.bar(freqs, power, width=max((np.max(freqs) - np.min(freqs)) * 0.03, 0.01))
+        width = float(max((np.max(freqs) - np.min(freqs)) * 0.03, 0.01))
+        bar_kwargs.setdefault("width", width)
+        ax.bar(freqs, power, **bar_kwargs)
         for fx, py, label in zip(freqs, power, labels):
             ax.text(fx, py, label, rotation=45, ha="left", va="bottom", fontsize=8)
 
@@ -188,6 +198,7 @@ class VortexModesPlotAccessor:
         ax.set_xlabel("Frequency [GHz]")
         ax.set_ylabel("Power [a.u.]")
         ax.set_title("Detected vortex modes")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def mode_table(self):

@@ -7,6 +7,13 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
+
 
 @dataclass
 class OrbitFitResult:
@@ -61,25 +68,26 @@ class PhasePlotAccessor:
 
     def phase_portrait(self, *, ax=None, **kwargs):
         """Plot phase portrait X vs dX/dt reconstructed from phase signal."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         x_signal = np.cos(self._result.phase_unwrapped)
         dx_dt = np.gradient(x_signal, self._result.time)
-        ax.plot(x_signal, dx_dt, **kwargs)
+        ax.plot(x_signal, dx_dt, **plot_kwargs)
         ax.set_xlabel("cos(phi)")
         ax.set_ylabel("d(cos(phi))/dt")
         ax.set_title("Phase portrait")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def frequency_vs_time(self, *, ax=None, unit: str = "hz", **kwargs):
         """Plot instantaneous frequency versus time."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         unit_norm = unit.lower()
         if unit_norm in {"hz", "f"}:
@@ -94,8 +102,9 @@ class PhasePlotAccessor:
         else:
             raise ValueError("unit must be 'hz', 'ghz', or 'rad/s'")
 
-        ax.plot(self._result.time, values, **kwargs)
+        ax.plot(self._result.time, values, **plot_kwargs)
         ax.set_xlabel("Time [s]")
         ax.set_ylabel(ylabel)
         ax.set_title("Instantaneous frequency")
+        apply_axes_style(ax, style_kwargs)
         return ax

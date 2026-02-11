@@ -7,6 +7,13 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
+
 
 @dataclass
 class AmplitudeEquationResult:
@@ -85,23 +92,24 @@ class AmplitudePlotAccessor:
 
     def power_vs_time(self, *, ax=None, **kwargs):
         """Plot ``p(t)=|c(t)|^2``."""
-        import matplotlib.pyplot as plt
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
-        if ax is None:
-            _, ax = plt.subplots()
-
-        ax.plot(self._result.time, self._result.power, **kwargs)
+        ax.plot(self._result.time, self._result.power, **plot_kwargs)
         ax.set_xlabel("Time [s]")
         ax.set_ylabel("Generation power p(t) [a.u.]")
         ax.set_title("Amplitude equation: power")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def phase_vs_time(self, *, ax=None, as_unwrapped: bool = True, **kwargs):
         """Plot trajectory phase versus time."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         if as_unwrapped:
             values = np.asarray(self._result.phase, dtype=float)
@@ -110,25 +118,27 @@ class AmplitudePlotAccessor:
             values = np.angle(self._result.complex_amplitude)
             ylabel = "Wrapped phase [rad]"
 
-        ax.plot(self._result.time, values, **kwargs)
+        ax.plot(self._result.time, values, **plot_kwargs)
         ax.set_xlabel("Time [s]")
         ax.set_ylabel(ylabel)
         ax.set_title("Amplitude equation: phase")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def complex_plane(self, *, ax=None, **kwargs):
         """Plot complex amplitude trajectory in Re-Im plane."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         c = np.asarray(self._result.complex_amplitude, dtype=np.complex128)
-        ax.plot(c.real, c.imag, **kwargs)
+        ax.plot(c.real, c.imag, **plot_kwargs)
         ax.set_xlabel("Re(c)")
         ax.set_ylabel("Im(c)")
         ax.set_title("Complex amplitude c(t)")
         ax.set_aspect("equal")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
 
@@ -140,19 +150,20 @@ class STPlotAccessor:
 
     def power_vs_current(self, *, ax=None, current_a: float | None = None, **kwargs):
         """Plot single-point generation power against current."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         if current_a is None:
             current_a = self._result.metadata.get("current_a")
         x_val = float(current_a) if current_a is not None else 0.0
 
-        ax.plot([x_val], [self._result.generation_power], marker="o", **kwargs)
+        ax.plot([x_val], [self._result.generation_power], marker="o", **plot_kwargs)
         ax.set_xlabel("Current [A]" if current_a is not None else "Index")
         ax.set_ylabel("Generation power p_gen [a.u.]")
         ax.set_title("Slavin-Tiberkevich: power vs current")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
 
@@ -164,23 +175,24 @@ class STBatchPlotAccessor:
 
     def power_vs_current(self, *, ax=None, **kwargs):
         """Plot generation power as function of current."""
-        import matplotlib.pyplot as plt
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
-        if ax is None:
-            _, ax = plt.subplots()
-
-        ax.plot(self._result.currents, self._result.powers, marker="o", **kwargs)
+        ax.plot(self._result.currents, self._result.powers, marker="o", **plot_kwargs)
         ax.set_xlabel("Current [A]")
         ax.set_ylabel("Generation power p_gen [a.u.]")
         ax.set_title("Power vs current")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def linewidth_vs_current(self, *, ax=None, as_mhz: bool = True, **kwargs):
         """Plot linewidth versus current."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         values = np.asarray(self._result.linewidths, dtype=float)
         ylabel = "Linewidth [Hz]"
@@ -188,18 +200,19 @@ class STBatchPlotAccessor:
             values = values * 1e-6
             ylabel = "Linewidth [MHz]"
 
-        ax.plot(self._result.currents, values, marker="o", **kwargs)
+        ax.plot(self._result.currents, values, marker="o", **plot_kwargs)
         ax.set_xlabel("Current [A]")
         ax.set_ylabel(ylabel)
         ax.set_title("Linewidth vs current")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
     def frequency_vs_current(self, *, ax=None, as_ghz: bool = True, **kwargs):
         """Plot dominant gyration frequency versus current."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         values = np.asarray(self._result.frequencies_hz, dtype=float)
         ylabel = "Frequency [Hz]"
@@ -207,10 +220,11 @@ class STBatchPlotAccessor:
             values = values * 1e-9
             ylabel = "Frequency [GHz]"
 
-        ax.plot(self._result.currents, values, marker="o", **kwargs)
+        ax.plot(self._result.currents, values, marker="o", **plot_kwargs)
         ax.set_xlabel("Current [A]")
         ax.set_ylabel(ylabel)
         ax.set_title("Frequency vs current")
+        apply_axes_style(ax, style_kwargs)
         return ax
 
 
@@ -266,41 +280,69 @@ class ThieleForcePlotAccessor:
 
     def force_balance(self, *, ax=None, as_norm: bool = True, **kwargs):
         """Plot force decomposition over time."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         t = np.asarray(self._result.time, dtype=float)
+        shared_kwargs = {k: v for k, v in plot_kwargs.items() if k != "label"}
         if as_norm:
-            ax.plot(t, np.linalg.norm(self._result.gyro_force, axis=1), label="|F_gyro|", **kwargs)
+            ax.plot(
+                t,
+                np.linalg.norm(self._result.gyro_force, axis=1),
+                label="|F_gyro|",
+                **shared_kwargs,
+            )
             ax.plot(
                 t,
                 np.linalg.norm(self._result.conservative_force, axis=1),
                 label="|F_cons|",
                 linestyle="--",
+                **{k: v for k, v in shared_kwargs.items() if k != "linestyle"},
             )
             ax.plot(
                 t,
                 np.linalg.norm(self._result.dissipative_force, axis=1),
                 label="|F_diss|",
                 linestyle=":",
+                **{k: v for k, v in shared_kwargs.items() if k != "linestyle"},
             )
             ax.plot(
                 t,
                 np.linalg.norm(self._result.residual_force, axis=1),
                 label="|F_res|",
                 linewidth=1.2,
+                **{k: v for k, v in shared_kwargs.items() if k != "linewidth"},
             )
             ax.set_ylabel("Force norm [a.u.]")
         else:
-            ax.plot(t, self._result.gyro_force[:, 0], label="F_gyro,x", **kwargs)
-            ax.plot(t, self._result.gyro_force[:, 1], label="F_gyro,y", linestyle="--")
-            ax.plot(t, self._result.residual_force[:, 0], label="F_res,x", linestyle=":")
-            ax.plot(t, self._result.residual_force[:, 1], label="F_res,y", linestyle="-.")
+            ax.plot(t, self._result.gyro_force[:, 0], label="F_gyro,x", **shared_kwargs)
+            ax.plot(
+                t,
+                self._result.gyro_force[:, 1],
+                label="F_gyro,y",
+                linestyle="--",
+                **{k: v for k, v in shared_kwargs.items() if k != "linestyle"},
+            )
+            ax.plot(
+                t,
+                self._result.residual_force[:, 0],
+                label="F_res,x",
+                linestyle=":",
+                **{k: v for k, v in shared_kwargs.items() if k != "linestyle"},
+            )
+            ax.plot(
+                t,
+                self._result.residual_force[:, 1],
+                label="F_res,y",
+                linestyle="-.",
+                **{k: v for k, v in shared_kwargs.items() if k != "linestyle"},
+            )
             ax.set_ylabel("Force component [a.u.]")
 
         ax.set_xlabel("Time [s]")
         ax.set_title("Thiele force balance")
         ax.legend()
+        apply_axes_style(ax, style_kwargs)
         return ax

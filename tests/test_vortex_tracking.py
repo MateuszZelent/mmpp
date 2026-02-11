@@ -133,11 +133,27 @@ def test_tracking_api_integration_and_plot_accessor(tmp_path):
     job = _create_job(tmp_path, data_5d, dx=dx, dy=dy, dt=dt)
 
     traj = job.m.solitons.vortex.core.track(method="centroid")
-    ax = traj.plt.xy()
+    ax = traj.plt.xy(
+        aspect="auto",
+        figsize=(5, 3),
+        dpi=90,
+        title="Tracked XY",
+        color="black",
+    )
+    ax_orbit = traj.plt.orbit_2d(
+        show_center=True,
+        figsize=(4, 4),
+        dpi=90,
+        xlim=(float(np.min(traj.x)), float(np.max(traj.x))),
+        ylim=(float(np.min(traj.y)), float(np.max(traj.y))),
+    )
     topo = job.solitons.vortex.detect()
 
     assert traj.time.size == data.shape[0]
     assert hasattr(ax, "plot")
+    assert ax.get_aspect() == "auto"
+    assert ax.get_title() == "Tracked XY"
+    assert hasattr(ax_orbit, "plot")
     assert topo.state in {"vortex", "antivortex", "meron", "unknown", "skyrmion"}
 
 

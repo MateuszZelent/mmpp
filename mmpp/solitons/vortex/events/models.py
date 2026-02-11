@@ -7,6 +7,13 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
+
 
 @dataclass
 class PolaritySwitchEvent:
@@ -95,10 +102,10 @@ class DwellTimePlotAccessor:
 
     def dwell_histogram(self, *, ax=None, bins: int = 20, as_ns: bool = True, **kwargs):
         """Plot dwell-time histogram."""
-        import matplotlib.pyplot as plt
-
-        if ax is None:
-            _, ax = plt.subplots()
+        hist_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(hist_kwargs)
+        figure_kwargs = pop_figure_kwargs(hist_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         values = np.asarray(self._result.dwell_times, dtype=float)
         if as_ns:
@@ -108,11 +115,12 @@ class DwellTimePlotAccessor:
             xlabel = "Dwell time [s]"
 
         if values.size:
-            ax.hist(values, bins=min(max(int(bins), 1), max(values.size, 1)), **kwargs)
+            ax.hist(values, bins=min(max(int(bins), 1), max(values.size, 1)), **hist_kwargs)
         else:
-            ax.hist([], bins=1, **kwargs)
+            ax.hist([], bins=1, **hist_kwargs)
 
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Count")
         ax.set_title(f"Dwell-time distribution: {self._result.state}")
+        apply_axes_style(ax, style_kwargs)
         return ax
