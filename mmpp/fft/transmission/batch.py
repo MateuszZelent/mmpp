@@ -395,6 +395,12 @@ class BatchTransmissionResult:
         grid_color: str = "white",
         grid_linestyle: str = "--",
         grid_axis: str = "y",
+        # Kittel FMR overlay
+        kittel = None,
+        kittel_color: str = "cyan",
+        kittel_linestyle: str = "--",
+        kittel_linewidth: float = 2.0,
+        kittel_label: str = "Kittel FMR",
         **kwargs,
     ):
         """Plot 2D heatmap of transmission cross-sections vs parameter.
@@ -723,6 +729,50 @@ class BatchTransmissionResult:
                 mark_on_ax.legend()
             except Exception as e:
                 log.warning(f"Failed to mark position on reference axis: {e}")
+
+        # Overlay Kittel FMR line if provided
+        if kittel is not None:
+            try:
+                from ...analytical.base import FMRResult
+                from ...analytical.fmr import kittel as kittel_func
+
+                if isinstance(kittel, FMRResult):
+                    fmr_params = kittel.params
+                    # Use raw (unscaled) param values as B field
+                    B_values = param_values_scaled / param_scale  # back to original
+                    B_fine = np.linspace(B_values.min(), B_values.max(), 500)
+                    fmr_result = kittel_func(
+                        B=B_fine,
+                        Ms=fmr_params["Ms"],
+                        Ku=fmr_params.get("Ku", 0.0),
+                        g=fmr_params.get("g", 2.0),
+                    )
+                    # FMRResult.f is in GHz, need to convert to freq_unit
+                    from .plot import FREQ_SCALE
+                    freq_scale = FREQ_SCALE.get(freq_unit, 1e-9)
+                    f_plot = fmr_result.f * 1e9 * freq_scale  # GHz -> Hz -> unit
+                    B_plot = B_fine * param_scale
+                    ax.plot(
+                        B_plot,
+                        f_plot,
+                        color=kittel_color,
+                        linestyle=kittel_linestyle,
+                        linewidth=kittel_linewidth,
+                        label=kittel_label,
+                        zorder=10,
+                    )
+                    ax.legend(loc="upper left", fontsize=10)
+                    if verbose:
+                        print(f"  Kittel FMR overlay: B=[{B_fine[0]:.4f}, {B_fine[-1]:.4f}] T")
+                        print(f"  Kittel f range: [{f_plot.min():.2f}, {f_plot.max():.2f}] {freq_unit}")
+                else:
+                    log.warning(
+                        "kittel parameter should be an FMRResult from "
+                        "mmpp.analytical.kittel(Ms=..., Ku=...). Got: %s",
+                        type(kittel),
+                    )
+            except Exception as e:
+                log.warning(f"Failed to overlay Kittel FMR line: {e}")
 
         if verbose:
             print(f"{'='*60}\n")

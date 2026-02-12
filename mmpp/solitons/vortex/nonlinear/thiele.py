@@ -183,6 +183,7 @@ class ThieleAnalyzer:
         omega0_Oe_per_J: float = 0.0,
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
+        chi_scale: float = 1.0,
     ) -> tuple[CPPThieleModel, MaterialParams, DiskGeometry]:
         mat = self._resolve_material(material)
         geo = self._resolve_geometry(geometry)
@@ -197,6 +198,7 @@ class ThieleAnalyzer:
             omega0_Oe_per_J=float(omega0_Oe_per_J),
             field=field,
             field_cal=field_cal,
+            chi_scale=float(chi_scale),
         )
         return model, mat, geo
 

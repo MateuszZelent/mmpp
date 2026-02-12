@@ -23,7 +23,7 @@ from .constants import MU0, gamma
 
 def kittel(
     *,
-    B: Union[float, np.ndarray],
+    B: Union[float, np.ndarray, None] = None,
     Ms: float,
     Ku: float = 0.0,
     g: float = 2.0,
@@ -36,8 +36,11 @@ def kittel(
     
     Parameters
     ----------
-    B : float or array
-        Applied magnetic field in Tesla
+    B : float or array or None
+        Applied magnetic field in Tesla.
+        If None, returns a "template" FMRResult with empty arrays
+        but stored params — useful for passing to plotting functions
+        that will supply B values automatically.
     Ms : float
         Saturation magnetization in A/m
     Ku : float, optional
@@ -70,13 +73,29 @@ def kittel(
     >>> fmr = mmpp.analytical.kittel(B=B, Ms=8e5, Ku=1e4)
     >>> fmr.plt.plot(title="Kittel FMR")
     
+    >>> # Template without B (for heatmap overlay)
+    >>> template = mmpp.analytical.kittel(Ms=8e5, Ku=1e4)
+    
     References
     ----------
     C. Kittel, *Phys. Rev.* **73**, 155 (1948).
     """
-    B = np.atleast_1d(np.asarray(B, dtype=float))
     Ms = float(Ms)
     Ku = float(Ku)
+    params = {"Ms": Ms, "Ku": Ku, "g": g}
+    metadata = {"geometry": "in-plane", "reference": "Phys. Rev. 73, 155 (1948)"}
+    
+    if B is None:
+        # Template mode: return FMRResult with empty arrays but stored params
+        return FMRResult(
+            model_name="Kittel 1948 (in-plane)",
+            B=np.array([]),
+            f=np.array([]),
+            params=params,
+            metadata=metadata,
+        )
+    
+    B = np.atleast_1d(np.asarray(B, dtype=float))
     gamma_val = gamma(g)
     
     # Effective field including anisotropy
@@ -93,8 +112,8 @@ def kittel(
         model_name="Kittel 1948 (in-plane)",
         B=B,
         f=f_ghz,
-        params={"Ms": Ms, "Ku": Ku, "g": g},
-        metadata={"geometry": "in-plane", "reference": "Phys. Rev. 73, 155 (1948)"},
+        params=params,
+        metadata=metadata,
     )
 
 

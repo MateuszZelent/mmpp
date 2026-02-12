@@ -1172,6 +1172,7 @@ class CPPThieleModel:
         omega0_Oe_per_J: float = 0.0,
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
+        chi_scale: float = 1.0,
     ) -> None:
         self.material = material
         self.geom = geom
@@ -1181,6 +1182,7 @@ class CPPThieleModel:
         self.omega0_Oe_per_J = float(omega0_Oe_per_J)
         self.field = field if field is not None else ExternalField()
         self.field_cal = field_cal if field_cal is not None else FieldCalibration()
+        self.chi_scale = float(chi_scale)
         assert self.polarity in (1, -1), "polarity must be +1 or -1"
 
         self._setup()
@@ -1206,8 +1208,8 @@ class CPPThieleModel:
     # ── public helpers ─────────────────────────────────────────
 
     def chi(self, J: float) -> float:
-        """STT pumping rate χ(J) [rad/s]."""
-        return self._chi_prefactor * J
+        """STT pumping rate χ(J) [rad/s], scaled by chi_scale."""
+        return self.chi_scale * self._chi_prefactor * J
 
     def d(self, u: float) -> float:
         """Nonlinear damping d(u) [dimensionless]."""
@@ -1257,8 +1259,8 @@ class CPPThieleModel:
     @property
     def J_threshold(self) -> float:
         """Threshold current density for self-oscillation [A/m²]."""
-        # χ(J_th) = d₀ · ω₀_eff(0)  →  J_th = 2 d₀ ω₀_eff / (γ σ)
-        return self._d0 * self.omega0_eff(0.0) / self._chi_prefactor
+        # χ(J_th) = d₀ · ω₀_eff(0)  →  J_th = 2 d₀ ω₀_eff / (γ σ chi_scale)
+        return self._d0 * self.omega0_eff(0.0) / (self.chi_scale * self._chi_prefactor)
 
     def threshold_current_dc(self) -> float:
         """Threshold DC current density for auto-oscillation [A/m²]."""
