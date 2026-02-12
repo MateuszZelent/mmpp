@@ -585,6 +585,7 @@ class ThieleFJFitResult(AnalyticalResult):
     omega0: float = float("nan")
     N: float = float("nan")
     omega0_Oe_per_J: float = 0.0
+    chi_scale: float = 1.0
     J_data: np.ndarray = field(default_factory=lambda: np.array([]))
     f_data_hz: np.ndarray = field(default_factory=lambda: np.array([]))
     f_fit_hz: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -674,10 +675,15 @@ class ThieleFJFitPlotAccessor:
 
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
-        ax.set_title(
+        
+        title = (
             f"Thiele fit: ω0={self._result.omega0:.3e} rad/s, "
-            f"N={self._result.N:.3f}, RMSE={self._result.rmse_hz:.3e} Hz"
+            f"N={self._result.N:.3f}"
         )
+        if abs(self._result.chi_scale - 1.0) > 0.01:
+            title += f", χ_scale={self._result.chi_scale:.2f}"
+        title += f", RMSE={self._result.rmse_hz:.3e} Hz"
+        ax.set_title(title)
         ax.grid(True, alpha=0.3)
         ax.legend()
 
@@ -1714,6 +1720,7 @@ def _predict_fj_curve(
     omega0: float,
     N: float,
     omega0_Oe_per_J: float,
+    chi_scale: float,
     *,
     allow_edge: bool,
 ) -> np.ndarray:
@@ -1724,6 +1731,7 @@ def _predict_fj_curve(
         N=float(N),
         polarity=int(polarity),
         omega0_Oe_per_J=float(omega0_Oe_per_J),
+        chi_scale=float(chi_scale),
     )
     out = np.full(J_data.shape, np.nan, dtype=float)
     for idx, jval in enumerate(J_data):
@@ -1747,10 +1755,12 @@ def fit_omega0_N_to_fJ(
     initial_N: float = 0.25,
     fit_omega0_Oe_per_J: bool = False,
     initial_omega0_Oe_per_J: float = 0.0,
+    fit_chi_scale: bool = False,
+    initial_chi_scale: float = 1.0,
     allow_edge: bool = False,
 ) -> ThieleFJFitResult:
     """
-    Fit ``omega0`` and ``N`` of CPP Thiele model to measured ``f(J)`` points.
+    Fit ``omega0``, ``N`` (optionally ``chi_scale``) of CPP Thiele model to measured ``f(J)`` points.
     """
     j = np.asarray(J_data, dtype=float).ravel()
     f = np.asarray(f_data_hz, dtype=float).ravel()
@@ -1768,14 +1778,20 @@ def fit_omega0_N_to_fJ(
     omega0_init = float(omega0_novosad(material, geom) if initial_omega0 is None else initial_omega0)
     n_init = float(initial_N)
     oe_init = float(initial_omega0_Oe_per_J)
+    chi_init = float(initial_chi_scale)
 
     def _objective(params: np.ndarray) -> float:
         omega0_val = max(float(params[0]), 1e6)
         n_val = float(params[1])
+        oe_val = oe_init
+        chi_val = chi_init
+        
+        idx = 2
         if fit_omega0_Oe_per_J:
-            oe_val = float(params[2])
-        else:
-            oe_val = oe_init
+            oe_val = float(params[idx])
+            idx += 1
+        if fit_chi_scale:
+            chi_val = float(params[idx])
 
         f_pred = _predict_fj_curve(
             j,
@@ -1785,6 +1801,7 @@ def fit_omega0_N_to_fJ(
             omega0_val,
             n_val,
             oe_val,
+            chi_val,
             allow_edge=allow_edge,
         )
         mask = np.isfinite(f_pred)
@@ -1798,6 +1815,9 @@ def fit_omega0_N_to_fJ(
     if fit_omega0_Oe_per_J:
         x0 = np.append(x0, oe_init)
         bounds.append((-1e-6, 1e-6))
+    if fit_chi_scale:
+        x0 = np.append(x0, chi_init)
+        bounds.append((0.1, 20.0))
 
     # Coarse global scan to avoid poor local minima.
     omega_low = max(1e6, 0.2 * omega0_init)
@@ -1805,21 +1825,27 @@ def fit_omega0_N_to_fJ(
     omega_grid = np.geomspace(omega_low, omega_high, 55)
     n_grid = np.linspace(-2.0, 2.0, 81)
     oe_grid = np.array([oe_init], dtype=float)
+    chi_grid = np.array([chi_init], dtype=float)
     if fit_omega0_Oe_per_J:
         oe_grid = np.linspace(-3e-7, 3e-7, 13)
+    if fit_chi_scale:
+        chi_grid = np.linspace(0.5, 10.0, 25)
 
     best = x0.copy()
     best_cost = float(_objective(best))
     for omega_val in omega_grid:
         for n_val in n_grid:
             for oe_val in oe_grid:
-                candidate = np.array([omega_val, n_val], dtype=float)
-                if fit_omega0_Oe_per_J:
-                    candidate = np.append(candidate, oe_val)
-                score = float(_objective(candidate))
-                if score < best_cost:
-                    best_cost = score
-                    best = candidate
+                for chi_val in chi_grid:
+                    candidate = np.array([omega_val, n_val], dtype=float)
+                    if fit_omega0_Oe_per_J:
+                        candidate = np.append(candidate, oe_val)
+                    if fit_chi_scale:
+                        candidate = np.append(candidate, chi_val)
+                    score = float(_objective(candidate))
+                    if score < best_cost:
+                        best_cost = score
+                        best = candidate
 
     success = False
     status = "coarse_grid"
@@ -1839,7 +1865,15 @@ def fit_omega0_N_to_fJ(
 
     omega0_fit = max(float(best[0]), 1e6)
     n_fit = float(best[1])
-    oe_fit = float(best[2]) if fit_omega0_Oe_per_J else oe_init
+    idx = 2
+    oe_fit = oe_init
+    chi_fit = chi_init
+    if fit_omega0_Oe_per_J:
+        oe_fit = float(best[idx])
+        idx += 1
+    if fit_chi_scale:
+        chi_fit = float(best[idx])
+    
     f_fit = _predict_fj_curve(
         j,
         material,
@@ -1848,6 +1882,7 @@ def fit_omega0_N_to_fJ(
         omega0_fit,
         n_fit,
         oe_fit,
+        chi_fit,
         allow_edge=allow_edge,
     )
 
@@ -1862,6 +1897,7 @@ def fit_omega0_N_to_fJ(
         omega0=omega0_fit,
         N=n_fit,
         omega0_Oe_per_J=oe_fit,
+        chi_scale=chi_fit,
         J_data=j,
         f_data_hz=f,
         f_fit_hz=f_fit,
@@ -1874,6 +1910,7 @@ def fit_omega0_N_to_fJ(
             "initial_omega0": omega0_init,
             "initial_N": n_init,
             "fit_omega0_Oe_per_J": bool(fit_omega0_Oe_per_J),
+            "fit_chi_scale": bool(fit_chi_scale),
         },
         metadata={
             "allow_edge": bool(allow_edge),

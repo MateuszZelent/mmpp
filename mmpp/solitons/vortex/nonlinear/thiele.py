@@ -317,6 +317,7 @@ class ThieleAnalyzer:
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
         B_func: FieldFunc | None = None,
+        chi_scale: float = 1.0,
         **simulate_kwargs,
     ) -> ThieleTrajectoryResult:
         """Run analytical CPP Thiele simulation and return trajectory result."""
@@ -328,6 +329,7 @@ class ThieleAnalyzer:
             polarity=polarity,
             field=field,
             field_cal=field_cal,
+            chi_scale=chi_scale,
         )
         j_func = current_waveform if current_waveform is not None else current_dc(float(current_density))
         result = model.simulate(t_span=t_span, s0=s0, J_func=j_func, B_func=B_func, dt=dt, **simulate_kwargs)
@@ -356,6 +358,7 @@ class ThieleAnalyzer:
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
         B_func: FieldFunc | None = None,
+        chi_scale: float = 1.0,
     ) -> ThieleTrajectoryResult:
         """Run stochastic CPP Thiele simulation (Euler-Maruyama)."""
         model, _, _ = self._build_cpp_model(
@@ -366,6 +369,7 @@ class ThieleAnalyzer:
             polarity=polarity,
             field=field,
             field_cal=field_cal,
+            chi_scale=chi_scale,
         )
         j_func = current_waveform if current_waveform is not None else current_dc(float(current_density))
         result = model.simulate_sde(
@@ -394,6 +398,7 @@ class ThieleAnalyzer:
         polarity: int | None = None,
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
+        chi_scale: float = 1.0,
     ) -> float:
         """Return threshold DC current density for CPP model [A/m²]."""
         model, _, _ = self._build_cpp_model(
@@ -404,6 +409,7 @@ class ThieleAnalyzer:
             polarity=polarity,
             field=field,
             field_cal=field_cal,
+            chi_scale=chi_scale,
         )
         return float(model.threshold_current_dc())
 
@@ -420,6 +426,7 @@ class ThieleAnalyzer:
         omega0_Oe_per_J: float = 0.0,
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
+        chi_scale: float = 1.0,
     ) -> float | None:
         """Predict steady-state frequency for given DC current density [Hz]."""
         model, _, _ = self._build_cpp_model(
@@ -431,6 +438,7 @@ class ThieleAnalyzer:
             omega0_Oe_per_J=omega0_Oe_per_J,
             field=field,
             field_cal=field_cal,
+            chi_scale=chi_scale,
         )
         return model.predict_frequency_dc(
             J_dc,
@@ -449,9 +457,11 @@ class ThieleAnalyzer:
         initial_N: float = 0.25,
         fit_omega0_Oe_per_J: bool = False,
         initial_omega0_Oe_per_J: float = 0.0,
+        fit_chi_scale: bool = False,
+        initial_chi_scale: float = 1.0,
         allow_edge: bool = False,
     ) -> ThieleFJFitResult:
-        """Fit CPP-model ``omega0`` and ``N`` to target ``f(J)`` data."""
+        """Fit CPP-model ``omega0`` and ``N`` (optionally ``chi_scale``) to target ``f(J)`` data."""
         mat = self._resolve_material(material)
         geo = self._resolve_geometry(geometry)
         p = self._infer_polarity() if polarity is None else int(np.sign(polarity) or 1)
@@ -465,6 +475,8 @@ class ThieleAnalyzer:
             initial_N=initial_N,
             fit_omega0_Oe_per_J=fit_omega0_Oe_per_J,
             initial_omega0_Oe_per_J=initial_omega0_Oe_per_J,
+            fit_chi_scale=fit_chi_scale,
+            initial_chi_scale=initial_chi_scale,
             allow_edge=allow_edge,
         )
 
@@ -483,6 +495,7 @@ class ThieleAnalyzer:
         n_grid: int = 300,
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
+        chi_scale: float = 1.0,
     ) -> ThieleOptimizationResult:
         """Optimize DC current density to match target frequency."""
         model, _, _ = self._build_cpp_model(
@@ -494,6 +507,7 @@ class ThieleAnalyzer:
             omega0_Oe_per_J=omega0_Oe_per_J,
             field=field,
             field_cal=field_cal,
+            chi_scale=chi_scale,
         )
         return model.optimize_current_for_target_frequency(
             target_frequency_hz,

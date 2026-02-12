@@ -580,6 +580,13 @@ class BatchTransmissionResult:
         if verbose:
             print(f"  extent: {extent}")
 
+        # Remove kittel-related parameters from kwargs before passing to imshow
+        # (they are handled separately below for overlay)
+        kwargs_for_imshow = {
+            k: v for k, v in kwargs.items() 
+            if not k.startswith('kittel')
+        }
+
         img = ax.imshow(
             plot_data,
             aspect="auto",
@@ -589,7 +596,7 @@ class BatchTransmissionResult:
             vmin=vmin,
             vmax=vmax,
             interpolation=interpolation,
-            **kwargs,
+            **kwargs_for_imshow,
         )
 
         # Labels and formatting
