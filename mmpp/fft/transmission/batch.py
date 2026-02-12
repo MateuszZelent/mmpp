@@ -737,7 +737,7 @@ class BatchTransmissionResult:
             except Exception as e:
                 log.warning(f"Failed to mark position on reference axis: {e}")
 
-        # Overlay Kittel FMR line if provided
+        # Overlay Kittel FMR points if provided
         if kittel is not None:
             try:
                 from ...analytical.base import FMRResult
@@ -745,11 +745,10 @@ class BatchTransmissionResult:
 
                 if isinstance(kittel, FMRResult):
                     fmr_params = kittel.params
-                    # Use raw (unscaled) param values as B field
+                    # Use actual B values from data (not interpolated)
                     B_values = param_values_scaled / param_scale  # back to original
-                    B_fine = np.linspace(B_values.min(), B_values.max(), 500)
                     fmr_result = kittel_func(
-                        B=B_fine,
+                        B=B_values,
                         Ms=fmr_params["Ms"],
                         Ku=fmr_params.get("Ku", 0.0),
                         g=fmr_params.get("g", 2.0),
@@ -758,19 +757,21 @@ class BatchTransmissionResult:
                     from .plot import FREQ_SCALE
                     freq_scale = FREQ_SCALE.get(freq_unit, 1e-9)
                     f_plot = fmr_result.f * 1e9 * freq_scale  # GHz -> Hz -> unit
-                    B_plot = B_fine * param_scale
-                    ax.plot(
+                    B_plot = B_values * param_scale
+                    ax.scatter(
                         B_plot,
                         f_plot,
                         color=kittel_color,
-                        linestyle=kittel_linestyle,
-                        linewidth=kittel_linewidth,
+                        s=kittel_linewidth * 20,  # convert linewidth to marker size
+                        marker='o',
                         label=kittel_label,
                         zorder=10,
+                        edgecolors='white',
+                        linewidths=0.5,
                     )
                     ax.legend(loc="upper left", fontsize=10)
                     if verbose:
-                        print(f"  Kittel FMR overlay: B=[{B_fine[0]:.4f}, {B_fine[-1]:.4f}] T")
+                        print(f"  Kittel FMR points: B=[{B_values[0]:.4f}, {B_values[-1]:.4f}] T ({len(B_values)} points)")
                         print(f"  Kittel f range: [{f_plot.min():.2f}, {f_plot.max():.2f}] {freq_unit}")
                 else:
                     log.warning(
