@@ -211,3 +211,33 @@ def test_transmission_raw_fft_forces_post_fft_when_pre_fft_requested(tmp_path):
     assert result.config.spatial_window_mode == "post_fft"
     assert result.metadata.get("raw_fft_output") is True
     assert np.iscomplexobj(result.transmission)
+
+
+def test_transmission_visualize_mode_single_component_accepts_z_alias():
+    n_time = 12
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+    raw_fft = np.zeros((freqs.size, 1, 3, 4, 1), dtype=np.complex128)
+    raw_fft[2, 0, :, :, 0] = 1.0 + 0.0j
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(4, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=1e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    fig, ax, meta = result.visualize_mode(
+        f=float(freqs[2] * 1e-9),
+        freq_unit="GHz",
+        component="z",
+        colorbar=False,
+    )
+    assert ax is not None
+    assert meta["component_index"] == 0
+    assert meta["xy"].shape == (3, 4)
+    plt.close(fig)

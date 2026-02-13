@@ -1034,7 +1034,15 @@ class TransmissionResult:
             comp_idx = int(component)
 
         if comp_idx < 0 or comp_idx >= n_comp:
-            raise ValueError(f"component index {comp_idx} out of range for n_comp={n_comp}")
+            if n_comp == 1:
+                log.warning(
+                    "Requested component=%r resolved to index=%d but n_comp=1; using component index 0.",
+                    component,
+                    comp_idx,
+                )
+                comp_idx = 0
+            else:
+                raise ValueError(f"component index {comp_idx} out of range for n_comp={n_comp}")
 
         t_idx = int(np.clip(int(t_show), 0, n_time - 1))
 
