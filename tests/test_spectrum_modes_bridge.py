@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import matplotlib.pyplot as plt
 import numpy as np
 import zarr
 
@@ -7,6 +8,7 @@ import mmpp.fft.modes.interface as modes_interface_mod
 from mmpp.core.job import ZarrJobResult
 from mmpp.fft.modes.interface import FFTModeInterfaceNew
 from mmpp.fft.spectrum.result import SpectrumResult
+from mmpp.fft.transmission.compute import TransmissionConfig, TransmissionResult
 
 
 def test_spectrum_modes_bridge_interactive_passes_existing_spectrum_result():
@@ -124,8 +126,71 @@ def test_transmission_and_dispersion_help_accessors_are_exposed(tmp_path):
     t_help = job.fft.transmission.help
     assert callable(t_help.compute)
     assert callable(t_help.plot_transmission)
+    assert callable(t_help.visualize_mode)
+    assert callable(t_help.visualize_modes)
 
     d_help = job.fft.dispersion.help
     assert callable(d_help.compute_1d)
     assert callable(d_help.compute_2d)
     assert hasattr(d_help, "filters")
+
+
+def test_transmission_result_visualize_mode_reconstructs_frequency_bin():
+    n_time = 16
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+
+    raw_fft = np.zeros((freqs.size, 1, 2, 5, 3), dtype=np.complex128)
+    raw_fft[3, 0, :, :, 2] = 1.0 + 0.5j
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(5, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=1e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    fig, ax, meta = result.visualize_mode(
+        f=float(freqs[3] * 1e-9),
+        freq_unit="GHz",
+        component="z",
+        copy_y=2,
+        colorbar=False,
+        x_lines=[1.0, 3.0],
+        x_lines_in_index=True,
+    )
+
+    assert ax is not None
+    assert meta["k"] == 3
+    assert meta["xy"].shape == (4, 5)
+    assert np.isfinite(meta["xy"]).all()
+    plt.close(fig)
+
+
+def test_transmission_help_visualize_mode_works_with_precomputed_result(tmp_path):
+    job = _create_fft_job(tmp_path)
+    result = job.fft.transmission(
+        raw_fft_output=True,
+        y_integration_mode="none",
+        normalize="none",
+        average_mode="none",
+        spatial_window=1,
+        spatial_step=1,
+        use_cache=False,
+    )
+
+    target_ghz = float(result.frequencies[1] * 1e-9)
+    fig, ax, meta = job.fft.transmission.help.visualize_mode(
+        f=target_ghz,
+        result=result,
+        colorbar=False,
+    )
+
+    assert ax is not None
+    assert isinstance(meta["k"], int)
+    assert np.isfinite(meta["xy"]).all()
+    plt.close(fig)

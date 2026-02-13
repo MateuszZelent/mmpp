@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 import math
@@ -869,6 +869,359 @@ class TransmissionResult:
             return fig, ax, minima_freqs
         else:
             return fig, ax
+
+    def visualize_mode(
+        self,
+        f: Optional[float] = None,
+        *,
+        k: Optional[int] = None,
+        freq_unit: str = "GHz",
+        t_show: int = 0,
+        z_layer: int = 0,
+        component: Union[int, str] = "z",
+        y_slice: Optional[slice] = None,
+        copy_y: int = 1,
+        mode: str = "real",
+        vlim_scale: float = 0.1,
+        ax=None,
+        figsize: tuple[float, float] = (13.0, 4.5),
+        dpi: int = 100,
+        aspect: str = "auto",
+        origin: str = "lower",
+        cmap: Optional[str] = None,
+        colorbar: bool = True,
+        interpolation: str = "nearest",
+        x_unit: str = "nm",
+        x_lines: Optional[Sequence[float]] = None,
+        x_lines_in_index: bool = False,
+        separator_lines: bool = True,
+        separator_style: str = "--",
+        separator_color: str = "black",
+        separator_linewidth: float = 1.0,
+        **imshow_kwargs,
+    ):
+        """Visualize reconstructed spin-wave mode for one selected frequency.
+
+        The method expects complex raw FFT output produced with
+        ``raw_fft_output=True`` in transmission compute.
+
+        Parameters
+        ----------
+        f : float, optional
+            Target frequency in ``freq_unit`` units (e.g. GHz).
+            Provide either ``f`` or ``k``.
+        k : int, optional
+            Direct frequency-bin index in rFFT array.
+        freq_unit : str, optional
+            Frequency unit for ``f`` ("Hz", "kHz", "MHz", "GHz"), default "GHz".
+        t_show : int, optional
+            Time index used after inverse FFT reconstruction, default 0.
+        z_layer : int, optional
+            Z-layer index, default 0.
+        component : int or str, optional
+            Magnetization component selector ("x"/"y"/"z" or index), default "z".
+        y_slice : slice, optional
+            Slice over Y axis before plotting.
+        copy_y : int, optional
+            Repeat the selected Y block vertically for easier visual inspection.
+        mode : str, optional
+            Rendered value: "real", "imag", "abs", or "phase".
+        vlim_scale : float, optional
+            Symmetric clipping factor for "real"/"imag" modes.
+            ``vlim = max(abs(data)) * vlim_scale``.
+        ax : matplotlib.axes.Axes, optional
+            Existing axes. If None, create a new figure/axes.
+        figsize : tuple, optional
+            Figure size used when ``ax is None``.
+        dpi : int, optional
+            Figure DPI used when ``ax is None``.
+        x_unit : str, optional
+            X-axis unit ("index", "m", "um", "nm"), default "nm".
+        x_lines : sequence of float, optional
+            Vertical reference lines. Values are interpreted in ``x_unit``
+            unless ``x_lines_in_index=True``.
+
+        Returns
+        -------
+        fig, ax, dict
+            Figure, axes and metadata dictionary with selected bin/frequency and
+            reconstructed 2D array under ``meta["xy"]``.
+        """
+        import matplotlib.pyplot as plt
+
+        if (f is None) == (k is None):
+            raise ValueError("Provide exactly one selector: either f=... or k=...")
+
+        freqs = np.asarray(self.frequencies, dtype=float)
+        if freqs.ndim != 1 or freqs.size == 0:
+            raise ValueError("TransmissionResult.frequencies must be a non-empty 1D array")
+
+        spectrum = np.asarray(self.transmission)
+        if not np.iscomplexobj(spectrum):
+            raise ValueError(
+                "visualize_mode requires complex raw FFT data. "
+                "Recompute transmission with raw_fft_output=True."
+            )
+        if spectrum.ndim not in (4, 5):
+            raise ValueError(
+                "Expected raw spectrum shape (freq,z,x,comp) or (freq,z,y,x,comp); "
+                f"got {spectrum.shape}"
+            )
+
+        if k is None:
+            unit_scales = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
+            freq_scale = unit_scales.get(str(freq_unit).lower())
+            if freq_scale is None:
+                raise ValueError(
+                    f"Unsupported freq_unit={freq_unit!r}. Use one of {list(unit_scales)}."
+                )
+            target_hz = float(f) * freq_scale
+            k = int(np.argmin(np.abs(freqs - target_hz)))
+        else:
+            k = int(k)
+            target_hz = float(freqs[k]) if 0 <= k < freqs.size else float("nan")
+
+        if k < 0 or k >= freqs.size:
+            raise ValueError(f"k={k} out of range [0, {freqs.size - 1}]")
+
+        n_time_meta = self.metadata.get("n_time")
+        try:
+            n_time = int(n_time_meta)
+        except (TypeError, ValueError):
+            n_time = int(2 * (freqs.size - 1))
+        if n_time <= 0:
+            raise ValueError("Unable to infer valid n_time for inverse FFT reconstruction")
+
+        filtered_fft = np.zeros_like(spectrum)
+        filtered_fft[k, ...] = spectrum[k, ...]
+        wave = np.fft.irfft(filtered_fft, n=n_time, axis=0)
+
+        n_z = wave.shape[1]
+        z_idx = int(z_layer)
+        if z_idx < 0:
+            z_idx += n_z
+        if z_idx < 0 or z_idx >= n_z:
+            raise ValueError(f"z_layer={z_layer} out of range for n_z={n_z}")
+
+        n_comp = wave.shape[-1]
+        if isinstance(component, str):
+            comp_alias = {
+                "x": 0,
+                "mx": 0,
+                "0": 0,
+                "y": 1,
+                "my": 1,
+                "1": 1,
+                "z": 2,
+                "mz": 2,
+                "2": 2,
+            }
+            key = component.lower().strip()
+            if key not in comp_alias:
+                raise ValueError(
+                    "Unsupported component string. Use one of: "
+                    "'x', 'y', 'z', 'mx', 'my', 'mz' or integer index."
+                )
+            comp_idx = comp_alias[key]
+        else:
+            comp_idx = int(component)
+
+        if comp_idx < 0 or comp_idx >= n_comp:
+            raise ValueError(f"component index {comp_idx} out of range for n_comp={n_comp}")
+
+        t_idx = int(np.clip(int(t_show), 0, n_time - 1))
+
+        if spectrum.ndim == 5:
+            y_selector = slice(None) if y_slice is None else y_slice
+            xy_complex = wave[t_idx, z_idx, y_selector, :, comp_idx]
+            if xy_complex.ndim == 1:
+                xy_complex = xy_complex[np.newaxis, :]
+        else:
+            xy_complex = wave[t_idx, z_idx, :, comp_idx][np.newaxis, :]
+
+        copy_y_int = int(copy_y)
+        if copy_y_int < 1:
+            raise ValueError("copy_y must be >= 1")
+        y_block = int(xy_complex.shape[0])
+        xy_complex_vis = (
+            np.tile(xy_complex, (copy_y_int, 1)) if copy_y_int > 1 else xy_complex
+        )
+
+        mode_key = str(mode).lower().strip()
+        if mode_key == "real":
+            xy_vis = np.real(xy_complex_vis)
+        elif mode_key in ("imag", "imaginary"):
+            xy_vis = np.imag(xy_complex_vis)
+        elif mode_key in ("abs", "magnitude"):
+            xy_vis = np.abs(xy_complex_vis)
+        elif mode_key == "phase":
+            xy_vis = np.angle(xy_complex_vis)
+        else:
+            raise ValueError("mode must be one of: 'real', 'imag', 'abs', 'phase'")
+
+        x_unit_key = str(x_unit).lower().strip()
+        if self.dx is None or x_unit_key in ("index", "idx", "cell", "cells"):
+            x_step = 1.0
+            x_unit_label = "index"
+        else:
+            x_scales = {"m": 1.0, "um": 1e6, "nm": 1e9}
+            if x_unit_key not in x_scales:
+                raise ValueError("x_unit must be one of: 'index', 'm', 'um', 'nm'")
+            x_step = float(self.dx) * float(x_scales[x_unit_key])
+            x_unit_label = x_unit_key
+
+        n_x = int(xy_vis.shape[1])
+        extent = [0.0, n_x * x_step, 0.0, float(xy_vis.shape[0])]
+
+        vmin = imshow_kwargs.pop("vmin", None)
+        vmax = imshow_kwargs.pop("vmax", None)
+        if vmin is None or vmax is None:
+            peak = float(np.max(np.abs(xy_vis))) if xy_vis.size > 0 else 0.0
+            if mode_key in ("real", "imag", "imaginary"):
+                vlim = peak * float(vlim_scale)
+                if not np.isfinite(vlim) or vlim <= 0:
+                    vlim = peak if peak > 0 else 1e-12
+                default_vmin, default_vmax = -vlim, +vlim
+            elif mode_key == "phase":
+                default_vmin, default_vmax = -np.pi, np.pi
+            else:
+                default_vmin, default_vmax = 0.0, peak if peak > 0 else 1e-12
+            if vmin is None:
+                vmin = default_vmin
+            if vmax is None:
+                vmax = default_vmax
+
+        if cmap is None:
+            if mode_key in ("abs", "magnitude"):
+                cmap = "inferno"
+            elif mode_key == "phase":
+                cmap = "twilight"
+            else:
+                cmap = "coolwarm"
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        else:
+            fig = ax.figure
+
+        img = ax.imshow(
+            xy_vis,
+            aspect=aspect,
+            origin=origin,
+            cmap=cmap,
+            interpolation=interpolation,
+            extent=extent,
+            vmin=vmin,
+            vmax=vmax,
+            **imshow_kwargs,
+        )
+
+        unit_scales_out = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
+        out_freq_scale = unit_scales_out.get(str(freq_unit).lower(), 1e9)
+        actual_freq_hz = float(freqs[k])
+        actual_freq_unit = actual_freq_hz / out_freq_scale
+
+        ax.set_title(
+            f"Mode @ f={actual_freq_unit:.4g} {freq_unit} (k={k}, t={t_idx}, z={z_idx})"
+        )
+        ax.set_xlabel(f"x [{x_unit_label}]")
+        ax.set_ylabel("y [index]")
+
+        if copy_y_int > 1 and separator_lines and y_block > 0:
+            for i in range(1, copy_y_int):
+                y_sep = i * y_block
+                ax.hlines(
+                    y=y_sep,
+                    xmin=extent[0],
+                    xmax=extent[1],
+                    colors=separator_color,
+                    linestyles=separator_style,
+                    linewidth=separator_linewidth,
+                )
+
+        if x_lines is not None:
+            for x_line in x_lines:
+                x_val = float(x_line)
+                if x_lines_in_index:
+                    x_val = x_val * x_step
+                ax.axvline(x_val, color="red", linewidth=1.1, alpha=0.9)
+
+        if colorbar:
+            cbar_label = {
+                "real": "Re(m)",
+                "imag": "Im(m)",
+                "imaginary": "Im(m)",
+                "abs": "|m|",
+                "magnitude": "|m|",
+                "phase": "arg(m) [rad]",
+            }[mode_key]
+            fig.colorbar(img, ax=ax, label=cbar_label)
+
+        meta = {
+            "k": int(k),
+            "frequency_hz": actual_freq_hz,
+            "requested_frequency_hz": float(target_hz),
+            "frequency_value": float(actual_freq_unit),
+            "frequency_unit": str(freq_unit),
+            "time_index": int(t_idx),
+            "n_time": int(n_time),
+            "z_index": int(z_idx),
+            "component_index": int(comp_idx),
+            "component": str(component),
+            "x_unit": x_unit_label,
+            "x_step": float(x_step),
+            "mode": mode_key,
+            "xy": xy_vis,
+            "xy_complex": xy_complex_vis,
+            "extent": extent,
+        }
+        return fig, ax, meta
+
+    def visualize_modes(
+        self,
+        frequencies: Sequence[float],
+        *,
+        freq_unit: str = "GHz",
+        ncols: int = 3,
+        figsize: Optional[tuple[float, float]] = None,
+        dpi: int = 100,
+        colorbar: bool = False,
+        **kwargs,
+    ):
+        """Plot reconstructed mode maps for multiple selected frequencies."""
+        import matplotlib.pyplot as plt
+
+        freq_list = [float(v) for v in frequencies]
+        if not freq_list:
+            raise ValueError("frequencies must contain at least one value")
+
+        ncols_int = max(1, int(ncols))
+        nrows = int(math.ceil(len(freq_list) / float(ncols_int)))
+        if figsize is None:
+            figsize = (5.6 * ncols_int, 4.1 * nrows)
+
+        fig, axes = plt.subplots(nrows, ncols_int, figsize=figsize, dpi=dpi, squeeze=False)
+        axes_flat = axes.reshape(-1)
+        used_axes = []
+        metas = []
+
+        for idx, freq_val in enumerate(freq_list):
+            axis = axes_flat[idx]
+            _, _, meta = self.visualize_mode(
+                f=freq_val,
+                freq_unit=freq_unit,
+                ax=axis,
+                colorbar=colorbar,
+                **kwargs,
+            )
+            used_axes.append(axis)
+            metas.append(meta)
+
+        for idx in range(len(freq_list), axes_flat.size):
+            fig.delaxes(axes_flat[idx])
+
+        fig.tight_layout()
+        return fig, used_axes, metas
 
 
 def _compute_hann_weights(length: int, power: float) -> np.ndarray:
@@ -1784,6 +2137,7 @@ class TransmissionCompute:
                     "dataset": dataset,
                     "z_layer": config.z_layer,
                     "time_step": dt,
+                    "n_time": int(n_time),
                     "raw_fft_output": True,
                     "fft_shape": full_spectrum.shape,
                 }
@@ -2279,6 +2633,7 @@ class TransmissionCompute:
             "window_size": window_size,
             "window_step": step,
             "time_step": dt,
+            "n_time": int(n_time),
             "method": config.method,
         }
         metadata.update(config.metadata)

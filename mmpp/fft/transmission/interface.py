@@ -65,8 +65,27 @@ class FFTTransmissionHelpAccessor:
             ["job[0].fft.transmission.help.plot_transmission(save=False)"],
         )
 
+    @property
+    def visualize_mode(self) -> CallableMethodHelper:
+        return self._method(
+            "visualize_mode",
+            "Reconstruct and plot 2D spin-wave mode for selected frequency.",
+            ["job[0].fft.transmission.help.visualize_mode(f=2.5)"],
+        )
+
+    @property
+    def visualize_modes(self) -> CallableMethodHelper:
+        return self._method(
+            "visualize_modes",
+            "Batch mode visualization for multiple selected frequencies.",
+            ["job[0].fft.transmission.help.visualize_modes([2.2, 2.5, 2.8])"],
+        )
+
     def __repr__(self) -> str:
-        return "<FFTTransmissionHelpAccessor: compute, call, plot_transmission>"
+        return (
+            "<FFTTransmissionHelpAccessor: compute, call, plot_transmission, "
+            "visualize_mode, visualize_modes>"
+        )
 
 
 class FFTTransmissionInterface:
@@ -294,6 +313,82 @@ class FFTTransmissionInterface:
         )
         return result.plot_transmission(plot_config=plot_config)
 
+    def visualize_mode(
+        self,
+        f: Optional[float] = None,
+        *,
+        k: Optional[int] = None,
+        result: Optional[TransmissionResult] = None,
+        compute_kwargs: Optional[dict[str, Any]] = None,
+        save: bool = False,
+        cache_path: Optional[Union[str, Path]] = None,
+        force: bool = False,
+        use_cache: bool = True,
+        **visualize_kwargs,
+    ):
+        """Compute (if needed) and visualize single-frequency spin-wave mode.
+
+        Parameters
+        ----------
+        f, k
+            Frequency selector forwarded to :meth:`TransmissionResult.visualize_mode`.
+        result : TransmissionResult, optional
+            Existing raw transmission result. If omitted, this method computes one.
+        compute_kwargs : dict, optional
+            Extra arguments passed to :meth:`__call__` when ``result`` is not provided.
+            Useful for overriding defaults (filters, datasets, cache options, etc.).
+        save, cache_path, force, use_cache
+            Cache controls used only when auto-computing ``result``.
+        **visualize_kwargs
+            Extra arguments forwarded to :meth:`TransmissionResult.visualize_mode`.
+        """
+        if result is None:
+            compute_args = dict(compute_kwargs or {})
+            compute_args.setdefault("raw_fft_output", True)
+            compute_args.setdefault("y_integration_mode", "none")
+            compute_args.setdefault("normalize", "none")
+            compute_args.setdefault("average_mode", "none")
+            compute_args.setdefault("spatial_window", 1)
+            compute_args.setdefault("spatial_step", 1)
+            result = self.__call__(
+                save=save,
+                cache_path=cache_path,
+                force=force,
+                use_cache=use_cache,
+                **compute_args,
+            )
+        return result.visualize_mode(f=f, k=k, **visualize_kwargs)
+
+    def visualize_modes(
+        self,
+        frequencies,
+        *,
+        result: Optional[TransmissionResult] = None,
+        compute_kwargs: Optional[dict[str, Any]] = None,
+        save: bool = False,
+        cache_path: Optional[Union[str, Path]] = None,
+        force: bool = False,
+        use_cache: bool = True,
+        **visualize_kwargs,
+    ):
+        """Compute (if needed) and visualize multiple selected frequencies."""
+        if result is None:
+            compute_args = dict(compute_kwargs or {})
+            compute_args.setdefault("raw_fft_output", True)
+            compute_args.setdefault("y_integration_mode", "none")
+            compute_args.setdefault("normalize", "none")
+            compute_args.setdefault("average_mode", "none")
+            compute_args.setdefault("spatial_window", 1)
+            compute_args.setdefault("spatial_step", 1)
+            result = self.__call__(
+                save=save,
+                cache_path=cache_path,
+                force=force,
+                use_cache=use_cache,
+                **compute_args,
+            )
+        return result.visualize_modes(frequencies, **visualize_kwargs)
+
     # ------------------------------------------------------------------
     # Rich / basic representation helpers
     # ------------------------------------------------------------------
@@ -320,6 +415,8 @@ class FFTTransmissionInterface:
             "  • transmission()       - Compute transmission analysis",
             "  • compute()           - Alias for transmission()",
             "  • plot_transmission() - Compute and plot results",
+            "  • visualize_mode()    - Reconstruct and plot single-frequency mode",
+            "  • visualize_modes()   - Plot multiple selected frequencies",
             "",
             "📋 USAGE EXAMPLES:",
             "─" * 50,
@@ -337,6 +434,9 @@ class FFTTransmissionInterface:
             "  fig, ax, m = result.plot_transmission(",
             "      plot_config=dict(freq_unit='GHz', log_scale=True)",
             "  )",
+            "  ",
+            "  # Spin-wave mode visualization (auto raw FFT compute)",
+            "  fig, ax, meta = job[0].fft.transmission.visualize_mode(f=2.5)",
             "",
             "⚙️ CONFIGURATION PARAMETERS (with available options):",
             "─" * 50,
