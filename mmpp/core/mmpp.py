@@ -709,7 +709,9 @@ class MMPP:
                 
                 # Filter out path from attributes
                 attrs = {k: v for k, v in row.items() if k != "path"}
-                self.zarr_results.append(ZarrJobResult(path, attrs))
+                result = ZarrJobResult(path, attrs)
+                result._set_mmpp_ref(self)
+                self.zarr_results.append(result)
                 valid_paths.append(path)
             
             # Update DataFrame with valid paths only
@@ -757,7 +759,9 @@ class MMPP:
         self.zarr_results = []
         for res in scan_results:
             if res.error is None:
-                self.zarr_results.append(ZarrJobResult(res.path, res.attributes))
+                result = ZarrJobResult(res.path, res.attributes)
+                result._set_mmpp_ref(self)
+                self.zarr_results.append(result)
 
         self._save_database()
         return self.df

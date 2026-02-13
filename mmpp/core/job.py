@@ -679,8 +679,6 @@ class ZarrJobResult:
             raise ImportError(
                 "FFT functionality not available. Check fft module import."
             )
-        if self._mmpp_ref is None:
-            raise ValueError("MMPP reference not set. Use results from MMPP instance.")
         from ..fft import FFT
         return FFT(self, self._mmpp_ref)
 

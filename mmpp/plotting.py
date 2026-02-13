@@ -241,9 +241,19 @@ class PlotterProxy:
             # Return BatchOperations for slice
             from .batch_operations import BatchOperations
             sliced_results = self.results[index]
+            if self.mmpp_instance is not None:
+                for res in sliced_results:
+                    setter = getattr(res, "_set_mmpp_ref", None)
+                    if callable(setter):
+                        setter(self.mmpp_instance)
             return BatchOperations(sliced_results, self.mmpp_instance)
-        
-        return self.results[index]
+
+        result = self.results[index]
+        if self.mmpp_instance is not None:
+            setter = getattr(result, "_set_mmpp_ref", None)
+            if callable(setter):
+                setter(self.mmpp_instance)
+        return result
     
     def __len__(self) -> int:
         """Return number of results."""
@@ -251,7 +261,14 @@ class PlotterProxy:
     
     def __iter__(self):
         """Make PlotterProxy iterable."""
-        return iter(self.results)
+        if self.mmpp_instance is not None:
+            for res in self.results:
+                setter = getattr(res, "_set_mmpp_ref", None)
+                if callable(setter):
+                    setter(self.mmpp_instance)
+                yield res
+            return
+        yield from self.results
 
     def __repr__(self) -> str:
         """String representation of the proxy."""
