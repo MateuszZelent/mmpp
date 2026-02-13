@@ -45,6 +45,11 @@ class SpectrumResult:
         return np.asarray(self.frequencies, dtype=float) * 1e-9
 
     @property
+    def freqs(self) -> np.ndarray:
+        """Alias for :attr:`frequencies`."""
+        return self.frequencies
+
+    @property
     def power(self) -> np.ndarray:
         """Power spectrum ``|FFT|²``."""
         if self._power_override is not None:
@@ -69,6 +74,11 @@ class SpectrumResult:
     @property
     def complex(self) -> np.ndarray:
         """Raw complex spectrum data."""
+        return self.spectrum
+
+    @property
+    def data(self) -> np.ndarray:
+        """Alias for :attr:`spectrum`."""
         return self.spectrum
 
     @property

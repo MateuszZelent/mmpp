@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from ...cli.logging_config import get_mmpp_logger
+from ..method_helpers import CallableMethodHelper
 
 from .cache import TransmissionCache
 from .compute import TransmissionCompute, TransmissionConfig, TransmissionResult
@@ -14,6 +15,58 @@ from .plot import TransmissionPlotConfig, TransmissionPlotter
 
 
 log = get_mmpp_logger("mmpp.fft.transmission.interface")
+
+
+class FFTTransmissionHelpAccessor:
+    """Callable helper namespace for transmission workflows."""
+
+    def __init__(self, transmission: "FFTTransmissionInterface", owner: str = "fft.transmission"):
+        self._transmission = transmission
+        self._owner = owner
+
+    def _method(
+        self,
+        name: str,
+        description: str,
+        examples: list[str] | None = None,
+    ) -> CallableMethodHelper:
+        target = getattr(self._transmission, name)
+        return CallableMethodHelper(
+            owner=self._owner,
+            name=name,
+            target=target,
+            description=description,
+            examples=examples or [],
+        )
+
+    @property
+    def compute(self) -> CallableMethodHelper:
+        return self._method(
+            "compute",
+            "Compute transmission map (cache-aware alias of call).",
+            ["job[0].fft.transmission.help.compute(save=True)"],
+        )
+
+    @property
+    def call(self) -> CallableMethodHelper:
+        return CallableMethodHelper(
+            owner=self._owner,
+            name="__call__",
+            target=self._transmission,
+            description="Compute transmission map via callable interface.",
+            examples=["job[0].fft.transmission.help.call(save=True)"],
+        )
+
+    @property
+    def plot_transmission(self) -> CallableMethodHelper:
+        return self._method(
+            "plot_transmission",
+            "Compute and immediately plot transmission map.",
+            ["job[0].fft.transmission.help.plot_transmission(save=False)"],
+        )
+
+    def __repr__(self) -> str:
+        return "<FFTTransmissionHelpAccessor: compute, call, plot_transmission>"
 
 
 class FFTTransmissionInterface:
@@ -47,6 +100,16 @@ class FFTTransmissionInterface:
             dataset_name=dataset_name,
             slice_info=slice_info,
         )
+
+    @property
+    def helpers(self) -> FFTTransmissionHelpAccessor:
+        """Helper namespace for major transmission methods."""
+        return FFTTransmissionHelpAccessor(self, owner="fft.transmission")
+
+    @property
+    def help(self) -> FFTTransmissionHelpAccessor:
+        """Alias for :attr:`helpers`."""
+        return self.helpers
 
     def __call__(
         self,

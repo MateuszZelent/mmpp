@@ -65,9 +65,25 @@ class ModeDataContext:
         # Check last element for component index
         if len(self.slice_info) > 0:
             last = self.slice_info[-1]
-            if isinstance(last, int) and 0 <= last <= 2:
-                self.component_index = last
-                log.debug(f"Extracted component index {last} from slice_info")
+            if isinstance(last, (int, np.integer)):
+                idx = int(last)
+                if idx in (0, 1, 2):
+                    self.component_index = idx
+                    log.debug(f"Extracted component index {idx} from slice_info")
+                elif idx == -1:
+                    self.component_index = 2
+                    log.debug("Extracted component index 2 (from -1) from slice_info")
+            elif isinstance(last, slice):
+                step = 1 if last.step is None else int(last.step)
+                if step == 1 and isinstance(last.start, (int, np.integer)):
+                    start = int(last.start)
+                    if start in (0, 1, 2) and isinstance(last.stop, (int, np.integer)):
+                        if int(last.stop) == start + 1:
+                            self.component_index = start
+                            log.debug(f"Extracted component index {start} from singleton slice_info")
+                    elif start == -1 and last.stop is None:
+                        self.component_index = 2
+                        log.debug("Extracted component index 2 from slice_info[-1:None]")
         
         # Check first element for time slice
         if len(self.slice_info) > 0:

@@ -132,6 +132,19 @@ class DatasetSpecificFFT:
 
         return SpectrumFilterChain(self.spectrum, filters)
 
+    @property
+    def helpers(self):
+        """Helper namespace with dataset/slice-aware method wrappers."""
+        from ..fft.core import FFTHelpAccessor
+
+        owner = f"{self.dataset_name}.fft"
+        return FFTHelpAccessor(self, owner=owner)
+
+    @property
+    def help(self):
+        """Alias for :attr:`helpers`."""
+        return self.helpers
+
     def __repr__(self):
         """Concise text representation."""
         dataset = self.dataset_name

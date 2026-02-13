@@ -14,6 +14,8 @@ from typing import Any, Optional, Union
 import logging
 import numpy as np
 
+from ..method_helpers import CallableMethodHelper
+
 log = logging.getLogger("mmpp.fft.modes")
 
 # Cache schema version - bump when cached results are no longer compatible
@@ -487,6 +489,113 @@ job[0].fft.modes.interactive_spectrum(toolbar=False, auto_animate=True)'''
             return "interactive_spectrum(...) - Interactive spectrum with mode visualization. Call with () to execute."
 
 
+class FFTModesHelpAccessor:
+    """Callable helper namespace for major mode-interface methods."""
+
+    def __init__(self, modes: "FFTModeInterfaceNew", owner: str = "fft.modes"):
+        self._modes = modes
+        self._owner = owner
+
+    def _method(
+        self,
+        name: str,
+        description: str,
+        examples: list[str] | None = None,
+    ) -> CallableMethodHelper:
+        target = getattr(self._modes, name)
+        return CallableMethodHelper(
+            owner=self._owner,
+            name=name,
+            target=target,
+            description=description,
+            examples=examples or [],
+        )
+
+    @property
+    def configure(self) -> CallableMethodHelper:
+        return self._method(
+            "configure",
+            "Configure tmax/cache/filter defaults for cloned interface.",
+            ["job[0].fft.modes.help.configure(tmax=500)"],
+        )
+
+    @property
+    def filters(self) -> CallableMethodHelper:
+        return self._method(
+            "filters",
+            "Apply fluent interactive-spectrum filters on a cloned interface.",
+            ["job[0].fft.modes.help.filters(freq_min=2.0, normalize=True)"],
+        )
+
+    @property
+    def clear_filters(self) -> CallableMethodHelper:
+        return self._method(
+            "clear_filters",
+            "Reset fluent filters while preserving dataset/config context.",
+            ["job[0].fft.modes.help.clear_filters()"],
+        )
+
+    @property
+    def mode(self) -> CallableMethodHelper:
+        return self._method(
+            "mode",
+            "Get mode object at frequency (GHz) with .plot helpers.",
+            ["job[0].fft.modes.help.mode(f=9.5)"],
+        )
+
+    @property
+    def plot(self) -> CallableMethodHelper:
+        return self._method(
+            "plot",
+            "Plot filtered FMR spectrum.",
+            ["job[0].fft.modes.help.plot(show=False)"],
+        )
+
+    @property
+    def plot_modes(self) -> CallableMethodHelper:
+        return self._method(
+            "plot_modes",
+            "Legacy static mode-grid plotting.",
+            ["job[0].fft.modes.help.plot_modes(frequency=9.5)"],
+        )
+
+    @property
+    def interactive_spectrum(self):
+        """Return existing interactive-spectrum helper."""
+        return self._modes.interactive_spectrum
+
+    @property
+    def compute_modes(self) -> CallableMethodHelper:
+        return self._method(
+            "compute_modes",
+            "Compute or recompute mode datasets in zarr.",
+            ["job[0].fft.modes.help.compute_modes(force=True)"],
+        )
+
+    @property
+    def characterize_mode(self) -> CallableMethodHelper:
+        return self._method(
+            "characterize_mode",
+            "Characterize and classify mode at frequency.",
+            ["job[0].fft.modes.help.characterize_mode(frequency=9.5)"],
+        )
+
+    @property
+    def save_modes_animation(self) -> CallableMethodHelper:
+        return self._method(
+            "save_modes_animation",
+            "Export temporal/frequency mode animation.",
+            ["job[0].fft.modes.help.save_modes_animation(frequency=9.5, save_path='mode.gif')"],
+        )
+
+    def __repr__(self) -> str:
+        return (
+            "<FFTModesHelpAccessor: configure, filters, clear_filters, mode, plot, "
+            "plot_modes, interactive_spectrum, compute_modes, characterize_mode, "
+            "save_modes_animation>"
+        )
+
+
 class FFTModeInterfaceNew:
     """Enhanced FFT interface with mode visualization capabilities.
     
@@ -557,8 +666,21 @@ class FFTModeInterfaceNew:
         """Extract component index from slice_context."""
         if self._slice_context and isinstance(self._slice_context, tuple):
             last = self._slice_context[-1]
-            if isinstance(last, int) and 0 <= last <= 2:
-                return last
+            if isinstance(last, (int, np.integer)):
+                idx = int(last)
+                if idx in (0, 1, 2):
+                    return idx
+                if idx == -1:
+                    return 2
+            if isinstance(last, slice):
+                step = 1 if last.step is None else int(last.step)
+                if step == 1 and isinstance(last.start, (int, np.integer)):
+                    start = int(last.start)
+                    if start in (0, 1, 2) and isinstance(last.stop, (int, np.integer)):
+                        if int(last.stop) == start + 1:
+                            return start
+                    if start == -1 and last.stop is None:
+                        return 2
         return None
     
     @property
@@ -574,6 +696,16 @@ class FFTModeInterfaceNew:
     def last_result(self) -> Optional[Any]:
         """Get the result from the most recent computation."""
         return self._last_result
+
+    @property
+    def helpers(self) -> FFTModesHelpAccessor:
+        """Helper namespace for major modes-interface methods."""
+        return FFTModesHelpAccessor(self, owner=f"{self.dataset_name}.fft.modes")
+
+    @property
+    def help(self) -> FFTModesHelpAccessor:
+        """Alias for :attr:`helpers`."""
+        return self.helpers
     
     def configure(
         self,
@@ -620,7 +752,7 @@ class FFTModeInterfaceNew:
         return clone
     
     def _clone(self) -> "FFTModeInterfaceNew":
-        """Create a shallow clone preserving configuration."""
+        """Create a shallow clone preserving runtime/configuration state."""
         clone = FFTModeInterfaceNew(self.fft_result_index, self.parent_fft)
         clone._dataset_context = self._dataset_context
         clone._slice_context = self._slice_context
@@ -628,6 +760,11 @@ class FFTModeInterfaceNew:
         clone._filters_config = copy.deepcopy(self._filters_config) if self._filters_config else None
         clone._cache_dir = self._cache_dir
         clone._memory_cache = self._memory_cache  # Share memory cache
+        clone._last_result = self._last_result
+        clone._data_loader = self._data_loader
+        clone._mode_analyzer = self._mode_analyzer
+        clone._interactive_filters = dict(self._interactive_filters)
+        clone._auto_compute_checked = self._auto_compute_checked
         return clone
     
     def _determine_tmax(self, default: int = 100) -> Optional[int]:
@@ -751,17 +888,6 @@ class FFTModeInterfaceNew:
             log.debug(f"Created data loader with dataset={self.dataset_name}, component={self.component_index}")
         
         return self._data_loader
-
-    def _clone(self) -> "FFTModeInterfaceNew":
-        """Create a shallow clone preserving context and fluent filters."""
-        clone = FFTModeInterfaceNew(self.fft_result_index, self.parent_fft)
-        clone._dataset_context = self._dataset_context
-        clone._slice_context = self._slice_context
-        clone._data_loader = self._data_loader
-        clone._mode_analyzer = self._mode_analyzer
-        clone._interactive_filters = dict(self._interactive_filters)
-        clone._auto_compute_checked = self._auto_compute_checked
-        return clone
 
     def filters(
         self,

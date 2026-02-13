@@ -11,6 +11,7 @@ import numpy as np
 
 # Import from our own modules
 from .compute_fft import FFTCompute, FFTComputeResult
+from .method_helpers import CallableMethodHelper
 from .plot import FFTPlotter
 from .spectrum.compute import build_cache_key, compute_fft_cached, format_slice_identifier
 from .transmission.interface import FFTTransmissionInterface
@@ -42,6 +43,107 @@ except ImportError:
     find_peaks_1d = None  # type: ignore
 
 from .spectrum import MultiSpectrumResult, SpectrumFilterChain, SpectrumHelper, SpectrumResult
+
+
+class FFTHelpAccessor:
+    """Callable helper namespace for major FFT API methods."""
+
+    def __init__(self, fft_like: Any, owner: str = "fft"):
+        self._fft = fft_like
+        self._owner = owner
+
+    def _method(
+        self,
+        name: str,
+        description: str,
+        examples: list[str] | None = None,
+    ) -> CallableMethodHelper:
+        target = getattr(self._fft, name)
+        return CallableMethodHelper(
+            owner=self._owner,
+            name=name,
+            target=target,
+            description=description,
+            examples=examples or [],
+        )
+
+    @property
+    def spectrum(self) -> CallableMethodHelper:
+        return self._method(
+            "spectrum",
+            "Compute FFT spectrum and return SpectrumResult.",
+            ["data.fft.help.spectrum()", "data.fft.help.spectrum(tmin=0, tmax=500)"],
+        )
+
+    @property
+    def filters(self) -> CallableMethodHelper:
+        return self._method(
+            "filters",
+            "Create fluent filter chain for spectrum workflows.",
+            ["data.fft.help.filters(remove_static=True).spectrum()"],
+        )
+
+    @property
+    def frequencies(self) -> CallableMethodHelper:
+        return self._method(
+            "frequencies",
+            "Return FFT frequency axis (Hz).",
+            ["data.fft.help.frequencies()"],
+        )
+
+    @property
+    def power(self) -> CallableMethodHelper:
+        return self._method(
+            "power",
+            "Return power spectrum |FFT|^2.",
+            ["data.fft.help.power()"],
+        )
+
+    @property
+    def magnitude(self) -> CallableMethodHelper:
+        return self._method(
+            "magnitude",
+            "Return amplitude spectrum |FFT|.",
+            ["data.fft.help.magnitude()"],
+        )
+
+    @property
+    def phase(self) -> CallableMethodHelper:
+        return self._method(
+            "phase",
+            "Return phase spectrum arg(FFT).",
+            ["data.fft.help.phase()"],
+        )
+
+    @property
+    def plot_spectrum(self) -> CallableMethodHelper:
+        return self._method(
+            "plot_spectrum",
+            "Legacy quick-look power plot (use spec.plot.spectrum for modular API).",
+            ["data.fft.help.plot_spectrum(log_scale=True)"],
+        )
+
+    @property
+    def plot_modes(self) -> CallableMethodHelper:
+        return self._method(
+            "plot_modes",
+            "Legacy static mode plot entrypoint (GHz).",
+            ["data.fft.help.plot_modes(frequency=9.5)"],
+        )
+
+    @property
+    def interactive_spectrum(self) -> CallableMethodHelper:
+        return self._method(
+            "interactive_spectrum",
+            "Legacy interactive spectrum entrypoint (prefer data.fft.modes).",
+            ["data.fft.help.interactive_spectrum(dpi=140)"],
+        )
+
+    def __repr__(self) -> str:
+        return (
+            "<FFTHelpAccessor: spectrum, filters, frequencies, power, magnitude, "
+            "phase, plot_spectrum, plot_modes, interactive_spectrum>"
+        )
 
 
 class FFT:
@@ -101,6 +203,16 @@ class FFT:
                 self.job_result,
             )
         return self._transmission_interface
+
+    @property
+    def helpers(self) -> FFTHelpAccessor:
+        """Helper namespace for major FFT methods."""
+        return FFTHelpAccessor(self, owner="fft")
+
+    @property
+    def help(self) -> FFTHelpAccessor:
+        """Alias for :attr:`helpers`."""
+        return self.helpers
 
     def _format_slice_identifier(self, slice_info: Optional[Any]) -> str:
         """Create a deterministic identifier for slice_info for caching/saving."""
@@ -337,23 +449,16 @@ class FFT:
 
                 log.info(f"Found {len(peak_indices)} peaks with prominence >= {min_prominence}")
 
-        # Try to determine if user selected a specific component
-        component_selected = False
+        # Determine whether a specific magnetization component was selected.
         component_label = None
-        if slice_info is not None:
-             # Look for component selection in the last dimension
-             # Typically slice_info is a tuple of slices/indices
-             if isinstance(slice_info, tuple) and len(slice_info) > 0:
-                 last_idx = slice_info[-1]
-                 if isinstance(last_idx, int):
-                     # User explicitly selected a specific component
-                     component_selected = True
-                     if last_idx == 0:
-                         component_label = r"$m_x$"
-                     elif last_idx == 1:
-                         component_label = r"$m_y$"
-                     elif last_idx == 2:
-                         component_label = r"$m_z$"
+        component_index = self._extract_component_index(slice_info)
+        component_selected = component_index is not None
+        if component_index == 0:
+            component_label = r"$m_x$"
+        elif component_index == 1:
+            component_label = r"$m_y$"
+        elif component_index == 2:
+            component_label = r"$m_z$"
         
         # Mark the spectrum result to indicate single-component selection
         result = SpectrumResult(
@@ -583,6 +688,51 @@ class FFT:
             return 1
 
         return n_timesteps
+
+    @staticmethod
+    def _extract_component_index(slice_info: Optional[Any]) -> Optional[int]:
+        """Extract selected component index from a dataset slice descriptor."""
+        if slice_info is None:
+            return None
+
+        entries = slice_info if isinstance(slice_info, tuple) else (slice_info,)
+        if not entries:
+            return None
+
+        last_entry = None
+        for entry in reversed(entries):
+            if entry is Ellipsis:
+                continue
+            last_entry = entry
+            break
+
+        if last_entry is None:
+            return None
+
+        if isinstance(last_entry, (int, np.integer)):
+            idx = int(last_entry)
+            if idx in (0, 1, 2):
+                return idx
+            if idx == -1:
+                return 2
+            return None
+
+        if isinstance(last_entry, slice):
+            step = 1 if last_entry.step is None else int(last_entry.step)
+            if step != 1:
+                return None
+
+            start = last_entry.start
+            stop = last_entry.stop
+            if isinstance(start, (int, np.integer)):
+                start_int = int(start)
+                if start_int in (0, 1, 2) and isinstance(stop, (int, np.integer)):
+                    if int(stop) == start_int + 1:
+                        return start_int
+                if start_int == -1 and stop is None:
+                    return 2
+
+        return None
 
     def power(
         self,

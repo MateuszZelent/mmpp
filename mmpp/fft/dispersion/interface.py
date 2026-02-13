@@ -34,6 +34,7 @@ except ImportError:
     _SCIPY_AVAILABLE = False
 
 from .core import SpinWaveAnalyzer, DispersionConfig
+from ..method_helpers import CallableMethodHelper
 from .models import DispersionResult1D, DispersionResult2D, DispersionBranch
 from .utils import (
     normalize_filter_config,
@@ -123,6 +124,85 @@ class _DispersionMethodHelper:
         return ""
 
 
+class FFTDispersionHelpAccessor:
+    """Callable helper namespace for major dispersion-analysis stages."""
+
+    def __init__(self, dispersion: "FFTDispersionInterface", owner: str = "fft.dispersion"):
+        self._dispersion = dispersion
+        self._owner = owner
+
+    def _method(
+        self,
+        name: str,
+        description: str,
+        examples: list[str] | None = None,
+    ) -> CallableMethodHelper:
+        target = getattr(self._dispersion, name)
+        return CallableMethodHelper(
+            owner=self._owner,
+            name=name,
+            target=target,
+            description=description,
+            examples=examples or [],
+        )
+
+    @property
+    def configure(self) -> CallableMethodHelper:
+        return self._method(
+            "configure",
+            "Configure dispersion defaults (dt, dx, component, tmax).",
+            ["job[0].fft.dispersion.help.configure(component='perp', tmax=800)"],
+        )
+
+    @property
+    def filters(self):
+        """Return existing rich helper for filter configuration."""
+        return self._dispersion.filters
+
+    @property
+    def compute_1d(self) -> CallableMethodHelper:
+        return self._method(
+            "compute_1d",
+            "Compute 1D dispersion relation S(k, f).",
+            ["job[0].fft.dispersion.help.compute_1d(axis='x', save=True)"],
+        )
+
+    @property
+    def compute_2d(self) -> CallableMethodHelper:
+        return self._method(
+            "compute_2d",
+            "Compute 2D dispersion relation S(kx, ky, f).",
+            ["job[0].fft.dispersion.help.compute_2d(component='perp')"],
+        )
+
+    @property
+    def plot_dispersion(self) -> CallableMethodHelper:
+        return self._method(
+            "plot_dispersion",
+            "Compute and plot 1D dispersion heatmap.",
+            ["job[0].fft.dispersion.help.plot_dispersion(axis='x', fmax=25)"],
+        )
+
+    @property
+    def plot_result(self):
+        """Return existing rich helper for plotting precomputed result."""
+        return self._dispersion.plot_result
+
+    @property
+    def dispersion_modes(self) -> CallableMethodHelper:
+        return self._method(
+            "dispersion_modes",
+            "Open Brillouin-zone folding and mode extraction workflow.",
+            ["job[0].fft.dispersion.help.dispersion_modes(lattice_constant_nm=470)"],
+        )
+
+    def __repr__(self) -> str:
+        return (
+            "<FFTDispersionHelpAccessor: configure, filters, compute_1d, compute_2d, "
+            "plot_dispersion, plot_result, dispersion_modes>"
+        )
+
+
 class FFTDispersionInterface:
     """
     Enhanced FFT interface with dispersion analysis capabilities.
@@ -170,6 +250,16 @@ class FFTDispersionInterface:
         else:
             clone._analyzer = None
         return clone
+
+    @property
+    def helpers(self) -> FFTDispersionHelpAccessor:
+        """Helper namespace for major dispersion methods."""
+        return FFTDispersionHelpAccessor(self, owner="fft.dispersion")
+
+    @property
+    def help(self) -> FFTDispersionHelpAccessor:
+        """Alias for :attr:`helpers`."""
+        return self.helpers
     
     @property
     def analyzer(self) -> SpinWaveAnalyzer:
