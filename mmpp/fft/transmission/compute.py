@@ -178,6 +178,13 @@ class TransmissionConfig:
             raise ValueError(
                 "method='cpsd' requires spatial_window_mode='post_fft' (window axis is needed)"
             )
+        if self.raw_fft_output and self.spatial_window_mode != "post_fft":
+            log.warning(
+                "raw_fft_output=True requires spatial_window_mode='post_fft'; "
+                "overriding spatial_window_mode=%r to 'post_fft'",
+                self.spatial_window_mode,
+            )
+            self.spatial_window_mode = "post_fft"
 
 
 @dataclass

@@ -194,3 +194,20 @@ def test_transmission_help_visualize_mode_works_with_precomputed_result(tmp_path
     assert isinstance(meta["k"], int)
     assert np.isfinite(meta["xy"]).all()
     plt.close(fig)
+
+
+def test_transmission_raw_fft_forces_post_fft_when_pre_fft_requested(tmp_path):
+    job = _create_fft_job(tmp_path)
+
+    result = job.fft.transmission(
+        raw_fft_output=True,
+        spatial_window_mode="pre_fft",
+        y_integration_mode="none",
+        use_cache=False,
+        force=True,
+    )
+
+    assert result.config.raw_fft_output is True
+    assert result.config.spatial_window_mode == "post_fft"
+    assert result.metadata.get("raw_fft_output") is True
+    assert np.iscomplexobj(result.transmission)
