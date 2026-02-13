@@ -901,6 +901,11 @@ class TransmissionResult:
         x_unit: str = "nm",
         x_lines: Optional[Sequence[float]] = None,
         x_lines_in_index: bool = False,
+        y_lines: Optional[Sequence[float]] = None,
+        y_spans: Optional[Sequence[tuple[float, float]]] = None,
+        y_span_color: str = "cyan",
+        y_span_alpha: float = 0.15,
+        flip_x: bool = True,
         separator_lines: bool = True,
         separator_style: str = "--",
         separator_color: str = "black",
@@ -1161,6 +1166,22 @@ class TransmissionResult:
                     x_val = x_val * x_step
                 ax.axvline(x_val, color="red", linewidth=1.1, alpha=0.9)
 
+        if y_lines is not None:
+            for y_line in y_lines:
+                ax.axhline(float(y_line), color="cyan", linewidth=1.1, linestyle="--", alpha=0.9)
+
+        if y_spans is not None:
+            for y0, y1 in y_spans:
+                ax.axhspan(
+                    float(y0),
+                    float(y1),
+                    color=y_span_color,
+                    alpha=float(y_span_alpha),
+                )
+
+        if flip_x:
+            ax.invert_xaxis()
+
         if colorbar:
             cbar_label = {
                 "real": "Re(m)",
@@ -1235,6 +1256,429 @@ class TransmissionResult:
         for idx in range(len(freq_list), axes_flat.size):
             fig.delaxes(axes_flat[idx])
 
+        fig.tight_layout()
+        return fig, used_axes, metas
+
+    def calculate_modes(
+        self,
+        f: Optional[Union[float, Sequence[float]]] = None,
+        *,
+        k: Optional[Union[int, Sequence[int]]] = None,
+        freq_unit: str = "GHz",
+        t_show: int = 0,
+        z_layer: int = 0,
+        component: Union[int, str] = "z",
+        y_slice: Optional[slice] = None,
+        copy_y: int = 1,
+    ) -> "TransmissionModesResult":
+        """Precompute reconstructed mode maps for selected frequencies/bins.
+
+        Parameters
+        ----------
+        f : float or sequence of float, optional
+            Frequency/frequencies in ``freq_unit`` units.
+        k : int or sequence of int, optional
+            Direct rFFT bin index/indices.
+        freq_unit : str, optional
+            Unit used for ``f`` and for visualization labels.
+        t_show, z_layer, component, y_slice, copy_y
+            Same semantics as :meth:`visualize_mode`.
+
+        Returns
+        -------
+        TransmissionModesResult
+            Container with precomputed complex mode maps and visualization helpers.
+        """
+        if (f is None) == (k is None):
+            raise ValueError("Provide exactly one selector: either f=... or k=...")
+
+        freqs = np.asarray(self.frequencies, dtype=float)
+        if freqs.ndim != 1 or freqs.size == 0:
+            raise ValueError("TransmissionResult.frequencies must be a non-empty 1D array")
+
+        spectrum = np.asarray(self.transmission)
+        if not np.iscomplexobj(spectrum):
+            raise ValueError(
+                "calculate_modes requires complex raw FFT data. "
+                "Recompute transmission with raw_fft_output=True."
+            )
+        if spectrum.ndim not in (4, 5):
+            raise ValueError(
+                "Expected raw spectrum shape (freq,z,x,comp) or (freq,z,y,x,comp); "
+                f"got {spectrum.shape}"
+            )
+
+        unit_scales = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
+        freq_scale = unit_scales.get(str(freq_unit).lower())
+        if freq_scale is None:
+            raise ValueError(
+                f"Unsupported freq_unit={freq_unit!r}. Use one of {list(unit_scales)}."
+            )
+
+        selected_bins: list[int] = []
+        requested_hz: list[float] = []
+        if f is not None:
+            freq_values = [float(f)] if np.isscalar(f) else [float(v) for v in f]
+            for f_val in freq_values:
+                hz = f_val * float(freq_scale)
+                selected_bins.append(int(np.argmin(np.abs(freqs - hz))))
+                requested_hz.append(float(hz))
+        else:
+            k_values = [int(k)] if np.isscalar(k) else [int(v) for v in k]
+            for k_val in k_values:
+                if k_val < 0 or k_val >= freqs.size:
+                    raise ValueError(f"k={k_val} out of range [0, {freqs.size - 1}]")
+                selected_bins.append(int(k_val))
+                requested_hz.append(float(freqs[k_val]))
+
+        n_time_meta = self.metadata.get("n_time")
+        try:
+            n_time = int(n_time_meta)
+        except (TypeError, ValueError):
+            n_time = int(2 * (freqs.size - 1))
+        if n_time <= 0:
+            raise ValueError("Unable to infer valid n_time for inverse FFT reconstruction")
+
+        n_z = int(spectrum.shape[1])
+        z_idx = int(z_layer)
+        if z_idx < 0:
+            z_idx += n_z
+        if z_idx < 0 or z_idx >= n_z:
+            raise ValueError(f"z_layer={z_layer} out of range for n_z={n_z}")
+
+        n_comp = int(spectrum.shape[-1])
+        if isinstance(component, str):
+            comp_alias = {
+                "x": 0,
+                "mx": 0,
+                "0": 0,
+                "y": 1,
+                "my": 1,
+                "1": 1,
+                "z": 2,
+                "mz": 2,
+                "2": 2,
+            }
+            key = component.lower().strip()
+            if key not in comp_alias:
+                raise ValueError(
+                    "Unsupported component string. Use one of: "
+                    "'x', 'y', 'z', 'mx', 'my', 'mz' or integer index."
+                )
+            comp_idx = int(comp_alias[key])
+        else:
+            comp_idx = int(component)
+
+        if comp_idx < 0 or comp_idx >= n_comp:
+            if n_comp == 1:
+                log.warning(
+                    "Requested component=%r resolved to index=%d but n_comp=1; using component index 0.",
+                    component,
+                    comp_idx,
+                )
+                comp_idx = 0
+            else:
+                raise ValueError(f"component index {comp_idx} out of range for n_comp={n_comp}")
+
+        t_idx = int(np.clip(int(t_show), 0, n_time - 1))
+        copy_y_int = int(copy_y)
+        if copy_y_int < 1:
+            raise ValueError("copy_y must be >= 1")
+
+        precomputed: list[dict[str, Any]] = []
+        y_selector = slice(None) if y_slice is None else y_slice
+
+        for k_idx, req_hz in zip(selected_bins, requested_hz):
+            filtered_fft = np.zeros_like(spectrum)
+            filtered_fft[k_idx, ...] = spectrum[k_idx, ...]
+            wave = np.fft.irfft(filtered_fft, n=n_time, axis=0)
+
+            if spectrum.ndim == 5:
+                xy_complex = wave[t_idx, z_idx, y_selector, :, comp_idx]
+                if xy_complex.ndim == 1:
+                    xy_complex = xy_complex[np.newaxis, :]
+            else:
+                xy_complex = wave[t_idx, z_idx, :, comp_idx][np.newaxis, :]
+
+            y_block = int(xy_complex.shape[0])
+            if copy_y_int > 1:
+                xy_complex = np.tile(xy_complex, (copy_y_int, 1))
+
+            precomputed.append(
+                {
+                    "k": int(k_idx),
+                    "frequency_hz": float(freqs[k_idx]),
+                    "requested_frequency_hz": float(req_hz),
+                    "frequency_value": float(freqs[k_idx] / freq_scale),
+                    "frequency_unit": str(freq_unit),
+                    "time_index": int(t_idx),
+                    "n_time": int(n_time),
+                    "z_index": int(z_idx),
+                    "component_index": int(comp_idx),
+                    "component": str(component),
+                    "xy_complex": np.asarray(xy_complex),
+                    "y_block": int(y_block),
+                    "copy_y": int(copy_y_int),
+                }
+            )
+
+        return TransmissionModesResult(
+            modes=precomputed,
+            dx=self.dx,
+            freq_unit=str(freq_unit),
+        )
+
+
+@dataclass
+class TransmissionModesResult:
+    """Precomputed transmission mode maps for selected frequencies."""
+
+    modes: list[dict[str, Any]]
+    dx: Optional[float] = None
+    freq_unit: str = "GHz"
+
+    def __len__(self) -> int:
+        return len(self.modes)
+
+    def __repr__(self) -> str:
+        return f"TransmissionModesResult(n_modes={len(self.modes)}, freq_unit={self.freq_unit!r})"
+
+    @property
+    def frequencies_hz(self) -> np.ndarray:
+        return np.asarray([float(m["frequency_hz"]) for m in self.modes], dtype=float)
+
+    def _mode_to_display(self, xy_complex: np.ndarray, mode: str) -> np.ndarray:
+        mode_key = str(mode).lower().strip()
+        if mode_key == "real":
+            return np.real(xy_complex)
+        if mode_key in ("imag", "imaginary"):
+            return np.imag(xy_complex)
+        if mode_key in ("abs", "magnitude"):
+            return np.abs(xy_complex)
+        if mode_key == "phase":
+            return np.angle(xy_complex)
+        raise ValueError("mode must be one of: 'real', 'imag', 'abs', 'phase'")
+
+    def _x_step(self, x_unit: str) -> tuple[float, str]:
+        x_key = str(x_unit).lower().strip()
+        if self.dx is None or x_key in ("index", "idx", "cell", "cells"):
+            return 1.0, "index"
+        scales = {"m": 1.0, "um": 1e6, "nm": 1e9}
+        if x_key not in scales:
+            raise ValueError("x_unit must be one of: 'index', 'm', 'um', 'nm'")
+        return float(self.dx) * float(scales[x_key]), x_key
+
+    def _select_indices(
+        self,
+        *,
+        index: Optional[int],
+        f: Optional[float],
+        k: Optional[int],
+        freq_unit: str,
+    ) -> list[int]:
+        if index is not None:
+            idx = int(index)
+            if idx < 0 or idx >= len(self.modes):
+                raise ValueError(f"index={idx} out of range [0, {len(self.modes) - 1}]")
+            return [idx]
+
+        if k is not None:
+            k_val = int(k)
+            for i, meta in enumerate(self.modes):
+                if int(meta["k"]) == k_val:
+                    return [i]
+            raise ValueError(f"Requested k={k_val} is not precomputed")
+
+        if f is not None:
+            unit_scales = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
+            scale = unit_scales.get(str(freq_unit).lower())
+            if scale is None:
+                raise ValueError(
+                    f"Unsupported freq_unit={freq_unit!r}. Use one of {list(unit_scales)}."
+                )
+            target_hz = float(f) * float(scale)
+            arr = np.asarray([float(m["frequency_hz"]) for m in self.modes], dtype=float)
+            return [int(np.argmin(np.abs(arr - target_hz)))]
+
+        if len(self.modes) == 1:
+            return [0]
+        return list(range(len(self.modes)))
+
+    def visualize(
+        self,
+        *,
+        index: Optional[int] = None,
+        f: Optional[float] = None,
+        k: Optional[int] = None,
+        freq_unit: Optional[str] = None,
+        mode: str = "real",
+        ncols: int = 3,
+        figsize: Optional[tuple[float, float]] = None,
+        dpi: int = 100,
+        aspect: str = "auto",
+        origin: str = "lower",
+        cmap: Optional[str] = None,
+        colorbar: bool = True,
+        interpolation: str = "nearest",
+        x_unit: str = "nm",
+        x_lines: Optional[Sequence[float]] = None,
+        x_lines_in_index: bool = False,
+        y_lines: Optional[Sequence[float]] = None,
+        y_spans: Optional[Sequence[tuple[float, float]]] = None,
+        y_span_color: str = "cyan",
+        y_span_alpha: float = 0.15,
+        flip_x: bool = True,
+        separator_lines: bool = True,
+        separator_style: str = "--",
+        separator_color: str = "black",
+        separator_linewidth: float = 1.0,
+        vlim_scale: float = 0.1,
+        **imshow_kwargs,
+    ):
+        """Visualize one or many precomputed mode maps."""
+        import matplotlib.pyplot as plt
+
+        if not self.modes:
+            raise ValueError("No precomputed modes available")
+
+        unit_out = str(freq_unit or self.freq_unit)
+        selected = self._select_indices(index=index, f=f, k=k, freq_unit=unit_out)
+        x_step, x_label = self._x_step(x_unit)
+        mode_key = str(mode).lower().strip()
+
+        if cmap is None:
+            if mode_key in ("abs", "magnitude"):
+                cmap = "inferno"
+            elif mode_key == "phase":
+                cmap = "twilight"
+            else:
+                cmap = "coolwarm"
+
+        def _plot_one(ax, meta: dict[str, Any]):
+            xy_complex = np.asarray(meta["xy_complex"])
+            xy_vis = self._mode_to_display(xy_complex, mode_key)
+
+            n_x = int(xy_vis.shape[1])
+            extent = [0.0, n_x * x_step, 0.0, float(xy_vis.shape[0])]
+
+            plot_kwargs = dict(imshow_kwargs)
+            vmin = plot_kwargs.pop("vmin", None)
+            vmax = plot_kwargs.pop("vmax", None)
+            if vmin is None or vmax is None:
+                peak = float(np.max(np.abs(xy_vis))) if xy_vis.size > 0 else 0.0
+                if mode_key in ("real", "imag", "imaginary"):
+                    vlim = peak * float(vlim_scale)
+                    if not np.isfinite(vlim) or vlim <= 0:
+                        vlim = peak if peak > 0 else 1e-12
+                    default_vmin, default_vmax = -vlim, +vlim
+                elif mode_key == "phase":
+                    default_vmin, default_vmax = -np.pi, np.pi
+                else:
+                    default_vmin, default_vmax = 0.0, peak if peak > 0 else 1e-12
+                if vmin is None:
+                    vmin = default_vmin
+                if vmax is None:
+                    vmax = default_vmax
+
+            img = ax.imshow(
+                xy_vis,
+                aspect=aspect,
+                origin=origin,
+                cmap=cmap,
+                interpolation=interpolation,
+                extent=extent,
+                vmin=vmin,
+                vmax=vmax,
+                **plot_kwargs,
+            )
+
+            out_scale = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}.get(
+                unit_out.lower(),
+                1e9,
+            )
+            f_disp = float(meta["frequency_hz"]) / float(out_scale)
+            ax.set_title(f"Mode @ f={f_disp:.4g} {unit_out} (k={meta['k']}, t={meta['time_index']})")
+            ax.set_xlabel(f"x [{x_label}]")
+            ax.set_ylabel("y [index]")
+
+            if x_lines is not None:
+                for x_line in x_lines:
+                    xv = float(x_line) * x_step if x_lines_in_index else float(x_line)
+                    ax.axvline(xv, color="red", linewidth=1.1, alpha=0.9)
+
+            if y_lines is not None:
+                for y_line in y_lines:
+                    ax.axhline(float(y_line), color="cyan", linewidth=1.1, linestyle="--", alpha=0.9)
+
+            if y_spans is not None:
+                for y0, y1 in y_spans:
+                    ax.axhspan(
+                        float(y0),
+                        float(y1),
+                        color=y_span_color,
+                        alpha=float(y_span_alpha),
+                    )
+
+            if flip_x:
+                ax.invert_xaxis()
+
+            if (
+                separator_lines
+                and int(meta.get("copy_y", 1)) > 1
+                and int(meta.get("y_block", 0)) > 0
+            ):
+                for i in range(1, int(meta["copy_y"])):
+                    y_sep = i * int(meta["y_block"])
+                    ax.hlines(
+                        y=y_sep,
+                        xmin=extent[0],
+                        xmax=extent[1],
+                        colors=separator_color,
+                        linestyles=separator_style,
+                        linewidth=separator_linewidth,
+                    )
+
+            if colorbar:
+                cbar_label = {
+                    "real": "Re(m)",
+                    "imag": "Im(m)",
+                    "imaginary": "Im(m)",
+                    "abs": "|m|",
+                    "magnitude": "|m|",
+                    "phase": "arg(m) [rad]",
+                }[mode_key]
+                ax.figure.colorbar(img, ax=ax, label=cbar_label)
+
+            result_meta = dict(meta)
+            result_meta["mode"] = mode_key
+            result_meta["xy"] = xy_vis
+            result_meta["x_unit"] = x_label
+            result_meta["x_step"] = float(x_step)
+            result_meta["extent"] = extent
+            return result_meta
+
+        if len(selected) == 1:
+            if figsize is None:
+                figsize = (13.0, 4.5)
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+            meta = _plot_one(ax, self.modes[selected[0]])
+            fig.tight_layout()
+            return fig, ax, meta
+
+        ncols_int = max(1, int(ncols))
+        nrows = int(math.ceil(len(selected) / float(ncols_int)))
+        if figsize is None:
+            figsize = (5.6 * ncols_int, 4.1 * nrows)
+        fig, axes = plt.subplots(nrows, ncols_int, figsize=figsize, dpi=dpi, squeeze=False)
+        axes_flat = axes.reshape(-1)
+        used_axes = []
+        metas = []
+        for i, idx in enumerate(selected):
+            ax = axes_flat[i]
+            metas.append(_plot_one(ax, self.modes[idx]))
+            used_axes.append(ax)
+        for i in range(len(selected), axes_flat.size):
+            fig.delaxes(axes_flat[i])
         fig.tight_layout()
         return fig, used_axes, metas
 
@@ -2742,4 +3186,5 @@ __all__ = [
     "TransmissionConfig",
     "TransmissionCompute",
     "TransmissionResult",
+    "TransmissionModesResult",
 ]

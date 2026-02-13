@@ -168,6 +168,7 @@ def test_transmission_result_visualize_mode_reconstructs_frequency_bin():
     assert meta["k"] == 3
     assert meta["xy"].shape == (4, 5)
     assert np.isfinite(meta["xy"]).all()
+    assert ax.xaxis_inverted()
     plt.close(fig)
 
 
@@ -193,6 +194,7 @@ def test_transmission_help_visualize_mode_works_with_precomputed_result(tmp_path
     assert ax is not None
     assert isinstance(meta["k"], int)
     assert np.isfinite(meta["xy"]).all()
+    assert ax.xaxis_inverted()
     plt.close(fig)
 
 
@@ -240,4 +242,56 @@ def test_transmission_visualize_mode_single_component_accepts_z_alias():
     assert ax is not None
     assert meta["component_index"] == 0
     assert meta["xy"].shape == (3, 4)
+    assert ax.xaxis_inverted()
     plt.close(fig)
+
+
+def test_transmission_calculate_modes_and_visualize_workflow():
+    n_time = 20
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+    raw_fft = np.zeros((freqs.size, 1, 3, 6, 1), dtype=np.complex128)
+    raw_fft[2, 0, :, :, 0] = 1.0 + 0.2j
+    raw_fft[4, 0, :, :, 0] = 0.6 + 0.3j
+    raw_fft[5, 0, :, :, 0] = 0.2 + 0.8j
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(6, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=2e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    modes = result.calculate_modes(
+        f=[float(freqs[2] * 1e-9), float(freqs[4] * 1e-9), float(freqs[5] * 1e-9)],
+        component=0,
+        t_show=0,
+    )
+    assert len(modes) == 3
+    assert modes.modes[0]["xy_complex"].shape == (3, 6)
+
+    fig, axes, metas = modes.visualize(
+        mode="real",
+        colorbar=False,
+        y_lines=[1],
+        y_spans=[(0.2, 1.8)],
+    )
+    assert len(axes) == 3
+    assert len(metas) == 3
+    assert metas[0]["xy"].shape == (3, 6)
+    assert axes[0].xaxis_inverted()
+    plt.close(fig)
+
+    fig_single, ax_single, meta_single = modes.visualize(
+        index=1,
+        colorbar=False,
+        flip_x=False,
+    )
+    assert ax_single is not None
+    assert meta_single["xy"].shape == (3, 6)
+    assert not ax_single.xaxis_inverted()
+    plt.close(fig_single)
