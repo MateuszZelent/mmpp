@@ -394,6 +394,21 @@ def _configure_system_path(ffmpeg_path: str, verbose: bool = True) -> None:
 
 
 # Make main classes available at package level
+# ─────────────────────────────────────────────────────────────────────
+# Thiele Interactive Dashboard (re-export from solitons module)
+# ─────────────────────────────────────────────────────────────────────
+try:
+    from .solitons.vortex.nonlinear.interactive import build_thiele_dashboard
+except ImportError:
+    # Fallback if solitons module not available
+    def build_thiele_dashboard(*args, **kwargs):
+        """Thiele interactive dashboard (solitons module required)."""
+        raise ImportError(
+            "build_thiele_dashboard requires solitons module. "
+            "Install with: pip install mmpp[solitons]"
+        )
+
+
 __all__ = [
     "MMPP",
     "ScanResult", 
@@ -409,6 +424,7 @@ __all__ = [
     "install_ffmpeg",  # FFmpeg installation
     "check_dependencies",  # Dependency checker
     "analytical",  # Analytical models module
+    "build_thiele_dashboard",  # Interactive Thiele dashboard
 ]
 
 # Feature availability flags

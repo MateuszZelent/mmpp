@@ -434,26 +434,91 @@ class ThieleTrajectoryResult(AnalyticalResult):
 
     @property
     def linewidth_ghz(self) -> float:
-        """Estimated linewidth (FWHM) from the power spectrum [GHz]."""
+        """Estimated linewidth (FWHM) from the power spectrum [GHz].
+        Uses a robust Lorentzian fit for noisy (SDE/micromagnetic) data, 
+        with a fallback to half-maximum counting for pure ODE trajectories.
+        """
         freqs, power = self._spectrum_cache
         if power.size < 3:
             return 0.0
+
         start = 1 if power.size > 1 else 0
         peak_idx = int(np.argmax(power[start:])) + start
-        half_max = power[peak_idx] / 2.0
-        # Find half-power crossings around the peak
+        f_peak = float(freqs[peak_idx])
+        p_max = float(power[peak_idx])
+        df = float(freqs[1] - freqs[0]) if len(freqs) > 1 else 0.0
+
+        # --- 1. Klasyczna metoda progowa (jako fallback i punkt startowy) ---
+        half_max = p_max / 2.0
         above = power >= half_max
-        # left edge
+
         left = peak_idx
         while left > start and above[left]:
             left -= 1
-        # right edge
+
         right = peak_idx
         while right < len(power) - 1 and above[right]:
             right += 1
-        df = float(freqs[1] - freqs[0]) if len(freqs) > 1 else 0.0
-        fwhm = float(right - left) * df
-        return fwhm * 1e-9
+
+        naive_fwhm = float(right - left) * df
+
+        # Jeśli widmo to absolutna "igła" (np. czyste ODE, brak szumu),
+        # metoda progowa jest optymalna - fitowanie nie ma tu sensu.
+        if naive_fwhm <= 2.0 * df or power.size < 10:
+            return naive_fwhm * 1e-9
+
+        # --- 2. Odporne na szum dopasowanie krzywej Lorentza ---
+        try:
+            import warnings
+
+            from scipy.optimize import curve_fit
+
+            # Wycinek okna częstotliwości (np. +/- 10 szerokości naiwnych, min. 200 MHz)
+            # Uodparnia to fit na artefakty 1/f i asymetrię przy 0 Hz.
+            window_hz = max(10.0 * naive_fwhm, 200e6)
+
+            mask = (freqs >= f_peak - window_hz) & (freqs <= f_peak + window_hz)
+            mask[:start] = False  # Zignoruj składową DC
+
+            f_win = freqs[mask]
+            p_win = power[mask]
+
+            if len(f_win) < 5:
+                return naive_fwhm * 1e-9
+
+            # Pracujemy w GHz, aby algorytm optymalizatora
+            # nie "zgłupiał" na gigantycznych wartościach f^2 (rzędu 10^18)
+            f_win_ghz = f_win * 1e-9
+            f_peak_ghz = f_peak * 1e-9
+
+            def lorentzian(f, f0, fwhm, amp, bg):
+                gamma = fwhm / 2.0
+                return amp * (gamma**2) / ((f - f0)**2 + gamma**2) + bg
+
+            bg_guess = float(np.median(p_win))
+            amp_guess = p_max - bg_guess
+            if amp_guess <= 0:
+                amp_guess = p_max
+
+            # Parametry początkowe: f0, fwhm, amplituda, background
+            p0 = [f_peak_ghz, naive_fwhm * 1e-9, amp_guess, bg_guess]
+
+            # Ograniczenia zapobiegające "rozjechaniu się" fita na niefizyczne wartości
+            bounds = (
+                [f_win_ghz[0], 0.0, 0.0, 0.0],
+                [f_win_ghz[-1], np.inf, np.inf, np.inf]
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                popt, _ = curve_fit(lorentzian, f_win_ghz, p_win, p0=p0, bounds=bounds, maxfev=2000)
+
+            fitted_fwhm_ghz = float(popt[1])
+            return fitted_fwhm_ghz
+
+        except Exception:
+            # Fallback w przypadku, gdy fit ze SciPy z jakiegoś powodu się nie powiedzie
+            return naive_fwhm * 1e-9
 
     # ── plotting ───────────────────────────────────────────────
 
@@ -675,7 +740,7 @@ class ThieleFJFitPlotAccessor:
 
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
-        
+
         title = (
             f"Thiele fit: ω0={self._result.omega0:.3e} rad/s, "
             f"N={self._result.N:.3f}"
@@ -865,7 +930,8 @@ def omega0_novosad(mat: MaterialParams, geo: DiskGeometry) -> float:
         F1 = 0.1  # guard for thick disks where expansion breaks down
 
     gamma0 = mat.gamma * MU0  # rad/(s·T) → rad·m/(s·A)
-    omega0 = (10.0 / 9.0) * gamma0 * mat.Ms * (geo.L / geo.R) * F1
+    # omega0 = (10.0 / 9.0) * gamma0 * mat.Ms * (geo.L / geo.R) * F1 <- blad konwerscji CGS /SI? 
+    omega0 = (5.0 / (9.0 * math.pi)) * gamma0 * mat.Ms * (geo.L / geo.R) * F1
     return omega0
 
 
@@ -1017,11 +1083,16 @@ class CIPThieleModel:
         beta = self._beta
         dG = self._dG
 
-        # Moon ODE (see docstring algebra) using relative coordinates
+        # Moon ODE using relative coordinates
+        # α dG dX/dt - p dY/dt = -ω₀ X - p u_y + β dG u_x  ... (I)
+        # p dX/dt + α dG dY/dt = -ω₀ Y + p u_x + β dG u_y  ... (II)
         det = (alpha * dG) ** 2 + p**2  # always > 0
-        rhs_I = -w0 * Xr + p * uy + beta * dG * ux
-        rhs_II = -w0 * Yr - p * ux + beta * dG * uy
+        
+        # FIZYKA: Prawidłowe znaki sił STT (rotacja CCW dla p=1, analiza SONETa)
+        rhs_I = -w0 * Xr - p * uy + beta * dG * ux
+        rhs_II = -w0 * Yr + p * ux + beta * dG * uy
 
+        # MATEMATYKA: Prawidłowa odwrotna macierz sprzężeń (Twój stary oryginał!)
         dXdt = (alpha * dG * rhs_I + p * rhs_II) / det
         dYdt = (-p * rhs_I + alpha * dG * rhs_II) / det
 
@@ -1266,7 +1337,10 @@ class CPPThieleModel:
     def J_threshold(self) -> float:
         """Threshold current density for self-oscillation [A/m²]."""
         # χ(J_th) = d₀ · ω₀_eff(0)  →  J_th = 2 d₀ ω₀_eff / (γ σ chi_scale)
-        return self._d0 * self.omega0_eff(0.0) / (self.chi_scale * self._chi_prefactor)
+        denom = self.chi_scale * self._chi_prefactor
+        if abs(denom) < 1e-30:
+            return float('inf')  # Brak STT (P=0) oznacza nieskończony próg wzbudzenia
+        return self._d0 * self.omega0_eff(0.0) / denom
 
     def threshold_current_dc(self) -> float:
         """Threshold DC current density for auto-oscillation [A/m²]."""
@@ -1785,7 +1859,7 @@ def fit_omega0_N_to_fJ(
         n_val = float(params[1])
         oe_val = oe_init
         chi_val = chi_init
-        
+
         idx = 2
         if fit_omega0_Oe_per_J:
             oe_val = float(params[idx])
@@ -1873,7 +1947,7 @@ def fit_omega0_N_to_fJ(
         idx += 1
     if fit_chi_scale:
         chi_fit = float(best[idx])
-    
+
     f_fit = _predict_fj_curve(
         j,
         material,

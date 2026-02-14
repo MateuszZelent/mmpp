@@ -803,6 +803,23 @@ if TEXTUAL_AVAILABLE:
                 self.pop_screen()
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Thiele Interactive Dashboard (re-export from solitons module)
+# ─────────────────────────────────────────────────────────────────────
+try:
+    from mmpp.solitons.vortex.nonlinear.interactive import (
+        build_thiele_dashboard,
+    )
+except ImportError:
+    # Fallback if solitons module not available
+    def build_thiele_dashboard(*args, **kwargs):
+        """Thiele interactive dashboard (solitons module required)."""
+        raise ImportError(
+            "build_thiele_dashboard requires solitons module. "
+            "Install with: pip install mmpp[solitons]"
+        )
+
+
 def main() -> None:
     """Main entry point for the TUI."""
     if not TEXTUAL_AVAILABLE:

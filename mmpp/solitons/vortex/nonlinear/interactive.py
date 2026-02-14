@@ -4,55 +4,67 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
-from mmpp.analytical import (
+# Importujemy modele prosto z naszej zweryfikowanej fizycznie biblioteki
+from mmpp.analytical.thiele import (
+    MaterialParams,
+    DiskGeometry,
     ExternalField,
     FieldCalibration,
-    ellipse_area,
+    CPPThieleModel,
+    omega0_novosad,
+    current_dc,
     field_ac,
     field_dc,
     slonczewski_mtj_efficiency,
+    ellipse_area,
 )
-
-from ..core.models import TrajectoryResult
+from mmpp.analytical.constants import MU0, GAMMA_E
 
 try:
     import ipywidgets as widgets
-
+    from IPython.display import display, HTML
     _HAS_WIDGETS = True
-except ImportError:  # pragma: no cover - optional dependency
-    widgets = None  # type: ignore[assignment]
+except ImportError:
+    widgets = None
+    HTML = None
     _HAS_WIDGETS = False
 
 try:
     import matplotlib.pyplot as plt
-
     _HAS_MATPLOTLIB = True
-except ImportError:  # pragma: no cover - optional dependency
-    plt = None  # type: ignore[assignment]
+except ImportError:
+    plt = None
     _HAS_MATPLOTLIB = False
 
 
-def _normalize_polarizer(polarizer: tuple[float, float, float]) -> tuple[float, float, float]:
-    px, py, pz = float(polarizer[0]), float(polarizer[1]), float(polarizer[2])
-    norm = float(np.sqrt(px * px + py * py + pz * pz))
-    if norm <= 1e-30:
-        raise ValueError("polarizer vector norm must be positive")
-    return px / norm, py / norm, pz / norm
+def _normalize_in_plane_polarizer(angle_deg: float) -> tuple[float, float]:
+    """Zwraca znormalizowany wektor polaryzatora w płaszczyźnie (in-plane)."""
+    rad = math.radians(angle_deg)
+    return math.cos(rad), math.sin(rad)
 
 
 def proxy_signal_from_trajectory(
-    trajectory: TrajectoryResult,
+    trajectory: Any,
     *,
     disk_radius: float | None = None,
-    polarizer: tuple[float, float, float] = (1.0, 0.0, 0.0),
+    polarizer_angle_deg: float = 0.0,
     center: tuple[float, float] | None = None,
     cubic: float = 0.0,
+    chirality: int = 1,
 ) -> np.ndarray:
-    """Build MTJ readout proxy signal from core trajectory."""
+    """Build MTJ readout proxy signal (TMR) from vortex core trajectory.
+    
+    Physics note:
+    For a magnetic vortex, displacing the core by (X, Y) induces an average 
+    in-plane magnetization perpendicular to the displacement:
+        <M_x> / M_s = - c * xi * (Y / R)
+        <M_y> / M_s =   c * xi * (X / R)
+    where c is the chirality (+1 CCW, -1 CW) and xi ≈ 2/3 is a shape factor.
+    """
     x = np.asarray(trajectory.x, dtype=float)
     y = np.asarray(trajectory.y, dtype=float)
 
@@ -60,22 +72,30 @@ def proxy_signal_from_trajectory(
         x0 = float(np.mean(x)) if x.size else 0.0
         y0 = float(np.mean(y)) if y.size else 0.0
     else:
-        x0 = float(center[0])
-        y0 = float(center[1])
+        x0, y0 = float(center[0]), float(center[1])
 
     if disk_radius is None:
-        disk_radius = float(trajectory.metadata.get("disk_radius", np.nan))
+        disk_radius = float(getattr(trajectory, "disk_radius", 100e-9))
     if not np.isfinite(disk_radius) or float(disk_radius) <= 0.0:
         radii = np.sqrt((x - x0) ** 2 + (y - y0) ** 2)
         disk_radius = max(float(np.percentile(radii, 95)) * 1.1, 1e-12)
+        
     r_norm = float(disk_radius)
 
     x_reduced = (x - x0) / r_norm
     y_reduced = (y - y0) / r_norm
 
-    px, py, _ = _normalize_polarizer(polarizer)
-    base = px * x_reduced + py * y_reduced
-    signal = base + float(cubic) * (base**3)
+    # Transformacja na średnią magnetyzację (uwzględniając chiralność wira)
+    c = 1.0 if chirality >= 0 else -1.0
+    xi = 2.0 / 3.0  
+    mx_avg = -c * xi * y_reduced
+    my_avg =  c * xi * x_reduced
+
+    px, py = _normalize_in_plane_polarizer(polarizer_angle_deg)
+    
+    # Sygnał TMR jest proporcjonalny do rzutu <M> na oś polaryzatora w płaszczyźnie
+    base_signal = px * mx_avg + py * my_avg
+    signal = base_signal + float(cubic) * (base_signal**3)
     return np.asarray(signal, dtype=float)
 
 
@@ -102,8 +122,7 @@ def proxy_psd(
     if method_norm == "welch":
         try:
             from scipy.signal import welch
-
-            nperseg_eff = min(sig.size, int(nperseg) if nperseg is not None else max(32, sig.size // 8))
+            nperseg_eff = min(sig.size, int(nperseg) if nperseg is not None else max(64, sig.size // 4))
             f, p = welch(sig, fs=1.0 / dt, nperseg=nperseg_eff, detrend="constant", scaling="density")
             return np.asarray(f, dtype=float), np.asarray(p, dtype=float)
         except Exception:
@@ -111,9 +130,12 @@ def proxy_psd(
 
     if method_norm == "fft":
         n = sig.size
-        fft = np.fft.rfft(sig)
+        # Używamy okna Hanna w celu minimalizacji przecieku widma (spectral leakage)
+        window = np.hanning(n)
+        fft = np.fft.rfft(sig * window)
         f = np.fft.rfftfreq(n, d=dt)
         p = (np.abs(fft) ** 2) / max(float(n), 1.0)
+        p *= 2.0 / max(float(np.mean(window**2)), 1e-30)
         return np.asarray(f, dtype=float), np.asarray(p, dtype=float)
 
     return np.array([], dtype=float), np.array([], dtype=float)
@@ -121,523 +143,481 @@ def proxy_psd(
 
 @dataclass
 class ThieleInteractiveDashboard:
-    """Ipywidgets dashboard for fast/full CPP Thiele exploration.
-
-    Uses a **persistent** matplotlib figure with in-place data updates
-    (``set_xdata`` / ``set_ydata``) to avoid flickering.  The figure is
-    created once on ``show()`` and then mutated by the ``_render``
-    callback.
+    """
+    Professional Ipywidgets dashboard for Vortex STNO dynamics.
+    Handles physics constraints, unit conversions, and flicker-free rendering.
     """
 
-    analyzer: Any
+    def __init__(self, analyzer: Any = None):
+        # Akceptujemy argument analyzer dla zgodności, ale instancjujemy
+        # CPPThieleModel samodzielnie dla pełnej kontroli na GUI.
+        self._require_widgets()
+        self._state: dict[str, Any] = {
+            "fig": None,
+            "axes": None,
+            "lines": {},
+            "patches": {},
+            "texts": {},
+            "mode": None,
+        }
 
     def _require_widgets(self) -> None:
-        if not _HAS_WIDGETS:
-            raise ImportError("ipywidgets is required for interactive dashboard")
-        if not _HAS_MATPLOTLIB:
-            raise ImportError("matplotlib is required for interactive dashboard")
-
-    # ------------------------------------------------------------------
-    # Smooth-update helper
-    # ------------------------------------------------------------------
+        if not _HAS_WIDGETS or not _HAS_MATPLOTLIB:
+            raise ImportError("ipywidgets and matplotlib are required. Run `pip install ipywidgets matplotlib`.")
 
     @staticmethod
     def _update_line(line, xdata, ydata):
-        """Update an existing Line2D in place."""
         line.set_xdata(xdata)
         line.set_ydata(ydata)
 
     @staticmethod
     def _relim_and_rescale(ax):
-        """Recompute limits from data and rescale."""
         ax.relim()
         ax.autoscale_view()
 
-    # ------------------------------------------------------------------
-    # Public entry-point
-    # ------------------------------------------------------------------
-
-    def show(
-        self,
-        *,
-        geometry_mode: str = "disk",
-        disk_diameter_nm: float | None = None,
-        size_x_nm: float = 220.0,
-        size_y_nm: float = 120.0,
-        thickness_nm: float = 20.0,
-        ms_kA_per_m: float = 800.0,
-        alpha: float = 0.01,
-        pol: float = 0.56,
-        lambd: float = 1.2,
-        cos_theta_eff: float = 0.5,
-        angle_deg: float = 20.0,
-        current_mA: float = 8.0,
-        b_ext_mt: float = 0.0,
-        bx_mt: float = 0.0,
-        by_mt: float = 0.0,
-        bz_mt: float = 0.0,
-        field_mode: str = "DC",
-        b_ac_freq_ghz: float = 1.0,
-        b_ac_phase_deg: float = 0.0,
-        field_cal: FieldCalibration | None = None,
-        domega0_dBz_ghz_per_T: float = 0.0,
-        seq_per_T: float = 0.0,
-        omega0_ghz: float = 0.9,
-        N: float = 0.25,
-        temperature_k: float = 300.0,
-        noise_scale: float = 1.0,
-        t_end_ns: float = 120.0,
-        dt_ps: float = 10.0,
-        fast_mode: bool = False,
-        use_sde: bool = True,
-        sde_seed: int | None = 0,
-        figsize: tuple[float, float] | None = None,
-        dpi: int = 100,
-    ):
-        """Create and return interactive widget panel."""
+    def show(self, figsize=(14, 4.5), dpi=100):
         self._require_widgets()
+        self.dpi = dpi
 
-        dpi_value = int(dpi)
-        if dpi_value <= 0:
-            raise ValueError("dpi must be positive")
+        # =========================================================
+        # ZAKŁADKI Z RESTRYKCJAMI FIZYCZNYMI (Bounds)
+        # =========================================================
+        layout = widgets.Layout(width='95%')
+        style = {'description_width': '160px'}
 
-        if figsize is not None:
-            if len(figsize) != 2:
-                raise ValueError("figsize must be a tuple of (width, height)")
-            figsize_value = (float(figsize[0]), float(figsize[1]))
-            if figsize_value[0] <= 0.0 or figsize_value[1] <= 0.0:
-                raise ValueError("figsize values must be positive")
+        def slider(desc, val, min_v, max_v, step, unit="", tooltip=""):
+            label = f"{desc} [{unit}]" if unit else desc
+            return widgets.FloatSlider(
+                description=label, value=val, min=min_v, max=max_v, step=step, 
+                continuous_update=False, style=style, layout=layout, description_tooltip=tooltip
+            )
+
+        # --- TAB 1: Geometry & Material ---
+        self.w_geom_mode = widgets.ToggleButtons(description="Shape:", options=[("Disk", "disk"), ("Ellipse→Eq", "ellipse_eq")], value="disk", style=style)
+        self.w_disk_d = slider("Diameter D", 250.0, 50.0, 1000.0, 5.0, "nm", "Physical diameter of the nanodisk")
+        self.w_size_x = slider("Ellipse X", 300.0, 50.0, 1000.0, 5.0, "nm")
+        self.w_size_y = slider("Ellipse Y", 200.0, 50.0, 1000.0, 5.0, "nm")
+        self.w_thick = slider("Thickness L", 10.0, 2.0, 50.0, 0.5, "nm", "Magnetic free layer thickness")
+        self.w_ms = slider("Magnetization M_s", 800.0, 100.0, 2000.0, 10.0, "kA/m", "Saturation magnetization (Permalloy ≈ 800)")
+        self.w_alpha = widgets.FloatLogSlider(description="Damping α:", value=0.01, base=10, min=-4, max=-1, step=0.01, continuous_update=False, style=style, layout=layout)
+        
+        tab_geom = widgets.VBox([
+            widgets.HTML("<b>Free Layer Geometry</b>"),
+            self.w_geom_mode, self.w_disk_d, self.w_size_x, self.w_size_y, self.w_thick,
+            widgets.HTML("<hr><b>Material Properties</b>"),
+            self.w_ms, self.w_alpha
+        ])
+
+        # --- TAB 2: STT & Readout ---
+        self.w_current = slider("Current I_dc", 4.0, -20.0, 20.0, 0.1, "mA", "DC current injected into the pillar")
+        self.w_pol = slider("Spin Polarization P", 0.3, 0.0, 1.0, 0.02)
+        self.w_lambda = slider("Slonczewski Λ", 1.0, 0.5, 5.0, 0.05, "", "Asymmetry parameter for MTJ STT")
+        self.w_pz = slider("Polarizer P_z (OOP)", 1.0, -1.0, 1.0, 0.05, "", "Out-of-plane component (excites vortex)")
+        self.w_p = widgets.ToggleButtons(description="Core Polarity (p):", options=[("Up (+1)", 1), ("Down (-1)", -1)], value=1, style=style)
+        self.w_c = widgets.ToggleButtons(description="Chirality (c):", options=[("CCW (+1)", 1), ("CW (-1)", -1)], value=1, style=style)
+        self.w_angle = slider("TMR Readout Angle", 0.0, -180.0, 180.0, 5.0, "deg")
+
+        tab_stt = widgets.VBox([
+            widgets.HTML("<b>Spin Transfer Torque (STT)</b><br/><i>The Slonczewski model requires a non-zero OOP polarizer component (Pz) to excite auto-oscillations.</i>"),
+            self.w_current, self.w_pol, self.w_lambda, self.w_pz, self.w_p, self.w_c,
+            widgets.HTML("<hr><b>MTJ Readout (TMR)</b>"),
+            self.w_angle
+        ])
+
+        # --- TAB 3: Magnetic Fields ---
+        self.w_bx = slider("B_x (IP)", 0.0, -200.0, 200.0, 1.0, "mT")
+        self.w_by = slider("B_y (IP)", 0.0, -200.0, 200.0, 1.0, "mT")
+        self.w_bz = slider("B_z (OOP)", 0.0, -500.0, 500.0, 5.0, "mT")
+        self.w_oersted = slider("Oersted Shift", -15.0, -50.0, 50.0, 0.5, "MHz per 10 MA/cm²")
+        
+        self.w_field_mode = widgets.ToggleButtons(description="Field Mode:", options=["DC", "AC"], value="DC", style=style)
+        self.w_bac_freq = slider("AC Freq", 1.0, 0.01, 10.0, 0.01, "GHz")
+        self.w_bac_phase = slider("AC Phase", 0.0, -180.0, 180.0, 5.0, "deg")
+
+        tab_field = widgets.VBox([
+            widgets.HTML("<b>External Magnetic Field</b><br/><i>In-plane fields (Bx, By) shift the core equilibrium. OOP field (Bz) shifts the frequency via Zeemann tuning.</i>"),
+            self.w_bx, self.w_by, self.w_bz,
+            widgets.HTML("<hr><b>Self-induced Field</b>"),
+            self.w_oersted,
+            widgets.HTML("<hr><b>AC Excitation</b>"),
+            self.w_field_mode, self.w_bac_freq, self.w_bac_phase
+        ])
+
+        # --- TAB 4: Thiele Physics Calibration ---
+        self.w_auto_w0 = widgets.Checkbox(description="Auto-calculate ω₀ (Novosad eq.)", value=True, style=style)
+        self.w_omega0 = slider("Override Base f₀", 0.395, 0.05, 5.0, 0.01, "GHz")
+        self.w_n = slider("Nonlinearity N", 0.25, -1.0, 2.0, 0.05, "", "Frequency blue-shift/red-shift coefficient")
+        self.w_domega0_dBz = slider("Zeeman dω₀/dB_z", 0.0, -10.0, 10.0, 0.1, "GHz/T")
+        self.w_seq_per_T = slider("IP Shift s_eq", 0.0, -5.0, 5.0, 0.05, "1/T", "Equilibrium shift per 1T of in-plane field")
+
+        tab_model = widgets.VBox([
+            widgets.HTML("<b>Gyrotropic Mode Tuning</b>"),
+            self.w_auto_w0, self.w_omega0,
+            widgets.HTML("<hr><b>Phenomenological Parameters (Fit to MuMax3)</b><br/><i>N > 0 means frequency blue-shifts with orbit radius.</i>"),
+            self.w_n, self.w_domega0_dBz, self.w_seq_per_T
+        ])
+
+        # --- TAB 5: Solver & Noise ---
+        self.w_sim_mode = widgets.ToggleButtons(description="Sim Mode:", options=["Fast (Analytical f(J))", "Full Trajectory"], value="Full Trajectory", style=style)
+        self.w_tend = slider("Sim. Time", 200.0, 10.0, 1000.0, 10.0, "ns")
+        self.w_dt = slider("Time Step dt", 5.0, 0.5, 50.0, 0.5, "ps")
+        self.w_sde = widgets.Checkbox(description="Enable Thermal Noise (SDE)", value=True, style=style)
+        self.w_temp = slider("Temperature", 300.0, 0.0, 600.0, 5.0, "K")
+        self.w_noise = slider("Noise Multiplier", 1.0, 0.0, 5.0, 0.1, "")
+        self.w_rand_seed = widgets.Checkbox(description="Randomize Seed", value=False, style=style)
+        self.w_seed = widgets.IntText(description="RNG Seed:", value=42, style=style, layout=widgets.Layout(width='200px'))
+
+        tab_solver = widgets.VBox([
+            widgets.HTML("<b>Integration Control</b><br/><i>Enable SDE and set T > 0 K for realistic thermal linewidth.</i>"),
+            self.w_sim_mode, self.w_tend, self.w_dt,
+            widgets.HTML("<hr><b>Stochastic Parameters</b>"),
+            self.w_sde, self.w_temp, self.w_noise, widgets.HBox([self.w_seed, self.w_rand_seed])
+        ])
+
+        # Złożenie Tabs
+        self.tabs = widgets.Tab(children=[tab_geom, tab_stt, tab_field, tab_model, tab_solver])
+        self.tabs.set_title(0, '📏 Geometry')
+        self.tabs.set_title(1, '⚡ STT Pumping')
+        self.tabs.set_title(2, '🧲 Fields')
+        self.tabs.set_title(3, '⚙️ Thiele Calib.')
+        self.tabs.set_title(4, '⏱️ Solver')
+
+        # Live Info Banner & Outputs
+        self.w_hud = widgets.HTML(value="")
+        self.w_status = widgets.HTML(value="")
+        self.out = widgets.Output()
+
+        self.figsize = figsize
+
+        self._wire_events()
+        self._sync_disabled()
+        
+        # Pusty wykres startowy
+        self._ensure_figure(self.w_sim_mode.value)
+        self.w_status.value = "<b style='color:green;'>Status: Ready</b>"
+
+        # Przycisk uruchamiania
+        btn_run = widgets.Button(description=" ▶ RUN SIMULATION", button_style='success', layout=widgets.Layout(width='200px', height='40px'))
+        btn_run.on_click(self._render)
+
+        header = widgets.HBox([btn_run, self.w_status], layout=widgets.Layout(align_items='center', gap='20px', margin='10px 0 10px 0'))
+        
+        return widgets.VBox([
+            widgets.HTML("<h2 style='color:#334155; margin-bottom:0;'>🌪️ Vortex STNO Interactive Dashboard</h2>"),
+            self.w_hud, header, self.tabs, self.out
+        ])
+
+    def _ensure_figure(self, mode: str):
+        if self._state["mode"] == mode and self._state["fig"] is not None:
+            return
+
+        if self._state["fig"] is not None:
+            plt.close(self._state["fig"])
+
+        self._state["lines"].clear()
+        self._state["patches"].clear()
+
+        if mode == "Fast (Analytical f(J))":
+            fs = (10.0, 4.0) if self.figsize is None else self.figsize
+            fig, ax = plt.subplots(1, 1, figsize=fs, dpi=self.dpi)
+            (line_fj,) = ax.plot([], [], 'o-', color="tab:blue", markersize=3)
+            vline = ax.axvline(0, color="tab:red", linestyle="--", alpha=0.6)
+            ax.set_xlabel("Current Density J [MA/cm²]")
+            ax.set_ylabel("Frequency [GHz]")
+            ax.set_title("Analytic Steady-State Frequency vs Current")
+            ax.grid(True, alpha=0.3)
+            
+            self._state["lines"]["fj"] = line_fj
+            self._state["lines"]["vline"] = vline
+            self._state["axes"] = [ax]
         else:
-            figsize_value = None
+            fs = (14.0, 4.0) if self.figsize is None else self.figsize
+            fig, axes = plt.subplots(1, 3, figsize=fs, dpi=self.dpi)
+            
+            # Orbit
+            (line_orbit,) = axes[0].plot([], [], '-', color="tab:blue", lw=1.5, zorder=2)
+            (line_point,) = axes[0].plot([], [], 'ro', markersize=5, zorder=3)
+            circle = plt.Circle((0, 0), 1, fill=False, color="tab:gray", linestyle="--", lw=1.2, alpha=0.9, zorder=1)
+            axes[0].add_patch(circle)
+            axes[0].set_xlabel("X [nm]")
+            axes[0].set_ylabel("Y [nm]")
+            axes[0].set_title("Core Trajectory")
+            axes[0].set_aspect("equal", adjustable="datalim")
+            axes[0].grid(True, alpha=0.3)
+            
+            # Signal
+            (line_sig,) = axes[1].plot([], [], color="tab:orange", lw=1.0)
+            axes[1].set_xlabel("Time [ns]")
+            axes[1].set_ylabel("TMR Proxy [a.u.]")
+            axes[1].set_title("Time-domain Signal")
+            axes[1].grid(True, alpha=0.3)
+            
+            # PSD
+            (line_psd,) = axes[2].plot([], [], color="tab:green", lw=1.5)
+            axes[2].set_xlabel("Frequency [GHz]")
+            axes[2].set_ylabel("PSD [dB]")
+            axes[2].set_title("Power Spectrum")
+            axes[2].grid(True, alpha=0.3)
 
-        mode_value = str(geometry_mode).strip().lower()
-        if mode_value not in {"disk", "ellipse_eq"}:
-            raise ValueError("geometry_mode must be 'disk' or 'ellipse_eq'")
-        disk_diam_init = float(200.0 if disk_diameter_nm is None else disk_diameter_nm)
-        if disk_diam_init <= 0.0:
-            raise ValueError("disk_diameter_nm must be positive")
+            suptitle = fig.suptitle("", fontsize=10)
 
-        # Geometry/material controls
-        w_geom_mode = widgets.ToggleButtons(
-            description="geom",
-            options=[("disk", "disk"), ("ellipse→eq", "ellipse_eq")],
-            value=mode_value,
-        )
-        w_disk_d = widgets.FloatSlider(description="D [nm]", value=disk_diam_init, min=40.0, max=500.0, step=5.0)
-        w_size_x = widgets.FloatSlider(description="sizeX [nm]", value=size_x_nm, min=40.0, max=500.0, step=5.0)
-        w_size_y = widgets.FloatSlider(description="sizeY [nm]", value=size_y_nm, min=40.0, max=500.0, step=5.0)
-        w_thick = widgets.FloatSlider(description="L [nm]", value=thickness_nm, min=2.0, max=80.0, step=1.0)
-        w_ms = widgets.FloatSlider(description="Ms [kA/m]", value=ms_kA_per_m, min=200.0, max=1600.0, step=10.0)
-        w_alpha = widgets.FloatSlider(description="alpha", value=alpha, min=0.001, max=0.1, step=0.001)
+            self._state["lines"]["orbit"] = line_orbit
+            self._state["lines"]["point"] = line_point
+            self._state["patches"]["circle"] = circle
+            self._state["lines"]["signal"] = line_sig
+            self._state["lines"]["psd"] = line_psd
+            self._state["texts"]["suptitle"] = suptitle
+            self._state["axes"] = axes
 
-        # STT / readout controls
-        w_pol = widgets.FloatSlider(description="Pol", value=pol, min=0.05, max=0.95, step=0.01)
-        w_lambda = widgets.FloatSlider(description="Lambda", value=lambd, min=0.5, max=3.0, step=0.05)
-        w_cos = widgets.FloatSlider(description="cosθ_eff", value=cos_theta_eff, min=-1.0, max=1.0, step=0.01)
-        w_angle = widgets.FloatSlider(description="angle [deg]", value=angle_deg, min=-180.0, max=180.0, step=1.0)
-        w_current = widgets.FloatSlider(description="I [mA]", value=current_mA, min=-30.0, max=30.0, step=0.1)
-        w_bx = widgets.FloatSlider(description="Bx [mT]", value=bx_mt, min=-500.0, max=500.0, step=1.0)
-        w_by = widgets.FloatSlider(description="By [mT]", value=by_mt, min=-500.0, max=500.0, step=1.0)
-        w_bz = widgets.FloatSlider(description="Bz [mT]", value=bz_mt if bz_mt != 0.0 else b_ext_mt, min=-500.0, max=500.0, step=1.0)
-        w_field_mode = widgets.ToggleButtons(
-            description="B mode",
-            options=["DC", "AC"],
-            value=str(field_mode),
-        )
-        w_bac_freq = widgets.FloatSlider(description="f_B [GHz]", value=b_ac_freq_ghz, min=0.01, max=20.0, step=0.01)
-        w_bac_phase = widgets.FloatSlider(description="φ_B [deg]", value=b_ac_phase_deg, min=-180.0, max=180.0, step=1.0)
+        fig.tight_layout()
+        self._state["fig"] = fig
+        self._state["mode"] = mode
 
-        # Field calibration controls
-        init_domega = domega0_dBz_ghz_per_T if field_cal is None else field_cal.domega0_dBz / (2.0 * math.pi * 1e9)
-        init_seq = seq_per_T if field_cal is None else field_cal.seq_per_T
-        w_domega0_dBz = widgets.FloatSlider(description="dω₀/dBz [GHz/T]", value=init_domega, min=-10.0, max=10.0, step=0.1)
-        w_seq_per_T = widgets.FloatSlider(description="s_eq [1/T]", value=init_seq, min=-5.0, max=5.0, step=0.05)
+    def _sync_disabled(self, *_args):
+        is_disk = self.w_geom_mode.value == "disk"
+        self.w_disk_d.disabled = not is_disk
+        self.w_size_x.disabled = is_disk
+        self.w_size_y.disabled = is_disk
+        
+        is_ac = self.w_field_mode.value == "AC"
+        self.w_bac_freq.disabled = not is_ac
+        self.w_bac_phase.disabled = not is_ac
+        
+        is_sde = self.w_sde.value
+        self.w_temp.disabled = not is_sde
+        self.w_noise.disabled = not is_sde
+        self.w_seed.disabled = (not is_sde) or self.w_rand_seed.value
 
-        # Model controls
-        w_omega0 = widgets.FloatSlider(description="omega0 [GHz]", value=omega0_ghz, min=0.1, max=20.0, step=0.05)
-        w_n = widgets.FloatSlider(description="N", value=N, min=-2.0, max=3.0, step=0.01)
-        w_temp = widgets.FloatSlider(description="T [K]", value=temperature_k, min=0.0, max=800.0, step=5.0)
-        w_noise = widgets.FloatSlider(description="noise", value=noise_scale, min=0.0, max=8.0, step=0.05)
-        w_tend = widgets.FloatSlider(description="t_end [ns]", value=t_end_ns, min=10.0, max=400.0, step=5.0)
-        w_dt = widgets.FloatSlider(description="dt [ps]", value=dt_ps, min=1.0, max=100.0, step=1.0)
-        w_fast = widgets.Checkbox(description="fast mode", value=bool(fast_mode))
-        w_sde = widgets.Checkbox(description="use SDE", value=bool(use_sde))
-        w_seed = widgets.IntText(description="seed", value=0 if sde_seed is None else int(sde_seed))
+        self.w_omega0.disabled = self.w_auto_w0.value
 
-        out = widgets.Output()
-
-        # ── Persistent figure state ──────────────────────────────
-        # We create one figure for "fast" mode and one for "full" mode.
-        # Each is lazily initialised and then updated in-place.
-        _state: dict[str, Any] = {
-            "fig": None,
-            "axes": None,
-            "lines": {},          # {name: Line2D}
-            "patches": {},        # {name: patch}
-            "texts": {},          # {name: Text}
-            "mode": None,         # "fast" or "full"
-        }
-
-        def _ensure_figure(mode: str):
-            """Create or recycle the persistent figure.
-
-            If the mode switches (fast↔full) we tear down and rebuild,
-            but within the same mode we only update data in-place —
-            no flicker.
-            """
-            if _state["mode"] == mode and _state["fig"] is not None:
-                return  # reuse current figure
-
-            # Tear down previous figure
-            if _state["fig"] is not None:
-                plt.close(_state["fig"])
-
-            _state["lines"].clear()
-            _state["patches"].clear()
-            _state["texts"].clear()
-
-            if mode == "fast":
-                fs = (12.0, 4.0) if figsize_value is None else figsize_value
-                fig, axes = plt.subplots(1, 2, figsize=fs, dpi=dpi_value)
-                (line_fj,) = axes[0].plot([], [], color="tab:blue")
-                vline = axes[0].axvline(0, color="tab:red", linestyle="--", alpha=0.6)
-                axes[0].set_xlabel("J [GA/m²]")
-                axes[0].set_ylabel("f [GHz]")
-                axes[0].set_title("Fast prediction: f(J)")
-                axes[0].grid(True, alpha=0.3)
-                axes[1].axis("off")
-                info_text = axes[1].text(0.0, 1.0, "", va="top", family="monospace",
-                                         transform=axes[1].transAxes)
-                _state["lines"]["fj"] = line_fj
-                _state["lines"]["vline"] = vline
-                _state["texts"]["info"] = info_text
+    def _update_hud(self, *_args):
+        """Aktualizuje statystyki fizyczne w locie bez całkowania równań ODE."""
+        try:
+            if self.w_geom_mode.value == "disk":
+                radius_eq = 0.5 * self.w_disk_d.value * 1e-9
+                geom_desc = f"Disk D={self.w_disk_d.value:.0f} nm"
             else:
-                fs = (15.0, 4.5) if figsize_value is None else figsize_value
-                fig, axes = plt.subplots(1, 3, figsize=fs, dpi=dpi_value)
-                # Orbit panel
-                (line_orbit,) = axes[0].plot([], [], color="tab:blue", zorder=2)
-                circle = plt.Circle((0, 0), 1, fill=False, color="tab:gray",
-                                    linestyle="--", linewidth=1.2, alpha=0.9, zorder=1)
-                axes[0].add_patch(circle)
-                axes[0].set_xlabel("X [nm]")
-                axes[0].set_ylabel("Y [nm]")
-                axes[0].set_title("Core orbit")
-                axes[0].set_aspect("equal", adjustable="box")
-                axes[0].grid(True, alpha=0.3)
-                # Signal panel
-                (line_sig,) = axes[1].plot([], [], color="tab:orange")
-                axes[1].set_xlabel("t [ns]")
-                axes[1].set_ylabel("proxy signal [a.u.]")
-                axes[1].set_title("MTJ readout proxy")
-                axes[1].grid(True, alpha=0.3)
-                # PSD panel
-                (line_psd,) = axes[2].plot([], [], color="tab:green")
-                axes[2].set_xlabel("f [GHz]")
-                axes[2].set_ylabel("PSD [a.u.]")
-                axes[2].set_title("Proxy PSD")
-                axes[2].grid(True, alpha=0.3)
+                area_ell = ellipse_area(self.w_size_x.value * 1e-9, self.w_size_y.value * 1e-9)
+                radius_eq = math.sqrt(area_ell / math.pi)
+                geom_desc = f"Ellipse {self.w_size_x.value:.0f}x{self.w_size_y.value:.0f} nm"
+                
+            area = math.pi * (radius_eq**2)
+            peff = slonczewski_mtj_efficiency(self.w_pol.value, self.w_lambda.value, self.w_pz.value)
+            
+            current_density_A_m2 = (self.w_current.value * 1e-3) / area
+            J_MA_cm2 = current_density_A_m2 / 1e10
 
-                suptitle = fig.suptitle("", fontsize=10)
+            mat = MaterialParams(Ms=self.w_ms.value * 1e3, alpha=self.w_alpha.value, P=peff)
+            geo = DiskGeometry(R=radius_eq, L=self.w_thick.value * 1e-9)
+            
+            w0_novo = omega0_novosad(mat, geo)
+            if self.w_auto_w0.value:
+                self.w_omega0.unobserve(self._update_hud, names='value')
+                self.w_omega0.value = w0_novo / (2.0 * math.pi * 1e9)
+                self.w_omega0.observe(self._update_hud, names='value')
+                
+            omega0_rad = 2.0 * math.pi * self.w_omega0.value * 1e9
 
-                _state["lines"]["orbit"] = line_orbit
-                _state["patches"]["circle"] = circle
-                _state["lines"]["signal"] = line_sig
-                _state["lines"]["psd"] = line_psd
-                _state["texts"]["suptitle"] = suptitle
+            # Konwersja Oersteda z MHz/(10 MA/cm2) -> rad/(s * A/m2)
+            oe_rad_per_Am2 = (self.w_oersted.value * 1e6 * 2.0 * math.pi) / 1e11
 
-            fig.tight_layout()
-            _state["fig"] = fig
-            _state["axes"] = axes if hasattr(axes, '__len__') else [axes]
-            _state["mode"] = mode
+            ext_field = ExternalField(Bx_T=self.w_bx.value*1e-3, By_T=self.w_by.value*1e-3, Bz_T=self.w_bz.value*1e-3)
+            fcal = FieldCalibration(
+                domega0_dBz=self.w_domega0_dBz.value * 2.0 * math.pi * 1e9,
+                seq_per_T=self.w_seq_per_T.value,
+                chirality=self.w_c.value
+            )
 
-        def _sync_geometry_controls() -> None:
-            disk_mode = w_geom_mode.value == "disk"
-            w_disk_d.disabled = not disk_mode
-            w_size_x.disabled = disk_mode
-            w_size_y.disabled = disk_mode
+            model = CPPThieleModel(
+                material=mat, geom=geo, omega0=omega0_rad, N=self.w_n.value,
+                polarity=self.w_p.value, omega0_Oe_per_J=oe_rad_per_Am2,
+                field=ext_field, field_cal=fcal
+            )
 
-        def _sync_sde_controls() -> None:
-            w_seed.disabled = not bool(w_sde.value)
+            j_th = model.threshold_current_dc()
+            j_th_MA = j_th / 1e10 if j_th != float('inf') else float('inf')
+            
+            f_pred = model.predict_frequency_dc(current_density_A_m2, allow_edge=True)
 
-        def _render(*_args):
-            with out:
-                # ── Compute parameters ───────────────────────────
-                if w_geom_mode.value == "disk":
-                    radius_eq = 0.5 * w_disk_d.value * 1e-9
-                    area = math.pi * (radius_eq**2)
-                    geom_desc = f"disk D={w_disk_d.value:.1f} nm"
+            is_osc = abs(current_density_A_m2) > j_th and j_th != float('inf')
+            status_color = "#10b981" if is_osc else "#ef4444"
+            status_text = "AUTO-OSCILLATION" if is_osc else "DAMPED (Sub-threshold)"
+            f_disp = f"<span style='color:{status_color}; font-weight:bold;'>{f_pred*1e-9:.3f} GHz</span>" if f_pred else "<span style='color:#ef4444;'>Damped (J < J_th)</span>"
+            
+            hud_html = f"""
+            <div style="background: #0f172a; color: #cbd5e1; padding: 12px; border-radius: 8px; border-left: 6px solid {status_color}; font-family: monospace; font-size: 1.1em; line-height: 1.5;">
+                <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                    <div style="flex: 1; min-width: 200px;">
+                        <b>📏 Geometry:</b> {geom_desc} | R_eq = {radius_eq*1e9:.1f} nm<br>
+                        <b>⚡ Current :</b> <span style='color:{status_color}'>{J_MA_cm2:.2f} MA/cm²</span> (Threshold: {j_th_MA:.2f} MA/cm²)<br>
+                    </div>
+                    <div style="flex: 1; min-width: 200px;">
+                        <b>⚙️ Base f₀:</b> {self.w_omega0.value:.3f} GHz (Analytic Novosad = {w0_novo / (2*math.pi*1e9):.3f} GHz)<br>
+                        <b>🎯 Pred f(J):</b> {f_disp}<br>
+                        <b>🏷️ Status :</b> <span style="color: {status_color}; font-weight: bold;">{status_text}</span>
+                    </div>
+                </div>
+            </div>
+            """
+            self.w_hud.value = hud_html
+
+        except Exception:
+            pass
+
+    def _wire_events(self):
+        # Synchronizacja UI disabled/enabled
+        for w in [self.w_geom_mode, self.w_field_mode, self.w_sde, self.w_auto_w0, self.w_rand_seed]:
+            w.observe(self._sync_disabled, names="value")
+
+        # Live Update dla HUDa (działa w tle błyskawicznie)
+        widgets_to_hud = [
+            self.w_geom_mode, self.w_disk_d, self.w_size_x, self.w_size_y, self.w_thick,
+            self.w_ms, self.w_alpha, self.w_current, self.w_pol, self.w_lambda, self.w_pz,
+            self.w_p, self.w_c, self.w_bx, self.w_by, self.w_bz, self.w_oersted,
+            self.w_auto_w0, self.w_omega0, self.w_n, self.w_domega0_dBz, self.w_seq_per_T
+        ]
+        for w in widgets_to_hud:
+            w.observe(self._update_hud, names="value")
+
+    def _render(self, *_args):
+        self.w_status.value = "<b><span style='color:orange'>⚙️ Calculating ODE/SDE...</span></b>"
+        
+        with self.out:
+            self.out.clear_output(wait=True)
+            try:
+                # Rekonstrukcja parametrów z suwaków
+                if self.w_geom_mode.value == "disk":
+                    radius_eq = 0.5 * self.w_disk_d.value * 1e-9
                 else:
-                    area = ellipse_area(w_size_x.value * 1e-9, w_size_y.value * 1e-9)
-                    radius_eq = math.sqrt(area / math.pi)
-                    geom_desc = f"ellipse→eq ({w_size_x.value:.1f} x {w_size_y.value:.1f} nm)"
-                peff = slonczewski_mtj_efficiency(w_pol.value, w_lambda.value, w_cos.value)
-                current_density = (w_current.value * 1e-3) / area
+                    area_ell = ellipse_area(self.w_size_x.value * 1e-9, self.w_size_y.value * 1e-9)
+                    radius_eq = math.sqrt(area_ell / math.pi)
+                    
+                area = math.pi * (radius_eq**2)
+                peff = slonczewski_mtj_efficiency(self.w_pol.value, self.w_lambda.value, self.w_pz.value)
+                
+                current_density_A_m2 = (self.w_current.value * 1e-3) / area
+                J_MA_cm2 = current_density_A_m2 / 1e10
 
-                angle_rad = math.radians(w_angle.value)
-                polarizer = (math.cos(angle_rad), math.sin(angle_rad), 0.0)
+                mat = MaterialParams(Ms=self.w_ms.value * 1e3, alpha=self.w_alpha.value, P=peff)
+                geo = DiskGeometry(R=radius_eq, L=self.w_thick.value * 1e-9)
+                
+                omega0_rad = 2.0 * math.pi * self.w_omega0.value * 1e9
 
-                material = {
-                    "Ms": w_ms.value * 1e3,
-                    "alpha": w_alpha.value,
-                    "P": peff,
-                }
-                geometry = {
-                    "R": radius_eq,
-                    "L": w_thick.value * 1e-9,
-                }
-                b_x_T = w_bx.value * 1e-3
-                b_y_T = w_by.value * 1e-3
-                b_z_T = w_bz.value * 1e-3
-                ext_field = ExternalField(Bx_T=b_x_T, By_T=b_y_T, Bz_T=b_z_T)
+                oe_rad_per_Am2 = (self.w_oersted.value * 1e6 * 2.0 * math.pi) / 1e11
+
+                ext_field = ExternalField(Bx_T=self.w_bx.value*1e-3, By_T=self.w_by.value*1e-3, Bz_T=self.w_bz.value*1e-3)
                 fcal = FieldCalibration(
-                    domega0_dBz=w_domega0_dBz.value * 2.0 * math.pi * 1e9,
-                    seq_per_T=w_seq_per_T.value,
+                    domega0_dBz=self.w_domega0_dBz.value * 2.0 * math.pi * 1e9,
+                    seq_per_T=self.w_seq_per_T.value,
+                    chirality=self.w_c.value
                 )
 
-                # Build B_func (DC or AC)
-                if w_field_mode.value == "AC":
-                    b_func = field_ac(
-                        ext_field,
-                        f_hz=w_bac_freq.value * 1e9,
-                        phase=math.radians(w_bac_phase.value),
-                    )
+                if self.w_field_mode.value == "AC":
+                    b_func = field_ac(ext_field, f_hz=self.w_bac_freq.value * 1e9, phase=math.radians(self.w_bac_phase.value))
                 else:
                     b_func = field_dc(ext_field)
 
-                omega0 = 2.0 * math.pi * w_omega0.value * 1e9
-                j_th = self.analyzer.threshold_current_dc(
-                    material=material,
-                    geometry=geometry,
-                    omega0=omega0,
-                    N=w_n.value,
-                    field=ext_field,
-                    field_cal=fcal,
-                )
-                f_pred = self.analyzer.predict_frequency_dc(
-                    current_density,
-                    material=material,
-                    geometry=geometry,
-                    omega0=omega0,
-                    N=w_n.value,
-                    allow_edge=True,
-                    field=ext_field,
-                    field_cal=fcal,
-                )
-                f_target = f_pred if f_pred is not None else abs(w_omega0.value * 1e9)
-                opt = self.analyzer.optimize_current_for_target_frequency(
-                    f_target,
-                    material=material,
-                    geometry=geometry,
-                    omega0=omega0,
-                    N=w_n.value,
-                    J_bounds=(1.01 * j_th, 8.0 * j_th),
-                    allow_edge=True,
-                    field=ext_field,
-                    field_cal=fcal,
+                model = CPPThieleModel(
+                    material=mat, geom=geo, omega0=omega0_rad, N=self.w_n.value,
+                    polarity=self.w_p.value, omega0_Oe_per_J=oe_rad_per_Am2,
+                    field=ext_field, field_cal=fcal
                 )
 
-                # ── Fast mode ────────────────────────────────────
-                if w_fast.value:
-                    _ensure_figure("fast")
-                    fig = _state["fig"]
-                    axes = _state["axes"]
+                j_th = model.threshold_current_dc()
 
-                    j_min = 1.01 * j_th
-                    j_max = 4.0 * j_th
-                    j_grid = np.linspace(j_min, j_max, 160)
-                    f_grid = np.array(
-                        [
-                            self.analyzer.predict_frequency_dc(
-                                val,
-                                material=material,
-                                geometry=geometry,
-                                omega0=omega0,
-                                N=w_n.value,
-                                allow_edge=True,
-                                field=ext_field,
-                                field_cal=fcal,
-                            )
-                            for val in j_grid
-                        ],
-                        dtype=float,
-                    )
+                # ── FAST MODE ──
+                if self.w_sim_mode.value == "Fast (Analytical f(J))":
+                    self._ensure_figure("Fast (Analytical f(J))")
+                    axes = self._state["axes"][0]
+                    
+                    j_max_scan = max(10.0, (j_th / 1e10) * 4.0) if j_th != float('inf') else 10.0
+                    j_grid = np.linspace(0.0, j_max_scan, 200)
+                    f_grid = []
+                    
+                    for j in j_grid:
+                        f = model.predict_frequency_dc(j * 1e10, allow_edge=True)
+                        f_grid.append(f * 1e-9 if f is not None else np.nan)
+                        
+                    self._update_line(self._state["lines"]["fj"], j_grid, f_grid)
+                    self._state["lines"]["vline"].set_xdata([J_MA_cm2, J_MA_cm2])
+                    
+                    self._relim_and_rescale(axes)
 
-                    # Update f(J) line in-place
-                    self._update_line(_state["lines"]["fj"],
-                                      j_grid * 1e-9, f_grid * 1e-9)
-                    # Update vertical marker
-                    _state["lines"]["vline"].set_xdata([current_density * 1e-9,
-                                                         current_density * 1e-9])
-                    self._relim_and_rescale(axes[0])
-
-                    # Update info text
-                    text_lines = [
-                        f"Geometry: {geom_desc}",
-                        f"Area: {area:.3e} m²",
-                        f"R_eq: {radius_eq*1e9:.2f} nm",
-                        f"B = ({w_bx.value:.1f}, {w_by.value:.1f}, {w_bz.value:.1f}) mT  [{w_field_mode.value}]",
-                        f"P_eff: {peff:.4f}",
-                        f"J_dc: {current_density*1e-9:.3f} GA/m²",
-                        f"J_th: {j_th*1e-9:.3f} GA/m²",
-                        f"f_pred: {('n/a' if f_pred is None else f'{f_pred*1e-9:.3f} GHz')}",
-                        f"J_opt(target=f_pred): {opt.current_density_ga_per_m2:.3f} GA/m²",
-                    ]
-                    _state["texts"]["info"].set_text("\n".join(text_lines))
-
-                    fig.canvas.draw_idle()
-                    fig.canvas.flush_events()
-                    return
-
-                # ── Full simulation mode ─────────────────────────
-                _ensure_figure("full")
-                fig = _state["fig"]
-                axes = _state["axes"]
-
-                t_span = (0.0, w_tend.value * 1e-9)
-                dt = w_dt.value * 1e-12
-                if w_sde.value:
-                    traj = self.analyzer.simulate_cpp_sde(
-                        material=material,
-                        geometry=geometry,
-                        omega0=omega0,
-                        N=w_n.value,
-                        current_density=current_density,
-                        t_span=t_span,
-                        dt=dt,
-                        temperature_k=w_temp.value,
-                        noise_scale=w_noise.value,
-                        seed=int(w_seed.value),
-                        s0=(0.0, 0.0),
-                        field=ext_field,
-                        field_cal=fcal,
-                        B_func=b_func,
-                    )
+                # ── FULL ODE/SDE MODE ──
                 else:
-                    traj = self.analyzer.simulate_cpp(
-                        material=material,
-                        geometry=geometry,
-                        omega0=omega0,
-                        N=w_n.value,
-                        current_density=current_density,
-                        t_span=t_span,
-                        dt=dt,
-                        s0=(1e-3, 0.0),
-                        field=ext_field,
-                        field_cal=fcal,
-                        B_func=b_func,
+                    self._ensure_figure("Full Trajectory")
+                    axes = self._state["axes"]
+
+                    t_span = (0.0, self.w_tend.value * 1e-9)
+                    dt = self.w_dt.value * 1e-12
+
+                    if self.w_sde.value and self.w_temp.value > 0:
+                        seed = None if self.w_rand_seed.value else int(self.w_seed.value)
+                        traj = model.simulate_sde(
+                            t_span=t_span, s0=(1e-3, 0.0), J_func=current_dc(current_density_A_m2),
+                            B_func=b_func, dt=dt, temperature_k=self.w_temp.value,
+                            noise_scale=self.w_noise.value, seed=seed
+                        )
+                    else:
+                        traj = model.simulate(
+                            t_span=t_span, s0=(1e-3, 0.0), J_func=current_dc(current_density_A_m2),
+                            B_func=b_func, dt=dt
+                        )
+
+                    # TMR Proxy Signal (Uwzględnia chiralność!)
+                    signal = proxy_signal_from_trajectory(
+                        traj, disk_radius=radius_eq, polarizer_angle_deg=self.w_angle.value, chirality=self.w_c.value
                     )
+                    
+                    # FFT / Welch
+                    freqs, psd = proxy_psd(signal, dt=dt, method="welch" if self.w_sde.value else "fft")
 
-                signal = proxy_signal_from_trajectory(
-                    traj,
-                    disk_radius=radius_eq,
-                    polarizer=polarizer,
-                )
-                freq, psd = proxy_psd(signal, dt=dt, method="welch")
+                    x_nm, y_nm = np.asarray(traj.x) * 1e9, np.asarray(traj.y) * 1e9
+                    R_nm = radius_eq * 1e9
 
-                x_nm = np.asarray(traj.x, dtype=float) * 1e9
-                y_nm = np.asarray(traj.y, dtype=float) * 1e9
-                disk_radius_nm = radius_eq * 1e9
-                if w_geom_mode.value == "disk":
-                    orbit_limit_nm = max(disk_radius_nm, 1e-12)
-                else:
-                    orbit_limit_nm = max(disk_radius_nm, 1e-12) * 1.05
+                    # Plot 1: Orbit
+                    self._update_line(self._state["lines"]["orbit"], x_nm, y_nm)
+                    if len(x_nm) > 0:
+                        self._update_line(self._state["lines"]["point"], [x_nm[-1]], [y_nm[-1]])
+                    self._state["patches"]["circle"].set_radius(R_nm)
+                    
+                    lim = max(R_nm, np.max(np.abs(x_nm)) if len(x_nm) > 0 else 0) * 1.05
+                    axes[0].set_xlim(-lim, lim)
+                    axes[0].set_ylim(-lim, lim)
 
-                # Update orbit line
-                self._update_line(_state["lines"]["orbit"], x_nm, y_nm)
-                # Update disk circle radius
-                _state["patches"]["circle"].set_radius(disk_radius_nm)
-                axes[0].set_xlim(-orbit_limit_nm, orbit_limit_nm)
-                axes[0].set_ylim(-orbit_limit_nm, orbit_limit_nm)
+                    # Plot 2: Time Signal
+                    show_idx = max(0, len(traj.t) - int(30e-9/dt)) # Zoom na ostatnie 30 ns
+                    self._update_line(self._state["lines"]["signal"], traj.t[show_idx:] * 1e9, signal[show_idx:])
+                    self._relim_and_rescale(axes[1])
 
-                # Update signal line
-                self._update_line(_state["lines"]["signal"],
-                                  traj.t * 1e9, signal)
-                self._relim_and_rescale(axes[1])
+                    # Plot 3: PSD in dB scale
+                    if len(psd) > 0:
+                        psd_db = 10 * np.log10(np.maximum(psd, 1e-20))
+                        self._update_line(self._state["lines"]["psd"], freqs * 1e-9, psd_db)
+                        axes[2].set_xlim(0, max(self.w_omega0.value * 2.5, 2.0))
+                        self._relim_and_rescale(axes[2])
 
-                # Update PSD line
-                self._update_line(_state["lines"]["psd"],
-                                  freq * 1e-9, psd)
-                self._relim_and_rescale(axes[2])
+                    f_dom = traj.dominant_frequency_ghz if hasattr(traj, 'dominant_frequency_ghz') else 0.0
+                    lw = traj.linewidth_ghz * 1000 if hasattr(traj, 'linewidth_ghz') else 0.0
+                    u_ss = traj.steady_state_radius_m / radius_eq if hasattr(traj, 'steady_state_radius_m') else 0.0
+                    
+                    info = f"p={model.polarity:+d} | c={model.field_cal.chirality:+d} | Radius u={u_ss:.2f} | f_peak={f_dom:.3f} GHz | Δf={lw:.1f} MHz"
+                    self._state["texts"]["suptitle"].set_text(info)
 
-                # Update suptitle
-                info = (
-                    f"{geom_desc}  "
-                    f"B=({w_bx.value:.1f},{w_by.value:.1f},{w_bz.value:.1f}) mT [{w_field_mode.value}]  "
-                    f"J_dc={current_density*1e-9:.3f} GA/m²  "
-                    f"J_th={j_th*1e-9:.3f} GA/m²  "
-                    f"f_pred={('n/a' if f_pred is None else f'{f_pred*1e-9:.3f} GHz')}  "
-                    f"J_opt={opt.current_density_ga_per_m2:.3f} GA/m²"
-                )
-                _state["texts"]["suptitle"].set_text(info)
+                self._state["fig"].canvas.draw_idle()
+                self._state["fig"].canvas.flush_events()
+                self.w_status.value = "<b style='color:green;'>Status: Completed ✅</b>"
+                
+            except Exception as e:
+                import traceback
+                self.w_status.value = f"<b style='color:red;'>Simulation Error:</b><br><pre>{traceback.format_exc()}</pre>"
 
-                fig.canvas.draw_idle()
-                fig.canvas.flush_events()
-
-        for widget in (
-            w_geom_mode,
-            w_disk_d,
-            w_size_x,
-            w_size_y,
-            w_thick,
-            w_ms,
-            w_alpha,
-            w_pol,
-            w_lambda,
-            w_cos,
-            w_angle,
-            w_current,
-            w_bx,
-            w_by,
-            w_bz,
-            w_field_mode,
-            w_bac_freq,
-            w_bac_phase,
-            w_domega0_dBz,
-            w_seq_per_T,
-            w_omega0,
-            w_n,
-            w_temp,
-            w_noise,
-            w_tend,
-            w_dt,
-            w_fast,
-            w_sde,
-            w_seed,
-        ):
-            widget.observe(_render, names="value")
-
-        w_geom_mode.observe(lambda *_: _sync_geometry_controls(), names="value")
-        w_sde.observe(lambda *_: _sync_sde_controls(), names="value")
-
-        def _sync_ac_controls(*_args):
-            is_ac = w_field_mode.value == "AC"
-            w_bac_freq.disabled = not is_ac
-            w_bac_phase.disabled = not is_ac
-
-        w_field_mode.observe(_sync_ac_controls, names="value")
-
-        controls = widgets.VBox(
-            [
-                widgets.HBox([w_geom_mode, w_disk_d, w_size_x, w_size_y, w_thick]),
-                widgets.HBox([w_ms, w_alpha]),
-                widgets.HBox([w_bx, w_by, w_bz, w_field_mode]),
-                widgets.HBox([w_bac_freq, w_bac_phase, w_domega0_dBz, w_seq_per_T]),
-                widgets.HBox([w_pol, w_lambda, w_cos, w_angle, w_current]),
-                widgets.HBox([w_omega0, w_n, w_temp, w_noise, w_seed]),
-                widgets.HBox([w_tend, w_dt, w_fast, w_sde]),
-            ]
-        )
-        root = widgets.VBox([controls, out])
-        _sync_geometry_controls()
-        _sync_sde_controls()
-        _sync_ac_controls()
-        _render()
-        return root
+        self._update_hud()
 
 
-def build_thiele_dashboard(analyzer: Any, **kwargs):
+def build_thiele_dashboard(**kwargs):
     """Build and return interactive dashboard widget for Thiele analysis."""
-    dash = ThieleInteractiveDashboard(analyzer=analyzer)
+    dash = ThieleInteractiveDashboard()
     return dash.show(**kwargs)
 
 
