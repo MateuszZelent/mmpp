@@ -541,18 +541,27 @@ def interactive_spectrum(
     if n_vis_types == 0:
         raise ValueError("At least one visualization type must be enabled")
 
+    # ── Grid layout ──────────────────────────────────────────────────────────
+    # columns:  0 = spectrum (all rows)
+    #           1 … n_comp = mode panels
+    #           last = dedicated colorbar strip (one per vis-row)
+    _spec_w  = getattr(analyzer.config, "spectrum_width_ratio", 1.5)
+    _cbar_w  = 0.12   # colorbar strip: ~12 % of a mode column → ≈ 0.4–0.5 in at 16 in wide
+
     gs = gridspec.GridSpec(
         n_vis_types,
-        n_components + 1,
-        width_ratios=[analyzer.config.spectrum_width_ratio]
-        + [analyzer.config.modes_width_ratio / n_components] * n_components,
-        height_ratios=[1] * n_vis_types,
+        n_components + 2,          # +1 spectrum, +1 colorbar strip
+        width_ratios=[_spec_w] + [1.0] * n_components + [_cbar_w],
+        height_ratios=[1.0] * n_vis_types,
+        hspace=0.35,
+        wspace=0.18,
+        left=0.06, right=0.97, top=0.92, bottom=0.08,
     )
 
-    # Spectrum plot spans all rows in first column
+    # Spectrum – spans all rows in column 0
     ax_spectrum = analyzer._interactive_fig.add_subplot(gs[:, 0])
 
-    # Mode plots in remaining columns - dynamic based on enabled visualizations
+    # Mode panels – rows × component columns
     analyzer._mode_axes = np.array(
         [
             [
@@ -562,6 +571,12 @@ def interactive_spectrum(
             for row in range(n_vis_types)
         ]
     )
+
+    # Dedicated colorbar axes – one per vis-row, rightmost column
+    analyzer._cbar_axes = [
+        analyzer._interactive_fig.add_subplot(gs[row, -1])
+        for row in range(n_vis_types)
+    ]
 
     # Plot spectrum
     # Debug: check spectrum shape
@@ -1020,7 +1035,8 @@ Interactive Spectrum Controls:
     # Store cleanup function for later use
     analyzer._interactive_fig._mmpp_cleanup = cleanup
 
-    plt.tight_layout()
+    # Margins are already set in the GridSpec; no tight_layout needed.
+    analyzer._interactive_fig.canvas.draw_idle()
 
     # Auto-animate all mode plots if requested
     if auto_animate:
@@ -1180,6 +1196,17 @@ def update_mode_plots(
                 )
         return
 
+    # ── Pre-compute shared rendering parameters (constant across all components) ──
+    try:
+        from ..vortex_optics import VortexOptics, TopologicalAnimator
+        _have_vortex = True
+    except ImportError:
+        _have_vortex = False
+
+    use_holo  = getattr(analyzer.config, "use_holography", False)
+    holo_gamma = getattr(analyzer.config, "holography_gamma", 0.5)
+    holo_noise = getattr(analyzer.config, "holography_noise_threshold", 1e-4)
+
     # Plot each component
     for i, comp in enumerate(components):
         try:
@@ -1187,18 +1214,10 @@ def update_mode_plots(
             magnitude = np.abs(comp_data)
             phase = np.angle(comp_data)
 
-            # Use VortexOptics labels when available
-            try:
-                from ..vortex_optics import VortexOptics, TopologicalAnimator
-                comp_label = VortexOptics.get_component_label(str(comp), latex=False)
-                _have_vortex = True
-            except ImportError:
-                comp_label = str(comp)
-                _have_vortex = False
-
-            use_holo = getattr(analyzer.config, "use_holography", False)
-            holo_gamma = getattr(analyzer.config, "holography_gamma", 0.5)
-            holo_noise = getattr(analyzer.config, "holography_noise_threshold", 1e-4)
+            comp_label = (
+                VortexOptics.get_component_label(str(comp), latex=False)
+                if _have_vortex else str(comp)
+            )
 
             row_idx = 0
 
@@ -1214,7 +1233,6 @@ def update_mode_plots(
                     interpolation=analyzer.config.interpolation,
                     origin="lower",
                 )
-                analyzer._mode_axes[row_idx, i].set_title(f"|{comp_label}|")
                 if images_for_colorbar[row_idx] is None:
                     images_for_colorbar[row_idx] = img
                 if i == 0:
@@ -1250,7 +1268,6 @@ def update_mode_plots(
                         vmax=np.pi,
                         origin="lower",
                     )
-                    ax_phase.set_title(f"arg({comp_label})")
                 if images_for_colorbar[row_idx] is None and not use_holo:
                     images_for_colorbar[row_idx] = img
                 if i == 0:
@@ -1275,7 +1292,6 @@ def update_mode_plots(
                     vmax=vmax_combined,
                     origin="lower",
                 )
-                analyzer._mode_axes[row_idx, i].set_title(f"Re[{comp_label}(t)]")
                 if images_for_colorbar[row_idx] is None:
                     images_for_colorbar[row_idx] = img
                 if i == 0:
@@ -1287,6 +1303,28 @@ def update_mode_plots(
             log.error(f"Failed to plot component {comp}: {e}")
             continue
 
+    # ── Column headers (top row) and row labels (leftmost column) ───────────
+    _vis_row_labels = {
+        "magnitude": "Amplitude",
+        "phase":     "Hologram" if use_holo else "Phase",
+        "combined":  "Re[m(t)]",
+    }
+    for r_idx, vis_type in enumerate(vis_types):
+        if r_idx < len(analyzer._mode_axes) and len(analyzer._mode_axes[r_idx]) > 0:
+            analyzer._mode_axes[r_idx, 0].set_ylabel(
+                _vis_row_labels.get(vis_type, vis_type),
+                fontsize=8, labelpad=5, rotation=90,
+            )
+    for c_idx, comp in enumerate(components):
+        if len(analyzer._mode_axes) > 0 and c_idx < analyzer._mode_axes.shape[1]:
+            _col_label = (
+                VortexOptics.get_component_label(str(comp), latex=False)
+                if _have_vortex else str(comp)
+            )
+            analyzer._mode_axes[0, c_idx].set_title(
+                _col_label, fontsize=9, fontweight="semibold", pad=4
+            )
+
     # Add frequency info
     analyzer._interactive_fig.suptitle(
         f"FMR Modes at {analyzer._current_frequency:.3f} GHz",
@@ -1294,66 +1332,47 @@ def update_mode_plots(
         fontweight="bold",
     )
 
-    # Create shared colorbars per visualization type - use INSET colorbars for publication quality
+    # ── Per-row colorbars in the dedicated axes created at figure build time ─
+    _CBAR_LABELS = {
+        "magnitude": "Amplitude (a.u.)",
+        "phase":     "Phase (rad)",
+        "combined":  "Re[m] (a.u.)",
+    }
+    _PHASE_TICKS  = [-np.pi, -np.pi / 2, 0.0, np.pi / 2, np.pi]
+    _PHASE_TLBLS  = [r"$-\pi$", r"$-\frac{\pi}{2}$", "0",
+                     r"$\frac{\pi}{2}$", r"$\pi$"]
+
+    _cbar_axes_list = getattr(analyzer, "_cbar_axes", [])
     for row_idx, (vis_type, img) in enumerate(zip(vis_types, images_for_colorbar)):
         if img is None:
             continue
+        if row_idx >= len(_cbar_axes_list):
+            continue
+        cax = _cbar_axes_list[row_idx]
         try:
-            # Get the rightmost axis in this row for colorbar placement
-            rightmost_ax = analyzer._mode_axes[row_idx, -1]
-            
-            # Determine vmin/vmax from image
-            try:
-                vmin = img.get_clim()[0]
-                vmax = img.get_clim()[1]
-            except:
-                vmin, vmax = 0, 1
-            
-            label = analyzer.config.colorbar_labels.get(vis_type, vis_type.title())
-            
-            # Use inset colorbar if available (publication-ready)
-            if INSET_COLORBAR_AVAILABLE:
-                _make_inset_colorbar(
-                    ax=rightmost_ax,
-                    image=img,
-                    fig=analyzer._interactive_fig,
-                    vmin=vmin,
-                    vmax=vmax,
-                    label=label,
-                    width=analyzer.config.colorbar_inset_width,
-                    height=analyzer.config.colorbar_inset_height,
-                    position=analyzer.config.colorbar_inset_position,
-                    bg_alpha=analyzer.config.colorbar_inset_bg_alpha,
-                    fontsize=analyzer.config.colorbar_inset_fontsize,
-                    title_fontsize=analyzer.config.colorbar_inset_title_fontsize,
+            cax.clear()
+            cbar = analyzer._interactive_fig.colorbar(
+                img, cax=cax, orientation="vertical"
+            )
+            cbar.set_label(
+                _CBAR_LABELS.get(vis_type, vis_type.capitalize()),
+                fontsize=7, labelpad=4,
+            )
+            cbar.ax.tick_params(labelsize=6, length=2, pad=2)
+            # Neat tick labels for phase rows
+            if vis_type == "phase" and not use_holo:
+                try:
+                    cbar.set_ticks(_PHASE_TICKS)
+                    cbar.set_ticklabels(_PHASE_TLBLS)
+                except Exception:
+                    pass
+            elif vis_type == "magnitude":
+                cbar.ax.yaxis.set_major_formatter(
+                    plt.FuncFormatter(lambda x, _: f"{x:.2g}")
                 )
-            elif AXES_GRID_AVAILABLE:
-                from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-                # Use make_axes_locatable for proper positioning
-                divider = make_axes_locatable(rightmost_ax)
-                cax = divider.append_axes(
-                    "right",
-                    size=f"{analyzer.config.colorbar_fraction*100}%",
-                    pad=analyzer.config.colorbar_pad,
-                )
-                cbar = analyzer._interactive_fig.colorbar(img, cax=cax)
-                cbar.set_label(label, fontsize=analyzer.config.colorbar_label_size)
-                cbar.ax.tick_params(labelsize=analyzer.config.colorbar_ticklabel_size)
-                analyzer._row_colorbars.append(cbar)
-            else:
-                # Fallback to basic colorbar positioned at rightmost axis
-                cbar = analyzer._interactive_fig.colorbar(
-                    img,
-                    ax=rightmost_ax,
-                    fraction=analyzer.config.colorbar_fraction,
-                    pad=analyzer.config.colorbar_pad,
-                )
-                cbar.set_label(label, fontsize=analyzer.config.colorbar_label_size)
-                cbar.ax.tick_params(labelsize=analyzer.config.colorbar_ticklabel_size)
-                analyzer._row_colorbars.append(cbar)
+            analyzer._row_colorbars.append(cbar)
         except Exception as exc:
-            log.debug(f"Skipping colorbar for {vis_type}: {exc}")
+            log.debug(f"Colorbar for row {row_idx} ({vis_type}) failed: {exc}")
 
     # Restart animations that were active before the update
     if has_active_animations and active_animation_keys:

@@ -79,8 +79,9 @@ class ModeVisualizationConfig:
     f_max: float = 40.0
 
     # Layout settings
-    spectrum_width_ratio: float = 0.4
-    modes_width_ratio: float = 0.6
+    # GridSpec ratios: spectrum column vs. each mode column (1.0) vs. colorbar strip
+    spectrum_width_ratio: float = 1.5   # ~1.5× wider than each mode panel
+    modes_width_ratio: float = 1.0      # each mode panel = 1.0 unit
 
     def __post_init__(self):
         """Validate configuration parameters."""
