@@ -1,17 +1,19 @@
 """
 Vortex Optics Module - Topological Transformations for Magnetization Dynamics
 
-This module provides rigorous tensor transformations from Cartesian basis to 
-higher-symmetry bases (circular/helical and cylindrical) for analyzing 
+This module provides rigorous tensor transformations from Cartesian basis to
+higher-symmetry bases (circular/helical and cylindrical) for analyzing
 gyrotropic vortex cores and azimuthal spin wave modes.
 
 Author: Micromag Physics Engine
 Integration: mmpp.fft.modes
 """
 
-import numpy as np
-import matplotlib.colors as mcolors
 import logging
+from typing import Optional
+
+import matplotlib.colors as mcolors
+import numpy as np
 
 log = logging.getLogger("mmpp.fft.modes.vortex_optics")
 
@@ -59,9 +61,9 @@ class VortexOptics:
 
     @staticmethod
     def to_cylindrical_basis(
-        m_x: np.ndarray, 
-        m_y: np.ndarray, 
-        center: tuple[float, float] = None
+        m_x: np.ndarray,
+        m_y: np.ndarray,
+        center: Optional[tuple[float, float]] = None
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Transform to cylindrical (magnetocentric) basis.
@@ -196,11 +198,11 @@ class VortexOptics:
     
     @staticmethod
     def resolve_physical_components(
-        m_x: np.ndarray, 
-        m_y: np.ndarray, 
-        m_z: np.ndarray, 
+        m_x: np.ndarray,
+        m_y: np.ndarray,
+        m_z: np.ndarray,
         components: list[str],
-        vortex_center: tuple[float, float] = None
+        vortex_center: Optional[tuple[float, float]] = None
     ) -> dict[str, np.ndarray]:
         """
         Intelligent router for physical basis transformations.
@@ -299,9 +301,9 @@ def to_circular(m_x: np.ndarray, m_y: np.ndarray) -> tuple[np.ndarray, np.ndarra
 
 
 def to_cylindrical(
-    m_x: np.ndarray, 
-    m_y: np.ndarray, 
-    center: tuple[float, float] = None
+    m_x: np.ndarray,
+    m_y: np.ndarray,
+    center: Optional[tuple[float, float]] = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Shorthand for VortexOptics.to_cylindrical_basis"""
     return VortexOptics.to_cylindrical_basis(m_x, m_y, center)
