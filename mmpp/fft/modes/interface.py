@@ -1051,6 +1051,13 @@ class FFTModeInterfaceNew:
         # Reuse an already computed spectrum when provided (e.g. SpectrumResult.plot.interactive()).
         # Fallback to parent FFT computation to preserve legacy behavior.
         spectrum_result = kwargs.pop("spectrum_result", None)
+
+        # Convenience aliases so both spellings work transparently
+        if "animate" in kwargs and "auto_animate" not in kwargs:
+            kwargs["auto_animate"] = kwargs.pop("animate")
+        elif "animate" in kwargs:
+            kwargs.pop("animate")  # auto_animate already provided explicitly
+
         if spectrum_result is None:
             find_peaks_params = kwargs.pop("find_peaks", {"min_prominence": 0.01})
             spectrum_result = self.parent_fft._spectrum_impl(
@@ -1109,7 +1116,23 @@ class FFTModeInterfaceNew:
             toolbar = False
             log.info("Legacy interactive mode selected due to legacy-only arguments")
 
-        if toolbar:
+        # Topological components (+, -, rho, phi) and holography are only
+        # handled by the legacy FMRModeAnalyzer path (VortexOptics engine).
+        # Force the legacy path so the correct interface is always used.
+        _TOPOLOGICAL_COMPONENTS = {"+", "-", "rho", "phi"}
+        _has_topological = components is not None and any(
+            str(c) in _TOPOLOGICAL_COMPONENTS for c in components
+        )
+        if use_holography or _has_topological:
+            toolbar = False
+            log.info(
+                "Legacy interactive mode selected: use_holography=%s, "
+                "topological_components=%s",
+                use_holography,
+                [c for c in (components or []) if str(c) in _TOPOLOGICAL_COMPONENTS],
+            )
+
+
             resolved_log_scale = bool(viewer_kwargs.pop("log_scale", False))
             resolved_normalize = bool(viewer_kwargs.pop("normalize", True))
             resolved_freq_unit = str(viewer_kwargs.pop("freq_unit", "GHz"))

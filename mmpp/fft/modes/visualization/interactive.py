@@ -1107,7 +1107,11 @@ def update_mode_plots(
     has_active_animations = (
         hasattr(analyzer, "_mode_animations") and analyzer._mode_animations
     )
+    has_active_column_animations = (
+        hasattr(analyzer, "_column_animations") and analyzer._column_animations
+    )
     active_animation_keys = set()
+    active_column_indices: list[int] = []
 
     if has_active_animations:
         # Store which axes were animated
@@ -1119,6 +1123,13 @@ def update_mode_plots(
         # Stop all current animations
         for axis_key in list(analyzer._mode_animations.keys()):
             _stop_mode_animation(analyzer, axis_key)
+
+    if has_active_column_animations:
+        from .animation import stop_column_animation as _stop_col_anim
+        active_column_indices = list(range(len(components)))
+        for col_idx in active_column_indices:
+            _stop_col_anim(analyzer, col_idx)
+        log.debug(f"Stopped {len(active_column_indices)} column animations for frequency update")
 
     # Clear previous shared colorbars safely
     for cbar in getattr(analyzer, "_row_colorbars", []):
@@ -1176,6 +1187,19 @@ def update_mode_plots(
             magnitude = np.abs(comp_data)
             phase = np.angle(comp_data)
 
+            # Use VortexOptics labels when available
+            try:
+                from ..vortex_optics import VortexOptics, TopologicalAnimator
+                comp_label = VortexOptics.get_component_label(str(comp), latex=False)
+                _have_vortex = True
+            except ImportError:
+                comp_label = str(comp)
+                _have_vortex = False
+
+            use_holo = getattr(analyzer.config, "use_holography", False)
+            holo_gamma = getattr(analyzer.config, "holography_gamma", 0.5)
+            holo_noise = getattr(analyzer.config, "holography_noise_threshold", 1e-4)
+
             row_idx = 0
 
             # Magnitude plot (if enabled)
@@ -1190,7 +1214,7 @@ def update_mode_plots(
                     interpolation=analyzer.config.interpolation,
                     origin="lower",
                 )
-                analyzer._mode_axes[row_idx, i].set_title(f"|m_{comp}|")
+                analyzer._mode_axes[row_idx, i].set_title(f"|{comp_label}|")
                 if images_for_colorbar[row_idx] is None:
                     images_for_colorbar[row_idx] = img
                 if i == 0:
@@ -1201,32 +1225,45 @@ def update_mode_plots(
 
             # Phase plot (if enabled)
             if analyzer.config.show_phase:
-                img = analyzer._mode_axes[row_idx, i].imshow(
-                    phase,
-                    cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
-                    extent=mode_data.extent,
-                    aspect="equal",
-                    interpolation=analyzer.config.interpolation,
-                    vmin=-np.pi,
-                    vmax=np.pi,
-                    origin="lower",
-                )
-                analyzer._mode_axes[row_idx, i].set_title(f"arg(m_{comp})")
-                if images_for_colorbar[row_idx] is None:
+                ax_phase = analyzer._mode_axes[row_idx, i]
+                if use_holo and _have_vortex:
+                    # Holographic domain coloring (amplitude + phase → HSV→RGB)
+                    holo_img = VortexOptics.complex_holography(
+                        comp_data, gamma=holo_gamma, noise_threshold=holo_noise
+                    )
+                    img = ax_phase.imshow(
+                        holo_img,
+                        extent=mode_data.extent,
+                        aspect="equal",
+                        interpolation=analyzer.config.interpolation,
+                        origin="lower",
+                    )
+                    ax_phase.set_title(f"Hologram({comp_label})")
+                else:
+                    img = ax_phase.imshow(
+                        phase,
+                        cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
+                        extent=mode_data.extent,
+                        aspect="equal",
+                        interpolation=analyzer.config.interpolation,
+                        vmin=-np.pi,
+                        vmax=np.pi,
+                        origin="lower",
+                    )
+                    ax_phase.set_title(f"arg({comp_label})")
+                if images_for_colorbar[row_idx] is None and not use_holo:
                     images_for_colorbar[row_idx] = img
                 if i == 0:
                     _add_scale_bar(
-                        analyzer, analyzer._mode_axes[row_idx, i], mode_data.extent
+                        analyzer, ax_phase, mode_data.extent
                     )
                 row_idx += 1
 
             # Combined plot (if enabled)
             if analyzer.config.show_combined:
-                # Create combined visualization: magnitude * cos(phase) for real part
-                # or magnitude * sin(phase) for imaginary part
-                # This shows the actual complex amplitude with sign
-                combined_data = magnitude * np.cos(phase)  # Real part
-                # Alternative: combined_data = magnitude * np.sin(phase)  # Imaginary part
+                # Re[m·exp(-iφ)] with fixed colour scale → no frame-to-frame flicker
+                vmax_combined = float(np.nanmax(magnitude)) or 1.0
+                combined_data = magnitude * np.cos(phase)
 
                 img = analyzer._mode_axes[row_idx, i].imshow(
                     combined_data,
@@ -1234,9 +1271,11 @@ def update_mode_plots(
                     extent=mode_data.extent,
                     aspect="equal",
                     interpolation=analyzer.config.interpolation,
+                    vmin=-vmax_combined,
+                    vmax=vmax_combined,
                     origin="lower",
                 )
-                analyzer._mode_axes[row_idx, i].set_title(f"m_{comp} (mag×cos(φ))")
+                analyzer._mode_axes[row_idx, i].set_title(f"Re[{comp_label}(t)]")
                 if images_for_colorbar[row_idx] is None:
                     images_for_colorbar[row_idx] = img
                 if i == 0:
@@ -1336,3 +1375,18 @@ def update_mode_plots(
                 log.warning(
                     f"Failed to restart animation for axis ({row_idx}, {col_idx}): {e}"
                 )
+
+    # Restart column animations that were active before the update
+    if active_column_indices:
+        from .animation import start_column_animation as _start_col_anim
+        frames = analyzer.config.animation_time_steps
+        for col_idx in active_column_indices:
+            if col_idx < len(components):
+                try:
+                    _start_col_anim(analyzer, col_idx, components[col_idx], z_layer, frames=frames)
+                    log.debug(
+                        f"Restarted column animation for col={col_idx} at {analyzer._current_frequency:.3f} GHz"
+                    )
+                except Exception as e:
+                    log.warning(f"Failed to restart column animation for col={col_idx}: {e}")
+
