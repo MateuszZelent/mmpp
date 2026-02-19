@@ -20,6 +20,13 @@ Usage:
 
 from .base import AnalyticalResult, DispersionResult, FMRResult
 from .constants import G_FACTOR_DEFAULT, GAMMA_E, MU0, gamma
+from . import nonlinear_stno
+from .nonlinear_stno import (
+    STNOParameters,
+    run_all_sweeps_parallel,
+    SpectrumAnalyzer,
+    DashboardPlotter,
+)
 from .dispersion import (
     backward_volume,
     bottcher,
@@ -48,6 +55,7 @@ from .thiele import (
     ThieleOptimizationResult,
     ThieleTrajectoryResult,
     current_ac,
+
     current_dc,
     current_pulse,
     ellipse_area,
@@ -104,4 +112,10 @@ __all__ = [
     "field_ac",
     "omega0_novosad",
     "f0_novosad_ghz",
+    # Nonlinear STNO dynamics (DBAT 2.0)
+    "nonlinear_stno",
+    "STNOParameters",
+    "run_all_sweeps_parallel",
+    "SpectrumAnalyzer",
+    "DashboardPlotter",
 ]

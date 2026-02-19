@@ -335,8 +335,10 @@ class ThieleTrajectoryResult(AnalyticalResult):
 
     @property
     def phi(self) -> np.ndarray:
-        """Azimuthal angle φ(t) = arg(z) [rad]."""
-        return np.angle(self.z)
+        """Azimuthal angle φ(t) [rad], centered on orbit geometry."""
+        x_c = self.x - np.mean(self.x)
+        y_c = self.y - np.mean(self.y)
+        return np.angle(x_c + 1j * y_c)
 
     @property
     def phi_unwrapped(self) -> np.ndarray:
@@ -388,8 +390,11 @@ class ThieleTrajectoryResult(AnalyticalResult):
     @property
     def _spectrum_cache(self) -> tuple[np.ndarray, np.ndarray]:
         """Cached (frequencies_hz, power) from windowed FFT of x(t)."""
-        cache_attr = "__spectrum_cache"
-        if not hasattr(self, cache_attr) or getattr(self, cache_attr) is None:
+        # Zwykłe pojedyncze podkreślenie - lintery je ignorują, brak name manglingu.
+        cache_attr = "_spectrum_cache_data"
+        
+        cached_result = getattr(self, cache_attr, None)
+        if cached_result is None:
             n = len(self.t)
             if n < 4:
                 result = (np.array([]), np.array([]))
@@ -401,13 +406,17 @@ class ThieleTrajectoryResult(AnalyticalResult):
                 sig_windowed = sig * window
                 fft_vals = np.fft.rfft(sig_windowed)
                 freqs = np.fft.rfftfreq(n, d=dt)
+                
                 # Normalised one-sided power spectrum
                 power = (np.abs(fft_vals) ** 2) / max(float(n), 1.0)
-                # Compensate for Hann window energy loss
                 power *= 2.0 / max(float(np.mean(window**2)), 1e-30)
+                
                 result = (freqs, power)
+            
             object.__setattr__(self, cache_attr, result)
-        return getattr(self, cache_attr)
+            return result
+            
+        return cached_result
 
     @property
     def spectrum_frequencies_ghz(self) -> np.ndarray:
@@ -470,7 +479,6 @@ class ThieleTrajectoryResult(AnalyticalResult):
         # --- 2. Odporne na szum dopasowanie krzywej Lorentza ---
         try:
             import warnings
-
             from scipy.optimize import curve_fit
 
             # Wycinek okna częstotliwości (np. +/- 10 szerokości naiwnych, min. 200 MHz)
@@ -649,7 +657,7 @@ class ThieleFJFitResult(AnalyticalResult):
 
     omega0: float = float("nan")
     N: float = float("nan")
-    omega0_Oe_per_J: float = 0.0
+    domega0_dJ: float = 0.0
     chi_scale: float = 1.0
     J_data: np.ndarray = field(default_factory=lambda: np.array([]))
     f_data_hz: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -900,7 +908,7 @@ def omega0_novosad(mat: MaterialParams, geo: DiskGeometry) -> float:
 
     .. math::
 
-        \omega_0 = \frac{10}{9} \gamma_0 M_s \frac{L}{R}
+        \omega_0 = \frac{5}{9\pi} \gamma_0 M_s \frac{L}{R}
                    F_1\!\left(\frac{L}{R}\right)
 
     where :math:`F_1(\beta) \approx 1 - 3\beta/(8\pi)` for thin disks
@@ -930,7 +938,6 @@ def omega0_novosad(mat: MaterialParams, geo: DiskGeometry) -> float:
         F1 = 0.1  # guard for thick disks where expansion breaks down
 
     gamma0 = mat.gamma * MU0  # rad/(s·T) → rad·m/(s·A)
-    # omega0 = (10.0 / 9.0) * gamma0 * mat.Ms * (geo.L / geo.R) * F1 <- blad konwerscji CGS /SI? 
     omega0 = (5.0 / (9.0 * math.pi)) * gamma0 * mat.Ms * (geo.L / geo.R) * F1
     return omega0
 
@@ -1024,8 +1031,8 @@ class CIPThieleModel:
         geo = self.geom
         p = self.polarity
 
-        # Spin-drift velocity prefactor: u₀ = μ_B P / (e Ms)  [m³/(A·s)]
-        self._u0_prefactor = _MU_B * mat.P / (_E_CHARGE * mat.Ms)
+        # Spin-drift velocity prefactor: u₀ = - μ_B P / (e Ms)  [m³/(A·s)]
+        self._u0_prefactor = - _MU_B * mat.P / (_E_CHARGE * mat.Ms)
 
         # Core diameter δ (≈ core_diameter or 2·exchange_length)
         delta = geo.core_diameter if geo.core_diameter else 2.0 * mat.exchange_length
@@ -1035,10 +1042,6 @@ class CIPThieleModel:
         self._d_over_G0 = 0.5 * math.log(max(ratio, 1.1))
 
         # Effective constants for the linear ODE
-        # ω₀ already given; κ = ω₀·G₀ (but G₀ cancels in the ODE)
-        # After dividing through by G₀ the ODE becomes:
-        #   p ẑ×(u − ṙ) = −ω₀ r − α (D/G₀) ṙ + β (D/G₀) u
-        # Rearranging for ṙ gives a 2×2 linear system per time-step.
         self._alpha = mat.alpha
         self._beta = mat.beta
         self._dG = self._d_over_G0
@@ -1084,15 +1087,13 @@ class CIPThieleModel:
         dG = self._dG
 
         # Moon ODE using relative coordinates
-        # α dG dX/dt - p dY/dt = -ω₀ X - p u_y + β dG u_x  ... (I)
-        # p dX/dt + α dG dY/dt = -ω₀ Y + p u_x + β dG u_y  ... (II)
         det = (alpha * dG) ** 2 + p**2  # always > 0
         
-        # FIZYKA: Prawidłowe znaki sił STT (rotacja CCW dla p=1, analiza SONETa)
+        # FIZYKA: Prawidłowe znaki sił STT (rotacja CCW dla p=1)
         rhs_I = -w0 * Xr - p * uy + beta * dG * ux
         rhs_II = -w0 * Yr + p * ux + beta * dG * uy
 
-        # MATEMATYKA: Prawidłowa odwrotna macierz sprzężeń (Twój stary oryginał!)
+        # MATEMATYKA: Prawidłowa odwrotna macierz sprzężeń
         dXdt = (alpha * dG * rhs_I + p * rhs_II) / det
         dYdt = (-p * rhs_I + alpha * dG * rhs_II) / det
 
@@ -1224,6 +1225,8 @@ class CPPThieleModel:
         Typical range 0.1–0.5; Guslienko reports ~0.2–0.25 for common geometries.
     polarity : int
         Core polarity *p* = ±1.  Determines rotation sense.
+    domega0_dJ : float
+        Current-induced frequency shift [rad/s / A/m²]. Used for Oersted field correction.
 
     Notes
     -----
@@ -1246,17 +1249,17 @@ class CPPThieleModel:
         omega0: float,
         N: float = 0.25,
         polarity: int = 1,
-        omega0_Oe_per_J: float = 0.0,
+        domega0_dJ: float = 0.0,
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
         chi_scale: float = 1.0,
     ) -> None:
         self.material = material
         self.geom = geom
-        self.omega0 = omega0
-        self.N = N
+        self.omega0 = float(omega0)
+        self.N = float(N)
         self.polarity = int(polarity)
-        self.omega0_Oe_per_J = float(omega0_Oe_per_J)
+        self.domega0_dJ = float(domega0_dJ)
         self.field = field if field is not None else ExternalField()
         self.field_cal = field_cal if field_cal is not None else FieldCalibration()
         self.chi_scale = float(chi_scale)
@@ -1292,7 +1295,9 @@ class CPPThieleModel:
         """Nonlinear damping d(u) [dimensionless]."""
         return self._d0 + self._d1 * u**2
 
-    def omega0_eff(self, J: float, field_state: ExternalField | None = None) -> float:
+    def omega0_eff(
+        self, J: float, field_state: ExternalField | None = None, *, domega0_dJ: float | None = None
+    ) -> float:
         """
         Effective linear frequency [rad/s].
 
@@ -1303,9 +1308,11 @@ class CPPThieleModel:
         The polarity factor ``p`` is applied automatically.
         """
         B = field_state if field_state is not None else self.field
+        # Wybierz podany override lub użyj atrybutu zdefiniowanego w modelu
+        slope = self.domega0_dJ if domega0_dJ is None else float(domega0_dJ)
         return (
             self.omega0
-            + self.omega0_Oe_per_J * float(J)
+            + slope * float(J)
             + self.field_cal.omega0_shift(field_state=B, polarity=self.polarity)
         )
 
@@ -1329,9 +1336,10 @@ class CPPThieleModel:
         sx, sy = self.field_cal.s_eq(field_state=B)
         return np.array([sx, sy], dtype=float)
 
-    def omega(self, u: float, J: float = 0.0) -> float:
+    def omega(self, u: float, J: float = 0.0, *, domega0_dJ: float | None = None) -> float:
         """Nonlinear gyrotropic frequency ω(u, J) [rad/s]."""
-        return self.omega0_eff(J) * (1.0 + self.N * u**2)
+        # Przekazujemy parametr do wywołania pod spodem
+        return self.omega0_eff(J, domega0_dJ=domega0_dJ) * (1.0 + self.N * u**2)
 
     @property
     def J_threshold(self) -> float:
@@ -1351,7 +1359,7 @@ class CPPThieleModel:
         J_dc: float,
         *,
         allow_edge: bool = False,
-        omega0_Oe_per_J: float | None = None,
+        domega0_dJ: float | None = None,
     ) -> float | None:
         """
         Predict steady-state gyration frequency for DC current.
@@ -1362,25 +1370,19 @@ class CPPThieleModel:
             DC current density [A/m²].
         allow_edge : bool
             If True, return edge-clamped frequency when u₀ ≥ u_stop.
-        omega0_Oe_per_J : float, optional
-            Override the model's ``omega0_Oe_per_J`` for this call.
+        domega0_dJ : float, optional
+            Override the model's ``domega0_dJ`` for this call.
 
         Returns
         -------
         float | None
             Frequency [Hz], or ``None`` below threshold / edge-clamped (if disallowed).
         """
-        old = self.omega0_Oe_per_J
-        if omega0_Oe_per_J is not None:
-            self.omega0_Oe_per_J = float(omega0_Oe_per_J)
-        try:
-            u0 = self.steady_state_u(float(J_dc), allow_edge=allow_edge)
-            if u0 is None:
-                return None
-            omega_eff = self.omega(u0, float(J_dc))
-            return float(omega_eff / (2.0 * math.pi))
-        finally:
-            self.omega0_Oe_per_J = old
+        u0 = self.steady_state_u(float(J_dc), allow_edge=allow_edge, domega0_dJ=domega0_dJ)
+        if u0 is None:
+            return None
+        omega_eff = self.omega(u0, float(J_dc), domega0_dJ=domega0_dJ)
+        return float(omega_eff / (2.0 * math.pi))
 
     def optimize_current_for_target_frequency(
         self,
@@ -1392,8 +1394,6 @@ class CPPThieleModel:
     ) -> ThieleOptimizationResult:
         """
         Optimize DC current density to match target gyration frequency.
-
-        Uses the model's ``omega0_Oe_per_J`` attribute for Oersted correction.
         """
         target = float(target_frequency_hz)
         if not np.isfinite(target) or target <= 0.0:
@@ -1457,13 +1457,13 @@ class CPPThieleModel:
             J_bounds=(j_min, j_max),
             params={
                 "allow_edge": bool(allow_edge),
-                "omega0_Oe_per_J": self.omega0_Oe_per_J,
+                "domega0_dJ": self.domega0_dJ,
                 "n_grid": int(max(int(n_grid), 32)),
             },
         )
 
     def steady_state_u(
-        self, J: float, *, allow_edge: bool = False, u_stop: float = 0.98,
+        self, J: float, *, allow_edge: bool = False, u_stop: float = 0.98, domega0_dJ: float | None = None
     ) -> float | None:
         """
         Analytical steady-state normalised radius u₀ for DC current J.
@@ -1474,7 +1474,8 @@ class CPPThieleModel:
         """
         J = float(J)
         chi_val = float(self.chi(J))
-        w0 = float(self.omega0_eff(J))
+        # Obliczenia z parametrem thread-safe:
+        w0 = float(self.omega0_eff(J, domega0_dJ=domega0_dJ))
         if not np.isfinite(chi_val) or not np.isfinite(w0) or w0 <= 0:
             return None
 
@@ -1491,7 +1492,6 @@ class CPPThieleModel:
         xs: list[float] = []
         if abs(c2) < 1e-30:
             if abs(c1) < 1e-30:
-                # No solution from quadratic
                 pass
             else:
                 xs = [-c0 / c1]
@@ -1509,15 +1509,12 @@ class CPPThieleModel:
             if u <= 0:
                 continue
             # Stability check: d/du[d·ω] > 0 at u₀
-            # For d(u)=d₀+d₁u² and ω(u)=w₀(1+Nu²):
-            #   d/du[dω] ∝ (d₁ + N·d₀ + 2·N·d₁·u²)
             if (d1 + N * d0 + 2.0 * N * d1 * u * u) <= 0.0:
                 continue
             u_candidates.append(u)
 
         if not u_candidates:
-            # No interior solution — check if pumping wins at edge
-            if allow_edge and chi_val > self.d(u_stop) * self.omega(u_stop, J):
+            if allow_edge and chi_val > self.d(u_stop) * self.omega(u_stop, J, domega0_dJ=domega0_dJ):
                 return float(u_stop)
             return None
 
@@ -1568,30 +1565,6 @@ class CPPThieleModel:
     ) -> ThieleTrajectoryResult:
         """
         Integrate the CPP nonlinear Thiele equation.
-
-        Parameters
-        ----------
-        t_span : (t_start, t_end)
-            Integration window [s].
-        s0 : (sₓ, sᵧ)
-            Initial normalised core position r₀/R.  Must be > 0
-            (the model has no noise to kick it out of the origin).
-        J_func : callable(t) -> float
-            Current-density waveform J(t) [A/m²].  Default: J = 0.
-        B_func : FieldFunc, optional
-            Time-dependent external field waveform ``B(t)``.  If None the
-            static ``self.field`` is used.  See :func:`field_dc`, :func:`field_ac`.
-        dt : float
-            Maximum time-step / output sampling [s].
-        method : str
-            ``solve_ivp`` method.  Default ``'RK45'``.
-        **ivp_kwargs
-            Extra keyword arguments forwarded to ``solve_ivp``.
-
-        Returns
-        -------
-        ThieleTrajectoryResult
-            Trajectory (in both physical [m] and normalized units).
         """
         from scipy.integrate import solve_ivp
 
@@ -1639,6 +1612,7 @@ class CPPThieleModel:
                 "sigma": self._sigma,
                 "J_threshold": self.J_threshold,
                 "polarity": self.polarity,
+                "domega0_dJ": self.domega0_dJ,
                 "field": self.field,
                 "field_cal": self.field_cal,
             },
@@ -1664,16 +1638,6 @@ class CPPThieleModel:
     ) -> ThieleTrajectoryResult:
         """
         Integrate stochastic CPP Thiele equation using Euler-Maruyama.
-
-        The noise term is isotropic in ``(s_x, s_y)`` and can be controlled by:
-        - explicit ``diffusion`` [1/s], or
-        - heuristic temperature scaling (``temperature_k``, ``noise_scale``).
-
-        Parameters
-        ----------
-        B_func : FieldFunc, optional
-            Time-dependent external field waveform ``B(t)``.  If None the
-            static ``self.field`` is used.
         """
         if J_func is None:
             J_func = current_dc(0.0)
@@ -1708,7 +1672,6 @@ class CPPThieleModel:
             # Resolve field at this time-step
             B = self._field_at(t_prev, B_func)
             s_eq = self.s_eq(field_state=B)
-            s_eq_norm = float(np.linalg.norm(s_eq))
 
             # Relative coordinates for gyrotropic dynamics
             s_rel = prev - s_eq
@@ -1734,13 +1697,11 @@ class CPPThieleModel:
             noise = sigma * rng.standard_normal(2)
             proposal = deterministic + noise
 
-            # Clamp: max radius accounting for shifted equilibrium
-            clamp_eff = max(0.0, float(clamp_u) - s_eq_norm)
-            u_rel = float(np.linalg.norm(proposal - s_eq))
-            if u_rel >= clamp_eff > 0.0:
-                s_rel_prop = proposal - s_eq
-                proposal = s_eq + s_rel_prop * (clamp_eff / max(u_rel, 1e-30))
-
+            # Clamp: w bezwzględnym układzie dysku
+            u_abs = float(np.linalg.norm(proposal))
+            if u_abs >= float(clamp_u):
+                proposal = proposal * (float(clamp_u) / max(u_abs, 1e-30))
+                
             state[idx, :] = proposal
 
         SX = state[:, 0]
@@ -1766,6 +1727,7 @@ class CPPThieleModel:
                 "sigma": self._sigma,
                 "J_threshold": self.J_threshold,
                 "polarity": self.polarity,
+                "domega0_dJ": self.domega0_dJ,
                 "field": self.field,
                 "field_cal": self.field_cal,
             },
@@ -1793,7 +1755,7 @@ def _predict_fj_curve(
     polarity: int,
     omega0: float,
     N: float,
-    omega0_Oe_per_J: float,
+    domega0_dJ: float,
     chi_scale: float,
     *,
     allow_edge: bool,
@@ -1804,7 +1766,7 @@ def _predict_fj_curve(
         omega0=float(omega0),
         N=float(N),
         polarity=int(polarity),
-        omega0_Oe_per_J=float(omega0_Oe_per_J),
+        domega0_dJ=float(domega0_dJ),
         chi_scale=float(chi_scale),
     )
     out = np.full(J_data.shape, np.nan, dtype=float)
@@ -1827,8 +1789,8 @@ def fit_omega0_N_to_fJ(
     polarity: int = 1,
     initial_omega0: float | None = None,
     initial_N: float = 0.25,
-    fit_omega0_Oe_per_J: bool = False,
-    initial_omega0_Oe_per_J: float = 0.0,
+    fit_domega0_dJ: bool = False,
+    initial_domega0_dJ: float = 0.0,
     fit_chi_scale: bool = False,
     initial_chi_scale: float = 1.0,
     allow_edge: bool = False,
@@ -1851,18 +1813,18 @@ def fit_omega0_N_to_fJ(
 
     omega0_init = float(omega0_novosad(material, geom) if initial_omega0 is None else initial_omega0)
     n_init = float(initial_N)
-    oe_init = float(initial_omega0_Oe_per_J)
+    dj_init = float(initial_domega0_dJ)
     chi_init = float(initial_chi_scale)
 
     def _objective(params: np.ndarray) -> float:
         omega0_val = max(float(params[0]), 1e6)
         n_val = float(params[1])
-        oe_val = oe_init
+        dj_val = dj_init
         chi_val = chi_init
 
         idx = 2
-        if fit_omega0_Oe_per_J:
-            oe_val = float(params[idx])
+        if fit_domega0_dJ:
+            dj_val = float(params[idx])
             idx += 1
         if fit_chi_scale:
             chi_val = float(params[idx])
@@ -1874,7 +1836,7 @@ def fit_omega0_N_to_fJ(
             polarity,
             omega0_val,
             n_val,
-            oe_val,
+            dj_val,
             chi_val,
             allow_edge=allow_edge,
         )
@@ -1886,8 +1848,8 @@ def fit_omega0_N_to_fJ(
 
     x0 = np.array([omega0_init, n_init], dtype=float)
     bounds = [(1e6, 1e14), (-5.0, 5.0)]
-    if fit_omega0_Oe_per_J:
-        x0 = np.append(x0, oe_init)
+    if fit_domega0_dJ:
+        x0 = np.append(x0, dj_init)
         bounds.append((-1e-6, 1e-6))
     if fit_chi_scale:
         x0 = np.append(x0, chi_init)
@@ -1898,10 +1860,10 @@ def fit_omega0_N_to_fJ(
     omega_high = max(omega_low * 1.01, 2.5 * omega0_init)
     omega_grid = np.geomspace(omega_low, omega_high, 55)
     n_grid = np.linspace(-2.0, 2.0, 81)
-    oe_grid = np.array([oe_init], dtype=float)
+    dj_grid = np.array([dj_init], dtype=float)
     chi_grid = np.array([chi_init], dtype=float)
-    if fit_omega0_Oe_per_J:
-        oe_grid = np.linspace(-3e-7, 3e-7, 13)
+    if fit_domega0_dJ:
+        dj_grid = np.linspace(-3e-7, 3e-7, 13)
     if fit_chi_scale:
         chi_grid = np.linspace(0.5, 10.0, 25)
 
@@ -1909,11 +1871,11 @@ def fit_omega0_N_to_fJ(
     best_cost = float(_objective(best))
     for omega_val in omega_grid:
         for n_val in n_grid:
-            for oe_val in oe_grid:
+            for dj_val in dj_grid:
                 for chi_val in chi_grid:
                     candidate = np.array([omega_val, n_val], dtype=float)
-                    if fit_omega0_Oe_per_J:
-                        candidate = np.append(candidate, oe_val)
+                    if fit_domega0_dJ:
+                        candidate = np.append(candidate, dj_val)
                     if fit_chi_scale:
                         candidate = np.append(candidate, chi_val)
                     score = float(_objective(candidate))
@@ -1940,10 +1902,10 @@ def fit_omega0_N_to_fJ(
     omega0_fit = max(float(best[0]), 1e6)
     n_fit = float(best[1])
     idx = 2
-    oe_fit = oe_init
+    dj_fit = dj_init
     chi_fit = chi_init
-    if fit_omega0_Oe_per_J:
-        oe_fit = float(best[idx])
+    if fit_domega0_dJ:
+        dj_fit = float(best[idx])
         idx += 1
     if fit_chi_scale:
         chi_fit = float(best[idx])
@@ -1955,7 +1917,7 @@ def fit_omega0_N_to_fJ(
         polarity,
         omega0_fit,
         n_fit,
-        oe_fit,
+        dj_fit,
         chi_fit,
         allow_edge=allow_edge,
     )
@@ -1970,7 +1932,7 @@ def fit_omega0_N_to_fJ(
         model_name="CPP Thiele f(J) fit",
         omega0=omega0_fit,
         N=n_fit,
-        omega0_Oe_per_J=oe_fit,
+        domega0_dJ=dj_fit,
         chi_scale=chi_fit,
         J_data=j,
         f_data_hz=f,
@@ -1983,7 +1945,7 @@ def fit_omega0_N_to_fJ(
             "polarity": int(polarity),
             "initial_omega0": omega0_init,
             "initial_N": n_init,
-            "fit_omega0_Oe_per_J": bool(fit_omega0_Oe_per_J),
+            "fit_domega0_dJ": bool(fit_domega0_dJ),
             "fit_chi_scale": bool(fit_chi_scale),
         },
         metadata={
@@ -2028,15 +1990,6 @@ class ThielePlotAccessor:
     ):
         """
         Plot X(t) and Y(t) vs time.
-
-        Parameters
-        ----------
-        ax : Axes, optional
-        units : str
-            ``'nm'``, ``'m'``, or ``'normalized'`` (s = r/R).
-        show : bool
-        **kwargs
-            Forwarded to ``ax.plot()``.
         """
         import matplotlib.pyplot as plt
 
@@ -2077,16 +2030,6 @@ class ThielePlotAccessor:
     ):
         """
         Plot 2D orbit X vs Y with optional disk outline.
-
-        Parameters
-        ----------
-        ax : Axes, optional
-        units : str
-        disk_outline : bool
-            Draw a dashed circle at the disk boundary.
-        show : bool
-        **kwargs
-            Forwarded to ``ax.plot()``.
         """
         import matplotlib.pyplot as plt
 
@@ -2184,17 +2127,6 @@ class ThielePlotAccessor:
     ):
         """
         Plot power spectrum of the trajectory.
-
-        Parameters
-        ----------
-        ax : Axes, optional
-        db : bool
-            If True, plot in dB scale (10·log10).
-        f_max_ghz : float, optional
-            Upper frequency limit [GHz].  Default: auto.
-        show : bool
-        **kwargs
-            Forwarded to ``ax.plot()``.
         """
         import matplotlib.pyplot as plt
 
@@ -2248,10 +2180,6 @@ class ThielePlotAccessor:
         """
         6-panel overview: orbit, X/Y(t), radius(t), frequency(t),
         power spectrum, and info text.
-
-        Returns
-        -------
-        Figure
         """
         import matplotlib.pyplot as plt
 
