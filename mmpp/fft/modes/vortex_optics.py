@@ -20,42 +20,42 @@ log = logging.getLogger("mmpp.fft.modes.vortex_optics")
 
 class VortexOptics:
     """
-    Fizyczny silnik (Micromag Singular Optics Engine) do rygorystycznej 
-    transformacji tensorów dynamiki magnetyzacji z bazy kartezjańskiej 
+    Fizyczny silnik (Micromag Singular Optics Engine) do rygorystycznej
+    transformacji tensorów dynamiki magnetyzacji z bazy kartezjańskiej
     na bazy wynikające z wyższych symetrii topologicznych.
     """
-    
+
     @staticmethod
     def to_circular_basis(m_x: np.ndarray, m_y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Transform to circular polarization basis (Helical Basis).
-        
-        Isolates chiral gyrotropic core modes and spin waves carrying 
+
+        Isolates chiral gyrotropic core modes and spin waves carrying
         orbital angular momentum (OAM).
-        
+
         Parameters:
         -----------
         m_x : np.ndarray
             X-component of magnetization (real or complex)
         m_y : np.ndarray
             Y-component of magnetization (real or complex)
-            
+
         Returns:
         --------
         tuple[np.ndarray, np.ndarray]
             (m_plus, m_minus) - Right (RCP) and Left (LCP) circular polarizations
-            
+
         Notes:
         ------
         The 1/√2 factor ensures unitary transformation (energy conservation).
         - m_plus: Right-hand circular polarization (RCP) - counterclockwise
         - m_minus: Left-hand circular polarization (LCP) - clockwise
-        
+
         For gyrotropic vortex core: one of (m+, m-) dominates depending on core polarity.
         """
         m_plus = (m_x + 1j * m_y) / np.sqrt(2.0)
         m_minus = (m_x - 1j * m_y) / np.sqrt(2.0)
-        
+
         log.debug(f"Circular basis: m+ shape={m_plus.shape}, m- shape={m_minus.shape}")
         return m_plus, m_minus
 
@@ -67,75 +67,75 @@ class VortexOptics:
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Transform to cylindrical (magnetocentric) basis.
-        
-        Deconstructs vector field into independent breathing modes (m_rho) 
+
+        Deconstructs vector field into independent breathing modes (m_rho)
         and azimuthal/rotating modes (m_phi).
-        
+
         Parameters:
         -----------
         m_x : np.ndarray
             X-component of magnetization
-        m_y : np.ndarray  
+        m_y : np.ndarray
             Y-component of magnetization
         center : tuple, optional
             (cx, cy) center of symmetry. If None, uses geometric center.
-            
+
         Returns:
         --------
         tuple[np.ndarray, np.ndarray]
             (m_rho, m_phi) - Radial and azimuthal components
-            
+
         Notes:
         ------
         - m_rho: Breathing/radial oscillations (expansion/contraction)
         - m_phi: Azimuthal/tangential oscillations (rotation around center)
-        
+
         Perfect for analyzing modes with cylindrical symmetry (vortices, skyrmions).
         """
         ny, nx = m_x.shape[-2:]
         y_idx, x_idx = np.indices((ny, nx))
-        
+
         # Wyznaczenie środka symetrii układu
         if center is None:
             cx, cy = (nx - 1) / 2.0, (ny - 1) / 2.0
         else:
             cx, cy = center
-            
+
         # Zgodność z prawoskrętnym fizycznym układem odniesienia
         # (Oś Y w NumPy rośnie w dół, więc ją odwracamy)
         X = x_idx - cx
         Y = -(y_idx - cy)
-        
+
         phi = np.arctan2(Y, X)
-        
+
         # Ochrona dla tensorów o wyższym rzędzie (gdyby pojawił się wymiar np. czasu/częstotliwości)
         while phi.ndim < m_x.ndim:
             phi = np.expand_dims(phi, 0)
-            
+
         cos_phi = np.cos(phi)
         sin_phi = np.sin(phi)
-        
+
         # Orthogonal rotation in-plane: (x, y) → (ρ, φ)
         m_rho = m_x * cos_phi + m_y * sin_phi
         m_phi = -m_x * sin_phi + m_y * cos_phi
-        
+
         log.debug(f"Cylindrical basis: m_rho shape={m_rho.shape}, m_phi shape={m_phi.shape}")
         return m_rho, m_phi
 
     @staticmethod
     def complex_holography(
-        z_array: np.ndarray, 
-        gamma: float = 0.6, 
+        z_array: np.ndarray,
+        gamma: float = 0.6,
         noise_threshold: float = 1e-4,
         saturation: float = 1.0
     ) -> np.ndarray:
         """
         Complex Holography via Domain Coloring.
-        
-        Projects complex-plane information onto HSV color space, then converts 
-        to RGB for Matplotlib rendering. Encodes both amplitude and phase in 
+
+        Projects complex-plane information onto HSV color space, then converts
+        to RGB for Matplotlib rendering. Encodes both amplitude and phase in
         single image.
-        
+
         Parameters:
         -----------
         z_array : np.ndarray
@@ -147,19 +147,19 @@ class VortexOptics:
             Relative threshold below which pixels are set to black (noise suppression)
         saturation : float, default=1.0
             Color saturation (1.0 = full color, 0.0 = grayscale)
-            
+
         Returns:
         --------
         np.ndarray
             RGB image array with shape (*z_array.shape, 3) in range [0, 1]
-            
+
         Notes:
         ------
         Color mapping:
         - Hue (H): Phase angle, -π (red) → 0 (cyan) → +π (red)
         - Saturation (S): Fixed at `saturation` parameter
         - Value (V): Amplitude with gamma correction and noise gating
-        
+
         Topological features:
         - Vortex cores appear as points where all colors meet (phase singularity)
         - Phase gradients → color wheel rotation
@@ -167,35 +167,35 @@ class VortexOptics:
         """
         amp = np.abs(z_array)
         phase = np.angle(z_array)
-        
+
         max_amp = np.nanmax(amp)
         if max_amp == 0 or np.isnan(max_amp):
             # Return black image if no signal
             return np.zeros(z_array.shape + (3,), dtype=np.float32)
-        
+
         # Nonlinear amplitude enhancement (gamma correction)
         # Pulls weak wavefronts out of noise background
         V = np.clip(amp / max_amp, 0, 1) ** gamma
-        
+
         # Noise floor suppression: set very low amplitudes to black
         V[amp < noise_threshold * max_amp] = 0.0
-        
+
         # Cyclic phase mapping to hue [0, 1]
         # Phase wraps: -π → 0, 0 → 0.5, +π → 1.0
         H = (phase + np.pi) / (2 * np.pi)
-        
+
         # Full color saturation for topological clarity
         S = np.full_like(H, saturation)
-        
+
         # Stack into HSV image
         hsv_img = np.dstack((H, S, V))
-        
+
         # Convert to RGB for Matplotlib
         rgb_img = mcolors.hsv_to_rgb(hsv_img)
-        
+
         log.debug(f"Holography: input shape={z_array.shape}, RGB output shape={rgb_img.shape}")
         return rgb_img
-    
+
     @staticmethod
     def resolve_physical_components(
         m_x: np.ndarray,
@@ -206,10 +206,10 @@ class VortexOptics:
     ) -> dict[str, np.ndarray]:
         """
         Intelligent router for physical basis transformations.
-        
+
         Decodes requested component labels and performs necessary transformations
         on-the-fly. Supports Cartesian, helical, and cylindrical bases.
-        
+
         Parameters:
         -----------
         m_x, m_y, m_z : np.ndarray
@@ -221,12 +221,12 @@ class VortexOptics:
             - 'rho', 'phi': Cylindrical (radial, azimuthal)
         vortex_center : tuple, optional
             Center for cylindrical transformation
-            
+
         Returns:
         --------
         dict[str, np.ndarray]
             Dictionary mapping component labels to transformed data arrays
-            
+
         Examples:
         ---------
         >>> data = resolve_physical_components(mx, my, mz, ['+', '-', 'z'])
@@ -235,37 +235,37 @@ class VortexOptics:
         >>> m_z = data['z']  # Out-of-plane component
         """
         resolved_data = {'x': m_x, 'y': m_y, 'z': m_z}
-        
+
         # Transform only if requested (lazy evaluation for performance)
         needs_circular = any(c in ['+', '-'] for c in components)
         needs_cylindrical = any(c in ['rho', 'phi'] for c in components)
-        
+
         if needs_circular:
             m_plus, m_minus = VortexOptics.to_circular_basis(m_x, m_y)
             resolved_data['+'] = m_plus
             resolved_data['-'] = m_minus
             log.info("Circular basis computed: m+ (RCP), m- (LCP)")
-        
+
         if needs_cylindrical:
             m_rho, m_phi = VortexOptics.to_cylindrical_basis(m_x, m_y, center=vortex_center)
             resolved_data['rho'] = m_rho
             resolved_data['phi'] = m_phi
             log.info("Cylindrical basis computed: m_rho (radial), m_phi (azimuthal)")
-        
+
         return resolved_data
-    
+
     @staticmethod
     def get_component_label(component: str, latex: bool = True) -> str:
         """
         Get formatted label for component visualization.
-        
+
         Parameters:
         -----------
         component : str
             Component key ('x', 'y', 'z', '+', '-', 'rho', 'phi')
         latex : bool, default=True
             Use LaTeX formatting for publication quality
-            
+
         Returns:
         --------
         str
@@ -294,6 +294,110 @@ class VortexOptics:
         return labels.get(component, component)
 
 
+class TopologicalAnimator:
+    """
+    Kinematic engine for ultra-fast spatial-temporal evaluation of FMR modes.
+
+    Separates expensive complex math (done once at construction) from fast
+    per-frame rendering (modular arithmetic only). Enables stable 60 fps
+    for large simulation grids via Matplotlib blitting.
+
+    Strategy
+    --------
+    For a mode with spatial profile F(r) the physical time evolution reads::
+
+        F(r, t) = F(r) · exp(-i ω t)
+
+    Consequently:
+
+    * **Amplitude row** – |F(r, t)| = |F(r)| is time-invariant. Compute once,
+      never update.
+    * **Holography row** – amplitude (V) is invariant; only hue (H = phase)
+      rotates. Per-frame cost: one modulo operation per pixel.
+    * **Real-part row** – Re[F(r) exp(-i t)] uses fixed vmin/vmax derived from
+      max amplitude, preventing colour-scale flicker.
+
+    Parameters
+    ----------
+    m_data : np.ndarray
+        Complex magnetization component array of arbitrary shape (y, x) or
+        (z, y, x).
+    gamma : float, optional
+        Brightness/gamma exponent for holographic rendering (default 0.5).
+    noise_threshold : float, optional
+        Relative noise floor – pixels below this fraction of max amplitude are
+        set to black in the hologram (default 1e-4).
+    """
+
+    def __init__(
+        self,
+        m_data: np.ndarray,
+        gamma: float = 0.5,
+        noise_threshold: float = 1e-4,
+    ) -> None:
+        self.m_data = m_data
+
+        # ── Amplitude cache (Value channel in HSV, time-invariant) ───────────
+        amp = np.abs(m_data)
+        self.max_amp: float = float(np.nanmax(amp))
+        if self.max_amp == 0 or np.isnan(self.max_amp):
+            self.max_amp = 1e-12
+
+        self.V_base: np.ndarray = np.clip(amp / self.max_amp, 0.0, 1.0) ** gamma
+        self.V_base[amp < noise_threshold * self.max_amp] = 0.0
+
+        # ── Phase cache (Hue base in [0, 1], time-invariant shape) ───────────
+        # Maps angle ∈ [-π, π]  →  hue ∈ [0, 1)
+        self.H_base: np.ndarray = (np.angle(m_data) + np.pi) / (2.0 * np.pi)
+
+        # ── Saturation is always 1.0 ──────────────────────────────────────────
+        self.S_base: np.ndarray = np.ones_like(self.H_base, dtype=np.float32)
+
+    # ── Frame generators ─────────────────────────────────────────────────────
+
+    def get_hologram_frame(self, phase_offset: float) -> np.ndarray:
+        """
+        Return an RGB holography frame for the given temporal phase offset.
+
+        The phase shift is applied as a cyclic hue rotation (modulo 1.0),
+        which is O(N) in pixel count with no trigonometric operations.
+
+        Parameters
+        ----------
+        phase_offset : float
+            Current temporal phase in radians (0 … 2π).
+
+        Returns
+        -------
+        np.ndarray
+            RGB image array with shape ``(*m_data.shape, 3)``, dtype float32.
+        """
+        # Map radian offset to hue fraction; minus sign → classical exp(-iωt)
+        phase_shift = phase_offset / (2.0 * np.pi)
+        H_anim = (self.H_base - phase_shift) % 1.0
+
+        hsv = np.dstack((H_anim, self.S_base, self.V_base))
+        return mcolors.hsv_to_rgb(hsv)
+
+    def get_real_frame(self, phase_offset: float) -> np.ndarray:
+        """
+        Return Re[F(r) · exp(-i·phase_offset)].
+
+        Scale is fixed at ± max_amp so the colour axis never jumps.
+
+        Parameters
+        ----------
+        phase_offset : float
+            Current temporal phase in radians.
+
+        Returns
+        -------
+        np.ndarray
+            Real-valued array with the same shape as ``m_data``.
+        """
+        return np.real(self.m_data * np.exp(-1j * phase_offset))
+
+
 # Convenience functions for direct module-level access
 def to_circular(m_x: np.ndarray, m_y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Shorthand for VortexOptics.to_circular_basis"""
@@ -310,8 +414,8 @@ def to_cylindrical(
 
 
 def hologram(
-    z_array: np.ndarray, 
-    gamma: float = 0.6, 
+    z_array: np.ndarray,
+    gamma: float = 0.6,
     noise_threshold: float = 1e-4
 ) -> np.ndarray:
     """Shorthand for VortexOptics.complex_holography"""

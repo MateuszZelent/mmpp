@@ -444,7 +444,14 @@ def toggle_mode_animation(
     component: Union[str, int],
     z_layer: int,
 ) -> None:
-    """Toggle between static mode plot and in-place animation."""
+    """
+    Toggle animation for a mode cell (row_idx, col_idx).
+
+    When ``analyzer.config.use_holography`` is *True* the whole column is
+    animated via :func:`start_column_animation` (single ``FuncAnimation``,
+    blit-optimised, GC-safe).  When holography is off, only the clicked row
+    is animated as before.
+    """
     if not ANIMATION_AVAILABLE:
         log.warning("Animation not available - matplotlib.animation required")
         return
@@ -453,25 +460,56 @@ def toggle_mode_animation(
     if not hasattr(analyzer, "_mode_animations"):
         analyzer._mode_animations = {}
         analyzer._animated_axes = set()
+    if not hasattr(analyzer, "_column_animations"):
+        analyzer._column_animations = {}
 
-    axis_key = (row_idx, col_idx)
+    use_holo = getattr(analyzer.config, "use_holography", False)
 
-    # Check if this axis is currently animated
-    if axis_key in analyzer._animated_axes:
-        # Stop animation and revert to static
-        stop_mode_animation(analyzer, axis_key)
-        # Redraw static mode (needs to call back to analyzer)
-        analyzer._update_single_mode_plot(ax, row_idx, col_idx, component, z_layer)
-        analyzer._interactive_fig.canvas.draw()
-        log.info(
-            f"Stopped animation for m_{component} (row {row_idx}, col {col_idx})"
-        )
+    if use_holo:
+        # ── Column-wide toggle ─────────────────────────────────────────────
+        col_key = f"col_{col_idx}"
+        col_running = col_key in analyzer._column_animations
+
+        if col_running:
+            stop_column_animation(analyzer, col_idx)
+            # Redraw every row as static
+            vis_types = []
+            if analyzer.config.show_magnitude:
+                vis_types.append("magnitude")
+            if analyzer.config.show_phase:
+                vis_types.append("phase")
+            if analyzer.config.show_combined:
+                vis_types.append("combined")
+            for r, _ in enumerate(vis_types):
+                if r < len(analyzer._mode_axes) and col_idx < len(analyzer._mode_axes[r]):
+                    analyzer._update_single_mode_plot(
+                        analyzer._mode_axes[r][col_idx], r, col_idx, component, z_layer
+                    )
+            analyzer._interactive_fig.canvas.draw()
+            log.info(f"Stopped column animation for m_{component} (col {col_idx})")
+        else:
+            frames = analyzer.config.animation_time_steps
+            start_column_animation(analyzer, col_idx, component, z_layer, frames=frames)
+            analyzer._interactive_fig.canvas.draw_idle()
+            log.info(f"Started column animation for m_{component} (col {col_idx})")
+
     else:
-        # Start animation
-        start_mode_animation(analyzer, ax, row_idx, col_idx, component, z_layer)
-        log.info(
-            f"Started animation for m_{component} (row {row_idx}, col {col_idx})"
-        )
+        # ── Legacy per-row toggle ──────────────────────────────────────────
+        axis_key = (row_idx, col_idx)
+
+        if axis_key in analyzer._animated_axes:
+            stop_mode_animation(analyzer, axis_key)
+            analyzer._update_single_mode_plot(ax, row_idx, col_idx, component, z_layer)
+            analyzer._interactive_fig.canvas.draw()
+            log.info(
+                f"Stopped animation for m_{component} (row {row_idx}, col {col_idx})"
+            )
+        else:
+            start_mode_animation(analyzer, ax, row_idx, col_idx, component, z_layer)
+            log.info(
+                f"Started animation for m_{component} (row {row_idx}, col {col_idx})"
+            )
+
 
 
 def stop_mode_animation(analyzer, axis_key: tuple[int, int]) -> None:
@@ -485,6 +523,228 @@ def stop_mode_animation(analyzer, axis_key: tuple[int, int]) -> None:
             log.debug(f"Error stopping animation: {e}")
 
     analyzer._animated_axes.discard(axis_key)
+
+
+def stop_column_animation(analyzer, col_idx: int) -> None:
+    """Stop the column-wide animation for column *col_idx*."""
+    col_key = f"col_{col_idx}"
+    if not hasattr(analyzer, "_column_animations"):
+        return
+    if col_key in analyzer._column_animations:
+        anim = analyzer._column_animations[col_key]
+        try:
+            anim.event_source.stop()
+        except Exception as e:
+            log.debug(f"Error stopping column animation: {e}")
+        del analyzer._column_animations[col_key]
+
+    # Remove axis keys for this column from the animated set
+    to_remove = {k for k in analyzer._animated_axes if k[1] == col_idx}
+    analyzer._animated_axes -= to_remove
+    log.info(f"Stopped column animation for col {col_idx}")
+
+
+def start_column_animation(
+    analyzer,
+    col_idx: int,
+    component: Union[str, int],
+    z_layer: int,
+    frames: int = 60,
+    interval_ms: int = 50,
+) -> None:
+    """
+    Animate **all display rows** of one component column with a single
+    ``FuncAnimation`` using Matplotlib blitting.
+
+    This is the Micromag Holographic Engine design:
+
+    * **Row 0 – Amplitude** is time-invariant and is rendered once as a frozen
+      background.  The ``FuncAnimation`` touches it only to return it in the
+      blit list (zero cost per frame).
+    * **Row 1 – Holography / Phase** rotates the HSV hue by
+      ``(H_base - t/(2π)) % 1.0`` – no trigonometry, just modular arithmetic.
+    * **Row 2 – Real part** calls
+      :py:meth:`~TopologicalAnimator.get_real_frame` – one complex multiply and
+      ``np.real`` per frame with a fixed colour scale that never flickers.
+
+    The returned ``FuncAnimation`` is stored on *analyzer* as
+    ``analyzer._column_animations[f"col_{col_idx}"]``, preventing Python's
+    garbage collector from destroying it.
+
+    Parameters
+    ----------
+    analyzer :
+        FMRModeAnalyzer instance (must have ``_mode_axes``, ``_interactive_fig``).
+    col_idx : int
+        Column index in the mode axes grid.
+    component : str or int
+        Magnetization component (``'x'``, ``'+'``, ``'rho'``, …).
+    z_layer : int
+        Simulation z-layer.
+    frames : int
+        Number of frames per full period (default 60).
+    interval_ms : int
+        Milliseconds between frames (default 50 → 20 fps).
+    """
+    if not ANIMATION_AVAILABLE:
+        log.warning("Column animation not available – matplotlib.animation required")
+        return
+
+    try:
+        from ..vortex_optics import TopologicalAnimator, VortexOptics
+
+        # ── Guard: kill previous column animation if present ─────────────────
+        if not hasattr(analyzer, "_column_animations"):
+            analyzer._column_animations = {}
+        stop_column_animation(analyzer, col_idx)
+
+        # ── Fetch mode data ───────────────────────────────────────────────────
+        mode_data = analyzer.get_mode(analyzer._current_frequency, z_layer)
+        comp_data = mode_data.get_component(component)
+
+        # ── Build TopologicalAnimator (one-time expensive math) ───────────────
+        holo_gamma = getattr(analyzer.config, "holography_gamma", 0.5)
+        holo_noise = getattr(analyzer.config, "holography_noise_threshold", 1e-4)
+        use_holo = getattr(analyzer.config, "use_holography", False)
+
+        topoanim = TopologicalAnimator(comp_data, gamma=holo_gamma, noise_threshold=holo_noise)
+
+        # ── Determine active vis rows ─────────────────────────────────────────
+        vis_types: list[str] = []
+        if analyzer.config.show_magnitude:
+            vis_types.append("magnitude")
+        if analyzer.config.show_phase:
+            vis_types.append("phase")
+        if analyzer.config.show_combined:
+            vis_types.append("combined")
+
+        n_rows = len(vis_types)
+        time_steps = np.linspace(0.0, 2.0 * np.pi, frames, endpoint=False)
+        comp_label = VortexOptics.get_component_label(str(component), latex=True)
+
+        # ── Draw initial frames and collect AxesImage handles ────────────────
+        im_handles: dict[int, Any] = {}   # row_idx → AxesImage
+
+        for row_idx, vis_type in enumerate(vis_types):
+            if row_idx >= len(analyzer._mode_axes):
+                break
+            if col_idx >= len(analyzer._mode_axes[row_idx]):
+                break
+
+            ax = analyzer._mode_axes[row_idx][col_idx]
+            ax.clear()
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            common_kw = dict(
+                extent=mode_data.extent,
+                aspect="equal",
+                interpolation=analyzer.config.interpolation,
+                origin="lower",
+            )
+
+            if vis_type == "magnitude":
+                # ── Row 0: Amplitude – render once, never update ──────────────
+                im = ax.imshow(
+                    np.abs(comp_data),
+                    cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_magnitude),
+                    **common_kw,
+                )
+                ax.set_title(f"|{comp_label}|", fontsize=8)
+
+            elif vis_type == "phase":
+                # ── Row 1: Holography or classical phase ──────────────────────
+                if use_holo:
+                    im = ax.imshow(
+                        topoanim.get_hologram_frame(0.0),
+                        **common_kw,
+                    )
+                    ax.set_title(f"Hologram {comp_label}", fontsize=8)
+                else:
+                    phase = np.angle(comp_data)
+                    im = ax.imshow(
+                        phase,
+                        cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
+                        vmin=-np.pi,
+                        vmax=np.pi,
+                        **common_kw,
+                    )
+                    ax.set_title(f"arg({comp_label})", fontsize=8)
+
+            elif vis_type == "combined":
+                # ── Row 2: Real part with fixed colour scale ──────────────────
+                im = ax.imshow(
+                    topoanim.get_real_frame(0.0),
+                    cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
+                    vmin=-topoanim.max_amp,
+                    vmax=topoanim.max_amp,
+                    **common_kw,
+                )
+                ax.set_title(f"Re[{comp_label}(t)]", fontsize=8)
+
+            im_handles[row_idx] = im
+            analyzer._animated_axes.add((row_idx, col_idx))
+
+        if not im_handles:
+            log.error(f"No axes found for col_idx={col_idx}")
+            return
+
+        # Pre-fetch static references so the closure is GC-safe
+        _phase_arr = np.angle(comp_data) if use_holo is False else None
+
+        # ── Main update function (blitting: only changed artists returned) ────
+        def _update_column(frame_idx: int) -> list:
+            t = time_steps[frame_idx]
+            updated: list = []
+
+            for row_idx, vis_type in enumerate(vis_types):
+                if row_idx not in im_handles:
+                    continue
+                im = im_handles[row_idx]
+
+                if vis_type == "magnitude":
+                    # Amplitude is constant — return handle without touching data
+                    # (blit still tracks it but redraws only on dirty)
+                    pass
+
+                elif vis_type == "phase":
+                    if use_holo:
+                        im.set_data(topoanim.get_hologram_frame(t))
+                    else:
+                        shifted = (_phase_arr + t) % (2.0 * np.pi)
+                        shifted = np.where(shifted > np.pi, shifted - 2.0 * np.pi, shifted)
+                        im.set_array(shifted)
+                    updated.append(im)
+
+                elif vis_type == "combined":
+                    im.set_array(topoanim.get_real_frame(t))
+                    updated.append(im)
+
+            return updated
+
+        # ── Launch animation ──────────────────────────────────────────────────
+        anim = FuncAnimation(
+            analyzer._interactive_fig,
+            _update_column,
+            frames=frames,
+            interval=interval_ms,
+            blit=True,
+            repeat=True,
+        )
+
+        # ── Store to prevent garbage collection ───────────────────────────────
+        col_key = f"col_{col_idx}"
+        analyzer._column_animations[col_key] = anim
+        log.info(
+            f"Column animation started for col={col_idx} component={component} "
+            f"({frames} frames, {interval_ms} ms interval, holography={use_holo})"
+        )
+
+    except Exception as e:
+        log.error(f"Failed to start column animation for col={col_idx}: {e}")
+        raise
+
+
 
 
 def save_animated_view(analyzer, save_path: str, z_layer: int = 0) -> None:
@@ -653,8 +913,24 @@ def start_mode_animation(
     component: Union[str, int],
     z_layer: int,
 ) -> None:
-    """Start in-place animation for specific mode axis."""
+    """
+    Start in-place animation for a single mode axis cell (row, col).
+
+    Uses :class:`~mmpp.fft.modes.vortex_optics.TopologicalAnimator` for
+    holography and real-part rows: amplitude/phase maps are cached once at
+    construction, so each frame costs only one modulo op (hue rotation) or
+    one multiply (real projection) per pixel.
+
+    Row semantics
+    -------------
+    * **magnitude** – static frame pulsed ±20 % (amplitude is time-invariant)
+    * **phase**     – holographic HSV rotation when ``use_holography=True``,
+                      otherwise classical phase-colormap shift
+    * **combined**  – Re[m(r) · exp(-it)] with fixed vmin/vmax (no flicker)
+    """
     try:
+        from ..vortex_optics import TopologicalAnimator
+
         mode_data = analyzer.get_mode(analyzer._current_frequency, z_layer)
         comp_data = mode_data.get_component(component)
 
@@ -676,9 +952,13 @@ def start_mode_animation(
         ax.set_xticks([])
         ax.set_yticks([])
 
+        frames = analyzer.config.animation_time_steps
+        interval_ms = 50  # 50 ms → 20 fps target
+
+        # ── Magnitude row ────────────────────────────────────────────────────
         if vis_type == "magnitude":
             amplitude = np.abs(comp_data)
-            time_steps = np.linspace(0, 2 * np.pi, 30)
+            time_steps = np.linspace(0, 2 * np.pi, frames)
 
             im = ax.imshow(
                 amplitude,
@@ -688,74 +968,65 @@ def start_mode_animation(
                 interpolation=analyzer.config.interpolation,
                 origin="lower",
             )
-            ax.set_title(f"|m_{component}| (animated)")
+            ax.set_title(f"|m_{component}|")
 
-            def animate_magnitude(frame):
-                pulse = 0.8 + 0.2 * np.sin(time_steps[frame])
-                im.set_array(amplitude * pulse)
-                return [im]
+            # Amplitude is time-invariant; gentle pulse only for visual feedback
+            def animate_magnitude(frame, _amp=amplitude, _ts=time_steps, _im=im):
+                pulse = 0.85 + 0.15 * np.sin(_ts[frame])
+                _im.set_array(_amp * pulse)
+                return [_im]
 
             anim = FuncAnimation(
                 analyzer._interactive_fig,
                 animate_magnitude,
-                frames=len(time_steps),
-                interval=100,
+                frames=frames,
+                interval=interval_ms,
                 blit=True,
                 repeat=True,
             )
 
+        # ── Phase / holography row ────────────────────────────────────────────
         elif vis_type == "phase":
-            # Check if holography is enabled
-            use_holo = getattr(analyzer.config, 'use_holography', False)
-            
+            use_holo = getattr(analyzer.config, "use_holography", False)
+            holo_gamma = getattr(analyzer.config, "holography_gamma", 0.5)
+            holo_noise = getattr(analyzer.config, "holography_noise_threshold", 1e-4)
+
             if use_holo:
-                # Complex holography (domain coloring) - animate phase rotation
-                from ..vortex_optics import VortexOptics
-                time_steps = np.linspace(0, 2 * np.pi, 30)
-                
-                # Initial hologram
-                holo_gamma = getattr(analyzer.config, 'holography_gamma', 0.6)
-                holo_noise = getattr(analyzer.config, 'holography_noise_threshold', 1e-4)
-                
-                rotated_data = comp_data * np.exp(1j * time_steps[0])
-                holo_img = VortexOptics.complex_holography(rotated_data, holo_gamma, holo_noise)
-                
+                # Build animator once (caches amp + phase; per-frame = modulo)
+                topoanim = TopologicalAnimator(
+                    comp_data, gamma=holo_gamma, noise_threshold=holo_noise
+                )
+                time_steps = np.linspace(0, 2 * np.pi, frames)
+
                 im = ax.imshow(
-                    holo_img,
+                    topoanim.get_hologram_frame(0.0),
                     extent=mode_data.extent,
                     aspect="equal",
                     interpolation=analyzer.config.interpolation,
                     origin="lower",
                 )
-                
-                # Get component label for title
-                comp_label = VortexOptics.get_component_label(str(component), latex=True)
-                ax.set_title(f"Hologram of {comp_label}")
-                
-                def animate_holography(frame):
-                    t = time_steps[frame]
-                    rotated_data = comp_data * np.exp(1j * t)
-                    holo_img = VortexOptics.complex_holography(rotated_data, holo_gamma, holo_noise)
-                    im.set_array(holo_img)
-                    return [im]
-                
+                ax.set_title(f"Hologram(m_{component})")
+
+                def animate_holography(frame, _ta=topoanim, _ts=time_steps, _im=im):
+                    _im.set_data(_ta.get_hologram_frame(_ts[frame]))
+                    return [_im]
+
                 anim = FuncAnimation(
                     analyzer._interactive_fig,
                     animate_holography,
-                    frames=len(time_steps),
-                    interval=100,
+                    frames=frames,
+                    interval=interval_ms,
                     blit=True,
                     repeat=True,
                 )
-            else:
-                # Standard phase visualization
-                amplitude = np.abs(comp_data)
-                phase = np.angle(comp_data)
-                time_steps = np.linspace(0, 2 * np.pi, 30)
 
-                current_phase = (phase + time_steps[0]) % (2 * np.pi)
+            else:
+                # Standard cyclic phase-colormap animation
+                phase = np.angle(comp_data)
+                time_steps = np.linspace(0, 2 * np.pi, frames)
+
                 im = ax.imshow(
-                    current_phase,
+                    phase,
                     cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
                     extent=mode_data.extent,
                     aspect="equal",
@@ -764,35 +1035,37 @@ def start_mode_animation(
                     vmax=np.pi,
                     origin="lower",
                 )
-                ax.set_title(f"arg(m_{component}) (animated)")
+                ax.set_title(f"arg(m_{component})")
 
-                def animate_phase(frame):
-                    current_phase = (phase + time_steps[frame]) % (2 * np.pi)
-                    current_phase = np.where(
-                        current_phase > np.pi, current_phase - 2 * np.pi, current_phase
-                    )
-                    im.set_array(current_phase)
-                    return [im]
+                def animate_phase(frame, _ph=phase, _ts=time_steps, _im=im):
+                    shifted = (_ph + _ts[frame]) % (2 * np.pi)
+                    shifted = np.where(shifted > np.pi, shifted - 2 * np.pi, shifted)
+                    _im.set_array(shifted)
+                    return [_im]
 
                 anim = FuncAnimation(
                     analyzer._interactive_fig,
                     animate_phase,
-                    frames=len(time_steps),
-                    interval=100,
+                    frames=frames,
+                    interval=interval_ms,
                     blit=True,
                     repeat=True,
                 )
 
+        # ── Real-part / combined row ──────────────────────────────────────────
         elif vis_type == "combined":
-            amplitude = np.abs(comp_data)
-            phase = np.angle(comp_data)
-            time_steps = np.linspace(0, 2 * np.pi, 30)
+            holo_gamma = getattr(analyzer.config, "holography_gamma", 0.5)
+            holo_noise = getattr(analyzer.config, "holography_noise_threshold", 1e-4)
+            topoanim = TopologicalAnimator(
+                comp_data, gamma=holo_gamma, noise_threshold=holo_noise
+            )
+            time_steps = np.linspace(0, 2 * np.pi, frames)
 
-            vmax = np.max(amplitude)
+            # Fixed colour scale derived from max amplitude → no flicker!
+            vmax = topoanim.max_amp
 
-            real_part = amplitude * np.cos(phase + time_steps[0])
             im = ax.imshow(
-                real_part,
+                topoanim.get_real_frame(0.0),
                 cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
                 extent=mode_data.extent,
                 aspect="equal",
@@ -801,19 +1074,17 @@ def start_mode_animation(
                 vmax=vmax,
                 origin="lower",
             )
-            ax.set_title(f"Re[m_{component}] (temporal)")
+            ax.set_title(f"Re[m_{component}(t)]")
 
-            def animate_combined(frame):
-                t = time_steps[frame]
-                real_part = amplitude * np.cos(phase + t)
-                im.set_array(real_part)
-                return [im]
+            def animate_combined(frame, _ta=topoanim, _ts=time_steps, _im=im):
+                _im.set_array(_ta.get_real_frame(_ts[frame]))
+                return [_im]
 
             anim = FuncAnimation(
                 analyzer._interactive_fig,
                 animate_combined,
-                frames=len(time_steps),
-                interval=100,
+                frames=frames,
+                interval=interval_ms,
                 blit=True,
                 repeat=True,
             )

@@ -69,7 +69,10 @@ from .visualization.animation import (
     stop_mode_animation as _stop_mode_animation,
     save_animated_view as _save_animated_view,
     start_mode_animation as _start_mode_animation,
+    start_column_animation as _start_column_animation,
+    stop_column_animation as _stop_column_animation,
 )
+from .vortex_optics import VortexOptics, TopologicalAnimator
 
 # Import static plotting functions
 from .visualization.static_plots import (

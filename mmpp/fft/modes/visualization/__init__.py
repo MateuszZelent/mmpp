@@ -11,6 +11,8 @@ from .animation import (
     stop_mode_animation,
     save_animated_view,
     start_mode_animation,
+    start_column_animation,
+    stop_column_animation,
 )
 
 from .static_plots import (
@@ -27,6 +29,8 @@ __all__ = [
     'stop_mode_animation',
     'save_animated_view',
     'start_mode_animation',
+    'start_column_animation',
+    'stop_column_animation',
     # Static plot functions
     'plot_modes',
     'update_single_mode_plot',
