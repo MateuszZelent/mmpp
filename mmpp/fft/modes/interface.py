@@ -993,6 +993,7 @@ class FFTModeInterfaceNew:
         soft_threshold_percentile: Optional[float] = None,
         peak_prominence: Optional[float] = None,
         peak_distance: Optional[int] = None,
+        use_holography: bool = False,
         **kwargs,
     ):
         """Create interactive spectrum with mode visualization panels.
@@ -1168,6 +1169,7 @@ class FFTModeInterfaceNew:
             log_scale=bool(viewer_kwargs.pop("log_scale", False)),
             normalize=bool(viewer_kwargs.pop("normalize", True)),
             show=show,
+            use_holography=use_holography,
             **viewer_kwargs,
         )
     

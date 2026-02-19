@@ -705,39 +705,83 @@ def start_mode_animation(
             )
 
         elif vis_type == "phase":
-            amplitude = np.abs(comp_data)
-            phase = np.angle(comp_data)
-            time_steps = np.linspace(0, 2 * np.pi, 30)
-
-            current_phase = (phase + time_steps[0]) % (2 * np.pi)
-            im = ax.imshow(
-                current_phase,
-                cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
-                extent=mode_data.extent,
-                aspect="equal",
-                interpolation=analyzer.config.interpolation,
-                vmin=-np.pi,
-                vmax=np.pi,
-                origin="lower",
-            )
-            ax.set_title(f"arg(m_{component}) (animated)")
-
-            def animate_phase(frame):
-                current_phase = (phase + time_steps[frame]) % (2 * np.pi)
-                current_phase = np.where(
-                    current_phase > np.pi, current_phase - 2 * np.pi, current_phase
+            # Check if holography is enabled
+            use_holo = getattr(analyzer.config, 'use_holography', False)
+            
+            if use_holo:
+                # Complex holography (domain coloring) - animate phase rotation
+                from ..vortex_optics import VortexOptics
+                time_steps = np.linspace(0, 2 * np.pi, 30)
+                
+                # Initial hologram
+                holo_gamma = getattr(analyzer.config, 'holography_gamma', 0.6)
+                holo_noise = getattr(analyzer.config, 'holography_noise_threshold', 1e-4)
+                
+                rotated_data = comp_data * np.exp(1j * time_steps[0])
+                holo_img = VortexOptics.complex_holography(rotated_data, holo_gamma, holo_noise)
+                
+                im = ax.imshow(
+                    holo_img,
+                    extent=mode_data.extent,
+                    aspect="equal",
+                    interpolation=analyzer.config.interpolation,
+                    origin="lower",
                 )
-                im.set_array(current_phase)
-                return [im]
+                
+                # Get component label for title
+                comp_label = VortexOptics.get_component_label(str(component), latex=True)
+                ax.set_title(f"Hologram of {comp_label}")
+                
+                def animate_holography(frame):
+                    t = time_steps[frame]
+                    rotated_data = comp_data * np.exp(1j * t)
+                    holo_img = VortexOptics.complex_holography(rotated_data, holo_gamma, holo_noise)
+                    im.set_array(holo_img)
+                    return [im]
+                
+                anim = FuncAnimation(
+                    analyzer._interactive_fig,
+                    animate_holography,
+                    frames=len(time_steps),
+                    interval=100,
+                    blit=True,
+                    repeat=True,
+                )
+            else:
+                # Standard phase visualization
+                amplitude = np.abs(comp_data)
+                phase = np.angle(comp_data)
+                time_steps = np.linspace(0, 2 * np.pi, 30)
 
-            anim = FuncAnimation(
-                analyzer._interactive_fig,
-                animate_phase,
-                frames=len(time_steps),
-                interval=100,
-                blit=True,
-                repeat=True,
-            )
+                current_phase = (phase + time_steps[0]) % (2 * np.pi)
+                im = ax.imshow(
+                    current_phase,
+                    cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
+                    extent=mode_data.extent,
+                    aspect="equal",
+                    interpolation=analyzer.config.interpolation,
+                    vmin=-np.pi,
+                    vmax=np.pi,
+                    origin="lower",
+                )
+                ax.set_title(f"arg(m_{component}) (animated)")
+
+                def animate_phase(frame):
+                    current_phase = (phase + time_steps[frame]) % (2 * np.pi)
+                    current_phase = np.where(
+                        current_phase > np.pi, current_phase - 2 * np.pi, current_phase
+                    )
+                    im.set_array(current_phase)
+                    return [im]
+
+                anim = FuncAnimation(
+                    analyzer._interactive_fig,
+                    animate_phase,
+                    frames=len(time_steps),
+                    interval=100,
+                    blit=True,
+                    repeat=True,
+                )
 
         elif vis_type == "combined":
             amplitude = np.abs(comp_data)

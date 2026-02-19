@@ -169,6 +169,7 @@ def interactive_spectrum(
     auto_animate: bool = False,
     auto_save: bool = False,
     spectrum_result: Any = None,  # NEW: Inject spectrum from FFT.spectrum()
+    use_holography: bool = False,  # NEW: Enable complex holography visualization
     **kwargs,
 ) -> "Figure":
     """
@@ -225,6 +226,13 @@ def interactive_spectrum(
         Automatically save animation after auto_animate completes (default: False)
         Requires saveanim to be enabled (True or custom path)
         When True with auto_animate=True, saves animation without requiring 's' key press
+    use_holography : bool, optional
+        Enable complex holography (domain coloring) for phase visualization (default: False)
+        When True, replaces standard phase plots with RGB images encoding both 
+        amplitude and phase simultaneously. Particularly useful for:
+        - Gyrotropic vortex core modes (circular basis: m+, m-)
+        - Azimuthal spin wave modes (cylindrical basis: m_rho, m_phi)
+        - Topological singularities and phase defects
     \\*\\*kwargs : dict
         Additional keyword arguments:
         - figsize : tuple, optional
@@ -448,6 +456,11 @@ def interactive_spectrum(
     # Update figure settings from kwargs
     analyzer.config.figsize = figsize
     analyzer.config.dpi = dpi
+    
+    # Update holography setting if provided
+    if use_holography:
+        analyzer.config.use_holography = use_holography
+        log.info("Complex holography enabled for phase visualization")
 
     # Validate number of components for layout
     if n_components > 3:

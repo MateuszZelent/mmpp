@@ -147,12 +147,16 @@ class FMRModeData:
         Parameters:
         -----------
         component : int or str
-            Component index (0, 1, 2) or name ('x', 'y', 'z', 'mx', 'my', 'mz')
+            Component index (0, 1, 2) or name:
+            - Cartesian: 'x', 'y', 'z', 'mx', 'my', 'mz'
+            - Circular: '+', '-' (RCP/LCP for gyrotropic modes)
+            - Cylindrical: 'rho', 'phi' (radial/azimuthal)
+            - Special: 'magnitude' (total magnitude)
 
         Returns:
         --------
         np.ndarray
-            Complex array for specified component
+            Complex array for specified component (2D spatial array)
         """
         if isinstance(component, str):
             # Handle magnitude component specially
@@ -160,13 +164,34 @@ class FMRModeData:
                 # Return magnitude across all components
                 return np.sqrt(np.sum(np.abs(self.mode_array)**2, axis=-1))
             
+            # Circular basis (helical/chiral modes)
+            if component in ['+', '-']:
+                from .vortex_optics import VortexOptics
+                m_x = self.mode_array[:, :, 0]
+                m_y = self.mode_array[:, :, 1]
+                m_plus, m_minus = VortexOptics.to_circular_basis(m_x, m_y)
+                return m_plus if component == '+' else m_minus
+            
+            # Cylindrical basis (radial/azimuthal modes)
+            if component in ['rho', 'phi']:
+                from .vortex_optics import VortexOptics
+                m_x = self.mode_array[:, :, 0]
+                m_y = self.mode_array[:, :, 1]
+                # Use geometric center by default
+                m_rho, m_phi = VortexOptics.to_cylindrical_basis(m_x, m_y, center=None)
+                return m_rho if component == 'rho' else m_phi
+            
+            # Standard Cartesian components
             component_map = {
                 'x': 0, 'mx': 0,
                 'y': 1, 'my': 1,
                 'z': 2, 'mz': 2
             }
             if component.lower() not in component_map:
-                raise ValueError(f"Unknown component name: {component}")
+                raise ValueError(
+                    f"Unknown component: {component}. "
+                    f"Supported: x/y/z (Cartesian), +/- (circular), rho/phi (cylindrical)"
+                )
             component = component_map[component.lower()]
         
         if not isinstance(component, int):

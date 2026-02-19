@@ -39,6 +39,9 @@ class ModeVisualizationConfig:
     show_magnitude: bool = True
     show_phase: bool = True
     show_combined: bool = True
+    use_holography: bool = False  # Use complex holography instead of phase for row 2
+    holography_gamma: float = 0.6  # Gamma correction for holographic brightness
+    holography_noise_threshold: float = 1e-4  # Noise floor suppression threshold
     colormap_magnitude: str = "cmc.berlin"  # cmcrameri berlin for amplitude data
     colormap_phase: str = "cmc.romaO"  # cmcrameri romaO for phase data
     colormap_animation: str = (

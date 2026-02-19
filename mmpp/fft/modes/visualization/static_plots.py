@@ -199,6 +199,10 @@ def update_single_mode_plot(
         ax.clear()
         ax.set_xticks([])
         ax.set_yticks([])
+        
+        # Get component label
+        from ..vortex_optics import VortexOptics
+        comp_label = VortexOptics.get_component_label(str(component), latex=True)
 
         if vis_type == "magnitude":
             magnitude = np.abs(comp_data)
@@ -210,21 +214,34 @@ def update_single_mode_plot(
                 interpolation=analyzer.config.interpolation,
                 origin="lower",
             )
-            ax.set_title(f"|m_{component}|")
+            ax.set_title(f"|{comp_label}|")
 
         elif vis_type == "phase":
-            phase = np.angle(comp_data)
-            ax.imshow(
-                phase,
-                cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
-                extent=mode_data.extent,
-                aspect="equal",
-                interpolation=analyzer.config.interpolation,
-                vmin=-np.pi,
-                vmax=np.pi,
-                origin="lower",
-            )
-            ax.set_title(f"arg(m_{component})")
+            # Check if holography is enabled
+            use_holo = getattr(analyzer.config, 'use_holography', False)
+            
+            if use_holo:
+                # Complex holography (domain coloring)
+                holo_gamma = getattr(analyzer.config, 'holography_gamma', 0.6)
+                holo_noise = getattr(analyzer.config, 'holography_noise_threshold', 1e-4)
+                
+                holo_img = VortexOptics.complex_holography(comp_data, holo_gamma, holo_noise)
+                ax.imshow(holo_img, extent=mode_data.extent, aspect="equal", origin="lower")
+                ax.set_title(f"Hologram of {comp_label}")
+            else:
+                # Standard phase visualization
+                phase = np.angle(comp_data)
+                ax.imshow(
+                    phase,
+                    cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
+                    extent=mode_data.extent,
+                    aspect="equal",
+                    interpolation=analyzer.config.interpolation,
+                    vmin=-np.pi,
+                    vmax=np.pi,
+                    origin="lower",
+                )
+                ax.set_title(f"arg({comp_label})")
 
         elif vis_type == "combined":
             magnitude = np.abs(comp_data)
@@ -238,7 +255,7 @@ def update_single_mode_plot(
                 interpolation=analyzer.config.interpolation,
                 origin="lower",
             )
-            ax.set_title(f"m_{component} (mag×cos(φ))")
+            ax.set_title(f"Re[{comp_label}]")
 
     except Exception as e:
         log.error(f"Failed to update single mode plot: {e}")
