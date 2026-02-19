@@ -45,6 +45,17 @@ except ImportError:
 from .spectrum import MultiSpectrumResult, SpectrumFilterChain, SpectrumHelper, SpectrumResult
 
 
+def generate_pastel_colors(n: int) -> list:
+    """Generate n distinct pastel-ish RGBA colors for component overlays."""
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import to_rgba
+        colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
+        return [to_rgba(c) for c in colors[:int(n)]]
+    except ImportError:
+        return [(0.4 + 0.15 * i, 0.6, 0.8, 1.0) for i in range(max(1, int(n)))]
+
+
 class FFTHelpAccessor:
     """Callable helper namespace for major FFT API methods."""
 

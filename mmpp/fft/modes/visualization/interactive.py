@@ -561,7 +561,14 @@ def interactive_spectrum(
     n_components = spectrum_to_use.shape[-1] if has_multi_components else 1
     
     # Generate pastel colors for components
-    from mmpp.fft.core import generate_pastel_colors
+    try:
+        from mmpp.fft.spectrum._plotting.static import _generate_pastel_colors as generate_pastel_colors
+    except ImportError:
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import to_rgba
+        def generate_pastel_colors(n):
+            colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
+            return [to_rgba(c) for c in colors[:int(n)]]
     pastel_colors = generate_pastel_colors(n_components)
     component_labels = [r"$m_x$", r"$m_y$", r"$m_z$"][:n_components]
     
