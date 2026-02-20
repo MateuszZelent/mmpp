@@ -515,7 +515,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
 
     control_panel = widgets.VBox(
         [
-            widgets.HTML("<b>FMR Spectrum Toolbar</b>"),
+            widgets.HTML("<b>FMR Spectrum Toolbar v3</b>"),
             preset_box,
             sections,
             widgets.HBox([controls["refresh"], controls["reset"]]),
