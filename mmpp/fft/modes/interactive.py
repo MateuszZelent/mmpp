@@ -140,6 +140,7 @@ class InteractiveSpectrum:
         self._widget_root: Any = None
         self._widget_output: Any = None
         self._controls: dict[str, Any] = {}
+        self._status_history: list[str] = []
         self._internal_update = False
         self._presets_dir: Optional[Path] = None
         self._is_saving_animation = False
@@ -533,9 +534,14 @@ class InteractiveSpectrum:
     def _update_status_text(self) -> None:
         update_status_text(self, logger=log)
 
-    def _set_status(self, message: str, color: str = "#334155") -> None:
+    def _set_status(
+        self,
+        message: str,
+        color: str = "#334155",
+        persist: bool = True,
+    ) -> None:
         """Set status message in toolbar or fallback to logger."""
-        set_status(self, message, color=color, logger=log)
+        set_status(self, message, color=color, logger=log, persist=persist)
 
     def _update_frequency_selection(self, redraw_canvas: bool = True) -> None:
         """Update vertical line and mode maps after frequency change."""

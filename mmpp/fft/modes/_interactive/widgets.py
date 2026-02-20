@@ -394,6 +394,13 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     controls["status"] = widgets.HTML(
         value="<small>Left-click spectrum: exact frequency. Right-click or Shift+click: nearest peak.</small>",
     )
+    controls["status_log"] = widgets.HTML(
+        value=(
+            "<div style='max-height:150px;overflow:auto;font-family:monospace;"
+            "font-size:11px;line-height:1.25;border:1px solid #e5e7eb;"
+            "padding:4px;background:#f8fafc;'></div>"
+        ),
+    )
     controls["preset_select"] = widgets.Dropdown(
         options=[("-- load preset --", "")],
         value="",
@@ -563,6 +570,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
             sections,
             widgets.HBox([controls["refresh"], controls["reset"]]),
             controls["status"],
+            controls["status_log"],
         ],
         layout=widgets.Layout(
             width="315px",

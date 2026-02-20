@@ -228,6 +228,8 @@ def draw_spectrum(explorer: Any) -> None:
 
     ax = explorer._ax_spectrum
     ax.clear()
+    # Axes clear invalidates previously cached line handles.
+    explorer._frequency_line = None
 
     if explorer._filtered_frequencies_ghz.size == 0:
         ax.text(
@@ -316,12 +318,16 @@ def draw_frequency_line(explorer: Any) -> None:
 
     scale = explorer._get_freq_scale(explorer._freq_unit)
     x_value = explorer._current_frequency_ghz * scale
-
-    if explorer._frequency_line is not None:
+    line = getattr(explorer, "_frequency_line", None)
+    if line is not None:
         try:
-            explorer._frequency_line.remove()
+            if getattr(line, "axes", None) is explorer._ax_spectrum:
+                line.set_xdata([x_value, x_value])
+                line.set_visible(True)
+                return
         except Exception:
             pass
+        explorer._frequency_line = None
 
     explorer._frequency_line = explorer._ax_spectrum.axvline(
         x_value,

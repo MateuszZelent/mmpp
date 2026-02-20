@@ -232,6 +232,7 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
         )
 
         save_attempts: list[tuple[str, Any, Path, int]] = []
+        save_failures: list[str] = []
         if fmt == "mp4":
             if FFMpegWriter is not None:
                 try:
@@ -249,6 +250,9 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                         )
                     )
                 except Exception as exc:
+                    save_failures.append(
+                        f"FFmpeg writer init failed: {exc.__class__.__name__}: {exc}"
+                    )
                     explorer._set_status(
                         f"FFmpeg unavailable ({exc}); falling back to GIF",
                         color="darkorange",
@@ -311,6 +315,10 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                 break
             except Exception as exc:
                 last_error = exc
+                error_detail = (
+                    f"{candidate_name} failed: {exc.__class__.__name__}: {exc}"
+                )
+                save_failures.append(error_detail)
                 if idx < len(save_attempts) - 1:
                     explorer._set_status(
                         f"Save with {candidate_name} failed ({exc}); trying fallback...",
@@ -328,6 +336,12 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
         if output_path.suffix.lower() == ".gif" and "Pillow" in writer_name:
             quality_hint = " | tip: use MP4 for better color quality"
 
+        if save_failures:
+            explorer._set_status(
+                "Fallback used due to save errors: " + " || ".join(save_failures[-3:]),
+                color="darkorange",
+            )
+
         explorer._set_status(
             (
                 f"Saved: {output_path} ({size_mb:.1f} MB) | "
@@ -340,7 +354,15 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
         import traceback
 
         traceback.print_exc()
-        explorer._set_status(f"Animation failed: {exc}", color="crimson")
+        tb = traceback.format_exc(limit=8)
+        explorer._set_status(
+            f"Animation failed: {exc.__class__.__name__}: {exc}",
+            color="crimson",
+        )
+        explorer._set_status(
+            "Traceback: " + tb.replace("\n", " | "),
+            color="crimson",
+        )
     finally:
         button.disabled = False
         button.description = old_desc
