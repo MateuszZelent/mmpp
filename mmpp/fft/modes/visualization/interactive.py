@@ -454,9 +454,8 @@ def interactive_spectrum(
         analyzer.config = temp_config
 
     # Update figure settings from kwargs
-    analyzer.config.figsize = figsize
     analyzer.config.dpi = dpi
-    
+
     # Update holography setting if provided
     if use_holography:
         analyzer.config.use_holography = use_holography
@@ -468,115 +467,114 @@ def interactive_spectrum(
             f"Too many components ({n_components}). Maximum supported: 3 (x, y, z)"
         )
 
-    # Create figure with custom layout
-    # Automatically configure interactive backend for Jupyter
+    # ── Determine visualization types ────────────────────────────────────────
+    n_vis_types = sum([
+        analyzer.config.show_magnitude,
+        analyzer.config.show_phase,
+        analyzer.config.show_combined,
+    ])
+    if n_vis_types == 0:
+        raise ValueError("At least one visualization type must be enabled")
+
+    # ── Auto-size figure based on content ────────────────────────────────────
+    _horizontal = (n_components == 1)   # single-component → horizontal layout
+    analyzer._layout_horizontal = _horizontal
+
+    if _horizontal:
+        # [spectrum | vis0 | cbar0 | vis1 | cbar1 | … ]
+        _fig_w = 5.5 + n_vis_types * 4.2
+        _fig_h = 5.0
+    else:
+        # [spectrum | c0 | c1 | … | cbar]
+        _fig_w = 6.0 + n_components * 3.8
+        _fig_h = 3.2 * n_vis_types + 1.0
+
+    # Allow user override
+    if figsize != (16, 10) and figsize != analyzer.config.figsize:
+        _fig_w, _fig_h = figsize
+    analyzer.config.figsize = (_fig_w, _fig_h)
+
+    # ── Interactive backend ──────────────────────────────────────────────────
     try:
         import matplotlib
-
         current_backend = matplotlib.get_backend()
-
-        # Check if we're in Jupyter/IPython environment
         try:
             from IPython import get_ipython
-
             ipython = get_ipython()
             in_jupyter = ipython is not None and hasattr(ipython, "kernel")
         except ImportError:
             in_jupyter = False
 
-        # Auto-configure interactive backend for Jupyter
         if in_jupyter:
-            # Always try to switch to widget backend for full interactivity
             try:
-                # Force widget backend for interactive features
                 ipython.run_line_magic("matplotlib", "widget")
-                log.info(
-                    "Switched to matplotlib widget backend for full interactivity"
-                )
-            except Exception as e:
-                log.debug(f"Could not auto-switch to widget backend: {e}")
-                # Try nbagg as fallback
+                log.info("Switched to widget backend")
+            except Exception:
                 try:
                     ipython.run_line_magic("matplotlib", "nbagg")
-                    log.info("Switched to nbagg backend as fallback")
                 except Exception:
-                    if (
-                        "ipympl" not in current_backend.lower()
-                        and "widget" not in current_backend.lower()
-                        and "nbagg" not in current_backend.lower()
-                    ):
-                        log.warning(
-                            f"Current backend '{current_backend}' may not support full interactivity. "
-                            "Please run '%matplotlib widget' manually. Install ipympl: pip install ipympl"
-                        )
-                    else:
-                        log.info(f"Using Jupyter-compatible backend: {current_backend}")
+                    if not any(k in current_backend.lower() for k in ("ipympl", "widget", "nbagg")):
+                        log.warning(f"Backend '{current_backend}' may lack interactivity – run %matplotlib widget")
         else:
-            # Not in Jupyter - check for standalone interactive backends
-            interactive_backends = ["qt5agg", "tkagg", "gtk3agg", "wxagg", "macosx"]
-            current_lower = current_backend.lower()
-            if current_lower not in interactive_backends:
-                log.info(
-                    f"Current backend: {current_backend}. Interactive features may be limited. "
-                    f"Consider switching to: Qt5Agg, TkAgg, GTK3Agg, wxAgg"
-                )
-            else:
-                log.info(f"Using interactive backend: {current_backend}")
-
+            log.info(f"Backend: {current_backend}")
     except Exception as e:
         log.warning(f"Could not configure interactive backend: {e}")
 
-    # Create figure WITHOUT constrained_layout to avoid colorbar conflicts
-    analyzer._interactive_fig = plt.figure(figsize=figsize, dpi=dpi, constrained_layout=False)
+    # ── Create figure ────────────────────────────────────────────────────────
+    fig = plt.figure(figsize=(_fig_w, _fig_h), dpi=dpi, constrained_layout=False)
+    analyzer._interactive_fig = fig
 
-    # Create grid layout: spectrum on left, modes on right
-    # Use dynamic number of rows (3 for all visualization types)
-    n_vis_types = sum(
-        [
-            analyzer.config.show_magnitude,
-            analyzer.config.show_phase,
-            analyzer.config.show_combined,
-        ]
-    )
-    if n_vis_types == 0:
-        raise ValueError("At least one visualization type must be enabled")
+    # ── Build GridSpec (adaptive layout) ─────────────────────────────────────
+    _SPEC_W  = 1.5      # spectrum column weight
+    _MODE_W  = 1.0      # each mode-image column weight
+    _CBAR_W  = 0.06     # each colorbar column weight
 
-    # ── Grid layout ──────────────────────────────────────────────────────────
-    # columns:  0 = spectrum (all rows)
-    #           1 … n_comp = mode panels
-    #           last = dedicated colorbar strip (one per vis-row)
-    _spec_w  = getattr(analyzer.config, "spectrum_width_ratio", 1.5)
-    _cbar_w  = 0.12   # colorbar strip: ~12 % of a mode column → ≈ 0.4–0.5 in at 16 in wide
+    if _horizontal:
+        # Single component – one row, vis types are columns
+        # [spectrum | vis0 | cbar0 | vis1 | cbar1 | vis2 | cbar2]
+        n_gcols = 1 + n_vis_types * 2
+        w_ratios: list[float] = [_SPEC_W]
+        for _ in range(n_vis_types):
+            w_ratios.extend([_MODE_W, _CBAR_W])
 
-    gs = gridspec.GridSpec(
-        n_vis_types,
-        n_components + 2,          # +1 spectrum, +1 colorbar strip
-        width_ratios=[_spec_w] + [1.0] * n_components + [_cbar_w],
-        height_ratios=[1.0] * n_vis_types,
-        hspace=0.35,
-        wspace=0.18,
-        left=0.06, right=0.97, top=0.92, bottom=0.08,
-    )
+        gs = gridspec.GridSpec(
+            1, n_gcols,
+            width_ratios=w_ratios,
+            hspace=0.05, wspace=0.25,
+            left=0.06, right=0.97, top=0.88, bottom=0.12,
+        )
+        ax_spectrum = fig.add_subplot(gs[0, 0])
 
-    # Spectrum – spans all rows in column 0
-    ax_spectrum = analyzer._interactive_fig.add_subplot(gs[:, 0])
+        # _mode_axes shape: (n_vis_types, 1) – row=vis_type, col=0
+        _axes, _cbars = [], []
+        for v in range(n_vis_types):
+            gc = 1 + v * 2   # GridSpec column for image
+            _axes.append([fig.add_subplot(gs[0, gc])])
+            _cbars.append(fig.add_subplot(gs[0, gc + 1]))
+        analyzer._mode_axes = np.array(_axes)  # (n_vis_types, 1)
+        analyzer._cbar_axes = _cbars
 
-    # Mode panels – rows × component columns
-    analyzer._mode_axes = np.array(
-        [
-            [
-                analyzer._interactive_fig.add_subplot(gs[row, col + 1])
-                for col in range(n_components)
-            ]
+    else:
+        # Multi-component – rows=vis_types, cols=[spectrum, c0..cN, cbar]
+        n_gcols = n_components + 2
+        w_ratios = [_SPEC_W] + [_MODE_W] * n_components + [_CBAR_W]
+
+        gs = gridspec.GridSpec(
+            n_vis_types, n_gcols,
+            width_ratios=w_ratios,
+            height_ratios=[1.0] * n_vis_types,
+            hspace=0.35, wspace=0.20,
+            left=0.06, right=0.97, top=0.90, bottom=0.08,
+        )
+        ax_spectrum = fig.add_subplot(gs[:, 0])
+
+        analyzer._mode_axes = np.array([
+            [fig.add_subplot(gs[row, col + 1]) for col in range(n_components)]
             for row in range(n_vis_types)
+        ])
+        analyzer._cbar_axes = [
+            fig.add_subplot(gs[row, -1]) for row in range(n_vis_types)
         ]
-    )
-
-    # Dedicated colorbar axes – one per vis-row, rightmost column
-    analyzer._cbar_axes = [
-        analyzer._interactive_fig.add_subplot(gs[row, -1])
-        for row in range(n_vis_types)
-    ]
 
     # Plot spectrum
     # Debug: check spectrum shape
@@ -585,12 +583,12 @@ def interactive_spectrum(
     log.debug(f"f_min={analyzer.config.f_min}, f_max={analyzer.config.f_max}")
     
     # Handle multi-dimensional spectrum - plot each component separately
+    # NOTE: n_spec_curves is the number of *spectral* curves, NOT the number of
+    #       mode components used in the GridSpec layout (which is len(components)).
     has_multi_components = spectrum_to_use.ndim > 1 and spectrum_to_use.shape[-1] <= 3
-    n_components = spectrum_to_use.shape[-1] if has_multi_components else 1
-    
-    # Generate pastel colors for components
-    # NOTE: Do NOT `import matplotlib.pyplot as plt` here — it would shadow the
-    # module-level `plt` and cause UnboundLocalError at plt.figure() above.
+    n_spec_curves = spectrum_to_use.shape[-1] if has_multi_components else 1
+
+    # Generate pastel colors for spectral curves
     try:
         from mmpp.fft.spectrum._plotting.static import _generate_pastel_colors as _gen_colors
     except ImportError:
@@ -598,8 +596,8 @@ def interactive_spectrum(
         def _gen_colors(n: int) -> list:
             colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
             return [to_rgba(c) for c in colors[:int(n)]]
-    pastel_colors = _gen_colors(n_components)
-    component_labels = [r"$m_x$", r"$m_y$", r"$m_z$"][:n_components]
+    pastel_colors = _gen_colors(n_spec_curves)
+    component_labels = [r"$m_x$", r"$m_y$", r"$m_z$"][:n_spec_curves]
     
     # Apply frequency mask FIRST
     freq_mask = (frequencies_to_use >= analyzer.config.f_min) & (
@@ -614,10 +612,10 @@ def interactive_spectrum(
     freqs_plot = frequencies_to_use[freq_mask]
     
     if has_multi_components:
-        log.info(f"Multi-component spectrum detected (shape={spectrum_to_use.shape}), plotting {n_components} curves")
+        log.info(f"Multi-component spectrum detected (shape={spectrum_to_use.shape}), plotting {n_spec_curves} curves")
         # For each component
         spectrum_components = []
-        for i in range(n_components):
+        for i in range(n_spec_curves):
             comp_spectrum = spectrum_to_use[:, i] if spectrum_to_use.ndim == 2 else spectrum_to_use[..., i].mean(axis=tuple(range(1, spectrum_to_use.ndim - 1)))
             spectrum_components.append(comp_spectrum[freq_mask])
     else:
@@ -671,18 +669,22 @@ def interactive_spectrum(
         ax_spectrum.legend(loc='upper right', frameon=True, fancybox=True,
                           framealpha=0.9, edgecolor='lightgray', fontsize=9)
     
-    ax_spectrum.set_xlabel("Frequency (GHz)")
-    
-    # Add component label to title if available
+    ax_spectrum.set_xlabel("Frequency (GHz)", fontsize=10)
+
+    # ── Professional spectrum panel styling ──────────────────────────────────
+    _title_comp = ""
     if spectrum_result is not None and hasattr(spectrum_result, 'component_label') and spectrum_result.component_label:
-        ax_spectrum.set_title(f"FMR Spectrum {spectrum_result.component_label} (Click to select frequency)")
-    else:
-        ax_spectrum.set_title("FMR Spectrum (Click to select frequency)")
-    ax_spectrum.grid(True, alpha=0.3, linestyle='--')
-    
-    # Clean up spines
-    ax_spectrum.spines['top'].set_visible(False)
-    ax_spectrum.spines['right'].set_visible(False)
+        _title_comp = f" {spectrum_result.component_label}"
+    ax_spectrum.set_title(
+        f"FMR Spectrum{_title_comp}",
+        fontsize=11, fontweight="semibold", pad=6,
+    )
+    ax_spectrum.grid(True, alpha=0.25, linestyle="-", linewidth=0.5, color="#cccccc")
+    ax_spectrum.tick_params(axis="both", labelsize=9, direction="in", length=3)
+    for spine in ("top", "right"):
+        ax_spectrum.spines[spine].set_visible(False)
+    for spine in ("bottom", "left"):
+        ax_spectrum.spines[spine].set_linewidth(0.6)
 
     # Find and mark peaks using the same spectrum data
     peaks = analyzer.find_peaks(
@@ -1256,7 +1258,7 @@ def update_mode_plots(
                         interpolation=analyzer.config.interpolation,
                         origin="lower",
                     )
-                    ax_phase.set_title(f"Hologram({comp_label})")
+                    # Title is set in the post-loop label block
                 else:
                     img = ax_phase.imshow(
                         phase,
@@ -1303,63 +1305,80 @@ def update_mode_plots(
             log.error(f"Failed to plot component {comp}: {e}")
             continue
 
-    # ── Column headers (top row) and row labels (leftmost column) ───────────
-    _vis_row_labels = {
+    # ── Labels (adaptive: horizontal vs vertical) ────────────────────────────
+    _vis_label = {
         "magnitude": "Amplitude",
         "phase":     "Hologram" if use_holo else "Phase",
         "combined":  "Re[m(t)]",
     }
-    for r_idx, vis_type in enumerate(vis_types):
-        if r_idx < len(analyzer._mode_axes) and len(analyzer._mode_axes[r_idx]) > 0:
-            analyzer._mode_axes[r_idx, 0].set_ylabel(
-                _vis_row_labels.get(vis_type, vis_type),
-                fontsize=8, labelpad=5, rotation=90,
-            )
-    for c_idx, comp in enumerate(components):
-        if len(analyzer._mode_axes) > 0 and c_idx < analyzer._mode_axes.shape[1]:
-            _col_label = (
-                VortexOptics.get_component_label(str(comp), latex=False)
-                if _have_vortex else str(comp)
-            )
-            analyzer._mode_axes[0, c_idx].set_title(
-                _col_label, fontsize=9, fontweight="semibold", pad=4
-            )
 
-    # Add frequency info
+    _is_horiz = getattr(analyzer, "_layout_horizontal", False)
+
+    if _is_horiz:
+        # Horizontal (1 component): each vis type is a column → use title
+        _comp_lbl = (
+            VortexOptics.get_component_label(str(components[0]), latex=False)
+            if _have_vortex else str(components[0])
+        )
+        for v_idx, vis_type in enumerate(vis_types):
+            ax = analyzer._mode_axes[v_idx, 0]
+            ax.set_title(
+                f"{_vis_label.get(vis_type, vis_type)} |{_comp_lbl}|"
+                if vis_type == "magnitude"
+                else f"{_vis_label.get(vis_type, vis_type)} ({_comp_lbl})",
+                fontsize=9, fontweight="semibold", pad=4,
+            )
+    else:
+        # Vertical (multi-component): row labels on left, column headers on top
+        for r_idx, vis_type in enumerate(vis_types):
+            if r_idx < len(analyzer._mode_axes) and analyzer._mode_axes.shape[1] > 0:
+                analyzer._mode_axes[r_idx, 0].set_ylabel(
+                    _vis_label.get(vis_type, vis_type),
+                    fontsize=9, labelpad=6, rotation=90,
+                )
+        for c_idx, comp in enumerate(components):
+            if analyzer._mode_axes.shape[0] > 0 and c_idx < analyzer._mode_axes.shape[1]:
+                _cl = (
+                    VortexOptics.get_component_label(str(comp), latex=False)
+                    if _have_vortex else str(comp)
+                )
+                analyzer._mode_axes[0, c_idx].set_title(
+                    _cl, fontsize=10, fontweight="semibold", pad=4,
+                )
+
+    # Suptitle with frequency
     analyzer._interactive_fig.suptitle(
-        f"FMR Modes at {analyzer._current_frequency:.3f} GHz",
-        fontsize=14,
-        fontweight="bold",
+        f"FMR Modes @ {analyzer._current_frequency:.3f} GHz",
+        fontsize=13, fontweight="bold", y=0.98 if _is_horiz else 0.96,
     )
 
-    # ── Per-row colorbars in the dedicated axes created at figure build time ─
+    # ── Per-row colorbars in dedicated axes ──────────────────────────────────
     _CBAR_LABELS = {
-        "magnitude": "Amplitude (a.u.)",
+        "magnitude": "Amplitude",
         "phase":     "Phase (rad)",
-        "combined":  "Re[m] (a.u.)",
+        "combined":  "Re[m]",
     }
-    _PHASE_TICKS  = [-np.pi, -np.pi / 2, 0.0, np.pi / 2, np.pi]
-    _PHASE_TLBLS  = [r"$-\pi$", r"$-\frac{\pi}{2}$", "0",
-                     r"$\frac{\pi}{2}$", r"$\pi$"]
+    _PHASE_TICKS = [-np.pi, -np.pi / 2, 0.0, np.pi / 2, np.pi]
+    _PHASE_TLBLS = [r"$-\pi$", r"$-\frac{\pi}{2}$", "0",
+                    r"$\frac{\pi}{2}$", r"$\pi$"]
 
     _cbar_axes_list = getattr(analyzer, "_cbar_axes", [])
     for row_idx, (vis_type, img) in enumerate(zip(vis_types, images_for_colorbar)):
-        if img is None:
-            continue
-        if row_idx >= len(_cbar_axes_list):
+        if img is None or row_idx >= len(_cbar_axes_list):
             continue
         cax = _cbar_axes_list[row_idx]
         try:
             cax.clear()
             cbar = analyzer._interactive_fig.colorbar(
-                img, cax=cax, orientation="vertical"
+                img, cax=cax, orientation="vertical",
             )
             cbar.set_label(
                 _CBAR_LABELS.get(vis_type, vis_type.capitalize()),
-                fontsize=7, labelpad=4,
+                fontsize=8, labelpad=3,
             )
-            cbar.ax.tick_params(labelsize=6, length=2, pad=2)
-            # Neat tick labels for phase rows
+            cbar.ax.tick_params(labelsize=7, length=2, pad=1, width=0.5)
+            cbar.outline.set_linewidth(0.4)
+            # Phase tick labels
             if vis_type == "phase" and not use_holo:
                 try:
                     cbar.set_ticks(_PHASE_TICKS)
