@@ -119,6 +119,7 @@ class InteractiveSpectrum:
         self._mode_colorbars: list[Any] = []
         self._frequency_line: Any = None
         self._current_frequency_ghz: Optional[float] = None
+        self._loaded_frequency_ghz: Optional[float] = None
         self._current_components: list[str] = ["x", "y", "z"]
         self._current_z_layer: int = -1
         self._freq_unit: str = "GHz"
@@ -351,9 +352,17 @@ class InteractiveSpectrum:
         if self._filtered_frequencies_ghz.size == 0:
             return
 
-        idx = int(change["new"])
-        idx = max(0, min(idx, self._filtered_frequencies_ghz.size - 1))
-        self._current_frequency_ghz = float(self._filtered_frequencies_ghz[idx])
+        slider = self._controls.get("freq_index") if self._controls else None
+        slider_kind = slider.__class__.__name__.lower() if slider is not None else ""
+        if slider_kind.startswith("float"):
+            requested = float(change.get("new", self._current_frequency_ghz or 0.0))
+            fmin = float(np.nanmin(self._filtered_frequencies_ghz))
+            fmax = float(np.nanmax(self._filtered_frequencies_ghz))
+            self._current_frequency_ghz = float(np.clip(requested, fmin, fmax))
+        else:
+            idx = int(change["new"])
+            idx = max(0, min(idx, self._filtered_frequencies_ghz.size - 1))
+            self._current_frequency_ghz = float(self._filtered_frequencies_ghz[idx])
         self._update_frequency_selection(redraw_canvas=True)
 
     def _on_refresh_clicked(self, _btn: Any) -> None:

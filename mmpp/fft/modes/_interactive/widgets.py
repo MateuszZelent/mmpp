@@ -250,14 +250,31 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         style={"description_width": "55px"},
     )
 
-    controls["freq_index"] = widgets.IntSlider(
-        value=max(explorer._closest_freq_index(explorer._current_frequency_ghz), 0),
-        min=0,
-        max=max(int(explorer._filtered_frequencies_ghz.size) - 1, 0),
-        step=1,
-        description="freq:",
+    freq_vals = np.asarray(explorer._filtered_frequencies_ghz, dtype=float)
+    if freq_vals.size:
+        freq_min = float(np.nanmin(freq_vals))
+        freq_max = float(np.nanmax(freq_vals))
+        current_freq = (
+            float(explorer._current_frequency_ghz)
+            if explorer._current_frequency_ghz is not None
+            else freq_min
+        )
+        current_freq = float(np.clip(current_freq, freq_min, freq_max))
+    else:
+        freq_min = 0.0
+        freq_max = 0.0
+        current_freq = 0.0
+
+    freq_step = max((freq_max - freq_min) / 2000.0, 1e-4)
+    controls["freq_index"] = widgets.FloatSlider(
+        value=current_freq,
+        min=freq_min,
+        max=freq_max,
+        step=freq_step,
+        description="freq [GHz]:",
+        readout_format=".4f",
         layout=widgets.Layout(width="100%"),
-        style={"description_width": "55px"},
+        style={"description_width": "70px"},
         continuous_update=False,
     )
 
@@ -281,7 +298,6 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         description="phase",
         disabled=False,
     )
-    widgets.jslink((controls["play"], "value"), (controls["phase_index"], "value"))
 
     controls["anim_frames"] = widgets.IntSlider(
         value=180,
@@ -407,6 +423,24 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     controls["animate"].on_click(explorer._on_animate_clicked)
     controls["mode_type"].observe(explorer._on_mode_type_changed, names="value")
     controls["phase_index"].observe(explorer._on_phase_index_changed, names="value")
+
+    def _on_play_value_changed(change: Any) -> None:
+        if change.get("name") != "value":
+            return
+        phase_control = controls.get("phase_index")
+        if phase_control is None:
+            return
+        new_val = int(change.get("new", 0))
+        new_val = int(np.clip(new_val, phase_control.min, phase_control.max))
+        if int(phase_control.value) != new_val:
+            explorer._internal_update = True
+            try:
+                phase_control.value = new_val
+            finally:
+                explorer._internal_update = False
+        explorer._on_phase_index_changed({"name": "value", "new": new_val})
+
+    controls["play"].observe(_on_play_value_changed, names="value")
     controls["preset_save"].on_click(explorer._on_save_preset_clicked)
     controls["preset_delete"].on_click(explorer._on_delete_preset_clicked)
     controls["preset_select"].observe(explorer._on_load_preset_changed, names="value")
@@ -481,7 +515,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
 
     control_panel = widgets.VBox(
         [
-            widgets.HTML("<b>FMR Spectrum Toolbar 3</b>"),
+            widgets.HTML("<b>FMR Spectrum Toolbar</b>"),
             preset_box,
             sections,
             widgets.HBox([controls["refresh"], controls["reset"]]),

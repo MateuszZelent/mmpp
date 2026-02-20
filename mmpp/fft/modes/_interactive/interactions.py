@@ -74,6 +74,7 @@ def on_spectrum_click(explorer: Any, event: Any) -> None:
         fmax = float(np.nanmax(explorer._filtered_frequencies_ghz))
         clicked_freq_ghz = float(np.clip(clicked_freq_ghz, fmin, fmax))
 
+    selected = clicked_freq_ghz
     snap_to_peak = _wants_peak_snap(event)
     if snap_to_peak and explorer._peaks:
         peak_freqs = np.array([p[0] for p in explorer._peaks], dtype=float)
@@ -84,20 +85,38 @@ def on_spectrum_click(explorer: Any, event: Any) -> None:
             "No detected peaks in current filter range; selected exact frequency",
             color="darkorange",
         )
-    else:
-        selected = clicked_freq_ghz
 
     explorer._current_frequency_ghz = selected
 
     if explorer._controls and "freq_index" in explorer._controls:
+        slider = explorer._controls["freq_index"]
+        slider_kind = slider.__class__.__name__.lower()
         idx = closest_freq_index(explorer, selected)
         explorer._internal_update = True
         try:
-            explorer._controls["freq_index"].value = idx
+            if slider_kind.startswith("float"):
+                slider.value = float(selected)
+            else:
+                slider.value = idx
         finally:
             explorer._internal_update = False
 
     update_frequency_selection(explorer, redraw_canvas=True)
+
+    if hasattr(explorer, "_set_status"):
+        idx = closest_freq_index(explorer, selected)
+        nearest = selected
+        if explorer._filtered_frequencies_ghz.size:
+            nearest = float(explorer._filtered_frequencies_ghz[idx])
+        click_kind = "peak-snap" if snap_to_peak else "exact"
+        explorer._set_status(
+            (
+                "Click detected | "
+                f"x={clicked_freq_ghz:.4f} GHz, mode={click_kind}, "
+                f"selected={selected:.4f} GHz, nearest-grid={nearest:.4f} GHz (idx={idx})"
+            ),
+            color="#0F766E",
+        )
 
 
 __all__ = [

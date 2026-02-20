@@ -441,7 +441,8 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
         return
 
     phase_idx = change.get("new", 0)
-    n_frames = 60
+    phase_ctrl = explorer._controls.get("phase_index") if explorer._controls else None
+    n_frames = int(getattr(phase_ctrl, "max", 59)) + 1
 
     phase_rad = (phase_idx / n_frames) * 2 * np.pi
     phase_deg = (phase_idx / n_frames) * 360
@@ -490,10 +491,12 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
                 if comp_amplitude <= 0:
                     comp_amplitude = 1.0
 
-                if row_type == "magnitude" or mode_type == "abs":
+                viz_type = mode_type if row_idx == 0 else row_type
+
+                if viz_type in {"magnitude", "abs"}:
                     plot_data = np.abs(comp_data)
                     img.set_clim(0, comp_amplitude)
-                elif row_type == "phase":
+                elif viz_type == "phase":
                     if getattr(explorer, "_use_holography", False):
                         try:
                             from ..vortex_optics import VortexOptics
@@ -505,10 +508,10 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
                     else:
                         plot_data = np.angle(comp_data)
                         img.set_clim(-np.pi, np.pi)
-                elif mode_type == "real" or row_type == "combined":
+                elif viz_type in {"real", "combined"}:
                     plot_data = np.real(comp_data)
                     img.set_clim(-comp_amplitude, comp_amplitude)
-                elif mode_type == "imag":
+                elif viz_type == "imag":
                     plot_data = np.imag(comp_data)
                     img.set_clim(-comp_amplitude, comp_amplitude)
                 else:

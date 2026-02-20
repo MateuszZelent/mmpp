@@ -152,7 +152,7 @@ def update_mode_plots(explorer: Any) -> None:
             explorer._current_frequency_ghz,
             explorer._current_z_layer,
         )
-        explorer._current_frequency_ghz = actual_freq
+        explorer._loaded_frequency_ghz = float(actual_freq)
     except Exception as exc:
         _render_mode_load_error(explorer, exc)
         return

@@ -26,6 +26,14 @@ def update_status_text(explorer: Any, logger: Any = None) -> None:
     else:
         freq_text = f"{explorer._current_frequency_ghz:.3f} GHz"
 
+    loaded_freq = getattr(explorer, "_loaded_frequency_ghz", None)
+    if (
+        loaded_freq is not None
+        and explorer._current_frequency_ghz is not None
+        and abs(float(loaded_freq) - float(explorer._current_frequency_ghz)) > 1e-6
+    ):
+        freq_text = f"{freq_text} (mode@{float(loaded_freq):.3f} GHz)"
+
     set_status(
         explorer,
         f"f={freq_text}, components={','.join(explorer._current_components)}, peaks={n_peaks}",

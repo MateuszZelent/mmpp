@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from .filters import SpectrumFilterState, normalize_component_selection
 
 
@@ -86,13 +88,31 @@ def refresh_freq_slider_bounds(explorer: Any) -> None:
         return
 
     slider = explorer._controls["freq_index"]
+    is_float_slider = slider.__class__.__name__.lower().startswith("float")
 
     explorer._internal_update = True
     try:
-        max_idx = max(int(explorer._filtered_frequencies_ghz.size) - 1, 0)
-        slider.max = max_idx
-        idx = explorer._closest_freq_index(explorer._current_frequency_ghz)
-        slider.value = idx
+        freqs = np.asarray(explorer._filtered_frequencies_ghz, dtype=float)
+        if freqs.size == 0:
+            slider.min = 0
+            slider.max = 0
+            slider.value = 0
+            return
+
+        if is_float_slider:
+            fmin = float(np.nanmin(freqs))
+            fmax = float(np.nanmax(freqs))
+            slider.min = fmin
+            slider.max = fmax
+            default_step = max((fmax - fmin) / 2000.0, 1e-4)
+            slider.step = default_step
+            current = float(explorer._current_frequency_ghz) if explorer._current_frequency_ghz is not None else fmin
+            slider.value = float(np.clip(current, fmin, fmax))
+        else:
+            max_idx = max(int(freqs.size) - 1, 0)
+            slider.max = max_idx
+            idx = explorer._closest_freq_index(explorer._current_frequency_ghz)
+            slider.value = idx
     finally:
         explorer._internal_update = False
 
