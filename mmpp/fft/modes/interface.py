@@ -1110,29 +1110,12 @@ class FFTModeInterfaceNew:
             if value is not None:
                 viewer_kwargs[key] = value
         
-        # Some arguments are implemented only by the legacy analyzer view.
-        legacy_only_keys = {"saveanim", "auto_animate", "auto_save", "method", "force", "use_fft_spectrum"}
-        if any(key in viewer_kwargs for key in legacy_only_keys):
-            toolbar = False
+        # Arguments still implemented only by the legacy analyzer view.
+        legacy_only_keys = {"saveanim", "auto_save", "method", "force", "use_fft_spectrum"}
+        use_legacy_view = any(key in viewer_kwargs for key in legacy_only_keys)
+        if use_legacy_view:
             log.info("Legacy interactive mode selected due to legacy-only arguments")
-
-        # Topological components (+, -, rho, phi) and holography are only
-        # handled by the legacy FMRModeAnalyzer path (VortexOptics engine).
-        # Force the legacy path so the correct interface is always used.
-        _TOPOLOGICAL_COMPONENTS = {"+", "-", "rho", "phi"}
-        _has_topological = components is not None and any(
-            str(c) in _TOPOLOGICAL_COMPONENTS for c in components
-        )
-        if use_holography or _has_topological:
-            toolbar = False
-            log.info(
-                "Legacy interactive mode selected: use_holography=%s, "
-                "topological_components=%s",
-                use_holography,
-                [c for c in (components or []) if str(c) in _TOPOLOGICAL_COMPONENTS],
-            )
-
-
+        else:
             resolved_log_scale = bool(viewer_kwargs.pop("log_scale", False))
             resolved_normalize = bool(viewer_kwargs.pop("normalize", True))
             resolved_freq_unit = str(viewer_kwargs.pop("freq_unit", "GHz"))
@@ -1161,7 +1144,7 @@ class FFTModeInterfaceNew:
                 show_peaks=resolved_show_peaks,
                 title=resolved_title,
                 initial_frequency=resolved_initial_frequency,
-                toolbar=True,
+                toolbar=bool(toolbar),
                 use_holography=use_holography,
                 show=show,
                 **viewer_kwargs,

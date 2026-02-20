@@ -94,7 +94,6 @@ def on_spectrum_click(explorer: Any, event: Any) -> None:
         explorer._internal_update = True
         try:
             explorer._controls["freq_index"].value = idx
-            explorer._controls["play"].value = idx
         finally:
             explorer._internal_update = False
 

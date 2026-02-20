@@ -346,7 +346,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     )
 
     controls["status"] = widgets.HTML(
-        value="<small>Left-click spectrum to select frequency, right-click to snap to nearest peak.</small>",
+        value="<small>Left-click spectrum: exact frequency. Right-click or Shift+click: nearest peak.</small>",
     )
     controls["preset_select"] = widgets.Dropdown(
         options=[("-- load preset --", "")],

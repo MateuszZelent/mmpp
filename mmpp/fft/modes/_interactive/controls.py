@@ -88,16 +88,13 @@ def refresh_freq_slider_bounds(explorer: Any) -> None:
         return
 
     slider = explorer._controls["freq_index"]
-    play = explorer._controls["play"]
 
     explorer._internal_update = True
     try:
         max_idx = max(int(explorer._filtered_frequencies_ghz.size) - 1, 0)
         slider.max = max_idx
-        play.max = max_idx
         idx = explorer._closest_freq_index(explorer._current_frequency_ghz)
         slider.value = idx
-        play.value = idx
     finally:
         explorer._internal_update = False
 
