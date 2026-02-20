@@ -231,47 +231,101 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
             fmt=fmt,
         )
 
-        writer_name = ""
-        export_dpi = 150 if fmt == "gif" else explorer.dpi
+        save_attempts: list[tuple[str, Any, Path, int]] = []
         if fmt == "mp4":
-            if FFMpegWriter is None:
-                raise RuntimeError("FFmpeg writer unavailable; select GIF format")
-            writer = FFMpegWriter(
-                fps=fps,
-                bitrate=4000,
-                codec="libx264",
-                extra_args=["-pix_fmt", "yuv420p", "-preset", "slower", "-crf", "18"],
+            if FFMpegWriter is not None:
+                try:
+                    save_attempts.append(
+                        (
+                            "FFmpeg",
+                            FFMpegWriter(
+                                fps=fps,
+                                bitrate=4000,
+                                codec="libx264",
+                                extra_args=["-pix_fmt", "yuv420p", "-preset", "slower", "-crf", "18"],
+                            ),
+                            output_path.with_suffix(".mp4"),
+                            int(explorer.dpi),
+                        )
+                    )
+                except Exception as exc:
+                    explorer._set_status(
+                        f"FFmpeg unavailable ({exc}); falling back to GIF",
+                        color="darkorange",
+                    )
+            save_attempts.append(
+                (
+                    "Pillow (GIF fallback)",
+                    PillowWriter(
+                        fps=fps,
+                        metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
+                    ),
+                    output_path.with_suffix(".gif"),
+                    150,
+                )
             )
-            writer_name = "FFmpeg"
         else:
             if has_imagemagick and ImageMagickWriter is not None:
                 try:
-                    writer = ImageMagickWriter(
-                        fps=fps,
-                        metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
-                        bitrate=2000,
-                        extra_args=["-layers", "Optimize"],
+                    save_attempts.append(
+                        (
+                            "ImageMagick",
+                            ImageMagickWriter(
+                                fps=fps,
+                                metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
+                                bitrate=2000,
+                                extra_args=["-layers", "Optimize"],
+                            ),
+                            output_path.with_suffix(".gif"),
+                            150,
+                        )
                     )
-                    writer_name = "ImageMagick"
                 except Exception:
-                    writer = PillowWriter(
+                    pass
+            save_attempts.append(
+                (
+                    "Pillow (256 colors)",
+                    PillowWriter(
                         fps=fps,
                         metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
-                    )
-                    writer_name = "Pillow (256 colors)"
-            else:
-                writer = PillowWriter(
-                    fps=fps,
-                    metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
+                    ),
+                    output_path.with_suffix(".gif"),
+                    150,
                 )
-                writer_name = "Pillow (256 colors)"
+            )
 
-        explorer._set_status(f"Saving animation: {output_path}...", color="#0F766E")
-        animation.save(str(output_path), writer=writer, dpi=export_dpi)
+        writer_name = ""
+        export_dpi = 150
+        last_error: Exception | None = None
+        for idx, (candidate_name, candidate_writer, candidate_path, candidate_dpi) in enumerate(save_attempts):
+            candidate_path.parent.mkdir(parents=True, exist_ok=True)
+            explorer._set_status(
+                f"Saving animation: {candidate_path} ({candidate_name})...",
+                color="#0F766E",
+            )
+            try:
+                animation.save(str(candidate_path), writer=candidate_writer, dpi=candidate_dpi)
+                output_path = candidate_path
+                writer_name = candidate_name
+                export_dpi = int(candidate_dpi)
+                break
+            except Exception as exc:
+                last_error = exc
+                if idx < len(save_attempts) - 1:
+                    explorer._set_status(
+                        f"Save with {candidate_name} failed ({exc}); trying fallback...",
+                        color="darkorange",
+                    )
+
+        if not writer_name:
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("No animation writers available")
+
         size_mb = output_path.stat().st_size / (1024 * 1024)
 
         quality_hint = ""
-        if fmt == "gif" and writer_name == "Pillow (256 colors)":
+        if output_path.suffix.lower() == ".gif" and "Pillow" in writer_name:
             quality_hint = " | tip: use MP4 for better color quality"
 
         explorer._set_status(
