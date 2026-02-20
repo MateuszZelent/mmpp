@@ -153,6 +153,10 @@ def update_mode_plots(explorer: Any) -> None:
             explorer._current_z_layer,
         )
         explorer._loaded_frequency_ghz = float(actual_freq)
+        explorer._phase_source_mode_array = np.asarray(mode_array)
+        explorer._phase_source_frequency_ghz = float(explorer._current_frequency_ghz)
+        explorer._phase_source_actual_frequency_ghz = float(actual_freq)
+        explorer._phase_source_z_layer = int(explorer._current_z_layer)
     except Exception as exc:
         _render_mode_load_error(explorer, exc)
         return

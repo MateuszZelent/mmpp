@@ -297,6 +297,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         interval=42,
         description="phase",
         disabled=False,
+        repeat=True,
     )
 
     controls["anim_frames"] = widgets.IntSlider(
@@ -441,6 +442,17 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         explorer._on_phase_index_changed({"name": "value", "new": new_val})
 
     controls["play"].observe(_on_play_value_changed, names="value")
+
+    def _on_playing_changed(change: Any) -> None:
+        if change.get("name") != "playing":
+            return
+        is_playing = bool(change.get("new", False))
+        explorer._is_animating = is_playing
+        if "animate" in controls:
+            controls["animate"].description = "⏸️ Stop" if is_playing else "🎬 Animate"
+            controls["animate"].button_style = "danger" if is_playing else "warning"
+
+    controls["play"].observe(_on_playing_changed, names="playing")
     controls["preset_save"].on_click(explorer._on_save_preset_clicked)
     controls["preset_delete"].on_click(explorer._on_delete_preset_clicked)
     controls["preset_select"].observe(explorer._on_load_preset_changed, names="value")

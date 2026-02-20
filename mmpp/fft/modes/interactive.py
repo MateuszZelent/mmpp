@@ -120,6 +120,10 @@ class InteractiveSpectrum:
         self._frequency_line: Any = None
         self._current_frequency_ghz: Optional[float] = None
         self._loaded_frequency_ghz: Optional[float] = None
+        self._phase_source_mode_array: Optional[np.ndarray] = None
+        self._phase_source_frequency_ghz: Optional[float] = None
+        self._phase_source_actual_frequency_ghz: Optional[float] = None
+        self._phase_source_z_layer: Optional[int] = None
         self._current_components: list[str] = ["x", "y", "z"]
         self._current_z_layer: int = -1
         self._freq_unit: str = "GHz"

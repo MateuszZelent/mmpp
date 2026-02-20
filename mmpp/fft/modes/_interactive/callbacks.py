@@ -267,6 +267,41 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
         explorer._set_status("No mode selected to animate", color="crimson")
         return
 
+    play_control = explorer._controls.get("play") if explorer._controls else None
+    phase_control = explorer._controls.get("phase_index") if explorer._controls else None
+    if play_control is not None and phase_control is not None:
+        if explorer._is_animating:
+            try:
+                play_control.playing = False
+            except Exception:
+                pass
+            stop_animation(explorer)
+            if "animate" in explorer._controls:
+                explorer._controls["animate"].description = "🎬 Animate"
+                explorer._controls["animate"].button_style = "warning"
+            explorer._set_status("Animation stopped", color="seagreen")
+            explorer._update_mode_plots()
+            return
+
+        try:
+            play_control.min = int(phase_control.min)
+            play_control.max = int(phase_control.max)
+            play_control.step = max(1, int(phase_control.step))
+            play_control.repeat = True
+            play_control.value = int(phase_control.value)
+            play_control.playing = True
+            explorer._is_animating = True
+            if "animate" in explorer._controls:
+                explorer._controls["animate"].description = "⏸️ Stop"
+                explorer._controls["animate"].button_style = "danger"
+            explorer._set_status("Animating phase (Play widget)", color="seagreen")
+            return
+        except Exception as exc:
+            explorer._set_status(
+                f"Play-widget animation failed, falling back: {exc}",
+                color="darkorange",
+            )
+
     if explorer._is_animating:
         stop_animation(explorer)
         if "animate" in explorer._controls:
@@ -382,6 +417,13 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
             blit=False,
             repeat=True,
         )
+        try:
+            explorer._animation._start()  # type: ignore[attr-defined]
+        except Exception:
+            try:
+                explorer._animation.event_source.start()
+            except Exception:
+                pass
 
         explorer._is_animating = True
         if "animate" in explorer._controls:
@@ -408,6 +450,12 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
 
 def stop_animation(explorer: Any) -> None:
     """Stop any running animation."""
+    if explorer._controls and "play" in explorer._controls:
+        try:
+            explorer._controls["play"].playing = False
+        except Exception:
+            pass
+
     if explorer._animation is not None:
         try:
             explorer._animation.event_source.stop()
@@ -448,10 +496,38 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
     phase_deg = (phase_idx / n_frames) * 360
 
     try:
-        mode_array, actual_freq, _extent = explorer._load_mode(
-            explorer._current_frequency_ghz,
-            explorer._current_z_layer,
-        )
+        requested_freq = float(explorer._current_frequency_ghz)
+        requested_z = int(explorer._current_z_layer)
+
+        cached_mode = getattr(explorer, "_phase_source_mode_array", None)
+        cached_freq = getattr(explorer, "_phase_source_frequency_ghz", None)
+        cached_z = getattr(explorer, "_phase_source_z_layer", None)
+
+        if (
+            cached_mode is not None
+            and cached_freq is not None
+            and cached_z is not None
+            and abs(float(cached_freq) - requested_freq) <= 1e-12
+            and int(cached_z) == requested_z
+        ):
+            mode_array = np.asarray(cached_mode)
+            actual_freq = float(
+                getattr(
+                    explorer,
+                    "_phase_source_actual_frequency_ghz",
+                    requested_freq,
+                )
+            )
+        else:
+            mode_array, actual_freq, _extent = explorer._load_mode(
+                requested_freq,
+                requested_z,
+            )
+            explorer._phase_source_mode_array = np.asarray(mode_array)
+            explorer._phase_source_frequency_ghz = requested_freq
+            explorer._phase_source_actual_frequency_ghz = float(actual_freq)
+            explorer._phase_source_z_layer = requested_z
+            explorer._loaded_frequency_ghz = float(actual_freq)
 
         phase_factor = np.exp(-1j * phase_rad)
         mode_at_phase = mode_array * phase_factor
@@ -533,6 +609,15 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
 
         if explorer._fig is not None:
             explorer._fig.canvas.draw_idle()
+        if hasattr(explorer, "_set_status"):
+            explorer._set_status(
+                (
+                    f"Phase preview: φ={phase_deg:.1f}°, "
+                    f"f={requested_freq:.4f} GHz, "
+                    f"mode@{float(actual_freq):.4f} GHz"
+                ),
+                color="#0F766E",
+            )
 
     except Exception:
         import traceback
