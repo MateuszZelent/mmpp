@@ -69,6 +69,34 @@ def _resolve_mode_viz(
     return np.real(comp_data), -comp_amplitude, comp_amplitude
 
 
+def _resolve_animation_output_path(
+    explorer: Any,
+    *,
+    actual_freq: float,
+    mode_type: str,
+    fmt: str,
+) -> tuple[Path, str]:
+    """Resolve output path and effective format for exported animation."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    default_name = f"fmr_mode_{actual_freq:.2f}GHz_{mode_type}_{timestamp}.{fmt}"
+    target = getattr(explorer, "_save_animation_path", None)
+
+    if target:
+        output_path = Path(target).expanduser()
+        suffix = output_path.suffix.lower()
+        if suffix in {".gif", ".mp4"}:
+            fmt = suffix.lstrip(".")
+        elif suffix:
+            output_path = output_path.with_suffix(f".{fmt}")
+        else:
+            output_path = output_path / default_name
+    else:
+        output_path = Path.cwd() / default_name
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return output_path, fmt
+
+
 def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
     """Save phase oscillation animation of selected FMR mode."""
     if explorer._is_saving_animation:
@@ -196,8 +224,12 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
             repeat=False,
         )
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path.cwd() / f"fmr_mode_{actual_freq:.2f}GHz_{mode_type}_{timestamp}.{fmt}"
+        output_path, fmt = _resolve_animation_output_path(
+            explorer,
+            actual_freq=actual_freq,
+            mode_type=mode_type,
+            fmt=fmt,
+        )
 
         writer_name = ""
         export_dpi = 150 if fmt == "gif" else explorer.dpi
@@ -234,7 +266,7 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                 )
                 writer_name = "Pillow (256 colors)"
 
-        explorer._set_status(f"Saving animation: {output_path.name}...", color="#0F766E")
+        explorer._set_status(f"Saving animation: {output_path}...", color="#0F766E")
         animation.save(str(output_path), writer=writer, dpi=export_dpi)
         size_mb = output_path.stat().st_size / (1024 * 1024)
 
@@ -244,7 +276,7 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
 
         explorer._set_status(
             (
-                f"Saved: {output_path.name} ({size_mb:.1f} MB) | "
+                f"Saved: {output_path} ({size_mb:.1f} MB) | "
                 f"{n_frames} frames @ {fps} fps, {export_dpi} dpi, writer={writer_name}"
                 f"{quality_hint}"
             ),

@@ -9,6 +9,7 @@ This module contains all animation-related functions:
 
 import numpy as np
 import logging
+from pathlib import Path
 from typing import Any, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,6 +30,13 @@ except ImportError:
 # Import FFmpeg utilities
 from ..ffmpeg_utils import _ensure_ffmpeg_available, _create_ffmpeg_writer
 from ..style import setup_animation_styling, MidpointNormalize
+
+
+def _ensure_animation_parent_dir(save_path: str) -> str:
+    """Expand user path and create parent directory when missing."""
+    path_obj = Path(save_path).expanduser()
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    return str(path_obj)
 
 
 def save_modes_animation(
@@ -85,6 +93,8 @@ def save_modes_animation(
 
     try:
         import matplotlib.cm as cm
+
+        save_path = str(Path(save_path).expanduser())
 
         # Parameter validation
         if frequency_range is None and frequency is None:
@@ -373,6 +383,7 @@ def save_modes_animation(
             if not save_path.endswith(".gif"):
                 save_path += ".gif"
 
+        save_path = _ensure_animation_parent_dir(save_path)
         log.info(f"Saving animation to {save_path} (this may take a while...)")
 
         try:
@@ -412,6 +423,7 @@ def save_modes_animation(
             if writer == "ffmpeg" and save_path.endswith(".mp4"):
                 log.info("Attempting fallback to GIF format...")
                 fallback_path = save_path.replace(".mp4", ".gif")
+                fallback_path = _ensure_animation_parent_dir(fallback_path)
                 try:
                     anim.save(
                         fallback_path,
@@ -751,6 +763,7 @@ def save_animated_view(analyzer, save_path: str, z_layer: int = 0) -> None:
     """Save current animated view to video file."""
     if not analyzer._mode_animations:
         raise ValueError("No active animations to save")
+    save_path = str(Path(save_path).expanduser())
 
     # Import required modules
     try:
@@ -808,6 +821,8 @@ def save_animated_view(analyzer, save_path: str, z_layer: int = 0) -> None:
         writer = PillowWriter(fps=10)
         writer_name = "pillow"
         save_path = save_path.replace(f".{file_ext}", ".gif")
+
+    save_path = _ensure_animation_parent_dir(save_path)
 
     # Create master animation
     def animate_all_modes(frame):

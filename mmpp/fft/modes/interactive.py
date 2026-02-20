@@ -139,6 +139,7 @@ class InteractiveSpectrum:
         self._internal_update = False
         self._presets_dir: Optional[Path] = None
         self._is_saving_animation = False
+        self._save_animation_path: Optional[Path] = None
         
         # Layout configuration
         self._mode_aspect: str = "equal"
@@ -241,6 +242,14 @@ class InteractiveSpectrum:
 
         self._peak_prominence = float(peak_prominence)
         self._peak_distance = int(peak_distance)
+
+        save_path_override = _ignored.pop("save_path", None)
+        if save_path_override is None:
+            save_path_override = _ignored.pop("animation_save_path", None)
+        if save_path_override is not None:
+            self._save_animation_path = Path(str(save_path_override)).expanduser()
+        else:
+            self._save_animation_path = None
 
         self._recompute_filtered_spectrum()
         self._initialize_frequency(initial_frequency)
