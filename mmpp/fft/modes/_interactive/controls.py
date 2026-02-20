@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
 from .filters import SpectrumFilterState, normalize_component_selection
 
 
@@ -83,7 +81,7 @@ def read_controls(explorer: Any) -> None:
 
 
 def refresh_freq_slider_bounds(explorer: Any) -> None:
-    """Refresh frequency slider/play bounds after filtering changes."""
+    """Refresh frequency slider bounds after filtering changes."""
     if not explorer._controls:
         return
 
