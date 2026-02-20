@@ -278,6 +278,7 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
 
     try:
         from matplotlib.animation import FuncAnimation
+        explorer._set_status("Starting animation...", color="#0F766E")
 
         freq_ghz = explorer._current_frequency_ghz
         mode_array, actual_freq, _extent = explorer._load_mode(
@@ -285,6 +286,10 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
         )
 
         freq_hz = actual_freq * 1e9
+        if not np.isfinite(freq_hz) or freq_hz <= 0:
+            raise ValueError(
+                f"Invalid frequency for animation: {actual_freq} GHz"
+            )
         omega = 2 * np.pi * freq_hz
         period_s = 1.0 / freq_hz
 
@@ -293,26 +298,29 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
             if hasattr(explorer._controls.get("anim_frames"), "value")
             else 60
         )
+        n_frames = max(2, n_frames)
         fps = int(
             explorer._controls.get("anim_fps", {}).value
             if hasattr(explorer._controls.get("anim_fps"), "value")
             else 24
         )
+        fps = max(1, fps)
 
         time_array = np.linspace(0, period_s, n_frames, endpoint=False)
 
-        precomputed_frames = []
-        for t in time_array:
-            phase_factor = np.exp(-1j * omega * t)
-            mode_at_t = mode_array * phase_factor
-            precomputed_frames.append(mode_at_t)
-
         mode_images, mode_titles = _collect_mode_images_and_titles(explorer)
+        if not any(img is not None for row in mode_images for img in row):
+            explorer._update_mode_plots()
+            mode_images, mode_titles = _collect_mode_images_and_titles(explorer)
+        if not any(img is not None for row in mode_images for img in row):
+            raise RuntimeError("No mode images found to animate")
+
         mode_type = explorer._mode_type
 
         def _update_frame(frame_idx: int) -> list[Any]:
-            mode_at_t = precomputed_frames[frame_idx]
             t = time_array[frame_idx]
+            phase_factor = np.exp(-1j * omega * t)
+            mode_at_t = mode_array * phase_factor
             phase_deg = (t / period_s) * 360
             t_ns = t * 1e9
 
@@ -371,7 +379,7 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
             _update_frame,
             frames=n_frames,
             interval=1000.0 / float(fps),
-            blit=True,
+            blit=False,
             repeat=True,
         )
 

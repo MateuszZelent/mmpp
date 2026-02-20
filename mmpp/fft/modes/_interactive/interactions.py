@@ -7,6 +7,41 @@ from typing import Any
 import numpy as np
 
 
+def _button_to_name(button: Any) -> str:
+    """Normalize matplotlib mouse button representation to lowercase text."""
+    if button is None:
+        return ""
+
+    if isinstance(button, (int, np.integer)):
+        if int(button) == 1:
+            return "left"
+        if int(button) == 2:
+            return "middle"
+        if int(button) == 3:
+            return "right"
+        return str(int(button))
+
+    name = getattr(button, "name", None)
+    if name:
+        return str(name).strip().lower()
+
+    text = str(button).strip().lower()
+    if "." in text:
+        text = text.split(".")[-1]
+    return text
+
+
+def _wants_peak_snap(event: Any) -> bool:
+    """Return True when the user requested peak snapping."""
+    button_name = _button_to_name(getattr(event, "button", None))
+    if button_name in {"right", "3"}:
+        return True
+
+    # Useful on touchpads where right-click is unavailable.
+    key_text = str(getattr(event, "key", "") or "").lower()
+    return "shift" in key_text
+
+
 def closest_freq_index(explorer: Any, freq_ghz: float | None) -> int:
     """Return closest filtered-frequency index for ``freq_ghz``."""
     if explorer._filtered_frequencies_ghz.size == 0:
@@ -34,11 +69,21 @@ def on_spectrum_click(explorer: Any, event: Any) -> None:
         return
 
     clicked_freq_ghz = float(event.xdata) / explorer._get_freq_scale(explorer._freq_unit)
+    if explorer._filtered_frequencies_ghz.size:
+        fmin = float(np.nanmin(explorer._filtered_frequencies_ghz))
+        fmax = float(np.nanmax(explorer._filtered_frequencies_ghz))
+        clicked_freq_ghz = float(np.clip(clicked_freq_ghz, fmin, fmax))
 
-    if event.button == 3 and explorer._peaks:
+    snap_to_peak = _wants_peak_snap(event)
+    if snap_to_peak and explorer._peaks:
         peak_freqs = np.array([p[0] for p in explorer._peaks], dtype=float)
         idx = int(np.argmin(np.abs(peak_freqs - clicked_freq_ghz)))
         selected = float(peak_freqs[idx])
+    elif snap_to_peak and hasattr(explorer, "_set_status"):
+        explorer._set_status(
+            "No detected peaks in current filter range; selected exact frequency",
+            color="darkorange",
+        )
     else:
         selected = clicked_freq_ghz
 

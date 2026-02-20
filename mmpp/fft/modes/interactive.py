@@ -182,6 +182,7 @@ class InteractiveSpectrum:
         ylim: Optional[Tuple[float, float]] = None,
         layout: str = "auto",
         use_holography: bool = False,
+        auto_animate: bool = False,
         **_ignored: Any,
     ) -> Any:
         """Create interactive spectrum with mode visualization.
@@ -239,10 +240,16 @@ class InteractiveSpectrum:
         self._recompute_filtered_spectrum()
         self._initialize_frequency(initial_frequency)
 
+        # Backward-compatible alias from older API.
+        if not auto_animate and "animate" in _ignored:
+            auto_animate = bool(_ignored.get("animate"))
+
         if toolbar and _HAS_WIDGETS:
             self._toolbar_enabled = True
             self._build_toolbar()
             self._render_figure()
+            if auto_animate:
+                self._on_animate_clicked(None)
             if show:
                 display(self._widget_root)
                 return None  # Avoid double display in Jupyter (display + auto-return)
@@ -250,6 +257,8 @@ class InteractiveSpectrum:
 
         self._toolbar_enabled = False
         self._render_figure()
+        if auto_animate:
+            self._on_animate_clicked(None)
         if show:
             plt.show()
             return None  # Avoid double display in Jupyter (plt.show + auto-return)

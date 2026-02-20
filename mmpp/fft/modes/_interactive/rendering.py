@@ -301,7 +301,7 @@ def draw_spectrum(explorer: Any) -> None:
     ax.text(
         0.02,
         0.02,
-        "left click: select, right click: snap to peak",
+        "left click: exact frequency, right click or Shift+click: nearest peak",
         transform=ax.transAxes,
         fontsize=8,
         alpha=0.75,
