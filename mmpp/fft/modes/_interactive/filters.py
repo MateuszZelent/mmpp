@@ -19,9 +19,22 @@ from ...filters.postprocess import (
     apply_smoothing as _shared_apply_smoothing,
 )
 
-COMPONENT_LABELS = [r"$m_x$", r"$m_y$", r"$m_z$"]
-COMPONENT_NAMES = ["x", "y", "z"]
-_COMPONENT_INDEX = {name: idx for idx, name in enumerate(COMPONENT_NAMES)}
+CARTESIAN_COMPONENT_NAMES = ("x", "y", "z")
+TOPOLOGICAL_COMPONENT_NAMES = ("+", "-", "rho", "phi")
+COMPONENT_NAMES = list(CARTESIAN_COMPONENT_NAMES + TOPOLOGICAL_COMPONENT_NAMES)
+
+COMPONENT_LABELS = {
+    "x": r"$m_x$",
+    "y": r"$m_y$",
+    "z": r"$m_z$",
+    "+": r"$m_{+}$",
+    "-": r"$m_{-}$",
+    "rho": r"$m_{\rho}$",
+    "phi": r"$m_{\phi}$",
+}
+_COMPONENT_INDEX = {
+    name: idx for idx, name in enumerate(CARTESIAN_COMPONENT_NAMES)
+}
 
 
 @dataclass
@@ -82,37 +95,112 @@ def _to_power(spectrum: np.ndarray) -> np.ndarray:
     return spec
 
 
+def component_plot_label(component: str) -> str:
+    """Return a publication-friendly label for a component key."""
+    key = str(component).strip().lower()
+    return COMPONENT_LABELS.get(key, f"$m_{{{key}}}$")
+
+
+def _normalize_component_key(component: Union[int, str]) -> Optional[str]:
+    """Normalize a single component selector token to canonical key."""
+    key: Optional[str] = None
+    if isinstance(component, int):
+        if 0 <= component < len(CARTESIAN_COMPONENT_NAMES):
+            key = CARTESIAN_COMPONENT_NAMES[component]
+    elif isinstance(component, str):
+        text = component.strip().lower().replace("_", "")
+        if text.startswith("m") and len(text) > 1:
+            text = text[1:]
+        if text in COMPONENT_NAMES:
+            key = text
+    return key
+
+
 def normalize_component_selection(
     components: Optional[Sequence[Union[int, str]]],
     available: Optional[Sequence[str]] = None,
 ) -> list[str]:
-    """Normalize mixed component input to canonical ['x', 'y', 'z'] subset."""
+    """Normalize mixed component input to canonical component keys."""
     if components is None:
-        normalized = ["x", "y", "z"]
+        normalized = list(CARTESIAN_COMPONENT_NAMES)
     else:
         normalized = []
         for comp in components:
-            key: Optional[str] = None
-            if isinstance(comp, int):
-                if 0 <= comp <= 2:
-                    key = COMPONENT_NAMES[comp]
-            elif isinstance(comp, str):
-                text = comp.strip().lower().replace("_", "")
-                if text.startswith("m") and len(text) > 1:
-                    text = text[1:]
-                if text in _COMPONENT_INDEX:
-                    key = text
-
+            key = _normalize_component_key(comp)
             if key is not None and key not in normalized:
                 normalized.append(key)
 
     if available:
-        allowed = [c for c in normalized if c in available]
+        available_set = {str(comp).strip().lower() for comp in available}
+        allowed = [
+            c
+            for c in normalized
+            if c in available_set or c in TOPOLOGICAL_COMPONENT_NAMES
+        ]
         if allowed:
             return allowed
-        return [available[0]]
+        return [str(available[0]).strip().lower()]
 
     return normalized or ["z"]
+
+
+def _extract_cartesian_components(mode_array: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Extract (mx, my, mz) arrays from a mode tensor with robust fallbacks."""
+    arr = np.asarray(mode_array)
+    if arr.ndim == 2:
+        arr = arr[:, :, np.newaxis]
+
+    if arr.ndim < 3:
+        raise ValueError(f"Unsupported mode array shape: {arr.shape}")
+
+    ny, nx = arr.shape[:2]
+    zeros = np.zeros((ny, nx), dtype=arr.dtype)
+
+    if arr.shape[-1] == 1:
+        return zeros, zeros, arr[:, :, 0]
+    if arr.shape[-1] == 2:
+        return arr[:, :, 0], arr[:, :, 1], zeros
+    return arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+
+
+def resolve_mode_components(
+    mode_array: np.ndarray,
+    components: Sequence[str],
+) -> dict[str, np.ndarray]:
+    """Resolve requested cartesian/topological components for mode rendering."""
+    requested = [
+        key
+        for key in normalize_component_selection(components)
+        if key in COMPONENT_NAMES
+    ]
+    if not requested:
+        requested = ["z"]
+
+    m_x, m_y, m_z = _extract_cartesian_components(mode_array)
+    resolved: dict[str, np.ndarray] = {
+        "x": m_x,
+        "y": m_y,
+        "z": m_z,
+    }
+
+    needs_topological = any(
+        key in TOPOLOGICAL_COMPONENT_NAMES for key in requested
+    )
+    if needs_topological:
+        try:
+            from ..vortex_optics import VortexOptics
+
+            resolved = VortexOptics.resolve_physical_components(
+                m_x,
+                m_y,
+                m_z,
+                list(requested),
+            )
+        except Exception:
+            # Fallback to cartesian-only rendering when transformation fails.
+            pass
+
+    return {key: resolved.get(key) for key in requested if key in resolved}
 
 
 def collapse_spectrum_components(
@@ -138,7 +226,7 @@ def collapse_spectrum_components(
         out: dict[str, np.ndarray] = {}
         n_comp = min(traces.shape[-1], 3)
         for idx in range(n_comp):
-            out[COMPONENT_NAMES[idx]] = np.asarray(traces[:, idx], dtype=float)
+            out[CARTESIAN_COMPONENT_NAMES[idx]] = np.asarray(traces[:, idx], dtype=float)
         return out
 
     reduced = np.mean(spec, axis=tuple(range(1, spec.ndim)))
@@ -310,14 +398,18 @@ def detect_spectrum_peaks(
 
 
 __all__ = [
+    "CARTESIAN_COMPONENT_NAMES",
+    "TOPOLOGICAL_COMPONENT_NAMES",
     "COMPONENT_LABELS",
     "COMPONENT_NAMES",
     "_COMPONENT_INDEX",
+    "component_plot_label",
     "SpectrumFilterState",
     "_component_from_label",
     "_to_ghz",
     "_to_power",
     "normalize_component_selection",
+    "resolve_mode_components",
     "collapse_spectrum_components",
     "apply_spectrum_filters",
     "detect_spectrum_peaks",

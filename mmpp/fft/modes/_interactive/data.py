@@ -87,9 +87,9 @@ def recompute_filtered_spectrum(explorer: Any) -> None:
         if comp in explorer._current_components
     }
     if not selected:
-        fallback_key = explorer._available_components[0]
-        selected = {fallback_key: filtered[fallback_key]}
-        explorer._current_components = [fallback_key]
+        # Keep requested mode components intact (e.g. '+', '-') and
+        # fallback only for spectrum traces used in the top panel.
+        selected = dict(filtered)
 
     explorer._filtered_component_power = selected
 

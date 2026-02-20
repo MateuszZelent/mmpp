@@ -1162,6 +1162,7 @@ class FFTModeInterfaceNew:
                 title=resolved_title,
                 initial_frequency=resolved_initial_frequency,
                 toolbar=True,
+                use_holography=use_holography,
                 show=show,
                 **viewer_kwargs,
             )

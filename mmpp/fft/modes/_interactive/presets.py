@@ -72,6 +72,16 @@ def collect_preset_state(explorer: Any) -> dict[str, Any]:
             if explorer._controls.get("cmap_combined")
             else "RdBu_r"
         ),
+        "aspect": (
+            str(explorer._controls.get("aspect").value)
+            if explorer._controls.get("aspect")
+            else "equal"
+        ),
+        "layout": (
+            str(explorer._controls.get("layout").value)
+            if explorer._controls.get("layout")
+            else "auto"
+        ),
         "freq_unit": str(explorer._freq_unit),
     }
 
@@ -213,6 +223,16 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
         if cmap_combined not in explorer._controls["cmap_combined"].options:
             cmap_combined = "RdBu_r"
         explorer._controls["cmap_combined"].value = cmap_combined
+
+        aspect = str(payload.get("aspect", "equal"))
+        if aspect not in explorer._controls["aspect"].options:
+            aspect = "equal"
+        explorer._controls["aspect"].value = aspect
+
+        layout = str(payload.get("layout", "auto"))
+        if layout not in [opt[1] for opt in explorer._controls["layout"].options]:
+            layout = "auto"
+        explorer._controls["layout"].value = layout
     finally:
         explorer._internal_update = False
 

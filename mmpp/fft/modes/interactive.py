@@ -114,6 +114,7 @@ class InteractiveSpectrum:
         self._fig: Optional[Figure] = None
         self._ax_spectrum: Optional[Axes] = None
         self._mode_axes: Optional[np.ndarray] = None
+        self._mode_cbar_axes: list[Any] = []
         self._mode_row_types: list[str] = ["magnitude", "phase", "combined"]
         self._mode_colorbars: list[Any] = []
         self._frequency_line: Any = None
@@ -138,13 +139,15 @@ class InteractiveSpectrum:
         self._mode_aspect: str = "equal"
         self._xlim: Optional[Tuple[float, float]] = None
         self._ylim: Optional[Tuple[float, float]] = None
-        self._layout_mode: str = "vertical"  # "vertical" or "horizontal"
+        self._layout_mode: str = "auto"  # "auto", "vertical" or "horizontal"
+        self._layout_variant: str = "vertical"
         
         # Animation state (matching dispersion module pattern)
         self._animation: Any = None
         self._is_animating: bool = False
         self._geometry_contour: Optional[np.ndarray] = None  # For overlay on mode plots
         self._mode_type: str = "combined"  # real, imag, abs, phase, combined, ampl_phase
+        self._use_holography: bool = False
 
     # ---------------------------------------------------------------------
     # Public API
@@ -177,7 +180,8 @@ class InteractiveSpectrum:
         aspect: str = "equal",
         xlim: Optional[Tuple[float, float]] = None,
         ylim: Optional[Tuple[float, float]] = None,
-        layout: str = "vertical",
+        layout: str = "auto",
+        use_holography: bool = False,
         **_ignored: Any,
     ) -> Any:
         """Create interactive spectrum with mode visualization.
@@ -200,7 +204,11 @@ class InteractiveSpectrum:
         self._mode_aspect = str(aspect)
         self._xlim = tuple(xlim) if xlim else None
         self._ylim = tuple(ylim) if ylim else None
-        self._layout_mode = str(layout)
+        layout_mode = str(layout).strip().lower()
+        if layout_mode not in {"auto", "vertical", "horizontal"}:
+            layout_mode = "auto"
+        self._layout_mode = layout_mode
+        self._use_holography = bool(use_holography)
 
         data_fmin = float(np.nanmin(self._raw_frequencies_ghz))
         data_fmax = float(np.nanmax(self._raw_frequencies_ghz))
@@ -370,6 +378,10 @@ class InteractiveSpectrum:
             self._controls["mode_view"].value = "all"
             self._controls["components"].value = tuple(self._available_components)
             self._controls["z_layer"].value = -1
+            if "aspect" in self._controls:
+                self._controls["aspect"].value = "equal"
+            if "layout" in self._controls:
+                self._controls["layout"].value = "auto"
         finally:
             self._internal_update = False
 

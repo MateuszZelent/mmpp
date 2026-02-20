@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from .filters import _COMPONENT_INDEX
+from .filters import component_plot_label, resolve_mode_components
 from .mode_layout import (
     apply_mode_colorbars,
     finalize_mode_figure,
@@ -70,6 +70,22 @@ def _resolve_plot_data(
     return plot_data, cmap_combined_name, -vmax_val, vmax_val, "combined"
 
 
+def _render_holography(comp_data: np.ndarray) -> np.ndarray:
+    """Render complex data as HSV domain-coloring RGB image."""
+    try:
+        from ..vortex_optics import VortexOptics
+
+        return VortexOptics.complex_holography(comp_data)
+    except Exception:
+        # Fallback: visualize phase only if vortex module is unavailable.
+        phase = np.angle(comp_data)
+        rgb = np.zeros(phase.shape + (3,), dtype=float)
+        rgb[..., 0] = (phase + np.pi) / (2 * np.pi)
+        rgb[..., 1] = 1.0
+        rgb[..., 2] = 1.0
+        return rgb
+
+
 def _apply_mode_axes_style(
     explorer: Any,
     *,
@@ -81,15 +97,24 @@ def _apply_mode_axes_style(
     actual_freq: float,
 ) -> None:
     """Apply labels/grid/title for one mode subplot."""
-    if row_idx == 0:
-        ax.set_title(f"m_{comp} @ {actual_freq:.3f} GHz", fontsize=10)
-    if col_idx == 0:
-        ax.set_ylabel(row_title, fontsize=9)
-
-    if row_idx == len(explorer._mode_row_types) - 1:
+    component_label = component_plot_label(comp)
+    single_component_layout = getattr(explorer, "_layout_variant", "") == "single_component"
+    if single_component_layout:
+        ax.set_title(
+            f"{row_title} ({component_label})",
+            fontsize=10,
+        )
+        ax.set_ylabel("")
         ax.set_xlabel("x [μm]", fontsize=9)
     else:
-        ax.set_xlabel("")
+        if row_idx == 0:
+            ax.set_title(f"{component_label} @ {actual_freq:.3f} GHz", fontsize=10)
+        if col_idx == 0:
+            ax.set_ylabel(row_title, fontsize=9)
+        if row_idx == len(explorer._mode_row_types) - 1:
+            ax.set_xlabel("x [μm]", fontsize=9)
+        else:
+            ax.set_xlabel("")
 
     ax.tick_params(labelsize=8)
     ax.grid(True, alpha=0.2, linestyle=":")
@@ -136,6 +161,7 @@ def update_mode_plots(explorer: Any) -> None:
         mode_array = mode_array[:, :, np.newaxis]
 
     cmap_mag_name, cmap_phase_name, cmap_combined_name = _resolve_mode_cmaps(explorer)
+    resolved_components = resolve_mode_components(mode_array, explorer._current_components)
 
     row_images: list[Any] = [None] * len(explorer._mode_row_types)
 
@@ -144,8 +170,8 @@ def update_mode_plots(explorer: Any) -> None:
             ax = explorer._mode_axes[row_idx, col_idx]
             ax.clear()
 
-            comp_idx = _COMPONENT_INDEX.get(comp)
-            if comp_idx is None or comp_idx >= mode_array.shape[-1]:
+            comp_data = resolved_components.get(comp)
+            if comp_data is None:
                 ax.text(
                     0.5,
                     0.5,
@@ -158,18 +184,27 @@ def update_mode_plots(explorer: Any) -> None:
                 ax.set_yticks([])
                 continue
 
-            comp_data = mode_array[:, :, comp_idx]
             magnitude = np.abs(comp_data)
             phase = np.angle(comp_data)
 
-            plot_data, cmap_name, vmin, vmax, row_title = _resolve_plot_data(
-                row_type,
-                magnitude,
-                phase,
-                cmap_mag_name,
-                cmap_phase_name,
-                cmap_combined_name,
+            use_holography = bool(
+                getattr(explorer, "_use_holography", False) and row_type == "phase"
             )
+            if use_holography:
+                plot_data = _render_holography(comp_data)
+                cmap_name = None
+                vmin = None
+                vmax = None
+                row_title = "holography"
+            else:
+                plot_data, cmap_name, vmin, vmax, row_title = _resolve_plot_data(
+                    row_type,
+                    magnitude,
+                    phase,
+                    cmap_mag_name,
+                    cmap_phase_name,
+                    cmap_combined_name,
+                )
 
             img = ax.imshow(
                 plot_data,
@@ -187,7 +222,7 @@ def update_mode_plots(explorer: Any) -> None:
             if explorer._ylim:
                 ax.set_ylim(*explorer._ylim)
 
-            if row_images[row_idx] is None:
+            if row_images[row_idx] is None and not use_holography:
                 row_images[row_idx] = img
 
             _apply_mode_axes_style(

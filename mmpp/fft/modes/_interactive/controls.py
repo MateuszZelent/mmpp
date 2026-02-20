@@ -76,7 +76,10 @@ def read_controls(explorer: Any) -> None:
     if "aspect" in explorer._controls:
         explorer._mode_aspect = str(explorer._controls["aspect"].value)
     if "layout" in explorer._controls:
-        explorer._layout_mode = str(explorer._controls["layout"].value)
+        layout_mode = str(explorer._controls["layout"].value).strip().lower()
+        if layout_mode not in {"auto", "vertical", "horizontal"}:
+            layout_mode = "auto"
+        explorer._layout_mode = layout_mode
 
 
 def refresh_freq_slider_bounds(explorer: Any) -> None:

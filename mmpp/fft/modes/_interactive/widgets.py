@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+from .filters import TOPOLOGICAL_COMPONENT_NAMES
+
 
 def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     """Build ipywidgets toolbar UI."""
@@ -17,8 +19,28 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     z_min, z_max = explorer._guess_layer_bounds()
 
     controls: dict[str, Any] = {}
+    component_labels = {
+        "x": "m_x",
+        "y": "m_y",
+        "z": "m_z",
+        "+": "m+ (RCP)",
+        "-": "m- (LCP)",
+        "rho": "m_rho",
+        "phi": "m_phi",
+    }
+    component_keys: list[str] = []
+    for comp in explorer._available_components:
+        key = str(comp).strip().lower()
+        if key and key not in component_keys:
+            component_keys.append(key)
+    for comp in TOPOLOGICAL_COMPONENT_NAMES:
+        if comp not in component_keys:
+            component_keys.append(comp)
+
     controls["components"] = widgets.SelectMultiple(
-        options=[(f"m_{name}", name) for name in explorer._available_components],
+        options=[
+            (component_labels.get(name, f"m_{name}"), name) for name in component_keys
+        ],
         value=tuple(explorer._current_components),
         description="Comp:",
         layout=widgets.Layout(width="100%", height="90px"),
@@ -213,8 +235,16 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         style={"description_width": "55px"},
     )
     controls["layout"] = widgets.Dropdown(
-        options=["vertical", "horizontal"],
-        value=explorer._layout_mode,
+        options=[
+            ("auto", "auto"),
+            ("vertical", "vertical"),
+            ("horizontal", "horizontal"),
+        ],
+        value=(
+            explorer._layout_mode
+            if explorer._layout_mode in {"auto", "vertical", "horizontal"}
+            else "auto"
+        ),
         description="layout:",
         layout=widgets.Layout(width="100%"),
         style={"description_width": "55px"},
@@ -361,6 +391,8 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         "peak_prom",
         "peak_dist",
         "mode_view",
+        "aspect",
+        "layout",
         "cmap_mag",
         "cmap_phase",
         "cmap_combined",
@@ -455,17 +487,23 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
             widgets.HBox([controls["refresh"], controls["reset"]]),
             controls["status"],
         ],
-        layout=widgets.Layout(width="330px", border="1px solid #ddd", padding="8px"),
+        layout=widgets.Layout(
+            width="315px",
+            min_width="315px",
+            flex="0 0 315px",
+            border="1px solid #ddd",
+            padding="8px",
+        ),
     )
 
     right_panel = widgets.VBox(
         [explorer._widget_output],
-        layout=widgets.Layout(width="calc(100% - 350px)", min_width="680px"),
+        layout=widgets.Layout(flex="1 1 auto", width="auto", min_width="760px"),
     )
 
     explorer._widget_root = widgets.HBox(
         [control_panel, right_panel],
-        layout=widgets.Layout(width="100%"),
+        layout=widgets.Layout(width="100%", align_items="stretch"),
     )
 
     explorer._controls = controls

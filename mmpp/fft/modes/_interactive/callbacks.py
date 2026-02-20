@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from .filters import _COMPONENT_INDEX
+from .filters import component_plot_label, resolve_mode_components
 
 
 def _collect_mode_images_and_titles(explorer: Any) -> tuple[list[list[Any]], list[list[Any]]]:
@@ -44,11 +44,20 @@ def _resolve_mode_viz(
     comp_data: np.ndarray,
     *,
     viz_type: str,
+    use_holography: bool = False,
 ) -> tuple[np.ndarray, float | None, float | None]:
     """Resolve frame data and clim values for a visualization mode."""
     comp_amplitude = float(np.nanmax(np.abs(comp_data)))
     if comp_amplitude <= 0:
         comp_amplitude = 1.0
+
+    if viz_type == "phase" and use_holography:
+        try:
+            from ..vortex_optics import VortexOptics
+
+            return VortexOptics.complex_holography(comp_data), None, None
+        except Exception:
+            pass
 
     if viz_type in {"magnitude", "abs"}:
         return np.abs(comp_data), 0.0, comp_amplitude
@@ -137,6 +146,9 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
             t_ns = t * 1e9
 
             artists = []
+            resolved_components = resolve_mode_components(
+                mode_at_t, explorer._current_components
+            )
 
             for row_idx, row_type in enumerate(explorer._mode_row_types):
                 for col_idx, comp in enumerate(explorer._current_components):
@@ -146,13 +158,20 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                     if img is None:
                         continue
 
-                    comp_idx = _COMPONENT_INDEX.get(comp, 0)
-                    if comp_idx >= mode_at_t.shape[2]:
+                    comp_data = resolved_components.get(comp)
+                    if comp_data is None:
                         continue
 
-                    comp_data = mode_at_t[:, :, comp_idx]
                     viz_type = mode_type if row_idx == 0 else row_type
-                    plot_data, vmin, vmax = _resolve_mode_viz(comp_data, viz_type=viz_type)
+                    use_holography = bool(
+                        getattr(explorer, "_use_holography", False)
+                        and viz_type == "phase"
+                    )
+                    plot_data, vmin, vmax = _resolve_mode_viz(
+                        comp_data,
+                        viz_type=viz_type,
+                        use_holography=use_holography,
+                    )
 
                     img.set_data(plot_data)
                     if vmin is not None and vmax is not None:
@@ -162,7 +181,7 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                     if row_idx == 0 and row_idx < len(mode_titles):
                         title_obj = mode_titles[row_idx][col_idx]
                         title_obj.set_text(
-                            f"m_{comp} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°"
+                            f"{component_plot_label(comp)} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°"
                         )
                         artists.append(title_obj)
 
@@ -298,6 +317,9 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
             t_ns = t * 1e9
 
             artists = []
+            resolved_components = resolve_mode_components(
+                mode_at_t, explorer._current_components
+            )
 
             for row_idx, row_type in enumerate(explorer._mode_row_types):
                 for col_idx, comp in enumerate(explorer._current_components):
@@ -307,17 +329,24 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
                     if img is None:
                         continue
 
-                    comp_idx = _COMPONENT_INDEX.get(comp, 0)
-                    if comp_idx >= mode_at_t.shape[2]:
+                    comp_data = resolved_components.get(comp)
+                    if comp_data is None:
                         continue
 
-                    comp_data = mode_at_t[:, :, comp_idx]
                     viz_type = mode_type if row_idx == 0 else row_type
 
                     if viz_type in ["magnitude", "abs"]:
                         plot_data = np.abs(comp_data)
                     elif viz_type == "phase":
-                        plot_data = np.angle(comp_data)
+                        if getattr(explorer, "_use_holography", False):
+                            try:
+                                from ..vortex_optics import VortexOptics
+
+                                plot_data = VortexOptics.complex_holography(comp_data)
+                            except Exception:
+                                plot_data = np.angle(comp_data)
+                        else:
+                            plot_data = np.angle(comp_data)
                     elif viz_type == "real":
                         plot_data = np.real(comp_data)
                     elif viz_type == "imag":
@@ -331,7 +360,7 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
                     if row_idx == 0 and row_idx < len(mode_titles):
                         title_obj = mode_titles[row_idx][col_idx]
                         title_obj.set_text(
-                            f"m_{comp} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°"
+                            f"{component_plot_label(comp)} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°"
                         )
                         artists.append(title_obj)
 
@@ -418,6 +447,9 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
         phase_factor = np.exp(-1j * phase_rad)
         mode_at_phase = mode_array * phase_factor
         mode_type = explorer._mode_type
+        resolved_components = resolve_mode_components(
+            mode_at_phase, explorer._current_components
+        )
 
         for row_idx, row_type in enumerate(explorer._mode_row_types):
             for col_idx, comp in enumerate(explorer._current_components):
@@ -442,11 +474,10 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
                 if img is None:
                     continue
 
-                comp_idx = _COMPONENT_INDEX.get(comp, 0)
-                if comp_idx >= mode_at_phase.shape[2]:
+                comp_data = resolved_components.get(comp)
+                if comp_data is None:
                     continue
 
-                comp_data = mode_at_phase[:, :, comp_idx]
                 comp_amplitude = float(np.nanmax(np.abs(comp_data)))
                 if comp_amplitude <= 0:
                     comp_amplitude = 1.0
@@ -455,8 +486,17 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
                     plot_data = np.abs(comp_data)
                     img.set_clim(0, comp_amplitude)
                 elif row_type == "phase":
-                    plot_data = np.angle(comp_data)
-                    img.set_clim(-np.pi, np.pi)
+                    if getattr(explorer, "_use_holography", False):
+                        try:
+                            from ..vortex_optics import VortexOptics
+
+                            plot_data = VortexOptics.complex_holography(comp_data)
+                        except Exception:
+                            plot_data = np.angle(comp_data)
+                            img.set_clim(-np.pi, np.pi)
+                    else:
+                        plot_data = np.angle(comp_data)
+                        img.set_clim(-np.pi, np.pi)
                 elif mode_type == "real" or row_type == "combined":
                     plot_data = np.real(comp_data)
                     img.set_clim(-comp_amplitude, comp_amplitude)
@@ -476,7 +516,7 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
                     freq_hz = actual_freq * 1e9
                     t_ns = (phase_idx / n_frames) * (1.0 / freq_hz) * 1e9
                     ax.set_title(
-                        f"m_{comp} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°",
+                        f"{component_plot_label(comp)} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°",
                         fontsize=10,
                     )
 
