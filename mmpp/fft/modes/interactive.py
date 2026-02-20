@@ -75,6 +75,7 @@ from ._interactive import (
     update_status_text,
     update_frequency_selection,
     normalize_component_selection,
+    normalize_spectrum_component_selection,
 )
 
 
@@ -124,7 +125,10 @@ class InteractiveSpectrum:
         self._phase_source_frequency_ghz: Optional[float] = None
         self._phase_source_actual_frequency_ghz: Optional[float] = None
         self._phase_source_z_layer: Optional[int] = None
-        self._current_components: list[str] = ["x", "y", "z"]
+        self._mode_components: list[str] = ["x", "y", "z"]
+        self._spectrum_components: list[str] = ["x", "y", "z"]
+        # Backward-compat alias used by older helpers/extensions.
+        self._current_components: list[str] = list(self._mode_components)
         self._current_z_layer: int = -1
         self._freq_unit: str = "GHz"
         self._title: Optional[str] = None
@@ -161,6 +165,8 @@ class InteractiveSpectrum:
     def show(
         self,
         components: Optional[Sequence[Union[int, str]]] = None,
+        mode_components: Optional[Sequence[Union[int, str]]] = None,
+        spectrum_components: Optional[Sequence[Union[int, str]]] = None,
         z_layer: int = -1,
         log_scale: bool = False,
         normalize: bool = True,
@@ -202,10 +208,24 @@ class InteractiveSpectrum:
         self._title = title
         self._show_peaks = bool(show_peaks)
         self._mode_row_types = self._resolve_mode_rows(mode_view)
-        self._current_components = normalize_component_selection(
+
+        base_components = normalize_component_selection(
             components,
             available=self._available_components or COMPONENT_NAMES,
         )
+        mode_selection = mode_components if mode_components is not None else base_components
+        spectrum_selection = (
+            spectrum_components if spectrum_components is not None else base_components
+        )
+        self._mode_components = normalize_component_selection(
+            mode_selection,
+            available=self._available_components or COMPONENT_NAMES,
+        )
+        self._spectrum_components = normalize_spectrum_component_selection(
+            spectrum_selection,
+            available=self._available_components,
+        )
+        self._current_components = list(self._mode_components)
         
         # Store layout configuration
         self._mode_aspect = str(aspect)
@@ -407,7 +427,15 @@ class InteractiveSpectrum:
             self._controls["peak_prom"].value = 0.05
             self._controls["peak_dist"].value = 5
             self._controls["mode_view"].value = "all"
-            self._controls["components"].value = tuple(self._available_components)
+            if "mode_components" in self._controls:
+                self._controls["mode_components"].value = tuple(self._available_components)
+            elif "components" in self._controls:
+                # Backward-compat for legacy toolbar keys.
+                self._controls["components"].value = tuple(self._available_components)
+            if "spectrum_components" in self._controls:
+                self._controls["spectrum_components"].value = tuple(
+                    self._available_components
+                )
             self._controls["z_layer"].value = -1
             if "aspect" in self._controls:
                 self._controls["aspect"].value = "equal"

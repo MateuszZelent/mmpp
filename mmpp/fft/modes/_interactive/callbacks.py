@@ -175,11 +175,11 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
 
             artists = []
             resolved_components = resolve_mode_components(
-                mode_at_t, explorer._current_components
+                mode_at_t, explorer._mode_components
             )
 
             for row_idx, row_type in enumerate(explorer._mode_row_types):
-                for col_idx, comp in enumerate(explorer._current_components):
+                for col_idx, comp in enumerate(explorer._mode_components):
                     if row_idx >= len(mode_images) or col_idx >= len(mode_images[row_idx]):
                         continue
                     img = mode_images[row_idx][col_idx]
@@ -447,11 +447,11 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
 
             artists = []
             resolved_components = resolve_mode_components(
-                mode_at_t, explorer._current_components
+                mode_at_t, explorer._mode_components
             )
 
             for row_idx, row_type in enumerate(explorer._mode_row_types):
-                for col_idx, comp in enumerate(explorer._current_components):
+                for col_idx, comp in enumerate(explorer._mode_components):
                     if row_idx >= len(mode_images) or col_idx >= len(mode_images[row_idx]):
                         continue
                     img = mode_images[row_idx][col_idx]
@@ -619,11 +619,11 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
         mode_at_phase = mode_array * phase_factor
         mode_type = explorer._mode_type
         resolved_components = resolve_mode_components(
-            mode_at_phase, explorer._current_components
+            mode_at_phase, explorer._mode_components
         )
 
         for row_idx, row_type in enumerate(explorer._mode_row_types):
-            for col_idx, comp in enumerate(explorer._current_components):
+            for col_idx, comp in enumerate(explorer._mode_components):
                 if (
                     row_idx >= explorer._mode_axes.shape[0]
                     or col_idx >= explorer._mode_axes.shape[1]

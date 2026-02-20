@@ -31,6 +31,7 @@ from .filters import (
     collapse_spectrum_components,
     detect_spectrum_peaks,
     normalize_component_selection,
+    normalize_spectrum_component_selection,
 )
 from .interactions import (
     closest_freq_index,
@@ -74,6 +75,7 @@ __all__ = [
     "collapse_spectrum_components",
     "detect_spectrum_peaks",
     "normalize_component_selection",
+    "normalize_spectrum_component_selection",
     "guess_layer_bounds",
     "load_spectrum_data",
     "recompute_filtered_spectrum",

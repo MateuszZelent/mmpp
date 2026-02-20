@@ -36,7 +36,12 @@ def update_status_text(explorer: Any, logger: Any = None) -> None:
 
     set_status(
         explorer,
-        f"f={freq_text}, components={','.join(explorer._current_components)}, peaks={n_peaks}",
+        (
+            f"f={freq_text}, "
+            f"mode={','.join(explorer._mode_components)}, "
+            f"spectrum={','.join(explorer._spectrum_components)}, "
+            f"peaks={n_peaks}"
+        ),
         color="#334155",
         logger=logger,
     )

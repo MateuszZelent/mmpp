@@ -6,7 +6,11 @@ from typing import Any
 
 import numpy as np
 
-from .filters import SpectrumFilterState, normalize_component_selection
+from .filters import (
+    SpectrumFilterState,
+    normalize_component_selection,
+    normalize_spectrum_component_selection,
+)
 
 
 def guess_layer_bounds(explorer: Any) -> tuple[int, int]:
@@ -60,9 +64,22 @@ def read_controls(explorer: Any) -> None:
         log_scale=bool(explorer._controls["log_scale"].value),
     )
 
-    selected_components = list(explorer._controls["components"].value)
-    explorer._current_components = normalize_component_selection(
-        selected_components,
+    mode_key = "mode_components" if "mode_components" in explorer._controls else "components"
+    selected_mode_components = list(explorer._controls[mode_key].value)
+    explorer._mode_components = normalize_component_selection(
+        selected_mode_components,
+        available=explorer._available_components,
+    )
+    explorer._current_components = list(explorer._mode_components)
+
+    spectrum_key = (
+        "spectrum_components"
+        if "spectrum_components" in explorer._controls
+        else mode_key
+    )
+    selected_spectrum_components = list(explorer._controls[spectrum_key].value)
+    explorer._spectrum_components = normalize_spectrum_component_selection(
+        selected_spectrum_components,
         available=explorer._available_components,
     )
 

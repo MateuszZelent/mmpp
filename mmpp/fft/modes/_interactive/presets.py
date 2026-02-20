@@ -9,7 +9,11 @@ from typing import Any
 
 import numpy as np
 
-from .filters import COMPONENT_NAMES, normalize_component_selection
+from .filters import (
+    COMPONENT_NAMES,
+    normalize_component_selection,
+    normalize_spectrum_component_selection,
+)
 
 
 def get_presets_dir(explorer: Any) -> Path:
@@ -34,7 +38,10 @@ def list_presets(explorer: Any) -> list[str]:
 def collect_preset_state(explorer: Any) -> dict[str, Any]:
     """Collect serializable state from current controls."""
     return {
-        "components": list(explorer._current_components),
+        # "components" kept for backward-compat with older presets.
+        "components": list(explorer._mode_components),
+        "mode_components": list(explorer._mode_components),
+        "spectrum_components": list(explorer._spectrum_components),
         "z_layer": int(explorer._current_z_layer),
         "freq_min": float(explorer._filter_state.freq_min),
         "freq_max": float(explorer._filter_state.freq_max),
@@ -93,11 +100,19 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
 
     explorer._internal_update = True
     try:
-        components = normalize_component_selection(
-            payload.get("components"),
+        mode_components = normalize_component_selection(
+            payload.get("mode_components", payload.get("components")),
             available=explorer._available_components or COMPONENT_NAMES,
         )
-        explorer._controls["components"].value = tuple(components)
+        spectrum_components = normalize_spectrum_component_selection(
+            payload.get("spectrum_components", payload.get("components")),
+            available=explorer._available_components,
+        )
+
+        mode_key = "mode_components" if "mode_components" in explorer._controls else "components"
+        explorer._controls[mode_key].value = tuple(mode_components)
+        if "spectrum_components" in explorer._controls:
+            explorer._controls["spectrum_components"].value = tuple(spectrum_components)
         z_control = explorer._controls["z_layer"]
         z_val = int(payload.get("z_layer", explorer._current_z_layer))
         explorer._controls["z_layer"].value = int(np.clip(z_val, z_control.min, z_control.max))

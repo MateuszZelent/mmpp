@@ -84,11 +84,11 @@ def recompute_filtered_spectrum(explorer: Any) -> None:
     selected = {
         comp: values
         for comp, values in filtered.items()
-        if comp in explorer._current_components
+        if comp in explorer._spectrum_components
     }
     if not selected:
-        # Keep requested mode components intact (e.g. '+', '-') and
-        # fallback only for spectrum traces used in the top panel.
+        # Keep mode-component selection independent and fallback only for
+        # traces used in the top spectrum panel.
         selected = dict(filtered)
 
     explorer._filtered_component_power = selected

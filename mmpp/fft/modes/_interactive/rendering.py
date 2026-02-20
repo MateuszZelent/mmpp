@@ -63,7 +63,7 @@ def render_figure(
     grid_spec_cls: Any,
 ) -> None:
     """Render spectrum + mode figure in widget output or directly."""
-    n_components = max(len(explorer._current_components), 1)
+    n_components = max(len(explorer._mode_components), 1)
     n_rows = max(len(explorer._mode_row_types), 1)
 
     if explorer._toolbar_enabled and explorer._widget_output is not None:
@@ -255,7 +255,7 @@ def draw_spectrum(explorer: Any) -> None:
 
     plot_components = [
         comp
-        for comp in explorer._current_components
+        for comp in explorer._spectrum_components
         if comp in explorer._filtered_component_power
     ]
     if not plot_components:

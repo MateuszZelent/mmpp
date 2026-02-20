@@ -144,6 +144,28 @@ def normalize_component_selection(
     return normalized or ["z"]
 
 
+def normalize_spectrum_component_selection(
+    components: Optional[Sequence[Union[int, str]]],
+    available: Optional[Sequence[str]],
+) -> list[str]:
+    """Normalize selection strictly to available spectrum-trace components."""
+    available_keys = []
+    if available:
+        for comp in available:
+            key = str(comp).strip().lower()
+            if key and key not in available_keys:
+                available_keys.append(key)
+    if not available_keys:
+        return []
+
+    normalized = normalize_component_selection(
+        components,
+        available=available_keys,
+    )
+    selected = [comp for comp in normalized if comp in available_keys]
+    return selected or list(available_keys)
+
+
 def _extract_cartesian_components(mode_array: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Extract (mx, my, mz) arrays from a mode tensor with robust fallbacks."""
     arr = np.asarray(mode_array)
@@ -409,6 +431,7 @@ __all__ = [
     "_to_ghz",
     "_to_power",
     "normalize_component_selection",
+    "normalize_spectrum_component_selection",
     "resolve_mode_components",
     "collapse_spectrum_components",
     "apply_spectrum_filters",

@@ -28,21 +28,50 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         "rho": "m_rho",
         "phi": "m_phi",
     }
-    component_keys: list[str] = []
+    mode_component_keys: list[str] = []
     for comp in explorer._available_components:
         key = str(comp).strip().lower()
-        if key and key not in component_keys:
-            component_keys.append(key)
+        if key and key not in mode_component_keys:
+            mode_component_keys.append(key)
     for comp in TOPOLOGICAL_COMPONENT_NAMES:
-        if comp not in component_keys:
-            component_keys.append(comp)
+        if comp not in mode_component_keys:
+            mode_component_keys.append(comp)
 
-    controls["components"] = widgets.SelectMultiple(
+    spectrum_component_keys: list[str] = []
+    for comp in explorer._available_components:
+        key = str(comp).strip().lower()
+        if key and key not in spectrum_component_keys:
+            spectrum_component_keys.append(key)
+
+    mode_default = tuple(
+        comp for comp in explorer._mode_components if comp in mode_component_keys
+    )
+    if not mode_default and mode_component_keys:
+        mode_default = tuple(mode_component_keys[: min(3, len(mode_component_keys))])
+
+    spectrum_default = tuple(
+        comp for comp in explorer._spectrum_components if comp in spectrum_component_keys
+    )
+    if not spectrum_default and spectrum_component_keys:
+        spectrum_default = tuple(spectrum_component_keys)
+
+    controls["mode_components"] = widgets.SelectMultiple(
         options=[
-            (component_labels.get(name, f"m_{name}"), name) for name in component_keys
+            (component_labels.get(name, f"m_{name}"), name)
+            for name in mode_component_keys
         ],
-        value=tuple(explorer._current_components),
-        description="Comp:",
+        value=mode_default,
+        description="mode m:",
+        layout=widgets.Layout(width="100%", height="90px"),
+        style={"description_width": "55px"},
+    )
+    controls["spectrum_components"] = widgets.SelectMultiple(
+        options=[
+            (component_labels.get(name, f"m_{name}"), name)
+            for name in spectrum_component_keys
+        ],
+        value=spectrum_default,
+        description="spec m:",
         layout=widgets.Layout(width="100%", height="90px"),
         style={"description_width": "55px"},
     )
@@ -391,7 +420,8 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     )
 
     observe_keys = [
-        "components",
+        "mode_components",
+        "spectrum_components",
         "z_layer",
         "fmin",
         "fmax",
@@ -473,7 +503,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         children=[
             widgets.VBox(
                 [
-                    controls["components"],
+                    controls["mode_components"],
                     controls["z_layer"],
                     controls["mode_view"],
                     controls["aspect"],
@@ -485,6 +515,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
             ),
             widgets.VBox(
                 [
+                    controls["spectrum_components"],
                     controls["fmin"],
                     controls["fmax"],
                     controls["normalize"],
@@ -551,6 +582,9 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         [control_panel, right_panel],
         layout=widgets.Layout(width="100%", align_items="stretch"),
     )
+
+    # Backward-compat alias for older extensions that read _controls["components"].
+    controls["components"] = controls["mode_components"]
 
     explorer._controls = controls
     explorer._refresh_preset_options()

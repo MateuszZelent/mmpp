@@ -165,12 +165,12 @@ def update_mode_plots(explorer: Any) -> None:
         mode_array = mode_array[:, :, np.newaxis]
 
     cmap_mag_name, cmap_phase_name, cmap_combined_name = _resolve_mode_cmaps(explorer)
-    resolved_components = resolve_mode_components(mode_array, explorer._current_components)
+    resolved_components = resolve_mode_components(mode_array, explorer._mode_components)
 
     row_images: list[Any] = [None] * len(explorer._mode_row_types)
 
     for row_idx, row_type in enumerate(explorer._mode_row_types):
-        for col_idx, comp in enumerate(explorer._current_components):
+        for col_idx, comp in enumerate(explorer._mode_components):
             ax = explorer._mode_axes[row_idx, col_idx]
             ax.clear()
 
