@@ -389,6 +389,7 @@ class DatasetAwareWrapper:
         self.slice_info = slice_info  # Store slicing information
         self._fft = None
         self._solitons = None
+        self._analyze = None
 
     def _resolve_source(self):
         """Return underlying data respecting the stored slice."""
@@ -399,7 +400,7 @@ class DatasetAwareWrapper:
     def __getattr__(self, name):
         """Delegate to zarr_array for most attributes (but not our own properties)"""
         # Don't delegate properties that are defined on this class
-        if name in ('dt', 'fft', 'shape', 'data'):
+        if name in ('dt', 'fft', 'analyze', 'shape', 'data'):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
         
         if self.slice_info is not None:
@@ -517,6 +518,20 @@ class DatasetAwareWrapper:
                 slice_info=self.slice_info,
             )
         return self._solitons
+
+    @property
+    def analyze(self):
+        """Return analysis interface with this dataset pre-selected."""
+        if self._analyze is None:
+            from ..analyze import DatasetSpecificAnalyze
+
+            self._analyze = DatasetSpecificAnalyze(
+                self.job_result,
+                self.dataset_name,
+                getattr(self.job_result, "_mmpp_ref", None),
+                slice_info=self.slice_info,
+            )
+        return self._analyze
 
     @property
     def vortex(self):

@@ -21,6 +21,33 @@ if RICH_AVAILABLE:
 
 log = get_mmpp_logger("mmpp")
 
+
+class _TreeDisplay:
+    """Wrapper for zarr tree string that renders nicely in Jupyter and terminal."""
+
+    def __init__(self, tree_str: str) -> None:
+        self._tree = tree_str
+
+    def __repr__(self) -> str:  # plain text (print / terminal)
+        return self._tree
+
+    def __str__(self) -> str:
+        return self._tree
+
+    def _repr_html_(self) -> str:  # rich Jupyter rendering
+        import html
+        escaped = html.escape(self._tree)
+        return (
+            "<pre style='"
+            "font-family:monospace;font-size:0.85em;line-height:1.4;"
+            "background:#0f172a;color:#e2e8f0;"
+            "border:1px solid #334155;border-radius:8px;"
+            "padding:12px 16px;overflow:auto;max-height:500px;"
+            "margin:6px 0;'"
+            f">{escaped}</pre>"
+        )
+
+
 @dataclass
 class ScanResult:
     """Data class for storing scan results from a single zarr folder."""
@@ -50,6 +77,7 @@ class ZarrJobResult:
         self._z = None
         self._path_obj = None
         self._name = None
+        self._analyze = None
 
     def _ensure_zarr_loaded(self) -> None:
         """Lazy load zarr group when needed."""
@@ -366,7 +394,7 @@ class ZarrJobResult:
         >>> print(tree_str)
         """
         self._ensure_zarr_loaded()
-        return str(self._z.tree())
+        return _TreeDisplay(str(self._z.tree()))
 
     def rm(self, dset: str) -> None:
         """
@@ -688,6 +716,15 @@ class ZarrJobResult:
         from ..solitons import SolitonInterface
 
         return SolitonInterface(self, self._mmpp_ref)
+
+    @property
+    def analyze(self):
+        """Get unified analysis namespace for this result."""
+        if self._analyze is None:
+            from ..analyze import AnalyzeInterface
+
+            self._analyze = AnalyzeInterface(self, self._mmpp_ref)
+        return self._analyze
 
     def calculate_fft_data(self, **kwargs):
         """Direct method for FFT calculation."""

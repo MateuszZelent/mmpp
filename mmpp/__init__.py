@@ -4,12 +4,51 @@ mmpp - Micro Magnetic Post Processing Library
 A Python library for simulation and analysis with advanced post-processing capabilities.
 """
 
+import warnings
+
 __version__ = "0.5.3"
 __author__ = "Mateusz Zelent"
 __email__ = "mateusz.zelent@amu.edu.pl"
 
+# Matplotlib emits this warning when `tight_layout()` is called on figures
+# with an already-active layout engine; keep logs/tests clean for this known case.
+warnings.filterwarnings(
+    "ignore",
+    message="The figure layout has changed to tight",
+    category=UserWarning,
+)
+
+
+def _patch_matplotlib_tight_layout_warning() -> None:
+    """Silence Matplotlib tight-layout warning at source for all figures."""
+    try:
+        from matplotlib.figure import Figure
+    except Exception:
+        return
+
+    if getattr(Figure.tight_layout, "_mmpp_tight_layout_patched", False):
+        return
+
+    original_tight_layout = Figure.tight_layout
+
+    def _tight_layout_without_warning(self, *args, **kwargs):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The figure layout has changed to tight",
+                category=UserWarning,
+            )
+            return original_tight_layout(self, *args, **kwargs)
+
+    _tight_layout_without_warning._mmpp_tight_layout_patched = True
+    Figure.tight_layout = _tight_layout_without_warning
+
+
+_patch_matplotlib_tight_layout_warning()
+
 # Import analytical module (no external dependencies required)
 from . import analytical
+from . import analyze
 
 
 # Import main classes with error handling for missing dependencies
