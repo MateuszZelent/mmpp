@@ -921,12 +921,15 @@ class TransmissionResult:
         k_idx: int,
         n_time: int,
         t_idx: int,
+        phase_offset_rad: float = 0.0,
     ) -> np.ndarray:
         """Evaluate one rFFT bin contribution at a single time index.
 
         This avoids allocating full ``zeros_like(spectrum)`` and full inverse FFT volume.
         """
-        phase = np.exp(1j * (2.0 * np.pi * float(k_idx) * float(t_idx) / float(n_time)))
+        phase = np.exp(
+            1j * (2.0 * np.pi * float(k_idx) * float(t_idx) / float(n_time) + float(phase_offset_rad))
+        )
         if k_idx == 0 or (n_time % 2 == 0 and k_idx == n_time // 2):
             scale = 1.0 / float(n_time)
         else:
@@ -944,6 +947,7 @@ class TransmissionResult:
         comp_idx: int,
         y_slice: Optional[slice],
         copy_y: int,
+        phase_offset_rad: float = 0.0,
     ) -> tuple[np.ndarray, int]:
         """Reconstruct selected mode snapshot in XY view with optional Y tiling."""
         if spectrum.ndim == 5:
@@ -954,7 +958,13 @@ class TransmissionResult:
         else:
             xy_k = np.asarray(spectrum[k_idx, z_idx, :, comp_idx])[np.newaxis, :]
 
-        xy = self._single_bin_snapshot(xy_k, k_idx=k_idx, n_time=n_time, t_idx=t_idx)
+        xy = self._single_bin_snapshot(
+            xy_k,
+            k_idx=k_idx,
+            n_time=n_time,
+            t_idx=t_idx,
+            phase_offset_rad=phase_offset_rad,
+        )
         y_block = int(xy.shape[0])
         if copy_y > 1:
             xy = np.tile(xy, (copy_y, 1))
@@ -967,6 +977,7 @@ class TransmissionResult:
         k: Optional[int] = None,
         freq_unit: str = "GHz",
         t_show: int = 0,
+        phase_deg: float = 0.0,
         z_layer: int = 0,
         component: Union[int, str] = "z",
         y_slice: Optional[slice] = None,
@@ -1011,6 +1022,9 @@ class TransmissionResult:
             Frequency unit for ``f`` ("Hz", "kHz", "MHz", "GHz"), default "GHz".
         t_show : int, optional
             Time index used after inverse FFT reconstruction, default 0.
+        phase_deg : float, optional
+            Global phase shift applied before snapshot extraction [degrees].
+            Useful for continuous phase stepping without changing ``t_show``.
         z_layer : int, optional
             Z-layer index, default 0.
         component : int or str, optional
@@ -1101,6 +1115,7 @@ class TransmissionResult:
         copy_y_int = int(copy_y)
         if copy_y_int < 1:
             raise ValueError("copy_y must be >= 1")
+        phase_offset_rad = np.deg2rad(float(phase_deg))
 
         xy_complex_vis, y_block = self._reconstruct_mode_xy(
             spectrum,
@@ -1111,6 +1126,7 @@ class TransmissionResult:
             comp_idx=comp_idx,
             y_slice=y_slice,
             copy_y=copy_y_int,
+            phase_offset_rad=phase_offset_rad,
         )
 
         mode_key = str(mode).lower().strip()
@@ -1246,6 +1262,7 @@ class TransmissionResult:
             "frequency_value": float(actual_freq_unit),
             "frequency_unit": str(freq_unit),
             "time_index": int(t_idx),
+            "phase_shift_deg": float(phase_deg),
             "n_time": int(n_time),
             "z_index": int(z_idx),
             "component_index": int(comp_idx),
@@ -1385,6 +1402,7 @@ class TransmissionResult:
                 unit=str(meta["frequency_unit"]).lower(),
                 mode=str(meta["mode"]),
                 t=int(meta["time_index"]),
+                phase_deg=float(meta.get("phase_shift_deg", 0.0)),
                 z=int(meta["z_index"]),
                 component=int(meta["component_index"]),
                 ext=fmt,
@@ -1411,6 +1429,7 @@ class TransmissionResult:
         k: Optional[Union[int, Sequence[int]]] = None,
         freq_unit: str = "GHz",
         t_show: int = 0,
+        phase_deg: float = 0.0,
         z_layer: int = 0,
         component: Union[int, str] = "z",
         y_slice: Optional[slice] = None,
@@ -1426,7 +1445,7 @@ class TransmissionResult:
             Direct rFFT bin index/indices.
         freq_unit : str, optional
             Unit used for ``f`` and for visualization labels.
-        t_show, z_layer, component, y_slice, copy_y
+        t_show, phase_deg, z_layer, component, y_slice, copy_y
             Same semantics as :meth:`visualize_mode`.
 
         Returns
@@ -1498,6 +1517,7 @@ class TransmissionResult:
         copy_y_int = int(copy_y)
         if copy_y_int < 1:
             raise ValueError("copy_y must be >= 1")
+        phase_offset_rad = np.deg2rad(float(phase_deg))
 
         precomputed: list[dict[str, Any]] = []
 
@@ -1511,6 +1531,7 @@ class TransmissionResult:
                 comp_idx=comp_idx,
                 y_slice=y_slice,
                 copy_y=copy_y_int,
+                phase_offset_rad=phase_offset_rad,
             )
 
             precomputed.append(
@@ -1521,6 +1542,7 @@ class TransmissionResult:
                     "frequency_value": float(freqs[k_idx] / freq_scale),
                     "frequency_unit": str(freq_unit),
                     "time_index": int(t_idx),
+                    "phase_shift_deg": float(phase_deg),
                     "n_time": int(n_time),
                     "z_index": int(z_idx),
                     "component_index": int(comp_idx),
@@ -1843,6 +1865,7 @@ class TransmissionModesResult:
                 unit=unit_out.lower(),
                 mode=str(meta["mode"]),
                 t=int(meta["time_index"]),
+                phase_deg=float(meta.get("phase_shift_deg", 0.0)),
                 z=int(meta["z_index"]),
                 component=int(meta["component_index"]),
                 ext=fmt,

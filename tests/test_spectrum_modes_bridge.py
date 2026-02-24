@@ -369,6 +369,50 @@ def test_transmission_result_save_mode_visualizations_saves_all_bins(tmp_path):
     assert paths[0].suffix == ".png"
 
 
+def test_transmission_visualize_mode_phase_shift_matches_integer_time_shift():
+    n_time = 16
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+    raw_fft = np.zeros((freqs.size, 1, 2, 3, 1), dtype=np.complex128)
+    raw_fft[1, 0, :, :, 0] = np.array(
+        [
+            [1.0 + 0.2j, 0.3 + 0.7j, -0.4 + 0.5j],
+            [0.6 - 0.3j, -0.2 + 0.1j, 0.8 + 0.4j],
+        ]
+    )
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(3, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=1e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    fig_phase, _, meta_phase = result.visualize_mode(
+        k=1,
+        component=0,
+        t_show=0,
+        phase_deg=90.0,
+        colorbar=False,
+    )
+    fig_time, _, meta_time = result.visualize_mode(
+        k=1,
+        component=0,
+        t_show=4,  # 2*pi*k*t/n = pi/2 for k=1,n=16
+        phase_deg=0.0,
+        colorbar=False,
+    )
+
+    assert np.allclose(meta_phase["xy"], meta_time["xy"])
+    assert meta_phase["phase_shift_deg"] == 90.0
+    plt.close(fig_phase)
+    plt.close(fig_time)
+
+
 def test_transmission_modes_result_save_visualizations(tmp_path):
     n_time = 20
     dt = 1e-12
@@ -394,3 +438,6 @@ def test_transmission_modes_result_save_visualizations(tmp_path):
 
     assert len(paths) == 2
     assert all(path.exists() for path in paths)
+
+    modes_phase = result.calculate_modes(k=[2], component=0, t_show=0, phase_deg=45.0)
+    assert modes_phase.modes[0]["phase_shift_deg"] == 45.0
