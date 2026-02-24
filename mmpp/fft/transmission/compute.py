@@ -77,6 +77,7 @@ ReferenceStatistic = Literal["mean", "median", "max"]
 YIntegrationMode = Literal["sum_m", "sum_fft", "none"]
 FFTEngine = Literal["scipy", "numpy", "auto"]
 SpatialWindowMode = Literal["pre_fft", "post_fft"]
+ReconstructionMode = Literal["real_signal", "phasor"]
 
 
 @dataclass
@@ -922,6 +923,7 @@ class TransmissionResult:
         n_time: int,
         t_idx: int,
         phase_offset_rad: float = 0.0,
+        reconstruction: ReconstructionMode = "real_signal",
     ) -> np.ndarray:
         """Evaluate one rFFT bin contribution at a single time index.
 
@@ -934,7 +936,12 @@ class TransmissionResult:
             scale = 1.0 / float(n_time)
         else:
             scale = 2.0 / float(n_time)
-        return np.real(spectrum_k * phase) * scale
+        phasor = spectrum_k * phase * scale
+        if reconstruction == "real_signal":
+            return np.real(phasor)
+        if reconstruction == "phasor":
+            return phasor
+        raise ValueError("reconstruction must be one of: 'real_signal', 'phasor'")
 
     def _reconstruct_mode_xy(
         self,
@@ -948,6 +955,7 @@ class TransmissionResult:
         y_slice: Optional[slice],
         copy_y: int,
         phase_offset_rad: float = 0.0,
+        reconstruction: ReconstructionMode = "real_signal",
     ) -> tuple[np.ndarray, int]:
         """Reconstruct selected mode snapshot in XY view with optional Y tiling."""
         if spectrum.ndim == 5:
@@ -964,6 +972,7 @@ class TransmissionResult:
             n_time=n_time,
             t_idx=t_idx,
             phase_offset_rad=phase_offset_rad,
+            reconstruction=reconstruction,
         )
         y_block = int(xy.shape[0])
         if copy_y > 1:
@@ -978,6 +987,7 @@ class TransmissionResult:
         freq_unit: str = "GHz",
         t_show: int = 0,
         phase_deg: float = 0.0,
+        reconstruction: ReconstructionMode = "real_signal",
         z_layer: int = 0,
         component: Union[int, str] = "z",
         y_slice: Optional[slice] = None,
@@ -1025,6 +1035,10 @@ class TransmissionResult:
         phase_deg : float, optional
             Global phase shift applied before snapshot extraction [degrees].
             Useful for continuous phase stepping without changing ``t_show``.
+        reconstruction : {"real_signal", "phasor"}, optional
+            ``real_signal`` reconstructs real-valued time-domain contribution
+            (imaginary part is numerically ~0). ``phasor`` keeps complex
+            quadrature so ``mode='imag'`` shows the 90° component.
         z_layer : int, optional
             Z-layer index, default 0.
         component : int or str, optional
@@ -1127,6 +1141,7 @@ class TransmissionResult:
             y_slice=y_slice,
             copy_y=copy_y_int,
             phase_offset_rad=phase_offset_rad,
+            reconstruction=reconstruction,
         )
 
         mode_key = str(mode).lower().strip()
@@ -1263,6 +1278,7 @@ class TransmissionResult:
             "frequency_unit": str(freq_unit),
             "time_index": int(t_idx),
             "phase_shift_deg": float(phase_deg),
+            "reconstruction": str(reconstruction),
             "n_time": int(n_time),
             "z_index": int(z_idx),
             "component_index": int(comp_idx),
@@ -1403,6 +1419,7 @@ class TransmissionResult:
                 mode=str(meta["mode"]),
                 t=int(meta["time_index"]),
                 phase_deg=float(meta.get("phase_shift_deg", 0.0)),
+                reconstruction=str(meta.get("reconstruction", "real_signal")),
                 z=int(meta["z_index"]),
                 component=int(meta["component_index"]),
                 ext=fmt,
@@ -1430,6 +1447,7 @@ class TransmissionResult:
         freq_unit: str = "GHz",
         t_show: int = 0,
         phase_deg: float = 0.0,
+        reconstruction: ReconstructionMode = "real_signal",
         z_layer: int = 0,
         component: Union[int, str] = "z",
         y_slice: Optional[slice] = None,
@@ -1445,7 +1463,7 @@ class TransmissionResult:
             Direct rFFT bin index/indices.
         freq_unit : str, optional
             Unit used for ``f`` and for visualization labels.
-        t_show, phase_deg, z_layer, component, y_slice, copy_y
+        t_show, phase_deg, reconstruction, z_layer, component, y_slice, copy_y
             Same semantics as :meth:`visualize_mode`.
 
         Returns
@@ -1532,6 +1550,7 @@ class TransmissionResult:
                 y_slice=y_slice,
                 copy_y=copy_y_int,
                 phase_offset_rad=phase_offset_rad,
+                reconstruction=reconstruction,
             )
 
             precomputed.append(
@@ -1543,6 +1562,7 @@ class TransmissionResult:
                     "frequency_unit": str(freq_unit),
                     "time_index": int(t_idx),
                     "phase_shift_deg": float(phase_deg),
+                    "reconstruction": str(reconstruction),
                     "n_time": int(n_time),
                     "z_index": int(z_idx),
                     "component_index": int(comp_idx),
@@ -1866,6 +1886,7 @@ class TransmissionModesResult:
                 mode=str(meta["mode"]),
                 t=int(meta["time_index"]),
                 phase_deg=float(meta.get("phase_shift_deg", 0.0)),
+                reconstruction=str(meta.get("reconstruction", "real_signal")),
                 z=int(meta["z_index"]),
                 component=int(meta["component_index"]),
                 ext=fmt,

@@ -413,6 +413,54 @@ def test_transmission_visualize_mode_phase_shift_matches_integer_time_shift():
     plt.close(fig_time)
 
 
+def test_transmission_visualize_mode_phasor_reconstructs_imaginary_quadrature():
+    n_time = 16
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+    raw_fft = np.zeros((freqs.size, 1, 2, 3, 1), dtype=np.complex128)
+    raw_fft[3, 0, :, :, 0] = np.array(
+        [
+            [1.0 + 0.2j, 0.3 + 0.7j, -0.4 + 0.5j],
+            [0.6 - 0.3j, -0.2 + 0.1j, 0.8 + 0.4j],
+        ]
+    )
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(3, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=1e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    fig_real, _, meta_real = result.visualize_mode(
+        k=3,
+        component=0,
+        t_show=0,
+        reconstruction="real_signal",
+        mode="imag",
+        colorbar=False,
+    )
+    fig_phasor, _, meta_phasor = result.visualize_mode(
+        k=3,
+        component=0,
+        t_show=0,
+        reconstruction="phasor",
+        mode="imag",
+        colorbar=False,
+    )
+
+    expected_imag = (2.0 / float(n_time)) * np.imag(raw_fft[3, 0, :, :, 0])
+    assert np.allclose(meta_real["xy"], 0.0)
+    assert np.allclose(meta_phasor["xy"], expected_imag)
+    assert meta_phasor["reconstruction"] == "phasor"
+    plt.close(fig_real)
+    plt.close(fig_phasor)
+
+
 def test_transmission_modes_result_save_visualizations(tmp_path):
     n_time = 20
     dt = 1e-12
@@ -441,3 +489,6 @@ def test_transmission_modes_result_save_visualizations(tmp_path):
 
     modes_phase = result.calculate_modes(k=[2], component=0, t_show=0, phase_deg=45.0)
     assert modes_phase.modes[0]["phase_shift_deg"] == 45.0
+
+    modes_phasor = result.calculate_modes(k=[2], component=0, t_show=0, reconstruction="phasor")
+    assert modes_phasor.modes[0]["reconstruction"] == "phasor"
