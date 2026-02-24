@@ -96,6 +96,38 @@ class HysteresisResult:
             data["frame_index"] = self.frame_index
         return pd.DataFrame(data)
 
+    def cloneflip(self) -> "HysteresisResult":
+        """Build a symmetric full loop from a single monotonic sweep.
+
+        Applies the centrosymmetric constraint **M(−B) = −M(B)**, valid for
+        reversible micromagnetic simulations where only one field polarity was
+        computed.  Both the field axis and the magnetization axis are reflected
+        around the origin and appended to form a closed two-branch loop
+        (ascending + descending) with the same |B| range on both polarities.
+
+        The returned result contains ``4N − 1`` points, where *N* is the
+        number of original samples.  For the interactive snapshot explorer,
+        reflected points are mapped to the original snapshot at the mirrored
+        field value.
+
+        Returns
+        -------
+        HysteresisResult
+            New result — the original is **not** modified.
+            ``result.metadata["cloneflip"] = True`` marks the copy.
+
+        Example
+        -------
+        >>> result = job[0].analyze.hysteresis.load(
+        ...     source="zarr_keys", key_prefix="B", component="y"
+        ... )
+        >>> full_loop = result.cloneflip()
+        >>> full_loop.plot.interactive()
+        """
+        from .compute import build_cloneflip_result
+
+        return build_cloneflip_result(self)
+
     def __repr__(self) -> str:
         return (
             "HysteresisResult("

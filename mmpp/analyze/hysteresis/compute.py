@@ -154,6 +154,106 @@ def segment_branches(field: np.ndarray, slope_tolerance: float = 1e-15) -> list[
     return branches
 
 
+def build_cloneflip_result(result: "HysteresisResult") -> "HysteresisResult":
+    """Create a symmetric full loop from a single monotonic sweep.
+
+    Applies the centrosymmetric constraint **M(−B) = −M(B)**, which holds for
+    reversible (single-equilibrium) micromagnetic simulations where only one
+    field polarity was computed.
+
+    The original data is sorted ascending by field.  A point-reflected copy
+    ``(−B, −M)`` is appended in ascending order to extend the field axis into
+    the opposite polarity, forming the outward sweep.  The return branch is
+    assembled as the time-reversal of the outward sweep (zero hysteresis area
+    — physically correct for a reversible system), resulting in a closed loop
+    of ``4N − 1`` points with two branches (ascending + descending).
+
+    For the interactive snapshot explorer, reflected points are mapped to the
+    corresponding original snapshot (same |B|, shown without sign change in the
+    spatial image).
+
+    Parameters
+    ----------
+    result:
+        Source :class:`HysteresisResult` — may be monotonic (single-direction
+        sweep); the ``require_non_monotonic`` check is intentionally bypassed.
+
+    Returns
+    -------
+    HysteresisResult
+        New result with ``4*N − 1`` points and two branches.  The original
+        result is *not* modified.  ``metadata["cloneflip"] = True`` and
+        ``metadata["n_original"] = N`` are set on the returned object.
+    """
+    from .result import HysteresisResult  # local import to avoid circularity
+
+    B = np.asarray(result.field, dtype=float).reshape(-1)
+    M = np.asarray(result.magnetization, dtype=float).reshape(-1)
+    frame_orig = result.frame_index
+
+    # ── sort ascending by field value ─────────────────────────────────────────
+    order = np.argsort(B)
+    B_s = B[order]
+    M_s = M[order]
+    frame_s = (
+        frame_orig[order]
+        if frame_orig is not None
+        else np.arange(B.size, dtype=int)[order]
+    )
+
+    N = int(B_s.size)
+    if N < 2:
+        raise ValueError(
+            "cloneflip requires at least 2 data points — "
+            f"only {N} point(s) found after sorting."
+        )
+
+    # ── reflected ascending part: (−B_s[::-1], −M_s[::-1]) ──────────────────
+    # Example: B_s = [−0.0065, …, −0.0005]
+    #          −B_s[::-1] = [+0.0005, …, +0.0065]  ← ascending, positive range
+    B_refl = -B_s[::-1]
+    M_refl = -M_s[::-1]
+    frame_refl = frame_s[::-1]  # map to same snapshot at mirrored |B|
+
+    # ── outward sweep: original ascending + reflected ascending ───────────────
+    B_up = np.concatenate([B_s, B_refl])        # 2N points
+    M_up = np.concatenate([M_s, M_refl])
+    frame_up = np.concatenate([frame_s, frame_refl])
+
+    # ── return sweep: reverse of outward (reversible → zero area) ────────────
+    # Skip the first point of the reversed array (== B_up[-1]) to avoid a
+    # duplicate at the field maximum; keep the last point (== B_up[0]) so the
+    # loop closes at the starting field value.
+    B_dn = B_up[::-1][1:]        # 2N − 1 points
+    M_dn = M_up[::-1][1:]
+    frame_dn = frame_up[::-1][1:]
+
+    # ── assemble closed loop: 4N − 1 points ──────────────────────────────────
+    B_loop = np.concatenate([B_up, B_dn])
+    M_loop = np.concatenate([M_up, M_dn])
+    frame_loop = np.concatenate([frame_up, frame_dn])
+
+    branches = segment_branches(B_loop)
+
+    meta = dict(result.metadata)
+    meta.update(
+        {
+            "cloneflip": True,
+            "n_original": N,
+            "cloneflip_field_range": (float(B_loop.min()), float(B_loop.max())),
+        }
+    )
+
+    return HysteresisResult(
+        field=B_loop,
+        magnetization=M_loop,
+        branches=branches,
+        frame_index=frame_loop,
+        config=result.config,
+        metadata=meta,
+    )
+
+
 def find_zero_crossings(x: np.ndarray, y: np.ndarray) -> list[float]:
     """Find x-values where y crosses zero using linear interpolation."""
     x_arr = np.asarray(x, dtype=float).reshape(-1)

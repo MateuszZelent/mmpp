@@ -195,6 +195,7 @@ def from_arrays(
     frame_index: np.ndarray | None = None,
     metadata: dict[str, Any] | None = None,
     config: HysteresisConfig | None = None,
+    cloneflip: bool = False,
 ) -> HysteresisResult:
     """Build hysteresis result from explicit arrays."""
     cfg = _resolve_config(config)
@@ -222,7 +223,7 @@ def from_arrays(
     meta = dict(metadata or {})
     meta.setdefault("source_type", "arrays")
 
-    return HysteresisResult(
+    result = HysteresisResult(
         field=field_clean,
         magnetization=mag_clean,
         branches=branches,
@@ -230,6 +231,10 @@ def from_arrays(
         config=cfg,
         metadata=meta,
     )
+    if cloneflip:
+        from .compute import build_cloneflip_result
+        result = build_cloneflip_result(result)
+    return result
 
 
 def from_table(
@@ -240,6 +245,7 @@ def from_table(
     component: str | None = None,
     metadata: dict[str, Any] | None = None,
     config: HysteresisConfig | None = None,
+    cloneflip: bool = False,
 ) -> HysteresisResult:
     """Read hysteresis signal from the table group."""
     cfg = _resolve_config(config)
@@ -257,7 +263,9 @@ def from_table(
         )
 
     finite_mask = np.isfinite(field_arr) & np.isfinite(mag_arr)
-    field_clean, mag_clean = validate_hysteresis_data(field_arr, mag_arr)
+    field_clean, mag_clean = validate_hysteresis_data(
+        field_arr, mag_arr, require_non_monotonic=not cloneflip
+    )
 
     meta = dict(metadata or {})
     meta.update(
@@ -273,7 +281,7 @@ def from_table(
 
     frame_idx = np.arange(field_arr.size, dtype=int)[finite_mask]
 
-    return HysteresisResult(
+    result = HysteresisResult(
         field=field_clean,
         magnetization=mag_clean,
         branches=segment_branches(field_clean),
@@ -281,6 +289,10 @@ def from_table(
         config=cfg,
         metadata=meta,
     )
+    if cloneflip:
+        from .compute import build_cloneflip_result
+        result = build_cloneflip_result(result)
+    return result
 
 
 def _extract_field_array(
@@ -338,6 +350,7 @@ def from_magnetization(
     slice_info: Any | None = None,
     metadata: dict[str, Any] | None = None,
     config: HysteresisConfig | None = None,
+    cloneflip: bool = False,
 ) -> HysteresisResult:
     """Build hysteresis loop from averaged magnetization dataset."""
     cfg = _resolve_config(config)
@@ -429,7 +442,7 @@ def from_magnetization(
     field_clean, mag_clean = validate_hysteresis_data(
         field_arr,
         mag_series,
-        require_non_monotonic=field_source != "index",
+        require_non_monotonic=field_source != "index" and not cloneflip,
     )
     frame_idx = np.arange(t_count, dtype=int)[finite_mask]
 
@@ -449,7 +462,7 @@ def from_magnetization(
         }
     )
 
-    return HysteresisResult(
+    result = HysteresisResult(
         field=field_clean,
         magnetization=mag_clean,
         branches=segment_branches(field_clean),
@@ -457,6 +470,10 @@ def from_magnetization(
         config=cfg,
         metadata=meta,
     )
+    if cloneflip:
+        from .compute import build_cloneflip_result
+        result = build_cloneflip_result(result)
+    return result
 
 
 def _parse_field_from_key(key: str, key_prefix: str) -> float | None:
@@ -558,6 +575,7 @@ def from_zarr_keys(
     min_spatial_size: int = 50,
     metadata: dict[str, Any] | None = None,
     config: HysteresisConfig | None = None,
+    cloneflip: bool = False,
 ) -> HysteresisResult:
     """Build hysteresis loop from named zarr arrays in the root group.
 
@@ -718,7 +736,7 @@ def from_zarr_keys(
         "zarr_group": zgroup,       # the zarr root group for snapshot loading
     })
 
-    return HysteresisResult(
+    result = HysteresisResult(
         field=field_arr,
         magnetization=mag_arr,
         branches=_seg(field_arr),
@@ -726,6 +744,10 @@ def from_zarr_keys(
         config=cfg,
         metadata=meta,
     )
+    if cloneflip:
+        from .compute import build_cloneflip_result
+        result = build_cloneflip_result(result)
+    return result
 
 
 def resolve_auto_source(

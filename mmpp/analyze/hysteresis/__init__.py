@@ -156,6 +156,7 @@ class HysteresisInterface:
         *,
         frame_index: np.ndarray | None = None,
         metadata: dict[str, Any] | None = None,
+        cloneflip: bool = False,
     ) -> HysteresisResult:
         """Build result directly from explicit arrays."""
         return from_arrays(
@@ -164,6 +165,7 @@ class HysteresisInterface:
             frame_index=frame_index,
             metadata=metadata,
             config=self._config,
+            cloneflip=cloneflip,
         )
 
     def from_table(
@@ -173,6 +175,7 @@ class HysteresisInterface:
         magnetization: str | None = None,
         component: str | None = None,
         metadata: dict[str, Any] | None = None,
+        cloneflip: bool = False,
     ) -> HysteresisResult:
         """Build result from ``job['table']`` data."""
         return from_table(
@@ -182,6 +185,7 @@ class HysteresisInterface:
             component=component,
             metadata=metadata,
             config=self._config,
+            cloneflip=cloneflip,
         )
 
     def from_magnetization(
@@ -194,6 +198,7 @@ class HysteresisInterface:
         roi_units: str = "idx",
         field: str | np.ndarray | None = None,
         metadata: dict[str, Any] | None = None,
+        cloneflip: bool = False,
     ) -> HysteresisResult:
         """Build result from averaged magnetization dataset."""
         return from_magnetization(
@@ -207,6 +212,7 @@ class HysteresisInterface:
             slice_info=self._slice_info,
             metadata=metadata,
             config=self._config,
+            cloneflip=cloneflip,
         )
 
     def from_zarr_keys(
@@ -219,6 +225,7 @@ class HysteresisInterface:
         roi_units: str = "idx",
         min_spatial_size: int = 50,
         metadata: dict[str, Any] | None = None,
+        cloneflip: bool = False,
     ) -> HysteresisResult:
         """Build hysteresis loop from named zarr arrays in the root group.
 
@@ -254,6 +261,7 @@ class HysteresisInterface:
             min_spatial_size=min_spatial_size,
             metadata=metadata,
             config=self._config,
+            cloneflip=cloneflip,
         )
 
     def load(
@@ -271,6 +279,7 @@ class HysteresisInterface:
         roi_units: str = "idx",
         min_spatial_size: int = 50,
         metadata: dict[str, Any] | None = None,
+        cloneflip: bool = False,
     ) -> "HysteresisResult":
         """Unified entry point for loading hysteresis data.
 
@@ -340,6 +349,7 @@ class HysteresisInterface:
                 field=field,
                 magnetization=magnetization,
                 metadata=metadata,
+                cloneflip=cloneflip,
             )
 
         if source_norm == "zarr_keys":
@@ -351,6 +361,7 @@ class HysteresisInterface:
                 roi_units=roi_units,
                 min_spatial_size=min_spatial_size,
                 metadata=metadata,
+                cloneflip=cloneflip,
             )
 
         raise ValueError(
