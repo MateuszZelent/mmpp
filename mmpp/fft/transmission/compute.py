@@ -8,6 +8,7 @@ from typing import Any, Dict, Literal, Optional, Tuple, Union
 import math
 import time
 import os
+from pathlib import Path
 
 import numpy as np
 from tqdm.auto import tqdm
@@ -877,6 +878,88 @@ class TransmissionResult:
         else:
             return fig, ax
 
+    @staticmethod
+    def _resolve_component_index(component: Union[int, str], n_comp: int) -> int:
+        """Resolve component alias/index with single-component fallback."""
+        if isinstance(component, str):
+            comp_alias = {
+                "x": 0,
+                "mx": 0,
+                "0": 0,
+                "y": 1,
+                "my": 1,
+                "1": 1,
+                "z": 2,
+                "mz": 2,
+                "2": 2,
+            }
+            key = component.lower().strip()
+            if key not in comp_alias:
+                raise ValueError(
+                    "Unsupported component string. Use one of: "
+                    "'x', 'y', 'z', 'mx', 'my', 'mz' or integer index."
+                )
+            comp_idx = int(comp_alias[key])
+        else:
+            comp_idx = int(component)
+
+        if comp_idx < 0 or comp_idx >= n_comp:
+            if n_comp == 1:
+                log.warning(
+                    "Requested component=%r resolved to index=%d but n_comp=1; using component index 0.",
+                    component,
+                    comp_idx,
+                )
+                return 0
+            raise ValueError(f"component index {comp_idx} out of range for n_comp={n_comp}")
+        return comp_idx
+
+    @staticmethod
+    def _single_bin_snapshot(
+        spectrum_k: np.ndarray,
+        *,
+        k_idx: int,
+        n_time: int,
+        t_idx: int,
+    ) -> np.ndarray:
+        """Evaluate one rFFT bin contribution at a single time index.
+
+        This avoids allocating full ``zeros_like(spectrum)`` and full inverse FFT volume.
+        """
+        phase = np.exp(1j * (2.0 * np.pi * float(k_idx) * float(t_idx) / float(n_time)))
+        if k_idx == 0 or (n_time % 2 == 0 and k_idx == n_time // 2):
+            scale = 1.0 / float(n_time)
+        else:
+            scale = 2.0 / float(n_time)
+        return np.real(spectrum_k * phase) * scale
+
+    def _reconstruct_mode_xy(
+        self,
+        spectrum: np.ndarray,
+        *,
+        k_idx: int,
+        n_time: int,
+        t_idx: int,
+        z_idx: int,
+        comp_idx: int,
+        y_slice: Optional[slice],
+        copy_y: int,
+    ) -> tuple[np.ndarray, int]:
+        """Reconstruct selected mode snapshot in XY view with optional Y tiling."""
+        if spectrum.ndim == 5:
+            y_selector = slice(None) if y_slice is None else y_slice
+            xy_k = np.asarray(spectrum[k_idx, z_idx, y_selector, :, comp_idx])
+            if xy_k.ndim == 1:
+                xy_k = xy_k[np.newaxis, :]
+        else:
+            xy_k = np.asarray(spectrum[k_idx, z_idx, :, comp_idx])[np.newaxis, :]
+
+        xy = self._single_bin_snapshot(xy_k, k_idx=k_idx, n_time=n_time, t_idx=t_idx)
+        y_block = int(xy.shape[0])
+        if copy_y > 1:
+            xy = np.tile(xy, (copy_y, 1))
+        return np.asarray(xy), y_block
+
     def visualize_mode(
         self,
         f: Optional[float] = None,
@@ -1004,67 +1087,30 @@ class TransmissionResult:
         if n_time <= 0:
             raise ValueError("Unable to infer valid n_time for inverse FFT reconstruction")
 
-        filtered_fft = np.zeros_like(spectrum)
-        filtered_fft[k, ...] = spectrum[k, ...]
-        wave = np.fft.irfft(filtered_fft, n=n_time, axis=0)
-
-        n_z = wave.shape[1]
+        n_z = int(spectrum.shape[1])
         z_idx = int(z_layer)
         if z_idx < 0:
             z_idx += n_z
         if z_idx < 0 or z_idx >= n_z:
             raise ValueError(f"z_layer={z_layer} out of range for n_z={n_z}")
 
-        n_comp = wave.shape[-1]
-        if isinstance(component, str):
-            comp_alias = {
-                "x": 0,
-                "mx": 0,
-                "0": 0,
-                "y": 1,
-                "my": 1,
-                "1": 1,
-                "z": 2,
-                "mz": 2,
-                "2": 2,
-            }
-            key = component.lower().strip()
-            if key not in comp_alias:
-                raise ValueError(
-                    "Unsupported component string. Use one of: "
-                    "'x', 'y', 'z', 'mx', 'my', 'mz' or integer index."
-                )
-            comp_idx = comp_alias[key]
-        else:
-            comp_idx = int(component)
-
-        if comp_idx < 0 or comp_idx >= n_comp:
-            if n_comp == 1:
-                log.warning(
-                    "Requested component=%r resolved to index=%d but n_comp=1; using component index 0.",
-                    component,
-                    comp_idx,
-                )
-                comp_idx = 0
-            else:
-                raise ValueError(f"component index {comp_idx} out of range for n_comp={n_comp}")
+        n_comp = int(spectrum.shape[-1])
+        comp_idx = self._resolve_component_index(component, n_comp)
 
         t_idx = int(np.clip(int(t_show), 0, n_time - 1))
-
-        if spectrum.ndim == 5:
-            y_selector = slice(None) if y_slice is None else y_slice
-            xy_complex = wave[t_idx, z_idx, y_selector, :, comp_idx]
-            if xy_complex.ndim == 1:
-                xy_complex = xy_complex[np.newaxis, :]
-        else:
-            xy_complex = wave[t_idx, z_idx, :, comp_idx][np.newaxis, :]
-
         copy_y_int = int(copy_y)
         if copy_y_int < 1:
             raise ValueError("copy_y must be >= 1")
-        y_block = int(xy_complex.shape[0])
-        xy_complex_vis = (
-            np.tile(xy_complex, (copy_y_int, 1)) if copy_y_int > 1 else xy_complex
+
+        xy_complex_vis, y_block = self._reconstruct_mode_xy(
+            spectrum,
+            k_idx=int(k),
+            n_time=n_time,
+            t_idx=t_idx,
+            z_idx=z_idx,
+            comp_idx=comp_idx,
+            y_slice=y_slice,
+            copy_y=copy_y_int,
         )
 
         mode_key = str(mode).lower().strip()
@@ -1259,6 +1305,105 @@ class TransmissionResult:
         fig.tight_layout()
         return fig, used_axes, metas
 
+    def save_mode_visualizations(
+        self,
+        output_dir: Union[str, Path],
+        *,
+        f: Optional[Union[float, Sequence[float]]] = None,
+        k: Optional[Union[int, Sequence[int]]] = None,
+        freq_unit: str = "GHz",
+        filename_template: str = "mode_k{k:05d}_f{frequency:.6f}_{unit}.{ext}",
+        image_format: str = "png",
+        dpi: Optional[int] = None,
+        overwrite: bool = True,
+        close_figures: bool = True,
+        show_progress: bool = True,
+        savefig_kwargs: Optional[dict[str, Any]] = None,
+        **visualize_kwargs,
+    ) -> list[Path]:
+        """Save per-frequency mode visualizations to ``output_dir``.
+
+        By default (``f=None`` and ``k=None``), saves all available frequency bins.
+        """
+        import matplotlib.pyplot as plt
+
+        if "ax" in visualize_kwargs:
+            raise ValueError("save_mode_visualizations does not accept explicit ax=...")
+        if (f is not None) and (k is not None):
+            raise ValueError("Provide at most one selector: f=... or k=...")
+
+        freqs = np.asarray(self.frequencies, dtype=float)
+        if freqs.ndim != 1 or freqs.size == 0:
+            raise ValueError("TransmissionResult.frequencies must be a non-empty 1D array")
+
+        unit_scales = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
+        freq_scale = unit_scales.get(str(freq_unit).lower())
+        if freq_scale is None:
+            raise ValueError(
+                f"Unsupported freq_unit={freq_unit!r}. Use one of {list(unit_scales)}."
+            )
+
+        selected_bins: list[int] = []
+        if f is not None:
+            freq_values = [float(f)] if np.isscalar(f) else [float(v) for v in f]
+            for f_val in freq_values:
+                hz = float(f_val) * float(freq_scale)
+                selected_bins.append(int(np.argmin(np.abs(freqs - hz))))
+        elif k is not None:
+            k_values = [int(k)] if np.isscalar(k) else [int(v) for v in k]
+            for k_val in k_values:
+                if k_val < 0 or k_val >= freqs.size:
+                    raise ValueError(f"k={k_val} out of range [0, {freqs.size - 1}]")
+                selected_bins.append(int(k_val))
+        else:
+            selected_bins = list(range(freqs.size))
+
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        fmt = str(image_format).lower().strip(".")
+        fig_save_kwargs = dict(savefig_kwargs or {})
+        if dpi is not None:
+            fig_save_kwargs.setdefault("dpi", int(dpi))
+
+        iterator = selected_bins
+        if show_progress and len(selected_bins) > 1:
+            iterator = tqdm(selected_bins, desc="Saving transmission mode visualizations")
+
+        saved_paths: list[Path] = []
+        for k_idx in iterator:
+            fig, _, meta = self.visualize_mode(
+                k=int(k_idx),
+                freq_unit=freq_unit,
+                **visualize_kwargs,
+            )
+
+            file_name = filename_template.format(
+                k=int(meta["k"]),
+                frequency=float(meta["frequency_value"]),
+                frequency_hz=float(meta["frequency_hz"]),
+                unit=str(meta["frequency_unit"]).lower(),
+                mode=str(meta["mode"]),
+                t=int(meta["time_index"]),
+                z=int(meta["z_index"]),
+                component=int(meta["component_index"]),
+                ext=fmt,
+            )
+
+            file_path = out_dir / file_name
+            if file_path.exists() and not overwrite:
+                if close_figures:
+                    plt.close(fig)
+                raise FileExistsError(f"File already exists: {file_path}")
+
+            fig.savefig(file_path, format=fmt, **fig_save_kwargs)
+            saved_paths.append(file_path)
+
+            if close_figures:
+                plt.close(fig)
+
+        return saved_paths
+
     def calculate_modes(
         self,
         f: Optional[Union[float, Sequence[float]]] = None,
@@ -1347,38 +1492,7 @@ class TransmissionResult:
             raise ValueError(f"z_layer={z_layer} out of range for n_z={n_z}")
 
         n_comp = int(spectrum.shape[-1])
-        if isinstance(component, str):
-            comp_alias = {
-                "x": 0,
-                "mx": 0,
-                "0": 0,
-                "y": 1,
-                "my": 1,
-                "1": 1,
-                "z": 2,
-                "mz": 2,
-                "2": 2,
-            }
-            key = component.lower().strip()
-            if key not in comp_alias:
-                raise ValueError(
-                    "Unsupported component string. Use one of: "
-                    "'x', 'y', 'z', 'mx', 'my', 'mz' or integer index."
-                )
-            comp_idx = int(comp_alias[key])
-        else:
-            comp_idx = int(component)
-
-        if comp_idx < 0 or comp_idx >= n_comp:
-            if n_comp == 1:
-                log.warning(
-                    "Requested component=%r resolved to index=%d but n_comp=1; using component index 0.",
-                    component,
-                    comp_idx,
-                )
-                comp_idx = 0
-            else:
-                raise ValueError(f"component index {comp_idx} out of range for n_comp={n_comp}")
+        comp_idx = self._resolve_component_index(component, n_comp)
 
         t_idx = int(np.clip(int(t_show), 0, n_time - 1))
         copy_y_int = int(copy_y)
@@ -1386,23 +1500,18 @@ class TransmissionResult:
             raise ValueError("copy_y must be >= 1")
 
         precomputed: list[dict[str, Any]] = []
-        y_selector = slice(None) if y_slice is None else y_slice
 
         for k_idx, req_hz in zip(selected_bins, requested_hz):
-            filtered_fft = np.zeros_like(spectrum)
-            filtered_fft[k_idx, ...] = spectrum[k_idx, ...]
-            wave = np.fft.irfft(filtered_fft, n=n_time, axis=0)
-
-            if spectrum.ndim == 5:
-                xy_complex = wave[t_idx, z_idx, y_selector, :, comp_idx]
-                if xy_complex.ndim == 1:
-                    xy_complex = xy_complex[np.newaxis, :]
-            else:
-                xy_complex = wave[t_idx, z_idx, :, comp_idx][np.newaxis, :]
-
-            y_block = int(xy_complex.shape[0])
-            if copy_y_int > 1:
-                xy_complex = np.tile(xy_complex, (copy_y_int, 1))
+            xy_complex, y_block = self._reconstruct_mode_xy(
+                spectrum,
+                k_idx=int(k_idx),
+                n_time=n_time,
+                t_idx=t_idx,
+                z_idx=z_idx,
+                comp_idx=comp_idx,
+                y_slice=y_slice,
+                copy_y=copy_y_int,
+            )
 
             precomputed.append(
                 {
@@ -1681,6 +1790,75 @@ class TransmissionModesResult:
             fig.delaxes(axes_flat[i])
         fig.tight_layout()
         return fig, used_axes, metas
+
+    def save_visualizations(
+        self,
+        output_dir: Union[str, Path],
+        *,
+        index: Optional[int] = None,
+        f: Optional[float] = None,
+        k: Optional[int] = None,
+        freq_unit: Optional[str] = None,
+        filename_template: str = "mode_k{k:05d}_f{frequency:.6f}_{unit}.{ext}",
+        image_format: str = "png",
+        dpi: Optional[int] = None,
+        overwrite: bool = True,
+        close_figures: bool = True,
+        show_progress: bool = True,
+        savefig_kwargs: Optional[dict[str, Any]] = None,
+        **visualize_kwargs,
+    ) -> list[Path]:
+        """Save one image per precomputed mode to ``output_dir``."""
+        import matplotlib.pyplot as plt
+
+        if "ax" in visualize_kwargs:
+            raise ValueError("save_visualizations does not accept explicit ax=...")
+
+        unit_out = str(freq_unit or self.freq_unit)
+        selected = self._select_indices(index=index, f=f, k=k, freq_unit=unit_out)
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_scale = float({"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}.get(unit_out.lower(), 1e9))
+
+        fmt = str(image_format).lower().strip(".")
+        fig_save_kwargs = dict(savefig_kwargs or {})
+        if dpi is not None:
+            fig_save_kwargs.setdefault("dpi", int(dpi))
+
+        iterator = selected
+        if show_progress and len(selected) > 1:
+            iterator = tqdm(selected, desc="Saving precomputed transmission mode visualizations")
+
+        saved_paths: list[Path] = []
+        for mode_idx in iterator:
+            fig, _, meta = self.visualize(
+                index=int(mode_idx),
+                freq_unit=unit_out,
+                **visualize_kwargs,
+            )
+            file_name = filename_template.format(
+                k=int(meta["k"]),
+                frequency=float(meta["frequency_hz"]) / out_scale,
+                frequency_hz=float(meta["frequency_hz"]),
+                unit=unit_out.lower(),
+                mode=str(meta["mode"]),
+                t=int(meta["time_index"]),
+                z=int(meta["z_index"]),
+                component=int(meta["component_index"]),
+                ext=fmt,
+            )
+
+            file_path = out_dir / file_name
+            if file_path.exists() and not overwrite:
+                if close_figures:
+                    plt.close(fig)
+                raise FileExistsError(f"File already exists: {file_path}")
+            fig.savefig(file_path, format=fmt, **fig_save_kwargs)
+            saved_paths.append(file_path)
+            if close_figures:
+                plt.close(fig)
+
+        return saved_paths
 
 
 def _compute_hann_weights(length: int, power: float) -> np.ndarray:

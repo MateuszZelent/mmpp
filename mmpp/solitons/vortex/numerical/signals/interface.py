@@ -1,0 +1,351 @@
+"""High-level interface for vortex electrical signal reconstruction."""
+
+from __future__ import annotations
+
+import warnings
+from typing import Any
+
+import numpy as np
+
+from ...config import VortexConfig
+from ..._shared.models import TrajectoryResult
+from mmpp._shared.repr_html import make_simple_card
+from .magnetoresistance import compute_magnetoresistance
+from .models import MagnetoresistanceResult, SignalSpectrumResult, VoltageResult
+from .power_spectrum import compute_signal_power_spectrum
+from .voltage import compute_voltage
+
+
+def _read_table_columns(job_result) -> dict[str, np.ndarray]:
+    if "table" not in job_result:
+        return {}
+    table = job_result["table"]
+    out: dict[str, np.ndarray] = {}
+    for key in table.keys():
+        try:
+            arr = table[key]
+            shape = tuple(getattr(arr, "shape", ()))
+            if len(shape) != 1:
+                continue
+            out[str(key)] = np.asarray(arr[:], dtype=float).reshape(-1)
+        except Exception:
+            continue
+    return out
+
+
+def _resolve_column_name(columns: dict[str, np.ndarray], aliases: tuple[str, ...]) -> str | None:
+    if not columns:
+        return None
+    lut = {name.lower(): name for name in columns.keys()}
+    for alias in aliases:
+        key = lut.get(alias.lower())
+        if key is not None:
+            return key
+    return None
+
+
+class SignalsInterface:
+    """Signals namespace: magnetoresistance, voltage and power spectrum."""
+
+    def __init__(
+        self,
+        job_result,
+        dataset_name: str | None,
+        slice_info: Any | None,
+        config: VortexConfig,
+        core_interface,
+    ):
+        self._job = job_result
+        self._dataset_name = dataset_name
+        self._slice_info = slice_info
+        self._config = config
+        self._core = core_interface
+
+        self._last_mr: MagnetoresistanceResult | None = None
+        self._last_voltage: VoltageResult | None = None
+        self._last_spectrum: SignalSpectrumResult | None = None
+
+    def _resolve_trajectory(self, trajectory: TrajectoryResult | None):
+        if trajectory is not None:
+            return trajectory
+        method = getattr(self._config.signals, "tracking_method", "centroid")
+        return self._core.track(method=method)
+
+    def _table_magnetoresistance(
+        self,
+        *,
+        polarizer: tuple[float, float, float] | tuple[float, float],
+        resistance_parallel_ohm: float,
+        delta_resistance_ohm: float,
+    ) -> MagnetoresistanceResult:
+        columns = _read_table_columns(self._job)
+        if not columns:
+            raise ValueError(
+                "Cannot build signals fallback from table because no readable table columns were found."
+            )
+
+        mx_key = _resolve_column_name(columns, ("mx", "Mx", "m_x", "M_x"))
+        my_key = _resolve_column_name(columns, ("my", "My", "m_y", "M_y"))
+        mz_key = _resolve_column_name(columns, ("mz", "Mz", "m_z", "M_z"))
+        if mx_key is None and my_key is None and mz_key is None:
+            raise ValueError(
+                "Table fallback requires at least one of magnetization columns "
+                "mx/my/mz."
+            )
+
+        n = None
+        for key in (mx_key, my_key, mz_key):
+            if key is not None:
+                n = int(columns[key].size)
+                break
+        assert n is not None
+
+        mx = np.asarray(columns[mx_key], dtype=float) if mx_key is not None else np.zeros(n, dtype=float)
+        my = np.asarray(columns[my_key], dtype=float) if my_key is not None else np.zeros(n, dtype=float)
+        mz = np.asarray(columns[mz_key], dtype=float) if mz_key is not None else np.zeros(n, dtype=float)
+
+        time_key = _resolve_column_name(columns, ("t", "time", "Time"))
+        if time_key is not None and int(columns[time_key].size) == n:
+            time = np.asarray(columns[time_key], dtype=float)
+        else:
+            dt = float(getattr(self._job, "attrs", {}).get("t_sampl", 1e-12))
+            time = np.arange(n, dtype=float) * dt
+
+        vec = np.asarray(polarizer, dtype=float).reshape(-1)
+        if vec.size == 2:
+            px, py = float(vec[0]), float(vec[1])
+            pz = 0.0
+        elif vec.size == 3:
+            px, py, pz = float(vec[0]), float(vec[1]), float(vec[2])
+        else:
+            raise ValueError("polarizer must have length 2 or 3")
+        norm = float(np.sqrt(px * px + py * py + pz * pz))
+        if norm <= 1e-30:
+            raise ValueError("polarizer cannot be a zero vector")
+        px, py, pz = px / norm, py / norm, pz / norm
+
+        projection = np.clip(px * mx + py * my + pz * mz, -1.0, 1.0)
+        resistance = float(resistance_parallel_ohm) + 0.5 * float(delta_resistance_ohm) * (1.0 - projection)
+
+        return MagnetoresistanceResult(
+            time=time,
+            resistance_ohm=np.asarray(resistance, dtype=float),
+            projection=np.asarray(projection, dtype=float),
+            method="table_projection",
+            metadata={
+                "table_columns": sorted(columns.keys()),
+                "mx_column": mx_key,
+                "my_column": my_key,
+                "mz_column": mz_key,
+                "polarizer": (px, py, pz),
+                "resistance_parallel_ohm": float(resistance_parallel_ohm),
+                "delta_resistance_ohm": float(delta_resistance_ohm),
+            },
+        )
+
+    def magnetoresistance(
+        self,
+        *,
+        trajectory: TrajectoryResult | None = None,
+        polarizer: tuple[float, float, float] | tuple[float, float] = (1.0, 0.0, 0.0),
+        resistance_parallel_ohm: float | None = None,
+        delta_resistance_ohm: float | None = None,
+        disk_radius: float | None = None,
+        chirality: int | None = None,
+        force: bool = False,
+    ) -> MagnetoresistanceResult:
+        """Compute MR/TMR proxy from trajectory (fallback: table projection)."""
+        if (
+            not force
+            and self._last_mr is not None
+            and trajectory is None
+            and resistance_parallel_ohm is None
+            and delta_resistance_ohm is None
+            and disk_radius is None
+            and chirality is None
+        ):
+            return self._last_mr
+
+        r_p = (
+            float(self._config.signals.resistance_parallel_ohm)
+            if resistance_parallel_ohm is None
+            else float(resistance_parallel_ohm)
+        )
+        d_r = (
+            float(self._config.signals.delta_resistance_ohm)
+            if delta_resistance_ohm is None
+            else float(delta_resistance_ohm)
+        )
+
+        try:
+            traj = self._resolve_trajectory(trajectory)
+            result = compute_magnetoresistance(
+                traj,
+                polarizer=polarizer,
+                resistance_parallel_ohm=r_p,
+                delta_resistance_ohm=d_r,
+                disk_radius=disk_radius,
+                chirality=chirality,
+            )
+        except Exception as exc:
+            result = self._table_magnetoresistance(
+                polarizer=polarizer,
+                resistance_parallel_ohm=r_p,
+                delta_resistance_ohm=d_r,
+            )
+            result.metadata["fallback_reason"] = str(exc)
+
+        self._last_mr = result
+        return result
+
+    def _resolve_current(
+        self,
+        *,
+        current_a: float | np.ndarray | None,
+        n_samples: int,
+    ) -> float | np.ndarray:
+        if current_a is not None:
+            return current_a
+
+        columns = _read_table_columns(self._job)
+        key = _resolve_column_name(
+            columns,
+            ("I", "Idc", "I_dc", "current", "current_a", "J", "Jdc"),
+        )
+        if key is not None and int(columns[key].size) == int(n_samples):
+            return np.asarray(columns[key], dtype=float)
+
+        attrs = getattr(self._job, "attrs", {})
+        for name in ("I", "Idc", "current", "current_a"):
+            value = attrs.get(name, None) if hasattr(attrs, "get") else None
+            if value is None:
+                continue
+            try:
+                return float(value)
+            except Exception:
+                continue
+
+        warnings.warn(
+            "Could not infer current automatically; using 0 A for voltage reconstruction.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return 0.0
+
+    def voltage(
+        self,
+        *,
+        current_a: float | np.ndarray | None = None,
+        trajectory: TrajectoryResult | None = None,
+        magnetoresistance: MagnetoresistanceResult | None = None,
+        force: bool = False,
+    ) -> VoltageResult:
+        """Compute voltage trace ``V(t)=I(t)R(t)``."""
+        if (
+            not force
+            and self._last_voltage is not None
+            and current_a is None
+            and trajectory is None
+            and magnetoresistance is None
+        ):
+            return self._last_voltage
+
+        mr = magnetoresistance if magnetoresistance is not None else self.magnetoresistance(
+            trajectory=trajectory
+        )
+        current = self._resolve_current(current_a=current_a, n_samples=mr.time.size)
+        result = compute_voltage(mr, current_a=current)
+        self._last_voltage = result
+        return result
+
+    def power_spectrum(
+        self,
+        *,
+        signal: str = "voltage",
+        trajectory: TrajectoryResult | None = None,
+        current_a: float | np.ndarray | None = None,
+        method: str | None = None,
+        nperseg: int | None = None,
+        force: bool = False,
+    ) -> SignalSpectrumResult:
+        """Compute PSD of voltage or resistance trace."""
+        if (
+            not force
+            and self._last_spectrum is not None
+            and signal == "voltage"
+            and trajectory is None
+            and current_a is None
+            and method is None
+            and nperseg is None
+        ):
+            return self._last_spectrum
+
+        signal_norm = str(signal).lower()
+        if signal_norm in {"voltage", "v"}:
+            source = self.voltage(current_a=current_a, trajectory=trajectory)
+            values = source.voltage_v
+            time = source.time
+            quantity = "voltage"
+        elif signal_norm in {"resistance", "mr", "tmr"}:
+            source = self.magnetoresistance(trajectory=trajectory)
+            values = source.resistance_ohm
+            time = source.time
+            quantity = "resistance"
+        else:
+            raise ValueError("signal must be one of {'voltage', 'v', 'resistance', 'mr', 'tmr'}")
+
+        method_eff = method or getattr(self._config.signals, "spectrum_method", "welch")
+        result = compute_signal_power_spectrum(
+            time,
+            values,
+            quantity=quantity,
+            method=method_eff,
+            nperseg=nperseg,
+        )
+        self._last_spectrum = result
+        return result
+
+    @property
+    def plt(self):
+        """Convenience plotting namespace."""
+        return SignalsPlotAccessor(self)
+
+    def _repr_html_(self) -> str:
+        methods = [
+            (".magnetoresistance(...)", "MR/TMR proxy from trajectory or table fallback"),
+            (".voltage(current_a=...)", "Voltage trace V(t)=I(t)R(t)"),
+            (".power_spectrum(signal='voltage')", "Signal PSD (Welch/periodogram)"),
+            (".plt.magnetoresistance()", "Compute + plot resistance trace"),
+            (".plt.voltage()", "Compute + plot voltage trace"),
+            (".plt.power_spectrum()", "Compute + plot electrical PSD"),
+        ]
+        return make_simple_card(
+            title="Vortex Signals Interface",
+            subtitle="Electrical signal reconstruction: MR/TMR, voltage and PSD",
+            rows=methods,
+        )
+
+
+class SignalsPlotAccessor:
+    """Plotting facade for :class:`SignalsInterface`."""
+
+    def __init__(self, interface: SignalsInterface):
+        self._interface = interface
+
+    def magnetoresistance(self, **kwargs):
+        """Compute and plot magnetoresistance trace."""
+        result = self._interface.magnetoresistance()
+        return result.plt.time_trace(**kwargs)
+
+    def voltage(self, **kwargs):
+        """Compute and plot voltage trace."""
+        result = self._interface.voltage()
+        return result.plt.time_trace(**kwargs)
+
+    def power_spectrum(self, **kwargs):
+        """Compute and plot electrical signal PSD."""
+        result = self._interface.power_spectrum()
+        return result.plt.power_spectrum(**kwargs)
+
+
+__all__ = ["SignalsInterface"]

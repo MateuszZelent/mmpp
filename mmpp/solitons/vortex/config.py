@@ -58,6 +58,7 @@ class ModesConfig:
 
     max_modes: int = 6
     min_prominence: float = 0.05
+    tracking_method: str = "centroid"
 
 
 @dataclass
@@ -71,6 +72,24 @@ class NonlinearConfig:
 
 
 @dataclass
+class SignalsConfig:
+    """Configuration for synthetic electrical-signal extraction."""
+
+    tracking_method: str = "centroid"
+    resistance_parallel_ohm: float = 100.0
+    delta_resistance_ohm: float = 40.0
+    spectrum_method: str = "welch"
+
+
+@dataclass
+class EnergyConfig:
+    """Configuration for energy time-series extraction from table data."""
+
+    column_prefixes: tuple[str, ...] = ("E_", "energy", "W_")
+    strict_missing: bool = False
+
+
+@dataclass
 class VortexConfig(SolitonConfig):
     """Top-level mutable configuration for vortex analysis."""
 
@@ -80,3 +99,5 @@ class VortexConfig(SolitonConfig):
     spectrum: SpectrumConfig = field(default_factory=SpectrumConfig)
     modes: ModesConfig = field(default_factory=ModesConfig)
     nonlinear: NonlinearConfig = field(default_factory=NonlinearConfig)
+    signals: SignalsConfig = field(default_factory=SignalsConfig)
+    energy: EnergyConfig = field(default_factory=EnergyConfig)

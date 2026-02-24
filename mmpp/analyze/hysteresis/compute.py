@@ -209,16 +209,23 @@ def build_cloneflip_result(result: "HysteresisResult") -> "HysteresisResult":
         )
 
     # ── reflected ascending part: (−B_s[::-1], −M_s[::-1]) ──────────────────
-    # Example: B_s = [−0.0065, …, −0.0005]
-    #          −B_s[::-1] = [+0.0005, …, +0.0065]  ← ascending, positive range
+    # Points at the opposite polarity: B_refl is ascending (from −b_max to −b_min).
     B_refl = -B_s[::-1]
     M_refl = -M_s[::-1]
     frame_refl = frame_s[::-1]  # map to same snapshot at mirrored |B|
 
-    # ── outward sweep: original ascending + reflected ascending ───────────────
-    B_up = np.concatenate([B_s, B_refl])        # 2N points
-    M_up = np.concatenate([M_s, M_refl])
-    frame_up = np.concatenate([frame_s, frame_refl])
+    # ── outward sweep: sorted merge of original and reflected ─────────────────
+    # We must sort so B_up is strictly ascending regardless of whether the
+    # original data lives in positive-B, negative-B or mixed range.
+    # Example (all-positive original, B_s=[+0.0005…+0.0065]):
+    #   B_refl = [−0.0065…−0.0005] → sorted concat → [−0.0065…−0.0005, +0.0005…+0.0065] ✓
+    _B_join = np.concatenate([B_s, B_refl])
+    _M_join = np.concatenate([M_s, M_refl])
+    _f_join = np.concatenate([frame_s, frame_refl])
+    _sort = np.argsort(_B_join, kind="stable")
+    B_up = _B_join[_sort]
+    M_up = _M_join[_sort]
+    frame_up = _f_join[_sort]
 
     # ── return sweep: reverse of outward (reversible → zero area) ────────────
     # Skip the first point of the reversed array (== B_up[-1]) to avoid a

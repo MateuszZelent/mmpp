@@ -1,38 +1,33 @@
-"""Plugin registry for user-defined hysteresis metrics."""
+"""Hysteresis metric registry backed by shared plugin registry."""
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 
-_LOG = logging.getLogger(__name__)
-_METRIC_REGISTRY: dict[str, Callable] = {}
+from ...._shared.registry import (
+    get_registered_metric as _get_registered_metric,
+    get_registry,
+    iter_registered_metrics as _iter_registered_metrics,
+    register_metric as _register_metric,
+)
+
+_NAMESPACE = "hysteresis.metrics"
+_METRIC_REGISTRY = get_registry(_NAMESPACE)
 
 
 def register_metric(name: str):
-    """Register a custom metric callable under a public name."""
-
-    metric_name = str(name).strip()
-    if not metric_name:
-        raise ValueError("Metric name must be non-empty")
-
-    def decorator(func: Callable):
-        if metric_name in _METRIC_REGISTRY:
-            _LOG.info("Replacing existing hysteresis metric registration: %s", metric_name)
-        _METRIC_REGISTRY[metric_name] = func
-        return func
-
-    return decorator
+    """Register custom metric callable under hysteresis namespace."""
+    return _register_metric(name, namespace=_NAMESPACE)
 
 
 def get_registered_metric(name: str) -> Callable | None:
     """Return registered metric callable by name."""
-    return _METRIC_REGISTRY.get(str(name))
+    return _get_registered_metric(name, namespace=_NAMESPACE)
 
 
 def iter_registered_metrics() -> list[tuple[str, Callable]]:
-    """Return sorted (name, callable) metric registry snapshot."""
-    return sorted(_METRIC_REGISTRY.items(), key=lambda item: item[0])
+    """Return sorted (name, callable) registry snapshot."""
+    return _iter_registered_metrics(namespace=_NAMESPACE)
 
 
 __all__ = [

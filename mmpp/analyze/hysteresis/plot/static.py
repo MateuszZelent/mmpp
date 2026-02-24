@@ -54,6 +54,17 @@ def plot_loop(
     mag = np.asarray(result.magnetization, dtype=float)
 
     c_asc, c_desc = cfg.branch_colors
+    n_total = field.size
+
+    # ── per-point color array — avoids z-order override ──────────────────────
+    point_colors = np.full(n_total, c_asc, dtype=object)
+    for branch in result.branches:
+        color = c_asc if branch.name == "ascending" else c_desc
+        if not show_branch_colors:
+            color = "#3b82f6"
+        point_colors[branch.slice] = color
+
+    # ── lines per branch ──────────────────────────────────────────────────────
     for branch in result.branches:
         color = c_asc if branch.name == "ascending" else c_desc
         if not show_branch_colors:
@@ -65,14 +76,14 @@ def plot_loop(
         label = branch.name if branch is result.branches[0] or branch.name not in {"ascending", "descending"} else None
         ax.plot(x, y, color=color, lw=1.8, alpha=0.9, label=label)
 
-    if show_markers and field.size:
+    # ── single scatter with per-point colors ─────────────────────────────────
+    if n_total > 0 and show_markers:
         ax.scatter(
-            [field[0], field[-1]],
-            [mag[0], mag[-1]],
+            field,
+            mag,
             s=float(cfg.marker_size) * 4,
-            color=["#16a34a", "#dc2626"],
+            c=list(point_colors),
             zorder=5,
-            label="start/end",
         )
 
     annotations: dict[str, Any] = {}

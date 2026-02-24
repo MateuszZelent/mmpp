@@ -72,27 +72,38 @@ def draw_loop_panel(explorer) -> None:
 
     field = np.asarray(explorer.result.field, dtype=float)
     mag = np.asarray(explorer.result.magnetization, dtype=float)
+    n_total = field.size
 
+    # ── build per-point color array (no z-order fights) ──────────────────────
+    asc_color, desc_color = explorer.result.config.branch_colors
+    use_branch_colors = explorer.state.show_flags.get("branch_colors", True)
+    default_color = "#3b82f6"
+
+    point_colors = np.full(n_total, default_color if not use_branch_colors else asc_color, dtype=object)
+    for branch in explorer.result.branches:
+        if not use_branch_colors:
+            color = default_color
+        else:
+            color = asc_color if branch.name == "ascending" else desc_color
+        point_colors[branch.slice] = color
+
+    # ── draw branch lines (one per branch, correct color) ──────────────────
     for branch in explorer.result.branches:
         x = field[branch.slice]
         y = mag[branch.slice]
         if x.size == 0:
             continue
-        color = _branch_color(explorer, branch.name)
-        ax.plot(
-            x,
-            y,
-            color=color,
-            lw=1.0,
-            alpha=0.35,
-            zorder=2,
-        )
+        color = point_colors[branch.start]
+        ax.plot(x, y, color=color, lw=1.4, alpha=0.45, zorder=2)
+
+    # ── single scatter with per-point colors ───────────────────────────────
+    if n_total > 0:
         points = ax.scatter(
-            x,
-            y,
-            s=26,
-            color=color,
-            alpha=0.9,
+            field,
+            mag,
+            s=24,
+            c=list(point_colors),
+            alpha=0.85,
             linewidths=0.0,
             zorder=4,
         )
@@ -122,7 +133,11 @@ def draw_loop_panel(explorer) -> None:
     ax.set_title("")
     ax.grid(True, alpha=0.25)
 
-    explorer._loop_trail, = ax.plot([], [], color="#0ea5e9", lw=2.0, alpha=0.35)
+    # Trail disabled — for snapshot-per-field data it just retraces the loop
+    # path itself and adds visual noise.  Use a no-op invisible line so that
+    # update_loop_cursor can still call set_data() without attribute errors.
+    explorer._loop_trail, = ax.plot([], [], color="#0ea5e9", lw=0, alpha=0.0)
+
     explorer._loop_marker = ax.scatter(
         [],
         [],
@@ -138,6 +153,7 @@ def draw_loop_panel(explorer) -> None:
         xytext=(0.0, 0.0),
         arrowprops={"arrowstyle": "->", "color": "#f59e0b", "lw": 1.5, "alpha": 0.9},
     )
+
 
 
 def update_loop_cursor(explorer, *, redraw: bool = True) -> None:

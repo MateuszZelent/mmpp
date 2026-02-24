@@ -81,10 +81,18 @@ class FFTTransmissionHelpAccessor:
             ["job[0].fft.transmission.help.visualize_modes([2.2, 2.5, 2.8])"],
         )
 
+    @property
+    def save_mode_visualizations(self) -> CallableMethodHelper:
+        return self._method(
+            "save_mode_visualizations",
+            "Save one mode image per selected frequency/bin to a folder.",
+            ["job[0].fft.transmission.help.save_mode_visualizations('mode_frames')"],
+        )
+
     def __repr__(self) -> str:
         return (
             "<FFTTransmissionHelpAccessor: compute, call, plot_transmission, "
-            "visualize_mode, visualize_modes>"
+            "visualize_mode, visualize_modes, save_mode_visualizations>"
         )
 
 
@@ -388,6 +396,36 @@ class FFTTransmissionInterface:
                 **compute_args,
             )
         return result.visualize_modes(frequencies, **visualize_kwargs)
+
+    def save_mode_visualizations(
+        self,
+        output_dir: Union[str, Path],
+        *,
+        result: Optional[TransmissionResult] = None,
+        compute_kwargs: Optional[dict[str, Any]] = None,
+        save: bool = False,
+        cache_path: Optional[Union[str, Path]] = None,
+        force: bool = False,
+        use_cache: bool = True,
+        **save_kwargs,
+    ):
+        """Compute (if needed) and save per-frequency mode visualizations."""
+        if result is None:
+            compute_args = dict(compute_kwargs or {})
+            compute_args.setdefault("raw_fft_output", True)
+            compute_args.setdefault("y_integration_mode", "none")
+            compute_args.setdefault("normalize", "none")
+            compute_args.setdefault("average_mode", "none")
+            compute_args.setdefault("spatial_window", 1)
+            compute_args.setdefault("spatial_step", 1)
+            result = self.__call__(
+                save=save,
+                cache_path=cache_path,
+                force=force,
+                use_cache=use_cache,
+                **compute_args,
+            )
+        return result.save_mode_visualizations(output_dir=output_dir, **save_kwargs)
 
     # ------------------------------------------------------------------
     # Rich / basic representation helpers

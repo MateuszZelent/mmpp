@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from mmpp._shared.repr_html import make_simple_card
+
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -26,6 +28,19 @@ class PolaritySwitchEvent:
     confidence: float
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def _repr_html_(self) -> str:
+        rows = [
+            ("time_s", f"{float(self.time):.6g}"),
+            ("index", str(int(self.index))),
+            ("transition", f"{int(self.from_p)} -> {int(self.to_p)}"),
+            ("confidence", f"{float(self.confidence):.6g}"),
+        ]
+        return make_simple_card(
+            title="PolaritySwitchEvent",
+            subtitle="Detected polarity transition event",
+            rows=rows,
+        )
+
 
 @dataclass
 class StateSwitchEvent:
@@ -37,6 +52,19 @@ class StateSwitchEvent:
     to_state: str
     confidence: float
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def _repr_html_(self) -> str:
+        rows = [
+            ("time_s", f"{float(self.time):.6g}"),
+            ("index", str(int(self.index))),
+            ("transition", f"{self.from_state} -> {self.to_state}"),
+            ("confidence", f"{float(self.confidence):.6g}"),
+        ]
+        return make_simple_card(
+            title="StateSwitchEvent",
+            subtitle="Detected G/C state transition",
+            rows=rows,
+        )
 
 
 @dataclass
@@ -50,6 +78,21 @@ class CoreExpulsionEvent:
     confidence: float
     duration: float
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def _repr_html_(self) -> str:
+        rows = [
+            ("time_s", f"{float(self.time):.6g}"),
+            ("index", str(int(self.index))),
+            ("radius_nm", f"{float(self.radius) * 1e9:.6g}"),
+            ("threshold_nm", f"{float(self.threshold) * 1e9:.6g}"),
+            ("duration_ns", f"{float(self.duration) * 1e9:.6g}"),
+            ("confidence", f"{float(self.confidence):.6g}"),
+        ]
+        return make_simple_card(
+            title="CoreExpulsionEvent",
+            subtitle="Detected core expulsion near disk boundary",
+            rows=rows,
+        )
 
 
 @dataclass
@@ -92,6 +135,21 @@ class DwellTimeResult:
     def plt(self) -> DwellTimePlotAccessor:
         """Plotting accessor."""
         return DwellTimePlotAccessor(self)
+
+    def _repr_html_(self) -> str:
+        rows = [
+            ("state", str(self.state)),
+            ("count", str(self.count)),
+            ("mean_ns", f"{self.mean_dwell_time * 1e9:.6g}"),
+            ("std_ns", f"{self.std_dwell_time * 1e9:.6g}"),
+            ("total_ns", f"{self.total_time * 1e9:.6g}"),
+            (".plt.dwell_histogram()", "Plot dwell-time distribution"),
+        ]
+        return make_simple_card(
+            title="DwellTimeResult",
+            subtitle="State dwell-time statistics",
+            rows=rows,
+        )
 
 
 class DwellTimePlotAccessor:

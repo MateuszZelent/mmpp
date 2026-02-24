@@ -232,9 +232,24 @@ def test_gaussian_fallback_at_edge():
     assert result_edge.y.size == 1
     assert result_edge.metadata["gaussian_frame_fallbacks"] >= 1
     assert float(result_edge.confidence[0]) < 0.5
+    assert "method_used" in result_edge.metadata
+    assert result_edge.metadata["method_used"][0] == "centroid"
 
     assert result_center.metadata["gaussian_frame_fallbacks"] == 0
     assert float(result_center.confidence[0]) > float(result_edge.confidence[0])
+    assert result_center.metadata["method_used"][0] == "gaussian"
+
+
+def test_tracking_interface_accepts_roi_and_keeps_time_shape(tmp_path):
+    data, _, _, dx, dy, dt = _make_orbit_data(nt=24, nx=80, ny=80)
+    job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+
+    traj = job.m.vortex.track(method="gaussian", roi=(10, 70, 10, 70))
+
+    assert traj.time.ndim == 1
+    assert traj.x.shape == traj.time.shape
+    assert traj.y.shape == traj.time.shape
+    assert traj.metadata.get("roi") == (10, 70, 10, 70)
 
 
 def test_polarity_series_contains_switch_metadata():

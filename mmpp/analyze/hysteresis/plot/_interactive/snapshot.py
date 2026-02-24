@@ -7,7 +7,10 @@ from typing import Any
 
 import numpy as np
 
-from .....pyzfn.snapshot import _create_quiver_grid_and_scale, _vector_field_to_rgb
+from .....ui.snapshot import (
+    create_quiver_grid_and_scale as _create_quiver_grid_and_scale,
+    vector_field_to_rgb as _vector_field_to_rgb,
+)
 
 
 class SnapshotCache:

@@ -66,6 +66,10 @@ tests/**
 !tests/fixtures/
 !tests/fixtures/__init__.py
 !tests/fixtures/synthetic_vortex.py
+!tests/fixtures/synthetic_hysteresis.py
+!tests/notebooks/
+!tests/notebooks/vortex/
+!tests/notebooks/vortex/vortex_dynamics.ipynb
 !tests/test_dispersion_mode_extraction.py
 !tests/test_vortex_topology.py
 !tests/test_vortex_tracking.py
@@ -74,7 +78,16 @@ tests/**
 !tests/test_vortex_modes.py
 !tests/test_vortex_nonlinear.py
 !tests/test_vortex_events.py
+!tests/test_vortex_signals.py
+!tests/test_vortex_energy.py
+!tests/test_vortex_interactive.py
+!tests/test_vortex_bridge_fit.py
+!tests/test_vortex_html_helpers.py
+!tests/test_fft_vortex_classifier_wrapper.py
 !tests/test_spectrum_modes_bridge.py
+!tests/test_imports_vortex.py
+!tests/test_imports_hysteresis.py
+!tests/test_xy_convention_contract.py
 
 # Translations
 *.mo
@@ -172,6 +185,7 @@ data/
 results/
 temp/
 *.ipynb
+!tests/notebooks/vortex/vortex_dynamics.ipynb
 *.png
 *.jpg
 *.jpeg

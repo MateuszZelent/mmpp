@@ -31,6 +31,10 @@ class VortexInterface:
         self._modes = None
         self._nonlinear = None
         self._events = None
+        self._signals = None
+        self._energy = None
+        self._model = None
+        self._bridge = None
 
     @property
     def dataset_name(self) -> str:
@@ -48,7 +52,7 @@ class VortexInterface:
     def topology(self):
         """Topology analysis namespace."""
         if self._topology is None:
-            from .topology import TopologyInterface
+            from .numerical.topology import TopologyInterface
 
             self._topology = TopologyInterface(
                 self._job,
@@ -62,7 +66,7 @@ class VortexInterface:
     def core(self):
         """Core-tracking namespace."""
         if self._core is None:
-            from .core import CoreInterface
+            from .numerical.core import CoreInterface
 
             self._core = CoreInterface(
                 self._job,
@@ -106,7 +110,7 @@ class VortexInterface:
     def modes(self):
         """Mode-classification namespace."""
         if self._modes is None:
-            from .modes import VortexModesInterface
+            from .numerical.modes import VortexModesInterface
 
             self._modes = VortexModesInterface(
                 self._job,
@@ -122,7 +126,7 @@ class VortexInterface:
     def nonlinear(self):
         """Nonlinear dynamics namespace."""
         if self._nonlinear is None:
-            from .nonlinear import NonlinearInterface
+            from .numerical.nonlinear import NonlinearInterface
 
             self._nonlinear = NonlinearInterface(
                 self._job,
@@ -139,7 +143,7 @@ class VortexInterface:
     def events(self):
         """Event detection namespace."""
         if self._events is None:
-            from .events import EventsInterface
+            from .numerical.events import EventsInterface
 
             self._events = EventsInterface(
                 self._job,
@@ -150,6 +154,58 @@ class VortexInterface:
                 trajectory_interface=self.trajectory,
             )
         return self._events
+
+    @property
+    def signals(self):
+        """Synthetic electrical-signal namespace (MR/TMR, voltage, PSD)."""
+        if self._signals is None:
+            from .numerical.signals import SignalsInterface
+
+            self._signals = SignalsInterface(
+                self._job,
+                dataset_name=self.dataset_name,
+                slice_info=self._slice_info,
+                config=self._config,
+                core_interface=self.core,
+            )
+        return self._signals
+
+    @property
+    def energy(self):
+        """Energy-analysis namespace sourced from table channels."""
+        if self._energy is None:
+            from .numerical.energy import EnergyInterface
+
+            self._energy = EnergyInterface(
+                self._job,
+                dataset_name=self.dataset_name,
+                slice_info=self._slice_info,
+                config=self._config,
+                core_interface=self.core,
+            )
+        return self._energy
+
+    @property
+    def model(self):
+        """Analytical-model namespace (Thiele and future adapters)."""
+        if self._model is None:
+            from .model import VortexModelInterface
+
+            self._model = VortexModelInterface(
+                self._job,
+                dataset_name=self.dataset_name,
+                slice_info=self._slice_info,
+            )
+        return self._model
+
+    @property
+    def bridge(self):
+        """Numerical <-> analytical bridge namespace."""
+        if self._bridge is None:
+            from .bridge import BridgeInterface
+
+            self._bridge = BridgeInterface()
+        return self._bridge
 
     def track(self, method: str = "gaussian", **kwargs):
         """Shortcut alias for ``self.core.track``."""
@@ -179,6 +235,10 @@ class VortexInterface:
             (".modes", "Mode classification & identification"),
             (".nonlinear", "Nonlinear dynamics analysis"),
             (".events", "Event detection (switching, nucleation, ...)"),
+            (".signals", "MR/TMR, voltage and signal spectra"),
+            (".energy", "Energy channels from table (E_ex, E_demag, ...)"),
+            (".model", "Analytical models (Thiele adapters)"),
+            (".bridge", "Numerical ↔ analytical comparison/fit glue"),
         ]
         ns_rows = "".join(
             f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"

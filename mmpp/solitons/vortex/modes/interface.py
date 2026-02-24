@@ -39,7 +39,9 @@ class VortexModesInterface:
 
     def _get_classifier(self) -> VortexModesClassifier:
         if self._classifier is None:
-            trajectory = self._core.track()
+            # Mode classification is spectrum-driven and does not require the
+            # most expensive sub-pixel tracker by default.
+            trajectory = self._core.track(method=self._config.modes.tracking_method)
             self._classifier = VortexModesClassifier(trajectory)
         return self._classifier
 

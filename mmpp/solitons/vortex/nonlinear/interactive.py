@@ -56,6 +56,7 @@ def proxy_signal_from_trajectory(
     *,
     disk_radius: float | None = None,
     polarizer_angle_deg: float = 0.0,
+    polarizer: tuple[float, float, float] | tuple[float, float] | None = None,
     center: tuple[float, float] | None = None,
     cubic: float = 0.0,
     chirality: int = 1,
@@ -95,7 +96,18 @@ def proxy_signal_from_trajectory(
     mx_avg = -c * xi * y_reduced
     my_avg =  c * xi * x_reduced
 
-    px, py = _normalize_in_plane_polarizer(polarizer_angle_deg)
+    if polarizer is not None:
+        polarizer_vec = np.asarray(polarizer, dtype=float).reshape(-1)
+        if polarizer_vec.size < 2:
+            raise ValueError("polarizer must provide at least x and y components")
+        px_raw = float(polarizer_vec[0])
+        py_raw = float(polarizer_vec[1])
+        norm = float(np.hypot(px_raw, py_raw))
+        if norm <= 1e-30:
+            raise ValueError("polarizer x/y components cannot both be zero")
+        px, py = px_raw / norm, py_raw / norm
+    else:
+        px, py = _normalize_in_plane_polarizer(polarizer_angle_deg)
     
     # Sygnał TMR jest proporcjonalny do rzutu <M> na oś polaryzatora w płaszczyźnie
     base_signal = px * mx_avg + py * my_avg
@@ -174,7 +186,8 @@ class ThieleInteractiveDashboard:
         ax.relim()
         ax.autoscale_view()
 
-    def show(self, figsize=(14, 4.5), dpi=100):
+    def show(self, figsize=(14, 4.5), dpi=100, fast_mode: bool = False):
+        _ = fast_mode
         self._require_widgets()
         self.dpi = dpi
 
@@ -701,7 +714,8 @@ class ThieleInteractiveDashboard:
         self._update_hud()
 
 
-def build_thiele_dashboard(**kwargs):
+def build_thiele_dashboard(analyzer: Any | None = None, **kwargs):
+    _ = analyzer
     dash = ThieleInteractiveDashboard()
     return dash.show(**kwargs)
 

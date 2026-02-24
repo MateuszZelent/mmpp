@@ -361,16 +361,15 @@ def from_magnetization(
         raise ValueError(f"Dataset '{dset}' is not available") from exc
 
     try:
-        source_data = np.asarray(
-            dset_obj[slice_info] if slice_info is not None else dset_obj[:],
-            dtype=float,
-        )
+        # Prefer lazy per-frame reads to avoid materializing full 4D/5D arrays.
+        source_data = dset_obj if slice_info is None else dset_obj[slice_info]
     except Exception as exc:
         raise ValueError(f"Failed reading dataset '{dset}'") from exc
 
-    if source_data.ndim not in {4, 5}:
+    shape = tuple(getattr(source_data, "shape", ()))
+    if len(shape) not in {4, 5}:
         raise ValueError(
-            f"Dataset '{dset}' must be 4D or 5D magnetization, got ndim={source_data.ndim}"
+            f"Dataset '{dset}' must be 4D or 5D magnetization, got ndim={len(shape)}"
         )
 
     component_key = str(component).lower()
@@ -379,28 +378,27 @@ def from_magnetization(
     if component_key not in {"x", "y", "z", "norm"}:
         raise ValueError("component must be one of: 'x', 'y', 'z', 'norm', 'snapshot'")
 
-    if source_data.ndim == 5:
+    if len(shape) == 5:
         # (t, z, y, x, c)
-        t_count, z_count, ny, nx, c_count = source_data.shape
+        t_count, z_count, ny, nx, c_count = shape
         if c_count < 1:
             raise ValueError(f"Dataset '{dset}' has no vector components")
         if z_layer == "all":
-            vec = source_data[:, :, :, :, : max(1, min(3, c_count))].mean(axis=1)
+            z_idx = None
         else:
             z_idx = int(z_layer)
             if z_idx < 0 or z_idx >= z_count:
                 raise ValueError(f"z_layer out of range: {z_idx} (valid 0..{z_count - 1})")
-            vec = source_data[:, z_idx, :, :, : max(1, min(3, c_count))]
     else:
         # (t, y, x, c)
-        t_count, ny, nx, c_count = source_data.shape
+        t_count, ny, nx, c_count = shape
         if c_count < 1:
             raise ValueError(f"Dataset '{dset}' has no vector components")
         if z_layer != 0 and z_layer != "all":
             raise ValueError(
                 "z_layer is not applicable for 4D dataset; use 0 or 'all'"
             )
-        vec = source_data[:, :, :, : max(1, min(3, c_count))]
+        z_idx = None
 
     attrs = getattr(job_result, "attrs", {})
     dx = attrs.get("dx") if hasattr(attrs, "get") else None
@@ -415,21 +413,42 @@ def from_magnetization(
         dy=float(dy) if dy is not None else None,
     )
 
-    vec_roi = vec[:, y0:y1, x0:x1, :]
-    if vec_roi.size == 0:
-        raise ValueError("ROI produced empty magnetization selection")
+    n_components = max(1, min(3, int(c_count)))
+    comp_idx = _COMPONENT_KEYS.get(component_key)
+    if comp_idx is not None and comp_idx >= n_components:
+        raise ValueError(
+            f"Requested component '{component_key}' is not available in "
+            f"dataset '{dset}' (components={n_components})"
+        )
 
-    if component_key in _COMPONENT_KEYS:
-        comp_idx = _COMPONENT_KEYS[component_key]
-        n_components = int(vec_roi.shape[-1])
-        if comp_idx >= n_components:
-            raise ValueError(
-                f"Requested component '{component_key}' is not available in "
-                f"dataset '{dset}' (components={n_components})"
+    mag_series = np.zeros(int(t_count), dtype=float)
+    for t_idx in range(int(t_count)):
+        if len(shape) == 5:
+            if z_idx is None:
+                # (z, y, x, c) -> mean over z
+                frame_vec = np.asarray(
+                    source_data[t_idx, :, y0:y1, x0:x1, :n_components],
+                    dtype=float,
+                )
+                vec_roi = np.mean(frame_vec, axis=0)
+            else:
+                vec_roi = np.asarray(
+                    source_data[t_idx, z_idx, y0:y1, x0:x1, :n_components],
+                    dtype=float,
+                )
+        else:
+            vec_roi = np.asarray(
+                source_data[t_idx, y0:y1, x0:x1, :n_components],
+                dtype=float,
             )
-        mag_series = np.mean(vec_roi[..., comp_idx], axis=(1, 2))
-    else:
-        mag_series = np.mean(np.linalg.norm(vec_roi, axis=-1), axis=(1, 2))
+
+        if vec_roi.size == 0:
+            raise ValueError("ROI produced empty magnetization selection")
+
+        if comp_idx is not None:
+            mag_series[t_idx] = float(np.mean(vec_roi[..., comp_idx]))
+        else:
+            mag_series[t_idx] = float(np.mean(np.linalg.norm(vec_roi, axis=-1)))
 
     field_arr, field_source = _extract_field_array(
         job_result,

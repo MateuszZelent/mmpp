@@ -1,19 +1,7 @@
-"""Tracking method registry for vortex core tracking."""
+"""Compatibility wrapper for numerical core method registry."""
 
 from __future__ import annotations
 
-from enum import Enum
-
-
-class TrackingMethod(str, Enum):
-    """Supported core tracking methods."""
-
-    MAXIMUM = "maximum"
-    CENTROID = "centroid"
-    GAUSSIAN = "gaussian"
-
-
-TRACKING_METHODS: set[str] = {item.value for item in TrackingMethod}
-
+from ..numerical.core.methods import TRACKING_METHODS, TrackingMethod
 
 __all__ = ["TrackingMethod", "TRACKING_METHODS"]

@@ -128,6 +128,7 @@ def test_transmission_and_dispersion_help_accessors_are_exposed(tmp_path):
     assert callable(t_help.plot_transmission)
     assert callable(t_help.visualize_mode)
     assert callable(t_help.visualize_modes)
+    assert callable(t_help.save_mode_visualizations)
 
     d_help = job.fft.dispersion.help
     assert callable(d_help.compute_1d)
@@ -295,3 +296,101 @@ def test_transmission_calculate_modes_and_visualize_workflow():
     assert meta_single["xy"].shape == (3, 6)
     assert not ax_single.xaxis_inverted()
     plt.close(fig_single)
+
+
+def test_transmission_visualize_mode_matches_single_bin_irfft_reference():
+    n_time = 18
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+    raw_fft = np.zeros((freqs.size, 1, 2, 4, 1), dtype=np.complex128)
+    raw_fft[3, 0, :, :, 0] = np.array(
+        [
+            [1.0 + 0.5j, -0.2 + 0.3j, 0.5 - 0.1j, 0.9 + 0.7j],
+            [0.1 + 0.8j, 0.2 + 0.4j, -0.7 + 0.9j, 0.3 - 0.6j],
+        ]
+    )
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(4, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=1e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    t_show = 5
+    fig, _, meta = result.visualize_mode(
+        k=3,
+        component=0,
+        t_show=t_show,
+        colorbar=False,
+        copy_y=1,
+    )
+
+    filtered = np.zeros_like(raw_fft)
+    filtered[3, ...] = raw_fft[3, ...]
+    wave = np.fft.irfft(filtered, n=n_time, axis=0)
+    reference_xy = wave[t_show, 0, :, :, 0]
+
+    assert np.allclose(meta["xy"], reference_xy)
+    plt.close(fig)
+
+
+def test_transmission_result_save_mode_visualizations_saves_all_bins(tmp_path):
+    n_time = 12
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+    raw_fft = np.zeros((freqs.size, 1, 2, 3, 1), dtype=np.complex128)
+    raw_fft[1:, 0, :, :, 0] = 0.25 + 0.5j
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(3, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=2e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    out_dir = tmp_path / "all_modes"
+    paths = result.save_mode_visualizations(
+        output_dir=out_dir,
+        colorbar=False,
+        show_progress=False,
+    )
+
+    assert len(paths) == freqs.size
+    assert all(path.exists() for path in paths)
+    assert paths[0].suffix == ".png"
+
+
+def test_transmission_modes_result_save_visualizations(tmp_path):
+    n_time = 20
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+    raw_fft = np.zeros((freqs.size, 1, 3, 5, 1), dtype=np.complex128)
+    raw_fft[2, 0, :, :, 0] = 1.0 + 0.2j
+    raw_fft[4, 0, :, :, 0] = 0.6 + 0.3j
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(5, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=2e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    modes = result.calculate_modes(k=[2, 4], component=0, t_show=0)
+    out_dir = tmp_path / "precomputed_modes"
+    paths = modes.save_visualizations(out_dir, colorbar=False, show_progress=False)
+
+    assert len(paths) == 2
+    assert all(path.exists() for path in paths)
