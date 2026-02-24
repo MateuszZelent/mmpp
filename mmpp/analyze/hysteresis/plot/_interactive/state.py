@@ -18,6 +18,8 @@ class HysteresisExplorerState:
     snapshot_component: str = "snapshot"
     z_layer: int | str = 0
     roi: tuple[int, int, int, int] | None = None
+    loop_panel_weight: float = 1.15
+    snapshot_panel_weight: float = 1.0
     show_flags: dict[str, bool] = field(
         default_factory=lambda: {
             "hc": True,

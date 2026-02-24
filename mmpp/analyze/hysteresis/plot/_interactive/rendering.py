@@ -5,6 +5,48 @@ from __future__ import annotations
 import numpy as np
 
 
+def _field_axis_label_from_metadata(meta: dict) -> str:
+    unit = str(meta.get("field_unit", "input")).strip()
+
+    raw = str(meta.get("field_column") or meta.get("field_source") or "B").strip().lower()
+    symbol = "H" if raw.startswith("h") else "B"
+    suffix = raw[-1] if raw else ""
+    if suffix in {"x", "y", "z"}:
+        var = rf"${symbol}_{suffix}$"
+    else:
+        var = rf"${symbol}$"
+    return f"{var} ({unit})"
+
+
+def _magnetization_label_from_metadata(meta: dict) -> str:
+    column = meta.get("magnetization_column")
+    if isinstance(column, str) and column.strip():
+        c = column.strip()
+        cl = c.lower()
+        if cl in {"mx", "my", "mz"}:
+            return rf"$m_{cl[-1]}$"
+        if cl in {"m_full", "norm", "|m|", "magnitude"}:
+            return r"$|m|$"
+        return c
+
+    component = str(meta.get("component", "")).strip().lower()
+    if component in {"x", "y", "z"}:
+        return rf"$m_{component}$"
+    if component in {"norm", "|m|", "magnitude"}:
+        return r"$|m|$"
+
+    label = meta.get("magnetization_label")
+    if isinstance(label, str) and label.strip():
+        return label
+    return r"$M$"
+
+
+def resolve_loop_axis_labels(result) -> tuple[str, str]:
+    """Resolve loop-axis labels from result metadata using math-style notation."""
+    meta = getattr(result, "metadata", {}) or {}
+    return _field_axis_label_from_metadata(meta), _magnetization_label_from_metadata(meta)
+
+
 def _branch_color(explorer, branch_name: str) -> str:
     if not explorer.state.show_flags.get("branch_colors", True):
         return "#3b82f6"
@@ -12,10 +54,21 @@ def _branch_color(explorer, branch_name: str) -> str:
     return asc if branch_name == "ascending" else desc
 
 
+def _field_axis_label(explorer) -> str:
+    meta = getattr(explorer.result, "metadata", {}) or {}
+    return _field_axis_label_from_metadata(meta)
+
+
+def _magnetization_label(explorer) -> str:
+    meta = getattr(explorer.result, "metadata", {}) or {}
+    return _magnetization_label_from_metadata(meta)
+
+
 def draw_loop_panel(explorer) -> None:
     """Render static loop traces and metric guides."""
     ax = explorer._ax_loop
     ax.clear()
+    explorer._loop_points = []
 
     field = np.asarray(explorer.result.field, dtype=float)
     mag = np.asarray(explorer.result.magnetization, dtype=float)
@@ -25,13 +78,25 @@ def draw_loop_panel(explorer) -> None:
         y = mag[branch.slice]
         if x.size == 0:
             continue
+        color = _branch_color(explorer, branch.name)
         ax.plot(
             x,
             y,
-            color=_branch_color(explorer, branch.name),
-            lw=1.8,
-            alpha=0.9,
+            color=color,
+            lw=1.0,
+            alpha=0.35,
+            zorder=2,
         )
+        points = ax.scatter(
+            x,
+            y,
+            s=26,
+            color=color,
+            alpha=0.9,
+            linewidths=0.0,
+            zorder=4,
+        )
+        explorer._loop_points.append(points)
 
     if explorer.state.show_flags.get("hc", True):
         hc = explorer.result.metrics.coercive_field
@@ -52,18 +117,26 @@ def draw_loop_panel(explorer) -> None:
         if np.isfinite(ms.ms_negative):
             ax.scatter([ms.hs_negative], [ms.ms_negative], color="#ef4444", s=42, zorder=6)
 
-    ax.set_xlabel(f"Field [{explorer.result.metadata.get('field_unit', 'input')}]")
-    ax.set_ylabel("Magnetization")
-    ax.set_title("Hysteresis loop")
+    ax.set_xlabel(_field_axis_label(explorer))
+    ax.set_ylabel(_magnetization_label(explorer))
+    ax.set_title("")
     ax.grid(True, alpha=0.25)
 
     explorer._loop_trail, = ax.plot([], [], color="#0ea5e9", lw=2.0, alpha=0.35)
-    explorer._loop_marker = ax.scatter([], [], s=90, color="#111827", zorder=7)
+    explorer._loop_marker = ax.scatter(
+        [],
+        [],
+        s=140,
+        color="#f59e0b",
+        edgecolors="#111827",
+        linewidths=1.2,
+        zorder=7,
+    )
     explorer._loop_arrow = ax.annotate(
         "",
         xy=(0.0, 0.0),
         xytext=(0.0, 0.0),
-        arrowprops={"arrowstyle": "->", "color": "#111827", "lw": 1.4, "alpha": 0.8},
+        arrowprops={"arrowstyle": "->", "color": "#f59e0b", "lw": 1.5, "alpha": 0.9},
     )
 
 
@@ -93,8 +166,8 @@ def update_loop_cursor(explorer, *, redraw: bool = True) -> None:
     else:
         explorer._loop_trail.set_data([], [])
 
-    if explorer.state.show_flags.get("arrow", True) and n_points >= 2:
-        next_idx = (idx + 1) % n_points
+    if explorer.state.show_flags.get("arrow", True) and n_points >= 2 and idx < (n_points - 1):
+        next_idx = idx + 1
         explorer._loop_arrow.set_visible(True)
         explorer._loop_arrow.xy = (float(field[next_idx]), float(mag[next_idx]))
         explorer._loop_arrow.set_position((x, y))

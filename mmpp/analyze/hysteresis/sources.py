@@ -703,6 +703,8 @@ def from_zarr_keys(
     from .compute import segment_branches as _seg
 
     meta = dict(metadata or {})
+    # frame_keys: {frame_idx_value -> zarr_key}  (frame_idx_value == candidate index)
+    frame_keys = {fi: candidates[fi][1] for fi in frame_indices}
     meta.update({
         "source_type": "zarr_keys",
         "key_prefix": key_prefix,
@@ -712,6 +714,8 @@ def from_zarr_keys(
         "n_keys_scanned": len(candidates),
         "field_unit": "T",
         "job_result": job_result,
+        "frame_keys": frame_keys,   # dict[int, str]: zarr key for each result frame
+        "zarr_group": zgroup,       # the zarr root group for snapshot loading
     })
 
     return HysteresisResult(

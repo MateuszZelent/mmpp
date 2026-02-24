@@ -189,3 +189,5 @@ mmpp/Untitled-1.ipynb
 mmpp/fft/transmission/experiment/*
 mmpp/fft/transmission/experiment/
 *.pdf
+docs/HYSTERESIS_IMPLEMENTATION_AUDIT.md
+*.md

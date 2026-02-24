@@ -11,6 +11,7 @@ dispersion_analysis
 batch_operations
 examples
 mode_visualization_api
+hysteresis_analysis
 ```
 
 ## Recommended Order

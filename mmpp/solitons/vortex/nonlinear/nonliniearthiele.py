@@ -195,7 +195,7 @@ class ThieleAnalyzer:
             omega0=omega0_val,
             N=float(N),
             polarity=p,
-            omega0_Oe_per_J=float(omega0_Oe_per_J),
+            domega0_dJ=float(omega0_Oe_per_J),
             field=field,
             field_cal=field_cal,
             chi_scale=float(chi_scale),

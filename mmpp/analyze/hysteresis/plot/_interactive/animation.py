@@ -30,7 +30,7 @@ def start_animation(explorer) -> None:
         if not explorer.state.is_animating:
             return []
         next_idx = (int(explorer.state.current_idx) + 1) % n_points
-        explorer._set_index(next_idx, redraw=False)
+        explorer._set_index(next_idx, redraw=True)
         return []
 
     explorer._animation = FuncAnimation(

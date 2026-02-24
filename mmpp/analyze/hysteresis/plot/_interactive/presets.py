@@ -35,6 +35,9 @@ def collect_preset_state(explorer: Any) -> dict[str, Any]:
         "z_layer": state.z_layer,
         "roi": list(state.roi) if state.roi is not None else None,
         "show_flags": dict(state.show_flags),
+        "debug_clicks": bool(getattr(explorer, "_debug_clicks", False)),
+        "loop_panel_weight": float(getattr(state, "loop_panel_weight", 1.15)),
+        "snapshot_panel_weight": float(getattr(state, "snapshot_panel_weight", 1.0)),
         "dset": str(getattr(explorer, "_snapshot_dset", "m")),
     }
 
@@ -60,6 +63,13 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
         for key, value in show_flags.items():
             merged[str(key)] = bool(value)
         state.show_flags = merged
+
+    if "debug_clicks" in payload:
+        explorer._debug_clicks = bool(payload.get("debug_clicks"))
+    if "loop_panel_weight" in payload:
+        state.loop_panel_weight = float(payload.get("loop_panel_weight"))
+    if "snapshot_panel_weight" in payload:
+        state.snapshot_panel_weight = float(payload.get("snapshot_panel_weight"))
 
 
 def save_preset(explorer: Any, name: str) -> Path:

@@ -479,7 +479,7 @@ class ThieleInteractiveDashboard:
 
                 model = CPPThieleModel(
                     material=mat, geom=geo, omega0=omega0_rad, N=self.w_n.value,
-                    polarity=self.w_p.value, omega0_Oe_per_J=oe_rad_per_Am2,
+                    polarity=self.w_p.value, domega0_dJ=oe_rad_per_Am2,
                     field=ext_field, field_cal=fcal
                 )
                 j_th = model.threshold_current_dc()
@@ -575,7 +575,7 @@ class ThieleInteractiveDashboard:
                     oe_rad_per_Am2 = (self.w_oersted.value * 1e6 * 2.0 * math.pi) / 1e11
                     model = CPPThieleModel(
                         material=mat, geom=geo, omega0=omega0_rad, N=self.w_n.value,
-                        polarity=self.w_p.value, omega0_Oe_per_J=oe_rad_per_Am2,
+                        polarity=self.w_p.value, domega0_dJ=oe_rad_per_Am2,
                         field=ext_field, field_cal=fcal
                     )
                 else:

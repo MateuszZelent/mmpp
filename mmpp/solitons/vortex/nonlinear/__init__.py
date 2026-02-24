@@ -10,7 +10,7 @@ from .models import (
     ThieleForceBalanceResult,
 )
 from .slavin_tiberkevich import extract_st_parameters
-from .thiele import ThieleAnalyzer
+from .nonliniearthiele import ThieleAnalyzer
 
 __all__ = [
     "NonlinearInterface",

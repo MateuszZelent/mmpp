@@ -9,6 +9,7 @@ core
 batch_operations
 plotting
 fft/index
+analyze
 simulation
 logging_config
 ```

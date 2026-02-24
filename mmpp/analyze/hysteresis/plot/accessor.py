@@ -18,6 +18,11 @@ class HysteresisPlotAccessor:
 
     def interactive(self, **kwargs):
         """Open interactive loop + snapshot explorer."""
+        # Backward compatibility: some live notebook sessions may still hold
+        # an older explorer implementation where ``debug_clicks`` is required.
+        kwargs.setdefault("debug_clicks", None)
+        kwargs.setdefault("loop_width", None)
+        kwargs.setdefault("snapshot_width", None)
         explorer = HysteresisInteractiveExplorer(self._result)
         return explorer.show(**kwargs)
 

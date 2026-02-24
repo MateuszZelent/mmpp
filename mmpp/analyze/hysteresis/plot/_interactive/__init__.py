@@ -2,12 +2,19 @@
 
 from .animation import start_animation, stop_animation
 from .callbacks import (
+    nearest_field_index,
     nearest_loop_index,
+    on_animation_fps_changed,
+    on_animation_speed_changed,
     on_component_changed,
+    on_panel_widths_changed,
+    on_field_changed,
     on_index_changed,
     on_loop_click,
     on_play_toggle,
     on_roi_changed,
+    on_save_animation_clicked,
+    on_trail_length_changed,
     on_z_layer_changed,
 )
 from .presets import (
@@ -32,11 +39,18 @@ __all__ = [
     "update_loop_cursor",
     "render_snapshot",
     "on_loop_click",
+    "on_field_changed",
     "on_index_changed",
     "on_component_changed",
+    "on_panel_widths_changed",
     "on_z_layer_changed",
     "on_roi_changed",
     "on_play_toggle",
+    "on_animation_speed_changed",
+    "on_animation_fps_changed",
+    "on_trail_length_changed",
+    "on_save_animation_clicked",
+    "nearest_field_index",
     "nearest_loop_index",
     "start_animation",
     "stop_animation",
