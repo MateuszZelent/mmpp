@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
+from matplotlib import animation as mpl_animation
 import numpy as np
 import zarr
 
@@ -128,6 +129,7 @@ def test_transmission_and_dispersion_help_accessors_are_exposed(tmp_path):
     assert callable(t_help.plot_transmission)
     assert callable(t_help.visualize_mode)
     assert callable(t_help.visualize_modes)
+    assert callable(t_help.animate_mode)
     assert callable(t_help.save_mode_visualizations)
 
     d_help = job.fft.dispersion.help
@@ -459,6 +461,44 @@ def test_transmission_visualize_mode_phasor_reconstructs_imaginary_quadrature():
     assert meta_phasor["reconstruction"] == "phasor"
     plt.close(fig_real)
     plt.close(fig_phasor)
+
+
+def test_transmission_animate_mode_over_time_returns_animation_object():
+    n_time = 14
+    dt = 1e-12
+    freqs = np.fft.rfftfreq(n_time, d=dt)
+    raw_fft = np.zeros((freqs.size, 1, 2, 4, 1), dtype=np.complex128)
+    raw_fft[3, 0, :, :, 0] = 0.7 + 0.2j
+
+    result = TransmissionResult(
+        frequencies=freqs,
+        x_positions=np.arange(4, dtype=float),
+        transmission=raw_fft,
+        power_map=np.abs(raw_fft),
+        reference_power=np.ones(freqs.size, dtype=float),
+        config=TransmissionConfig(raw_fft_output=True, y_integration_mode="none"),
+        dx=1e-9,
+        metadata={"raw_fft_output": True, "n_time": n_time, "time_step": dt},
+    )
+
+    fig, ax, anim, meta = result.animate_mode(
+        animate="t",
+        k=3,
+        t_frames=[0, 2, 4],
+        component=0,
+        mode="real",
+        colorbar=False,
+        repeat=False,
+        interval=20,
+    )
+
+    assert ax is not None
+    assert isinstance(anim, mpl_animation.FuncAnimation)
+    assert meta["animate"] == "t"
+    assert meta["frame_count"] == 3
+    assert meta["frame_values"].tolist() == [0, 2, 4]
+    anim._draw_was_started = True
+    plt.close(fig)
 
 
 def test_transmission_modes_result_save_visualizations(tmp_path):

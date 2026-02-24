@@ -1338,6 +1338,418 @@ class TransmissionResult:
         fig.tight_layout()
         return fig, used_axes, metas
 
+    def animate_mode(
+        self,
+        *,
+        animate: Literal["k", "t"] = "t",
+        f: Optional[float] = None,
+        k: Optional[int] = None,
+        freq_unit: str = "GHz",
+        t_show: int = 0,
+        frames: Optional[Union[Sequence[int], slice]] = None,
+        k_frames: Optional[Union[Sequence[int], slice]] = None,
+        t_frames: Optional[Union[Sequence[int], slice]] = None,
+        phase_deg: float = 0.0,
+        reconstruction: ReconstructionMode = "real_signal",
+        z_layer: int = 0,
+        component: Union[int, str] = "z",
+        y_slice: Optional[slice] = None,
+        copy_y: int = 1,
+        mode: str = "real",
+        vlim_scale: float = 0.1,
+        ax=None,
+        figsize: tuple[float, float] = (13.0, 4.5),
+        dpi: int = 100,
+        aspect: str = "auto",
+        origin: str = "lower",
+        cmap: Optional[str] = None,
+        colorbar: bool = True,
+        interpolation: str = "nearest",
+        x_unit: str = "nm",
+        x_lines: Optional[Sequence[float]] = None,
+        x_lines_in_index: bool = False,
+        y_lines: Optional[Sequence[float]] = None,
+        y_spans: Optional[Sequence[tuple[float, float]]] = None,
+        y_span_color: str = "cyan",
+        y_span_alpha: float = 0.15,
+        flip_x: bool = True,
+        separator_lines: bool = True,
+        separator_style: str = "--",
+        separator_color: str = "black",
+        separator_linewidth: float = 1.0,
+        interval: int = 100,
+        fps: int = 15,
+        repeat: bool = True,
+        color_scale: Literal["global", "frame"] = "global",
+        saveas: Optional[Union[str, Path]] = None,
+        writer: Optional[str] = None,
+        animation_save_kwargs: Optional[dict[str, Any]] = None,
+        show_progress: bool = False,
+        **imshow_kwargs,
+    ):
+        """Animate reconstructed transmission mode over ``k`` or ``t``.
+
+        Parameters
+        ----------
+        animate : {"k", "t"}, optional
+            Animation axis. ``"k"`` animates frequency bins at fixed time.
+            ``"t"`` animates time at fixed frequency.
+        frames, k_frames, t_frames : sequence/slice, optional
+            Explicit frame indices. ``frames`` is generic for the selected axis.
+            If omitted:
+            - animate="k": all frequency bins are used
+            - animate="t": all time indices are used
+        saveas : str or Path, optional
+            Output animation path (e.g. ``"mode.mp4"`` or ``"mode.gif"``).
+            If omitted, animation object is returned without saving.
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib import animation as mpl_animation
+
+        freqs = np.asarray(self.frequencies, dtype=float)
+        if freqs.ndim != 1 or freqs.size == 0:
+            raise ValueError("TransmissionResult.frequencies must be a non-empty 1D array")
+
+        spectrum = np.asarray(self.transmission)
+        if not np.iscomplexobj(spectrum):
+            raise ValueError(
+                "animate_mode requires complex raw FFT data. "
+                "Recompute transmission with raw_fft_output=True."
+            )
+        if spectrum.ndim not in (4, 5):
+            raise ValueError(
+                "Expected raw spectrum shape (freq,z,x,comp) or (freq,z,y,x,comp); "
+                f"got {spectrum.shape}"
+            )
+
+        n_time_meta = self.metadata.get("n_time")
+        try:
+            n_time = int(n_time_meta)
+        except (TypeError, ValueError):
+            n_time = int(2 * (freqs.size - 1))
+        if n_time <= 0:
+            raise ValueError("Unable to infer valid n_time for inverse FFT reconstruction")
+
+        n_z = int(spectrum.shape[1])
+        z_idx = int(z_layer)
+        if z_idx < 0:
+            z_idx += n_z
+        if z_idx < 0 or z_idx >= n_z:
+            raise ValueError(f"z_layer={z_layer} out of range for n_z={n_z}")
+
+        n_comp = int(spectrum.shape[-1])
+        comp_idx = self._resolve_component_index(component, n_comp)
+
+        copy_y_int = int(copy_y)
+        if copy_y_int < 1:
+            raise ValueError("copy_y must be >= 1")
+
+        phase_offset_rad = np.deg2rad(float(phase_deg))
+        mode_key = str(mode).lower().strip()
+        if mode_key not in ("real", "imag", "imaginary", "abs", "magnitude", "phase"):
+            raise ValueError("mode must be one of: 'real', 'imag', 'abs', 'phase'")
+
+        unit_scales = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
+        freq_scale = unit_scales.get(str(freq_unit).lower())
+        if freq_scale is None:
+            raise ValueError(
+                f"Unsupported freq_unit={freq_unit!r}. Use one of {list(unit_scales)}."
+            )
+
+        x_unit_key = str(x_unit).lower().strip()
+        if self.dx is None or x_unit_key in ("index", "idx", "cell", "cells"):
+            x_step = 1.0
+            x_unit_label = "index"
+        else:
+            x_scales = {"m": 1.0, "um": 1e6, "nm": 1e9}
+            if x_unit_key not in x_scales:
+                raise ValueError("x_unit must be one of: 'index', 'm', 'um', 'nm'")
+            x_step = float(self.dx) * float(x_scales[x_unit_key])
+            x_unit_label = x_unit_key
+
+        out_freq_scale = unit_scales.get(str(freq_unit).lower(), 1e9)
+        animate_key = str(animate).lower().strip()
+        if animate_key not in {"k", "t"}:
+            raise ValueError("animate must be either 'k' or 't'")
+
+        def _materialize_indices(
+            spec: Optional[Union[Sequence[int], slice]],
+            *,
+            upper: int,
+            name: str,
+        ) -> Optional[list[int]]:
+            if spec is None:
+                return None
+            if isinstance(spec, slice):
+                start, stop, step = spec.indices(upper)
+                out = list(range(start, stop, step))
+            else:
+                out = [int(v) for v in spec]
+            for idx in out:
+                if idx < 0 or idx >= upper:
+                    raise ValueError(f"{name} contains {idx}, allowed range [0, {upper - 1}]")
+            return out
+
+        generic_frames = _materialize_indices(
+            frames,
+            upper=freqs.size if animate_key == "k" else n_time,
+            name="frames",
+        )
+
+        frame_pairs: list[tuple[int, int]] = []
+        if animate_key == "k":
+            k_list = (
+                generic_frames
+                or _materialize_indices(k_frames, upper=freqs.size, name="k_frames")
+            )
+            if k_list is None:
+                if k is not None:
+                    k_val = int(k)
+                    if k_val < 0 or k_val >= freqs.size:
+                        raise ValueError(f"k={k_val} out of range [0, {freqs.size - 1}]")
+                    k_list = [k_val]
+                elif f is not None:
+                    k_list = [int(np.argmin(np.abs(freqs - float(f) * float(freq_scale))))]
+                else:
+                    k_list = list(range(freqs.size))
+
+            t_fixed = int(np.clip(int(t_show), 0, n_time - 1))
+            frame_pairs = [(int(k_idx), t_fixed) for k_idx in k_list]
+        else:
+            if (f is None) == (k is None):
+                raise ValueError("For animate='t', provide exactly one selector: either f=... or k=...")
+
+            if k is None:
+                k_fixed = int(np.argmin(np.abs(freqs - float(f) * float(freq_scale))))
+            else:
+                k_fixed = int(k)
+            if k_fixed < 0 or k_fixed >= freqs.size:
+                raise ValueError(f"k={k_fixed} out of range [0, {freqs.size - 1}]")
+
+            t_list = (
+                generic_frames
+                or _materialize_indices(t_frames, upper=n_time, name="t_frames")
+                or list(range(n_time))
+            )
+            frame_pairs = [(k_fixed, int(t_idx)) for t_idx in t_list]
+
+        if not frame_pairs:
+            raise ValueError("No animation frames selected")
+
+        def _frame_data(k_idx: int, t_idx: int) -> tuple[np.ndarray, np.ndarray, int]:
+            xy_complex, y_block = self._reconstruct_mode_xy(
+                spectrum,
+                k_idx=int(k_idx),
+                n_time=n_time,
+                t_idx=int(t_idx),
+                z_idx=z_idx,
+                comp_idx=comp_idx,
+                y_slice=y_slice,
+                copy_y=copy_y_int,
+                phase_offset_rad=phase_offset_rad,
+                reconstruction=reconstruction,
+            )
+
+            if mode_key == "real":
+                xy_vis = np.real(xy_complex)
+            elif mode_key in ("imag", "imaginary"):
+                xy_vis = np.imag(xy_complex)
+            elif mode_key in ("abs", "magnitude"):
+                xy_vis = np.abs(xy_complex)
+            else:
+                xy_vis = np.angle(xy_complex)
+            return np.asarray(xy_complex), np.asarray(xy_vis), int(y_block)
+
+        def _default_clim(arr: np.ndarray) -> tuple[float, float]:
+            peak = float(np.max(np.abs(arr))) if arr.size > 0 else 0.0
+            if mode_key in ("real", "imag", "imaginary"):
+                vlim = peak * float(vlim_scale)
+                if not np.isfinite(vlim) or vlim <= 0:
+                    vlim = peak if peak > 0 else 1e-12
+                return -vlim, +vlim
+            if mode_key == "phase":
+                return -np.pi, np.pi
+            return 0.0, peak if peak > 0 else 1e-12
+
+        _, xy_vis0, y_block0 = _frame_data(*frame_pairs[0])
+        n_x = int(xy_vis0.shape[1])
+        extent = [0.0, n_x * x_step, 0.0, float(xy_vis0.shape[0])]
+
+        plot_kwargs = dict(imshow_kwargs)
+        user_vmin = plot_kwargs.pop("vmin", None)
+        user_vmax = plot_kwargs.pop("vmax", None)
+        color_scale_key = str(color_scale).lower().strip()
+        if color_scale_key not in ("global", "frame"):
+            raise ValueError("color_scale must be one of: 'global', 'frame'")
+
+        if user_vmin is None or user_vmax is None:
+            if color_scale_key == "global":
+                if mode_key == "phase":
+                    default_vmin, default_vmax = -np.pi, np.pi
+                else:
+                    peak = float(np.max(np.abs(xy_vis0))) if xy_vis0.size > 0 else 0.0
+                    iter_pairs = frame_pairs[1:]
+                    if show_progress and len(frame_pairs) > 2:
+                        iter_pairs = tqdm(iter_pairs, desc="Computing animation color scale")
+                    for k_idx, t_idx in iter_pairs:
+                        _, frame_vis, _ = _frame_data(k_idx, t_idx)
+                        if frame_vis.size > 0:
+                            peak = max(peak, float(np.max(np.abs(frame_vis))))
+                    if mode_key in ("real", "imag", "imaginary"):
+                        vlim = peak * float(vlim_scale)
+                        if not np.isfinite(vlim) or vlim <= 0:
+                            vlim = peak if peak > 0 else 1e-12
+                        default_vmin, default_vmax = -vlim, +vlim
+                    else:
+                        default_vmin, default_vmax = 0.0, peak if peak > 0 else 1e-12
+            else:
+                default_vmin, default_vmax = _default_clim(xy_vis0)
+            vmin = default_vmin if user_vmin is None else float(user_vmin)
+            vmax = default_vmax if user_vmax is None else float(user_vmax)
+        else:
+            vmin = float(user_vmin)
+            vmax = float(user_vmax)
+
+        if cmap is None:
+            if mode_key in ("abs", "magnitude"):
+                cmap = "inferno"
+            elif mode_key == "phase":
+                cmap = "twilight"
+            else:
+                cmap = "coolwarm"
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        else:
+            fig = ax.figure
+
+        img = ax.imshow(
+            xy_vis0,
+            aspect=aspect,
+            origin=origin,
+            cmap=cmap,
+            interpolation=interpolation,
+            extent=extent,
+            vmin=vmin,
+            vmax=vmax,
+            **plot_kwargs,
+        )
+
+        ax.set_xlabel(f"x [{x_unit_label}]")
+        ax.set_ylabel("y [index]")
+
+        if copy_y_int > 1 and separator_lines and y_block0 > 0:
+            for i in range(1, copy_y_int):
+                y_sep = i * y_block0
+                ax.hlines(
+                    y=y_sep,
+                    xmin=extent[0],
+                    xmax=extent[1],
+                    colors=separator_color,
+                    linestyles=separator_style,
+                    linewidth=separator_linewidth,
+                )
+
+        if x_lines is not None:
+            for x_line in x_lines:
+                x_val = float(x_line) * x_step if x_lines_in_index else float(x_line)
+                ax.axvline(x_val, color="red", linewidth=1.1, alpha=0.9)
+
+        if y_lines is not None:
+            for y_line in y_lines:
+                ax.axhline(float(y_line), color="cyan", linewidth=1.1, linestyle="--", alpha=0.9)
+
+        if y_spans is not None:
+            for y0, y1 in y_spans:
+                ax.axhspan(
+                    float(y0),
+                    float(y1),
+                    color=y_span_color,
+                    alpha=float(y_span_alpha),
+                )
+
+        if flip_x:
+            ax.invert_xaxis()
+
+        if colorbar:
+            cbar_label = {
+                "real": "Re(m)",
+                "imag": "Im(m)",
+                "imaginary": "Im(m)",
+                "abs": "|m|",
+                "magnitude": "|m|",
+                "phase": "arg(m) [rad]",
+            }[mode_key]
+            fig.colorbar(img, ax=ax, label=cbar_label)
+
+        def _set_title(k_idx: int, t_idx: int, frame_idx: int) -> None:
+            f_disp = float(freqs[k_idx]) / float(out_freq_scale)
+            ax.set_title(
+                f"Mode @ f={f_disp:.4g} {freq_unit} (k={k_idx}, t={t_idx}, z={z_idx}) "
+                f"[{frame_idx + 1}/{len(frame_pairs)}]"
+            )
+
+        def _update(frame_idx: int):
+            k_idx, t_idx = frame_pairs[int(frame_idx)]
+            _, xy_vis, _ = _frame_data(k_idx, t_idx)
+            img.set_data(xy_vis)
+            if color_scale_key == "frame" and (user_vmin is None or user_vmax is None):
+                auto_vmin, auto_vmax = _default_clim(xy_vis)
+                img.set_clim(
+                    auto_vmin if user_vmin is None else float(user_vmin),
+                    auto_vmax if user_vmax is None else float(user_vmax),
+                )
+            _set_title(k_idx, t_idx, int(frame_idx))
+            return (img,)
+
+        _update(0)
+        animation = mpl_animation.FuncAnimation(
+            fig,
+            _update,
+            frames=len(frame_pairs),
+            interval=int(interval),
+            repeat=bool(repeat),
+            blit=False,
+        )
+
+        save_path: Optional[Path] = None
+        if saveas is not None:
+            save_path = Path(saveas)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            writer_name = writer
+            if writer_name is None:
+                ext = save_path.suffix.lower()
+                if ext == ".gif":
+                    writer_name = "pillow"
+                elif ext in {".mp4", ".m4v", ".mov"}:
+                    writer_name = "ffmpeg"
+                else:
+                    raise ValueError(
+                        "Cannot infer writer from extension. Use .gif/.mp4 or pass writer=..."
+                    )
+            save_kwargs = dict(animation_save_kwargs or {})
+            save_kwargs.setdefault("fps", int(fps))
+            save_kwargs.setdefault("dpi", int(dpi))
+            animation.save(str(save_path), writer=writer_name, **save_kwargs)
+
+        frame_values = [int(pair[0] if animate_key == "k" else pair[1]) for pair in frame_pairs]
+        meta = {
+            "animate": animate_key,
+            "frame_count": int(len(frame_pairs)),
+            "frame_values": np.asarray(frame_values, dtype=int),
+            "frame_pairs": np.asarray(frame_pairs, dtype=int),
+            "frequency_unit": str(freq_unit),
+            "phase_shift_deg": float(phase_deg),
+            "reconstruction": str(reconstruction),
+            "z_index": int(z_idx),
+            "component_index": int(comp_idx),
+            "x_unit": x_unit_label,
+            "x_step": float(x_step),
+            "mode": mode_key,
+            "saved_to": None if save_path is None else str(save_path),
+        }
+        return fig, ax, animation, meta
+
     def save_mode_visualizations(
         self,
         output_dir: Union[str, Path],

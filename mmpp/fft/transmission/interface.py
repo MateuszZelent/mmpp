@@ -82,6 +82,16 @@ class FFTTransmissionHelpAccessor:
         )
 
     @property
+    def animate_mode(self) -> CallableMethodHelper:
+        return self._method(
+            "animate_mode",
+            "Animate mode map across frequency bins (k) or time indices (t).",
+            [
+                "job[0].fft.transmission.help.animate_mode(animate='t', k=120, saveas='mode.gif')",
+            ],
+        )
+
+    @property
     def save_mode_visualizations(self) -> CallableMethodHelper:
         return self._method(
             "save_mode_visualizations",
@@ -92,7 +102,7 @@ class FFTTransmissionHelpAccessor:
     def __repr__(self) -> str:
         return (
             "<FFTTransmissionHelpAccessor: compute, call, plot_transmission, "
-            "visualize_mode, visualize_modes, save_mode_visualizations>"
+            "visualize_mode, visualize_modes, animate_mode, save_mode_visualizations>"
         )
 
 
@@ -396,6 +406,35 @@ class FFTTransmissionInterface:
                 **compute_args,
             )
         return result.visualize_modes(frequencies, **visualize_kwargs)
+
+    def animate_mode(
+        self,
+        *,
+        result: Optional[TransmissionResult] = None,
+        compute_kwargs: Optional[dict[str, Any]] = None,
+        save: bool = False,
+        cache_path: Optional[Union[str, Path]] = None,
+        force: bool = False,
+        use_cache: bool = True,
+        **animate_kwargs,
+    ):
+        """Compute (if needed) and animate single-mode reconstruction."""
+        if result is None:
+            compute_args = dict(compute_kwargs or {})
+            compute_args.setdefault("raw_fft_output", True)
+            compute_args.setdefault("y_integration_mode", "none")
+            compute_args.setdefault("normalize", "none")
+            compute_args.setdefault("average_mode", "none")
+            compute_args.setdefault("spatial_window", 1)
+            compute_args.setdefault("spatial_step", 1)
+            result = self.__call__(
+                save=save,
+                cache_path=cache_path,
+                force=force,
+                use_cache=use_cache,
+                **compute_args,
+            )
+        return result.animate_mode(**animate_kwargs)
 
     def save_mode_visualizations(
         self,
