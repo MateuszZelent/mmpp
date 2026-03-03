@@ -601,12 +601,13 @@ class DispersionAnalyzeAccessor:
     def scan(
         self,
         sources,
-        param_values,
+        param_values=None,
         param_label: str = "parameter",
         *,
-        filters: Optional[dict] = None,
-        compute_kwargs: Optional[dict] = None,
-        find_kwargs: Optional[dict] = None,
+        job_indices=None,
+        filters: dict | None = None,
+        compute_kwargs: dict | None = None,
+        find_kwargs: dict | None = None,
         slice_spec=None,
         verbose: bool = True,
         on_error: str = "warn",
@@ -619,11 +620,13 @@ class DispersionAnalyzeAccessor:
 
         Parameters
         ----------
-        sources : iterable
-            MMPP jobs, pre-computed :class:`DispersionResult1D` instances, or
-            callables returning ``DispersionResult1D``.
-        param_values : sequence of float
-            One value per source item.
+        sources : mmpp.MMPP | list[ZarrJobResult] | list[DispersionResult1D]
+            MMPP container, list of jobs, pre-computed results, or callables.
+        param_values : sequence of float, optional
+            One value per *selected* job.  ``None`` → auto-label with indices.
+        job_indices : sequence of int, optional
+            Pick specific jobs from *sources* by index.  Must match length of
+            *param_values* when both are given.
         param_label : str
             Human-readable name for the scan parameter.
         filters, compute_kwargs, find_kwargs : dict, optional
@@ -642,12 +645,14 @@ class DispersionAnalyzeAccessor:
         Examples
         --------
         >>> jobs = mmpp.MMPP("/path/to/sweep/", debug=False)
+        >>> # Select 7 specific jobs from a 26-job container:
         >>> bulk = result.analyze.scan(
-        ...     jobs,                         # mmpp.MMPP object — iterated automatically
-        ...     param_values=[0, 10, 20, 30],
+        ...     jobs,
+        ...     job_indices=[0, 5, 10, 15, 20, 25, 30],
+        ...     param_values=[0, 5, 10, 15, 20, 25, 30],
         ...     param_label="B_ext [mT]",
         ...     filters=dict(remove_static=True),
-        ...     # slice_spec=(slice(None), Ellipsis, slice(0, 1))  # optional: first z-layer
+        ...     slice_spec=(slice(None), Ellipsis, slice(0, 1)),
         ... )
         >>> bulk.plot.summary()
         """
@@ -655,14 +660,15 @@ class DispersionAnalyzeAccessor:
 
         # Inherit config from current result where not overridden
         res = self._result
-        _filters       = filters       or {}
-        _find_kwargs   = find_kwargs   or {}
-        _compute_kw    = compute_kwargs or {"axis": getattr(res, "axis", "x")}
+        _filters     = filters       or {}
+        _find_kwargs = find_kwargs   or {}
+        _compute_kw  = compute_kwargs or {"axis": getattr(res, "axis", "x")}
 
         return scan_minimum_frequency(
             sources,
             param_values=param_values,
             param_label=param_label,
+            job_indices=job_indices,
             filters=_filters,
             compute_kwargs=_compute_kw,
             find_kwargs=_find_kwargs,

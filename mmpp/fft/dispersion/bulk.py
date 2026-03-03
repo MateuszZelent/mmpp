@@ -865,15 +865,16 @@ class BulkMinimumPlotAccessor:
 
 def scan_minimum_frequency(
     sources: Iterable[Any],
-    param_values: Sequence[float],
+    param_values: Sequence[float] | None = None,
     param_label: str = "parameter",
     *,
-    filters: Optional[dict[str, Any]] = None,
-    compute_kwargs: Optional[dict[str, Any]] = None,
-    find_kwargs: Optional[dict[str, Any]] = None,
-    slice_spec: Optional[Any] = None,
+    job_indices: Sequence[int] | None = None,
+    filters: dict[str, Any] | None = None,
+    compute_kwargs: dict[str, Any] | None = None,
+    find_kwargs: dict[str, Any] | None = None,
+    slice_spec: Any | None = None,
     dataset: str = "m",
-    z_slice: Optional[Any] = None,
+    z_slice: Any | None = None,
     verbose: bool = True,
     on_error: str = "warn",
 ) -> BulkMinimumFrequencyResult:
@@ -900,8 +901,15 @@ def scan_minimum_frequency(
         * A plain list / iterable of ``ZarrJobResult`` objects.
         * A list of pre-computed :class:`DispersionResult1D` — used directly.
         * A list of callables ``() -> DispersionResult1D`` — called once per job.
-    param_values : sequence of float
-        One value per source item; used as the scan axis.
+    param_values : sequence of float, optional
+        Physical axis values — one entry per *selected* job.  If ``None``
+        (default), indices ``0, 1, 2, …`` are used as labels.
+    job_indices : sequence of int, optional
+        Select a subset of jobs from *sources* by integer index.  When
+        provided, only those positions are processed and *param_values* must
+        have the same length (or be ``None`` to auto-label with the indices).
+        Example: ``job_indices=[0, 5, 10, 15, 20, 25, 30]`` picks 7 jobs from
+        a 26-job MMPP container.
     param_label : str
         Human-readable label for the scan parameter (used in plots).
     filters : dict, optional
@@ -935,18 +943,27 @@ def scan_minimum_frequency(
         import mmpp
         from mmpp.fft.dispersion.bulk import scan_minimum_frequency
 
-        # jobs is a single mmpp.MMPP container — iterated automatically
+        # jobs is a single mmpp.MMPP container (may hold more jobs than needed)
         jobs = mmpp.MMPP("/path/to/sweep_dir/", debug=False)
 
+        # Case A: all jobs map 1-to-1 to param_values
         bulk = scan_minimum_frequency(
             jobs,
-            param_values=[0, 5, 10, 15, 20, 25, 30],
+            param_values=[0, 5, 10, 15, 20, 25, 30],   # 7 jobs in container
+            param_label="B_ext [mT]",
+        )
+
+        # Case B: select 7 specific jobs from a 26-job container
+        bulk = scan_minimum_frequency(
+            jobs,
+            job_indices=[0, 5, 10, 15, 20, 25, 30],    # which jobs to pick
+            param_values=[0, 5, 10, 15, 20, 25, 30],   # their B_ext values
             param_label="B_ext [mT]",
             filters=dict(remove_static=True,
                          live={"gaussian_morph": {"enabled": True, "sigma_f": 1.0}}),
             compute_kwargs=dict(axis="x", save=True, force=False),
             find_kwargs=dict(side="positive", smooth_sigma=2.0),
-            # slice_spec=(slice(None), Ellipsis, slice(0, 1))  # optional: first z-layer
+            slice_spec=(slice(None), Ellipsis, slice(0, 1)),
         )
 
         bulk.plot.summary()
@@ -956,16 +973,37 @@ def scan_minimum_frequency(
     # Accept mmpp.MMPP objects (iterable over ZarrJobResult), plain lists, etc.
     if hasattr(sources, "zarr_results"):
         # mmpp.MMPP container — unpack its ZarrJobResult list directly
-        sources = list(sources.zarr_results)
+        all_sources: list[Any] = list(sources.zarr_results)
     else:
-        sources = list(sources)
+        all_sources = list(sources)
 
-    param_values_arr = np.asarray(param_values, dtype=float)
+    # Optional job selection --------------------------------------------------
+    if job_indices is not None:
+        idx_list = list(job_indices)
+        try:
+            sources = [all_sources[i] for i in idx_list]  # type: ignore[assignment]
+        except IndexError as exc:
+            raise IndexError(
+                f"job_indices contains an out-of-range index for a container "
+                f"of {len(all_sources)} jobs."
+            ) from exc
+    else:
+        sources = all_sources  # type: ignore[assignment]
+
+    # Param values: default to 0, 1, 2, … or the job_indices themselves ------
+    if param_values is None:
+        param_values_arr = np.asarray(
+            job_indices if job_indices is not None else range(len(sources)),
+            dtype=float,
+        )
+    else:
+        param_values_arr = np.asarray(param_values, dtype=float)
 
     if len(sources) != len(param_values_arr):
         raise ValueError(
             f"sources has {len(sources)} items but param_values has "
-            f"{len(param_values_arr)} — must match."
+            f"{len(param_values_arr)} — must match.  "
+            f"Use job_indices to select a subset of the {len(all_sources)}-job container."
         )
 
     filters        = filters        or {}
