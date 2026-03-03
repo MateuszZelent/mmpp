@@ -891,12 +891,15 @@ def scan_minimum_frequency(
 
     Parameters
     ----------
-    sources : iterable
-        Each item must be either:
+    sources : mmpp.MMPP | list[ZarrJobResult] | list[DispersionResult1D]
+        Sweep source — one of:
 
-        * An ``mmpp.MMPP`` instance — accessed as ``src[0].m[slice_spec]``.
-        * A precomputed :class:`DispersionResult1D` — used directly.
-        * A callable ``() -> DispersionResult1D`` — called once per job.
+        * **``mmpp.MMPP(path)``** (most common): a collection object.  Iterated
+          automatically; each item is a ``ZarrJobResult`` accessed as
+          ``src.m[slice_spec].fft.dispersion``.
+        * A plain list / iterable of ``ZarrJobResult`` objects.
+        * A list of pre-computed :class:`DispersionResult1D` — used directly.
+        * A list of callables ``() -> DispersionResult1D`` — called once per job.
     param_values : sequence of float
         One value per source item; used as the scan axis.
     param_label : str
@@ -908,8 +911,9 @@ def scan_minimum_frequency(
     find_kwargs : dict, optional
         Passed to ``DispersionAnalyzeAccessor.find_lowest_possible_frequency(**find_kwargs)``.
     slice_spec : slice / index, optional
-        Spatial slice applied to ``job[0].m[slice_spec]``.
-        Default: ``[:, ..., 0:1]`` (first z-layer).
+        Spatial slice applied to ``src.m[slice_spec]``.
+        ``None`` (default) means no slicing — the full dataset is passed to
+        the FFT pipeline.
     dataset : str
         Dataset name on the simulation object (default ``"m"``).
     z_slice : optional
@@ -931,7 +935,9 @@ def scan_minimum_frequency(
         import mmpp
         from mmpp.fft.dispersion.bulk import scan_minimum_frequency
 
-        jobs = [mmpp.MMPP(p) for p in sorted(zarr_paths)]
+        # jobs is a single mmpp.MMPP container — iterated automatically
+        jobs = mmpp.MMPP("/path/to/sweep_dir/", debug=False)
+
         bulk = scan_minimum_frequency(
             jobs,
             param_values=[0, 5, 10, 15, 20, 25, 30],
@@ -940,12 +946,20 @@ def scan_minimum_frequency(
                          live={"gaussian_morph": {"enabled": True, "sigma_f": 1.0}}),
             compute_kwargs=dict(axis="x", save=True, force=False),
             find_kwargs=dict(side="positive", smooth_sigma=2.0),
+            # slice_spec=(slice(None), Ellipsis, slice(0, 1))  # optional: first z-layer
         )
 
         bulk.plot.summary()
         bulk.save("sweep_field.npz")
     """
-    sources = list(sources)
+    # Normalise sources -------------------------------------------------------
+    # Accept mmpp.MMPP objects (iterable over ZarrJobResult), plain lists, etc.
+    if hasattr(sources, "zarr_results"):
+        # mmpp.MMPP container — unpack its ZarrJobResult list directly
+        sources = list(sources.zarr_results)
+    else:
+        sources = list(sources)
+
     param_values_arr = np.asarray(param_values, dtype=float)
 
     if len(sources) != len(param_values_arr):
@@ -954,14 +968,13 @@ def scan_minimum_frequency(
             f"{len(param_values_arr)} — must match."
         )
 
-    filters       = filters       or {}
+    filters        = filters        or {}
     compute_kwargs = compute_kwargs or {}
-    find_kwargs   = find_kwargs   or {}
+    find_kwargs    = find_kwargs    or {}
 
     if z_slice is not None and slice_spec is None:
         slice_spec = z_slice
-    if slice_spec is None:
-        slice_spec = (slice(None), Ellipsis, slice(0, 1))
+    # Note: slice_spec=None means no slicing (dataset passed as-is)
 
     f_min_arr      = np.full(len(sources), np.nan)
     k_star_arr     = np.full(len(sources), np.nan)
@@ -980,18 +993,20 @@ def scan_minimum_frequency(
         try:
             # --- Resolve DispersionResult1D ---------------------------------
             if callable(src) and not hasattr(src, "fft"):
-                result: "DispersionResult1D" = src()
+                result = src()  # type: ignore[assignment]  # callable -> DispersionResult1D
             elif hasattr(src, "S") and hasattr(src, "k_axis"):
                 # Already a DispersionResult1D
                 result = src  # type: ignore[assignment]
             else:
-                # Treat as MMPP job
-                m_data = getattr(src[0], dataset)[slice_spec]
-                chain = m_data.fft.dispersion.filters(**filters)
+                # ZarrJobResult (or compatible): access dataset + optional slice
+                data_accessor = getattr(src, dataset)  # e.g. src.m
+                if slice_spec is not None:
+                    data_accessor = data_accessor[slice_spec]
+                chain = data_accessor.fft.dispersion.filters(**filters)
                 result = chain.compute_1d(**compute_kwargs)
 
             # --- Extract compact data (S(k,f) freed immediately) ----------
-            compact = _extract_compact(result, find_kwargs)
+            compact = _extract_compact(result, find_kwargs)  # type: ignore[arg-type]
 
             f_min_arr[i]  = compact["f_min_hz"]
             k_star_arr[i] = compact["k_star_rad_m"]
@@ -1021,7 +1036,7 @@ def scan_minimum_frequency(
             if on_error == "raise":
                 raise
             elif on_error == "warn":
-                warnings.warn(f"Job {i} ({param_label}={param_values_arr[i]}) failed: {msg}")
+                warnings.warn(f"Job {i} ({param_label}={param_values_arr[i]}) failed: {msg}", stacklevel=2)
             if verbose:
                 print(f"  ERROR: {msg}")
 

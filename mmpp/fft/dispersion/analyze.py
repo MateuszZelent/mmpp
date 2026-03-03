@@ -641,10 +641,13 @@ class DispersionAnalyzeAccessor:
 
         Examples
         --------
+        >>> jobs = mmpp.MMPP("/path/to/sweep/", debug=False)
         >>> bulk = result.analyze.scan(
-        ...     jobs,
+        ...     jobs,                         # mmpp.MMPP object — iterated automatically
         ...     param_values=[0, 10, 20, 30],
         ...     param_label="B_ext [mT]",
+        ...     filters=dict(remove_static=True),
+        ...     # slice_spec=(slice(None), Ellipsis, slice(0, 1))  # optional: first z-layer
         ... )
         >>> bulk.plot.summary()
         """
@@ -654,9 +657,7 @@ class DispersionAnalyzeAccessor:
         res = self._result
         _filters       = filters       or {}
         _find_kwargs   = find_kwargs   or {}
-        _compute_kw    = compute_kwargs or dict(
-            axis=getattr(res, "axis", "x"),
-        )
+        _compute_kw    = compute_kwargs or {"axis": getattr(res, "axis", "x")}
 
         return scan_minimum_frequency(
             sources,
