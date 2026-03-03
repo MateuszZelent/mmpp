@@ -289,7 +289,7 @@ class TransmissionPlotter:
                 data = np.abs(data)
                 label = "$|FFT|$ (raw mode)"
             else:
-                label = "Transmission $T(f,x)"
+                label = "Transmission $T(f,x)$"
             return data, label
         if which == "power":
             return self.result.power_map, "Averaged Power"

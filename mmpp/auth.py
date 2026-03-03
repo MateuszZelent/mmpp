@@ -95,22 +95,22 @@ class AuthManager:
             if not server_url.startswith(("http://", "https://")):
                 server_url = f"https://{server_url}"
 
-            print(f"🔧 DEBUG: Server URL: {server_url}")
+            log.debug("Server URL: %s", server_url)
 
             # Remove /login suffix if present (user might copy full login URL)
             if server_url.endswith("/login"):
                 server_url = server_url[:-6]
-                print(f"🔧 DEBUG: Removed /login suffix: {server_url}")
+                log.debug("Removed /login suffix: %s", server_url)
 
             # Remove any API endpoint paths to get base URL
             if "/api/v1/" in server_url:
                 base_url = server_url.split("/api/v1/")[0]
-                print(f"🔧 DEBUG: Extracted base URL: {base_url}")
+                log.debug("Extracted base URL: %s", base_url)
                 server_url = base_url
 
             # Use containers_admin2 cli-login endpoint
             login_url = urljoin(server_url, "/api/v1/auth/cli-login")
-            print(f"🔧 DEBUG: Login URL: {login_url}")
+            log.debug("Login URL: %s", login_url)
 
             headers = {
                 "accept": "application/json",
@@ -120,19 +120,14 @@ class AuthManager:
             # Send cli_token in JSON body, not as Bearer token
             data = {"cli_token": cli_token}
 
-            print(f"🔧 DEBUG: Headers: {headers}")
-            print(f"🔧 DEBUG: Data: {data}")
-
-            print(f"🔧 DEBUG: Making POST request to {login_url}")
+            log.debug("Making POST request to %s", login_url)
             response = requests.post(login_url, headers=headers, json=data, timeout=10)
-            print(f"🔧 DEBUG: Response status: {response.status_code}")
-            print(f"🔧 DEBUG: Response headers: {dict(response.headers)}")
-            print(f"🔧 DEBUG: Response text: {response.text[:300]}...")
+            log.debug("Response status: %s", response.status_code)
 
             if response.status_code == 200:
                 try:
                     result = response.json()
-                    print(f"🔧 DEBUG: Successfully parsed JSON: {result}")
+                    log.debug("Successfully parsed JSON response")
 
                     if "access_token" in result:
                         return True, {
@@ -144,28 +139,28 @@ class AuthManager:
                         return False, {"error": "No access token in response"}
 
                 except Exception as json_err:
-                    print(f"🔧 DEBUG: JSON parse error: {json_err}")
+                    log.debug("JSON parse error: %s", json_err)
                     return False, {"error": f"Invalid response format: {json_err}"}
             elif response.status_code == 401:
-                print("🔧 DEBUG: Authentication failed - invalid CLI token")
+                log.debug("Authentication failed - invalid CLI token")
                 return False, {"error": "Invalid CLI token"}
             elif response.status_code == 404:
-                print("🔧 DEBUG: API endpoint not found")
+                log.debug("API endpoint not found")
                 return False, {"error": "Server API not found - check server URL"}
             else:
-                print(f"🔧 DEBUG: Unexpected status code: {response.status_code}")
+                log.debug("Unexpected status code: %s", response.status_code)
                 return False, {
                     "error": f"Server returned status {response.status_code}"
                 }
 
         except requests.exceptions.ConnectionError as conn_err:
-            print(f"🔧 DEBUG: Connection error: {conn_err}")
+            log.debug("Connection error: %s", conn_err)
             return False, {"error": "Cannot connect to server"}
         except requests.exceptions.Timeout as timeout_err:
-            print(f"🔧 DEBUG: Timeout error: {timeout_err}")
+            log.debug("Timeout error: %s", timeout_err)
             return False, {"error": "Connection timeout"}
         except Exception as e:
-            print(f"🔧 DEBUG: General exception: {e}")
+            log.debug("General exception: %s", e)
             return False, {"error": str(e)}
 
     def test_connection(
@@ -177,60 +172,57 @@ class AuthManager:
             if not server_url.startswith(("http://", "https://")):
                 server_url = f"https://{server_url}"
 
-            print(f"🔧 DEBUG: Original server URL: {server_url}")
+            log.debug("Original server URL: %s", server_url)
 
             # Remove /login suffix if present (user might copy full login URL)
             if server_url.endswith("/login"):
                 server_url = server_url[:-6]
-                print(f"🔧 DEBUG: Removed /login suffix: {server_url}")
+                log.debug("Removed /login suffix: %s", server_url)
 
             # Remove any API endpoint paths to get base URL
             if "/api/v1/" in server_url:
                 base_url = server_url.split("/api/v1/")[0]
-                print(f"🔧 DEBUG: Extracted base URL: {base_url}")
+                log.debug("Extracted base URL: %s", base_url)
                 server_url = base_url
 
             # Use containers_admin2 /me endpoint for verification
             verify_url = urljoin(server_url, "/api/v1/auth/me")
-            print(f"🔧 DEBUG: Verify URL: {verify_url}")
+            log.debug("Verify URL: %s", verify_url)
 
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             }
-            print(f"🔧 DEBUG: Headers: {headers}")
 
-            print(f"🔧 DEBUG: Making GET request to {verify_url}")
+            log.debug("Making GET request to %s", verify_url)
             response = requests.get(verify_url, headers=headers, timeout=10)
-            print(f"🔧 DEBUG: Response status: {response.status_code}")
-            print(f"🔧 DEBUG: Response headers: {dict(response.headers)}")
-            print(f"🔧 DEBUG: Response text: {response.text[:300]}...")
+            log.debug("Response status: %s", response.status_code)
 
             if response.status_code == 200:
                 try:
                     user_info = response.json()
-                    print(f"🔧 DEBUG: Successfully parsed JSON: {user_info}")
+                    log.debug("Successfully parsed JSON response")
                     return True, user_info
                 except Exception as json_err:
-                    print(f"🔧 DEBUG: JSON parse error: {json_err}")
+                    log.debug("JSON parse error: %s", json_err)
                     return True, {"status": "authenticated"}
             elif response.status_code == 401:
-                print("🔧 DEBUG: Authentication failed - invalid token")
+                log.debug("Authentication failed - invalid token")
                 return False, {"error": "Invalid token"}
             elif response.status_code == 404:
-                print("🔧 DEBUG: API endpoint not found")
+                log.debug("API endpoint not found")
                 return False, {"error": "Server API not found - check server URL"}
             else:
-                print(f"🔧 DEBUG: Unexpected status code: {response.status_code}")
+                log.debug("Unexpected status code: %s", response.status_code)
                 return False, {
                     "error": f"Server returned status {response.status_code}"
                 }
 
         except requests.exceptions.ConnectionError as conn_err:
-            print(f"🔧 DEBUG: Connection error: {conn_err}")
+            log.debug("Connection error: %s", conn_err)
             return False, {"error": "Cannot connect to server"}
         except requests.exceptions.Timeout as timeout_err:
-            print(f"🔧 DEBUG: Timeout error: {timeout_err}")
+            log.debug("Timeout error: %s", timeout_err)
             return False, {"error": "Connection timeout"}
         except Exception as e:
             return False, {"error": str(e)}

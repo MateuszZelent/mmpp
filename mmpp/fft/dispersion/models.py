@@ -145,6 +145,240 @@ class DispersionResult1D:
         )
         return slice_result
 
+    # ------------------------------------------------------------------
+    # New accessor namespaces  (spectrum/modes architecture)
+    # ------------------------------------------------------------------
+
+    @property
+    def plot(self) -> "DispersionPlotAccessor":
+        """Plotting namespace: ``.plot.heatmap()``, ``.plot.branch(branch)``."""
+        from ._plotting.accessor import DispersionPlotAccessor
+        return DispersionPlotAccessor(self)
+
+    @property
+    def analyze(self) -> "DispersionAnalyzeAccessor":
+        """Analysis namespace: ``.analyze.find_lowest_possible_frequency()``."""
+        from .analyze import DispersionAnalyzeAccessor
+        return DispersionAnalyzeAccessor(self)
+
+    @property
+    def modes(self) -> "DispersionModesBridge":
+        """Modes bridge: ``.modes.interactive()``, ``.modes.at(k, f)``."""
+        from .modes.bridge import DispersionModesBridge
+        return DispersionModesBridge(self)
+
+    def filtered(self, live: Optional[Dict[str, Any]] = None, **kwargs) -> "DispersionResult1D":
+        """Return a new :class:`DispersionResult1D` with *live* post-filters applied.
+
+        Non-destructive – original data is never modified.
+
+        Parameters
+        ----------
+        live : dict, optional
+            Live-filter configuration dict (same format as ``.filters(live=...)``).
+        **kwargs
+            Additional filter keyword arguments forwarded to the filter engine.
+
+        Returns
+        -------
+        DispersionResult1D
+            New instance with filtered ``S``.
+        """
+        import copy
+
+        if live is None and not kwargs:
+            return self
+
+        S_new = self.S.copy()
+
+        if live:
+            try:
+                from .utils import apply_dispersion_post_filters
+
+                S_new = apply_dispersion_post_filters(
+                    S_new,
+                    k_axis=self.k_axis,
+                    f_axis=self.f_axis,
+                    filters=live,
+                    include_live=True,
+                )
+            except Exception:
+                pass  # degrade gracefully
+
+        new_result = copy.copy(self)
+        object.__setattr__(new_result, "S", S_new)
+        return new_result
+
+    # ------------------------------------------------------------------
+    # Jupyter repr
+    # ------------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        nk, nf = self.S.shape
+        kmin = self.k_axis.min() / 1e6
+        kmax = self.k_axis.max() / 1e6
+        fmin = self.f_axis[self.f_axis >= 0].min() / 1e9 if (self.f_axis >= 0).any() else 0.0
+        fmax = self.f_axis.max() / 1e9
+        return (
+            f"DispersionResult1D(axis={self.axis!r}, component={self.component!r}, "
+            f"shape=({nk}, {nf}), k=[{kmin:.2f}..{kmax:.2f}] rad/\u03bcm, "
+            f"f=[{fmin:.2f}..{fmax:.2f}] GHz)"
+        )
+
+    def _repr_html_(self) -> str:
+        from html import escape as _esc
+        import numpy as _np
+
+        nk, nf = self.S.shape
+        kmin = float(self.k_axis.min()) / 1e6
+        kmax = float(self.k_axis.max()) / 1e6
+        f_pos = self.f_axis[self.f_axis >= 0]
+        fmin = float(f_pos.min()) / 1e9 if f_pos.size else 0.0
+        fmax_val = float(self.f_axis.max()) / 1e9
+        has_local = self.S_local is not None
+        has_complex = self.S_complex is not None
+        has_folded = self.S_folded is not None
+        smax = float(self.S.max())
+
+        HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
+
+        def stat_row(k, v, tip=""):
+            t = f" title=\"{_esc(tip)}\"" if tip else ""
+            return (
+                f"<tr {HV}{t}>"
+                f"<td style='padding:2px 10px;color:#94a3b8;font-size:.85em;'>{_esc(k)}</td>"
+                f"<td style='padding:2px 10px;color:#a5b4fc;font-weight:600;font-family:monospace;'>{_esc(str(v))}</td>"
+                f"</tr>"
+            )
+
+        def method_row(sig, desc, tip=""):
+            t = f" title=\"{_esc(tip)}\"" if tip else ""
+            return (
+                f"<tr {HV}{t} style='cursor:pointer;'>"
+                f"<td style='padding:3px 10px;font-family:monospace;color:#93c5fd;font-size:.88em;'>{_esc(sig)}</td>"
+                f"<td style='padding:3px 10px;color:#cbd5e1;font-size:.85em;'>{_esc(desc)}</td>"
+                f"</tr>"
+            )
+
+        flags = []
+        if has_local:
+            n_orth = self.S_local.shape[0]
+            flags.append(f"S_local ({n_orth} slices)")
+        if has_complex:
+            flags.append("S_complex")
+        if has_folded:
+            flags.append("S_folded")
+        flags_html = "".join(
+            f"<span style='background:#1e3a5f;color:#7dd3fc;border-radius:4px;"
+            f"padding:1px 6px;font-size:.75em;margin-right:4px;'>{_esc(f)}</span>"
+            for f in flags
+        ) if flags else "<span style='color:#475569;font-size:.8em;'>—</span>"
+
+        stats_html = (
+            "<table style='border-collapse:collapse;width:100%;margin-bottom:8px;'>"
+            + stat_row("axis", self.axis, "Propagation direction for k-space decomposition")
+            + stat_row("component", self.component, "Magnetization component used in FFT")
+            + stat_row("shape", f"({nk} k-bins, {nf} f-bins)", "Size of S(k,f) array")
+            + stat_row("k range", f"{kmin:.3f} … {kmax:.3f} rad/\u03bcm", "Wave-vector axis extent")
+            + stat_row("f range", f"{fmin:.3f} … {fmax_val:.3f} GHz", "Frequency axis extent (positive half shown)")
+            + stat_row("S_max", f"{smax:.4g}", "Maximum spectral density value")
+            + "</table>"
+        )
+
+        def section(label, color, badge, rows_html, tip="", open_=False):
+            op = " open" if open_ else ""
+            return (
+                f"<details{op} style='margin:4px 0;'>"
+                f"<summary style='cursor:pointer;padding:4px 6px;border-radius:6px;"
+                f"background:#1e293b;color:{color};font-family:monospace;font-size:.88em;"
+                f"list-style:none;display:flex;align-items:center;gap:8px;'"
+                f" title=\"{_esc(tip)}\">"
+                f"<span style='color:#475569;'>&#9654;</span>"
+                f"<span>{_esc(label)}</span>"
+                f"<span style='background:{color}22;color:{color};border-radius:4px;"
+                f"padding:0px 6px;font-size:.75em;margin-left:auto;'>{_esc(badge)}</span>"
+                f"</summary>"
+                f"<div style='margin-left:16px;margin-top:4px;'>"
+                f"<table style='border-collapse:collapse;width:100%;'>{rows_html}</table>"
+                f"</div>"
+                f"</details>"
+            )
+
+        plot_rows = (
+            method_row(".plot.heatmap(fmax=10, lognorm=True)",
+                       "S(k,f) power heatmap",
+                       "Plot spin-wave dispersion as a 2D heatmap. fmax clips the frequency axis. lognorm uses logarithmic color scale.")
+            + method_row(".plot.heatmap(orth_index=0)",
+                         "Single orthogonal slice heatmap",
+                         "Show S(k,f) for one y-slice only (requires avg_over_orthogonal=False).")
+            + method_row(".plot.branch(branch)",
+                         "Dispersion branch + group velocity",
+                         "Plot a tracked DispersionBranch: frequency vs k on the left, group velocity dω/dk on the right.")
+        )
+
+        analyze_rows = (
+            method_row(".analyze.find_lowest_possible_frequency()",
+                       "→ LowestFrequencyResult",
+                       "Find the true minimum frequency on the branch — for backward-volume SW it occurs at k>0, not at k=0.")
+            + method_row(".analyze.find_lowest_possible_frequency(side='both', smooth_sigma=2.0)",
+                         "search both k halves, with Gaussian smoothing",
+                         "side='both' searches full k-axis. smooth_sigma applies Gaussian smoothing to f_peak(k) before argmin.")
+        )
+
+        modes_rows = (
+            method_row(".modes.interactive(lattice_constant_nm=470)",
+                       "Open interactive dispersion-mode widget",
+                       "Opens ipywidgets-based interactive explorer. Click on S(k,f) to see the spatial mode profile m(x,y).")
+            + method_row(".modes.at(k_rad_um=2.3, f_ghz=5.0)",
+                         "→ DispersionModeResult",
+                         "Extract mode image at a specific (k*, f*) point. Requires S_complex to be stored.")
+            + method_row(".modes.at(...).plot.imshow()",
+                         "Mode spatial profile |ψ(x,y)|",
+                         "Show the reconstructed spin-wave mode amplitude. mode_type: abs | real | imag | phase.")
+        )
+
+        filtered_rows = method_row(
+            ".filtered(live={'gaussian_morph': {'enabled': True, 'sigma_f': 1.0}})",
+            "→ new DispersionResult1D",
+            "Non-destructive: applies live post-filters to S(k,f) and returns a new result. Original data unchanged."
+        )
+
+        breadcrumb = (
+            "<div style='font-size:.78em;color:#475569;margin-bottom:8px;font-family:monospace;'>"
+            "fft.dispersion "
+            "<span style='color:#334155;'>›</span> "
+            ".filters() "
+            "<span style='color:#334155;'>›</span> "
+            "<span style='color:#7dd3fc;font-weight:600;'>.compute_1d()</span>"
+            "</div>"
+        )
+
+        return (
+            "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;"
+            "border:2px solid #2563eb;border-radius:10px;padding:14px;margin:6px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#0c1a35 100%);color:#e2e8f0;max-width:720px;'>"
+            + breadcrumb
+            + "<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px;'>"
+            + "<span style='font-weight:700;font-size:1.05em;color:#f1f5f9;'>DispersionResult1D</span>"
+            + "<span style='background:#1d4ed8;color:#bfdbfe;border-radius:5px;padding:1px 8px;font-size:.75em;'>S(k,f)</span>"
+            + f"<span style='margin-left:auto;font-size:.8em;color:#475569;padding:1px 8px;border:1px solid #334155;border-radius:4px;'>axis={_esc(self.axis)}</span>"
+            + "</div>"
+            + stats_html
+            + "<div style='font-size:.78em;color:#64748b;margin:4px 0 6px 2px;'>Optional stored arrays: "
+            + flags_html
+            + "</div>"
+            + section(".plot", "#60a5fa", "DispersionPlotAccessor", plot_rows,
+                      "Plotting namespace: S(k,f) heatmap and dispersion branch visualization.",
+                      open_=True)
+            + section(".analyze", "#34d399", "DispersionAnalyzeAccessor", analyze_rows,
+                      "Analysis tools: find the true minimum frequency on the dispersion branch.")
+            + section(".modes", "#f59e0b", "DispersionModesBridge", modes_rows,
+                      "Mode extraction: interactive widget or single-point mode profile m(x,y).")
+            + section(".filtered(...)", "#a78bfa", "non-destructive", filtered_rows,
+                      "Apply live/post filters to S(k,f) without recomputing FFT. Returns new DispersionResult1D.")
+            + "</div>"
+        )
+
 
 @dataclass
 class DispersionResult2D:

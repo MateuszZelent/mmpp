@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
 import numpy as np
+import zarr
 
 from .cli.logging_config import get_mmpp_logger
 
@@ -422,9 +423,10 @@ class BatchDatasetWrapper:
         self.slice_info = None
     
     def __getitem__(self, key):
-        """Capture slice information."""
-        self.slice_info = key
-        return self
+        """Capture slice information, returning a new wrapper (immutable pattern)."""
+        new = BatchDatasetWrapper(self.results, self.mmpp_ref, self.dataset_name)
+        new.slice_info = key
+        return new
     
     @property
     def fft(self) -> BatchFFT:
@@ -605,13 +607,18 @@ class BatchOperations:
         BatchDatasetWrapper
             Wrapper for dataset-aware operations
         """
-        # Check if this could be a dataset name
-        # Common patterns: 'm', 'm_layer*', 'm_resonator', etc.
-        if name.startswith('m') or name in ['B_ext', 'regions', 'table']:
-            log.debug(f"Creating dataset wrapper for: {name}")
-            return BatchDatasetWrapper(self.results, self.mmpp_ref, name)
+        # Check if any result has a dataset with this name.
+        for result in self.results:
+            try:
+                result._ensure_zarr_loaded()
+                member = result._z[name]
+                if isinstance(member, zarr.Array):
+                    log.debug(f"Creating dataset wrapper for: {name}")
+                    return BatchDatasetWrapper(self.results, self.mmpp_ref, name)
+            except (KeyError, Exception):
+                continue
         
-        # Default behavior for other attributes
+        # Not a dataset — raise standard error
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     def __len__(self) -> int:

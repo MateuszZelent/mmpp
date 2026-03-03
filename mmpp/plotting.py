@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
+import zarr
 from .pyzfn import Pyzfn
 
 # Import shared logging configuration
@@ -208,11 +209,17 @@ class PlotterProxy:
         - job.find(...).m_layer13[...].fft.transmission() - dataset access
         - job.find(...).mpl.plot() - plotting methods
         """
-        # Check if this could be a dataset name (like in BatchOperations)
-        if name.startswith('m') or name in ['B_ext', 'regions', 'table']:
-            from .batch_operations import BatchDatasetWrapper
-            log.debug(f"PlotterProxy: Creating dataset wrapper for: {name}")
-            return BatchDatasetWrapper(self.results, self.mmpp_instance, name)
+        # Check if any result has a dataset with this name
+        for result in self.results:
+            try:
+                result._ensure_zarr_loaded()
+                member = result._z[name]
+                if isinstance(member, zarr.Array):
+                    from .batch_operations import BatchDatasetWrapper
+                    log.debug(f"PlotterProxy: Creating dataset wrapper for: {name}")
+                    return BatchDatasetWrapper(self.results, self.mmpp_instance, name)
+            except (KeyError, Exception):
+                continue
         
         # Default: delegate to MMPPlotter for plotting methods
         if not MATPLOTLIB_AVAILABLE:
@@ -1811,36 +1818,50 @@ MMPP Plotter:
         t: int = -1,
         ax: Optional[Axes] = None,
         repeat: int = 1,
-        zero: Optional[bool] = None,
+        zero: Optional[int] = None,
+        cmap: Optional[str] = None,
+        component: Optional[int] = None,
     ) -> Axes:
         """
-        Create a snapshot visualization of magnetization data.
+        Create a snapshot visualization of magnetization or scalar data.
 
-        Parameters:
-        -----------
+        Automatically detects whether the dataset is vector (3-component,
+        e.g. magnetization) or scalar (1-component / no component axis,
+        e.g. ``geom``, ``regions``) and renders accordingly:
+
+        * **Vector** – HSL colour-wheel background + quiver arrows.
+        * **Scalar** – 2-D heatmap with colorbar (default cmap: ``viridis``).
+
+        Parameters
+        ----------
         dset : str, optional
-            Dataset name. If None, automatically selects the largest m dataset.
-            Dataset name to visualize
+            Dataset name. If *None*, automatically selects the largest ``m``
+            dataset.
         z : int, default 0
-            Z-slice to display
+            Z-slice to display.
         t : int, default -1
-            Time step to display (-1 for last)
-        ax : Optional[Axes], default None
-            Matplotlib axes to plot on (creates new if None)
+            Time step to display (``-1`` for last).
+        ax : Axes, optional
+            Matplotlib axes to plot on (creates new if *None*).
         repeat : int, default 1
-            Number of times to tile the image
-        zero : Optional[bool], default None
-            Reference time step to subtract (for difference plots)
+            Number of times to tile the image.
+        zero : int, optional
+            Reference time step to subtract (for difference plots).
+        cmap : str, optional
+            Colormap for scalar data (default ``'viridis'``).
+            Ignored for vector data.
+        component : int, optional
+            For vector data, plot only the selected component (0, 1, 2)
+            as a scalar heatmap instead of the default HSL view.
 
-        Returns:
-        --------
+        Returns
+        -------
         Axes
-            Matplotlib axes object with the plot
+            Matplotlib axes object with the plot.
         """
         if not self.results:
             raise ValueError("No results available for plotting")
 
-        # Use the first result for now
         result = self.results[0]
 
         # Auto-select dataset if not provided
@@ -1848,70 +1869,147 @@ MMPP Plotter:
             dset = result.get_largest_m_dataset()
             log.info(f"Auto-selected dataset: {dset}")
 
-        # Get the magnetization data
-        arr = result.get_np3d(dset, (t, z, slice(None), slice(None), slice(None)))
-        if ax is None:
-            shape_ratio = arr.shape[1] / arr.shape[0]
-            _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
-        if zero is not None:
-            arr -= result.get_np3d(
-                dset, (zero, z, slice(None), slice(None), slice(None))
+        # ── Probe dataset shape to decide vector vs scalar ──────────
+        raw_dset = result.get_raw(dset)
+        full_shape = raw_dset.shape          # e.g. (Nt, Nz, Ny, Nx, 3) or (Nz, Ny, Nx)
+        ndim = len(full_shape)
+
+        # Build the indexing tuple depending on dimensionality
+        if ndim == 5:
+            # Standard 5-D: (t, z, y, x, comp)
+            slices = (t, z, slice(None), slice(None), slice(None))
+            arr = np.asarray(raw_dset[slices], dtype=np.float32)
+            n_comp = arr.shape[-1]
+        elif ndim == 4:
+            # Could be (t, y, x, comp) or (z, y, x, comp) – use *t* as first axis
+            slices = (t, slice(None), slice(None), slice(None))
+            arr = np.asarray(raw_dset[slices], dtype=np.float32)
+            n_comp = arr.shape[-1]
+        elif ndim == 3:
+            # (y, x, comp) or (z, y, x) – heuristic: last dim <= 3 → component
+            if full_shape[-1] <= 3:
+                arr = np.asarray(raw_dset[:], dtype=np.float32)
+                n_comp = arr.shape[-1]
+            else:
+                # Treat as (z, y, x) scalar volume → take z-slice
+                arr = np.asarray(raw_dset[z], dtype=np.float32)
+                n_comp = 0  # pure 2-D scalar
+        elif ndim == 2:
+            # (y, x) – pure 2-D scalar
+            arr = np.asarray(raw_dset[:], dtype=np.float32)
+            n_comp = 0
+        else:
+            raise ValueError(
+                f"Dataset '{dset}' has unsupported shape {full_shape} for snapshot"
             )
 
-        arr = np.tile(arr, (repeat, repeat, 1))
-        u = arr[:, :, 0]
-        v = arr[:, :, 1]
-        w = arr[:, :, 2]
+        # Subtract reference if requested
+        if zero is not None:
+            if ndim == 5:
+                ref = np.asarray(
+                    raw_dset[(zero, z, slice(None), slice(None), slice(None))],
+                    dtype=np.float32,
+                )
+            elif ndim == 4:
+                ref = np.asarray(
+                    raw_dset[(zero, slice(None), slice(None), slice(None))],
+                    dtype=np.float32,
+                )
+            else:
+                log.warning(
+                    "zero=%s ignored for %dD dataset '%s' (no time axis)",
+                    zero, ndim, dset,
+                )
+                ref = np.zeros_like(arr)
+            arr = arr - ref
 
-        alphas = -np.abs(w) + 1
-        hsl = np.ones((u.shape[0], u.shape[1], 3), dtype=np.float32)
-        hsl[:, :, 0] = np.angle(u + 1j * v) / np.pi / 2  # normalization
-        hsl[:, :, 1] = np.sqrt(u**2 + v**2 + w**2)
-        hsl[:, :, 2] = (w + 1) / 2
-        rgb = hsl2rgb(hsl)
+        # Force scalar path when user asks for a single component
+        if component is not None and n_comp >= 2:
+            if component < 0 or component >= n_comp:
+                raise IndexError(
+                    f"component={component} is out of range for dataset "
+                    f"'{dset}' with {n_comp} components"
+                )
+            arr = arr[..., component : component + 1]
+            n_comp = 1
 
-        stepx = max(int(u.shape[1] / 20), 1)
-        stepy = max(int(u.shape[0] / 20), 1)
-        scale = 1 / max(stepx, stepy)
-        x, y = np.meshgrid(
-            np.arange(0, u.shape[1], stepx) * float(result.z.attrs["dx"]) * 1e9,
-            np.arange(0, u.shape[0], stepy) * float(result.z.attrs["dy"]) * 1e9,
-        )
+        # ── Determine spatial extent (nm) ───────────────────────────
+        try:
+            dx_nm = float(result.z.attrs["dx"]) * 1e9
+            dy_nm = float(result.z.attrs["dy"]) * 1e9
+        except (KeyError, AttributeError):
+            dx_nm = 1.0
+            dy_nm = 1.0
 
-        antidots = np.ma.masked_not_equal(result[dset][0, 0, :, :, 2], 0)
-        antidots = np.tile(antidots, (repeat, repeat))
+        is_vector = n_comp == 3
 
-        ax.quiver(
-            x,
-            y,
-            u[::stepy, ::stepx],
-            v[::stepy, ::stepx],
-            alpha=alphas[::stepy, ::stepx],
-            angles="xy",
-            scale_units="xy",
-            scale=scale,
-        )
+        # ── VECTOR path (HSL colour-wheel + quiver) ────────────────
+        if is_vector:
+            arr = np.tile(arr, (repeat, repeat, 1))
+            u = arr[:, :, 0]
+            v = arr[:, :, 1]
+            w = arr[:, :, 2]
 
-        ax.imshow(
-            rgb,
-            interpolation="None",
-            origin="lower",
-            aspect="equal",
-            cmap="hsv",
-            vmin=-np.pi,
-            vmax=np.pi,
-            extent=(
-                0,
-                rgb.shape[1] * float(result.z.attrs["dx"]) * 1e9,
-                0,
-                rgb.shape[0] * float(result.z.attrs["dy"]) * 1e9,
-            ),
-        )
+            if ax is None:
+                shape_ratio = arr.shape[1] / arr.shape[0]
+                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
 
-        ax.set(title=result.name, xlabel="x (nm)", ylabel="y (nm)")
+            alphas = -np.abs(w) + 1
+            hsl = np.ones((u.shape[0], u.shape[1], 3), dtype=np.float32)
+            hsl[:, :, 0] = np.angle(u + 1j * v) / np.pi / 2
+            hsl[:, :, 1] = np.sqrt(u**2 + v**2 + w**2)
+            hsl[:, :, 2] = (w + 1) / 2
+            rgb = hsl2rgb(hsl)
 
-        # if not isinstance(ax, Axes):
-        #     raise ValueError("ax must be a matplotlib Axes object")
+            stepx = max(int(u.shape[1] / 20), 1)
+            stepy = max(int(u.shape[0] / 20), 1)
+            scale = 1 / max(stepx, stepy)
+            x, y = np.meshgrid(
+                np.arange(0, u.shape[1], stepx) * dx_nm,
+                np.arange(0, u.shape[0], stepy) * dy_nm,
+            )
+
+            ax.quiver(
+                x, y,
+                u[::stepy, ::stepx],
+                v[::stepy, ::stepx],
+                alpha=alphas[::stepy, ::stepx],
+                angles="xy",
+                scale_units="xy",
+                scale=scale,
+            )
+
+            ax.imshow(
+                rgb,
+                interpolation="None",
+                origin="lower",
+                aspect="equal",
+                extent=(0, rgb.shape[1] * dx_nm, 0, rgb.shape[0] * dy_nm),
+            )
+
+        # ── SCALAR path (heatmap + colorbar) ────────────────────────
+        else:
+            # Reduce to pure 2-D by collapsing trailing axes
+            while arr.ndim > 2:
+                arr = arr[..., 0]
+
+            arr = np.tile(arr, (repeat, repeat))
+
+            if ax is None:
+                shape_ratio = arr.shape[1] / arr.shape[0]
+                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
+
+            im = ax.imshow(
+                arr,
+                interpolation="none",
+                origin="lower",
+                aspect="equal",
+                cmap=cmap or "viridis",
+                extent=(0, arr.shape[1] * dx_nm, 0, arr.shape[0] * dy_nm),
+            )
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        ax.set(title=f"{result.name} — {dset}", xlabel="x (nm)", ylabel="y (nm)")
 
         return ax
 

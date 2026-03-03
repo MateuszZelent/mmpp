@@ -578,10 +578,10 @@ class ZarrJobResult:
         zarr.Array
             The zarr dataset
         """
-        dset_tmp = self[dset]
-        if isinstance(dset_tmp, zarr.Group):
+        member = self._get_zarr_member(dset)
+        if isinstance(member, zarr.Group):
             raise ValueError(f"`{dset}` is a group, not a dataset.")
-        return dset_tmp
+        return member
 
     def get_f32(self, dset: str, slices: ArraySlice) -> npf32:
         """

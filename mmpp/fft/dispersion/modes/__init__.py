@@ -34,6 +34,12 @@ from .animation import (
     SpinWaveModeAnimator,
     animate_mode_from_folding,
 )
+from .bridge import (
+    DispersionModesBridge,
+    DispersionModeResult,
+    DispersionModePlotAccessor,
+    DispersionModesPlotAccessor,
+)
 
 __all__ = [
     # Models
@@ -51,4 +57,9 @@ __all__ = [
     "generate_animation_frames",
     "SpinWaveModeAnimator",
     "animate_mode_from_folding",
+    # Bridge (new fluent API)
+    "DispersionModesBridge",
+    "DispersionModeResult",
+    "DispersionModePlotAccessor",
+    "DispersionModesPlotAccessor",
 ]

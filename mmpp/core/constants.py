@@ -49,6 +49,7 @@ SPECIAL_ATTRS = {
 
 # Feature flags and optional imports
 try:
+    import itables  # noqa: F401
     ITABLES_AVAILABLE = True
 except ImportError:
     ITABLES_AVAILABLE = False

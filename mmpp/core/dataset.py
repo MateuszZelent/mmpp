@@ -379,6 +379,35 @@ job[0].fft.modes  # Shows mode analysis options'''
         return html
 
 
+class DatasetPlotAccessor:
+    """Plot accessor for DatasetAwareWrapper.
+
+    Provides convenient plotting methods pre-bound to a specific dataset
+    and slice context.  Accessed via ``job[0].geom[:].plot``.
+    """
+
+    def __init__(self, job_result, dataset_name: str, slice_info=None):
+        self._job_result = job_result
+        self._dataset_name = dataset_name
+        self._slice_info = slice_info
+
+    def snapshot(self, **kwargs):
+        """Create a snapshot visualisation.
+
+        All keyword arguments are forwarded to
+        :meth:`MMPPlotter.snapshot`.  The ``dset`` parameter is
+        automatically filled from the parent dataset.
+        """
+        from ..plotting import MMPPlotter
+
+        kwargs.setdefault("dset", self._dataset_name)
+        plotter = MMPPlotter([self._job_result], getattr(self._job_result, "_mmpp_ref", None))
+        return plotter.snapshot(**kwargs)
+
+    def __repr__(self):
+        return f"<DatasetPlotAccessor('{self._dataset_name}')>"
+
+
 class DatasetAwareWrapper:
     """Wrapper that acts like zarr.Array but has .fft property"""
 
@@ -390,6 +419,7 @@ class DatasetAwareWrapper:
         self._fft = None
         self._solitons = None
         self._analyze = None
+        self._plot = None
 
     def _resolve_source(self):
         """Return underlying data respecting the stored slice."""
@@ -400,7 +430,7 @@ class DatasetAwareWrapper:
     def __getattr__(self, name):
         """Delegate to zarr_array for most attributes (but not our own properties)"""
         # Don't delegate properties that are defined on this class
-        if name in ('dt', 'fft', 'analyze', 'shape', 'data'):
+        if name in ('dt', 'fft', 'analyze', 'shape', 'data', 'plot'):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
         
         if self.slice_info is not None:
@@ -532,6 +562,24 @@ class DatasetAwareWrapper:
                 slice_info=self.slice_info,
             )
         return self._analyze
+
+    @property
+    def plot(self):
+        """Plot accessor with dataset context pre-selected.
+
+        Examples
+        --------
+        >>> job[0].geom[:].plot.snapshot()
+        >>> job[0].m[:].plot.snapshot(z=0, t=-1)
+        >>> job[0].regions[:].plot.snapshot(cmap='tab10')
+        """
+        if self._plot is None:
+            self._plot = DatasetPlotAccessor(
+                self.job_result,
+                self.dataset_name,
+                slice_info=self.slice_info,
+            )
+        return self._plot
 
     @property
     def vortex(self):

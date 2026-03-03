@@ -1199,7 +1199,8 @@ class FFTDispersionInterface:
 
         clone = self.clone_for_dataset(self.dataset_name, self.slice_info)
         clone._filters_config = copy.deepcopy(config)
-        return clone
+        from .filter_chain import DispersionFilterChain
+        return DispersionFilterChain(clone)
 
     def _normalize_filters_config(
         self,
@@ -1482,6 +1483,13 @@ class FFTDispersionInterface:
 
         if kmax is not None and result is not None:
             result = self._trim_dispersion_kmax(result, kmax)
+
+        # Attach back-reference so result.modes.interactive() can delegate
+        if result is not None:
+            try:
+                object.__setattr__(result, "_interface", self)
+            except (AttributeError, TypeError):
+                pass
 
         return cast(DispersionResult1D, result)
 

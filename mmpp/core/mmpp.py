@@ -308,7 +308,7 @@ class MMPP:
                         'min': values.min(),
                         'max': values.max()
                     }
-            except:
+            except Exception:
                 continue
         
         # Sort by number of unique values (descending) - varying parameters first
@@ -512,7 +512,6 @@ class MMPP:
                 for path in zarr_folders
             }
 
-            from rich.progress import track
             
             # Use rich progress bar if available, otherwise simple loop
             try:
@@ -964,6 +963,6 @@ class MMPP:
             List of paths to zarr folders matching the criteria
         """
         proxy = self.find(**kwargs)
-        if hasattr(proxy, "jobs"):
-             return [job.path for job in proxy.jobs]
+        if hasattr(proxy, "results"):
+             return [job.path for job in proxy.results]
         return [job.path for job in proxy] # type: ignore
