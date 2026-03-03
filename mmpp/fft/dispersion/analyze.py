@@ -449,6 +449,7 @@ class DispersionAnalyzeAccessor:
         k_min_rad_um: float = 0.0,
         k_max_rad_um: Optional[float] = None,
         peak_method: str = "argmax",
+        fmin_hz: Optional[float] = "auto",
     ) -> LowestFrequencyResult:
         """Find the lowest frequency reachable on the spin-wave dispersion.
 
@@ -478,6 +479,14 @@ class DispersionAnalyzeAccessor:
 
             * ``"argmax"`` – index of maximum spectral density.
             * ``"centroid"`` – power-weighted centroid frequency.
+        fmin_hz : float, ``"auto"``, or None
+            Minimum frequency cutoff (Hz).  Frequencies below this value are
+            excluded from the peak search to avoid DC / low-frequency artifacts.
+
+            * ``"auto"`` (default) – skip the lowest 5 % of the positive
+              frequency axis.  Equivalent to ``fmin_hz = 0.05 * f_axis.max()``.
+            * ``None`` or ``0`` – no cutoff, use all positive frequencies.
+            * Explicit ``float`` – use that value as the lower bound (Hz).
 
         Returns
         -------
@@ -492,6 +501,20 @@ class DispersionAnalyzeAccessor:
         pos_f = f_axis >= 0
         f_axis_pos = f_axis[pos_f]
         S_pos = S[:, pos_f]
+
+        # Apply fmin cutoff to avoid DC artifacts
+        if fmin_hz == "auto":
+            fmin_cutoff = 0.05 * float(f_axis_pos.max())
+        elif fmin_hz is not None and fmin_hz > 0:
+            fmin_cutoff = float(fmin_hz)
+        else:
+            fmin_cutoff = 0.0
+
+        if fmin_cutoff > 0:
+            f_keep = f_axis_pos >= fmin_cutoff
+            f_axis_pos = f_axis_pos[f_keep]
+            S_pos = S_pos[:, f_keep]
+
 
         # Convert search window to rad/m
         k_min_rm = k_min_rad_um * 1e6
@@ -670,6 +693,9 @@ class DispersionAnalyzeAccessor:
             (".find_lowest_possible_frequency(k_min_rad_um=0.5, k_max_rad_um=8.0)",
              "Restrict k search window",
              "k_min_rad_um / k_max_rad_um restrict the search range in rad/\u03bcm. Useful to exclude the k=0 region."),
+            (".find_lowest_possible_frequency(fmin_hz=2e9)",
+             "Explicit fmin cutoff (Hz)",
+             "fmin_hz='auto' (default) skips lowest 5% of spectrum. Set explicit Hz value, or None to disable."),
         ]
         rows = "".join(
             f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
