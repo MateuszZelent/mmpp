@@ -629,6 +629,107 @@ class BatchOperations:
         """String representation of batch operations."""
         return f"BatchOperations({len(self.results)} results)"
 
+    def _repr_html_(self) -> str:
+        """Return rich HTML representation for Jupyter notebooks."""
+        import uuid as _uuid
+
+        n = len(self.results)
+
+        # ── header ──────────────────────────────────────────────
+        html = (
+            '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
+            '0 0 0 1px rgba(148,163,184,0.1) inset;">'
+        )
+        html += (
+            '<h3 style="margin:0 0 12px 0;color:#f1f5f9;font-weight:600;'
+            'letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);">'
+            f"📦 Batch Operations &nbsp;"
+            f'<span style="color:#60a5fa;font-weight:700;">{n}</span>'
+            f'<span style="color:#cbd5e1;font-weight:400;font-size:0.9em;"> result{"s" if n != 1 else ""}</span>'
+            "</h3>"
+        )
+
+        # ── info section ────────────────────────────────────────
+        html += (
+            '<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
+            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;margin-bottom:12px;"
+            'border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);">'
+        )
+        if n > 0:
+            first_name = self.results[0].path.split("/")[-1]
+            last_name = self.results[-1].path.split("/")[-1]
+            html += (
+                '<b style="color:#94a3b8;">First:</b> '
+                f'<code style="background:rgba(15,23,42,0.6);padding:4px 10px;border-radius:5px;'
+                f"font-family:'Courier New',monospace;font-size:0.9em;color:#cbd5e1;"
+                f'border:1px solid rgba(71,85,105,0.3);">{first_name}</code><br>'
+            )
+            if n > 1:
+                html += (
+                    '<b style="color:#94a3b8;">Last:</b> '
+                    f'<code style="background:rgba(15,23,42,0.6);padding:4px 10px;border-radius:5px;'
+                    f"font-family:'Courier New',monospace;font-size:0.9em;color:#cbd5e1;"
+                    f'border:1px solid rgba(71,85,105,0.3);">{last_name}</code>'
+                )
+        else:
+            html += '<span style="color:#fbbf24;">⚠️ Empty batch – no results.</span>'
+        html += "</div>"
+
+        # ── available operations table ──────────────────────────
+        uid = str(_uuid.uuid4())[:8]
+        ops = [
+            ("job[:].fft.spectrum", "Batch FFT spectrum computation"),
+            ("job[:].fft.modes", "Batch FMR mode analysis"),
+            ("job[:].fft.transmission", "Batch transmission analysis"),
+            ("job[:].get.&lt;dset&gt;[:]", "Stacked numpy arrays [n_jobs, …]"),
+            ("job[:].process(…)", "Full analysis pipeline"),
+        ]
+
+        html += (
+            '<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
+            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;margin-bottom:12px;"
+            'border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);">'
+            '<b style="color:#94a3b8;">🔧 Available Operations:</b>'
+            '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;">'
+        )
+        for code, desc in ops:
+            html += (
+                '<tr style="border-bottom:1px solid rgba(71,85,105,0.3);">'
+                f'<td style="padding:6px 8px;">'
+                f'<code style="background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;'
+                f'color:#60a5fa;border:1px solid rgba(71,85,105,0.3);font-weight:500;">{code}</code></td>'
+                f'<td style="padding:6px 8px;color:#cbd5e1;">{desc}</td></tr>'
+            )
+        html += "</table></div>"
+
+        # ── quick-start examples (collapsible) ──────────────────
+        example_id = f"batch-examples-{uid}"
+        html += (
+            f'<div style="margin-top:4px;">'
+            f'<span onclick="var e=document.getElementById(\'{example_id}\');'
+            f"e.style.display=e.style.display==='none'?'block':'none';\""
+            f' style="cursor:pointer;color:#60a5fa;font-size:0.9em;">'
+            f"▶ Quick-start examples</span>"
+            f'<div id="{example_id}" style="display:none;margin-top:8px;">'
+            f'<pre style="background:rgba(15,23,42,0.8);padding:10px;border-radius:6px;'
+            f"font-family:'Courier New',monospace;font-size:0.85em;color:#10b981;"
+            f'border:1px solid rgba(71,85,105,0.4);overflow-x:auto;">'
+            "# Batch spectrum\n"
+            'batch = job[:].fft.spectrum.compute_all(fmin=5e9, fmax=25e9)\n'
+            'batch.plot.heatmap("B0")\n\n'
+            "# Batch numpy access\n"
+            "arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n"
+            "# Full pipeline\n"
+            'job[:].process(dset="m")'
+            "</pre></div></div>"
+        )
+
+        html += "</div>"
+        return html
+
     def __iter__(self):
         """Make batch operations iterable."""
         return iter(self.results)

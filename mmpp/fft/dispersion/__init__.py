@@ -47,6 +47,18 @@ from .utils import (
     group_velocity_1d,
 )
 from .comsol import read_data_from_comsol, ComsolDispersionData
+from .filter_chain import DispersionFilterChain
+from .analyze import (
+    DispersionAnalyzeAccessor,
+    LowestFrequencyResult,
+    LowestFrequencyPlotAccessor,
+)
+from .bulk import (
+    BulkMinimumFrequencyResult,
+    BulkMinimumPlotAccessor,
+    scan_minimum_frequency,
+)
+from ._plotting.accessor import DispersionPlotAccessor
 
 # BZ folding and mode analysis module
 from .modes import (
@@ -89,4 +101,14 @@ __all__ = [
     # Animation
     "SpinWaveModeAnimator",
     "extract_amplitude_phase",
+    # New fluent API
+    "DispersionFilterChain",
+    "DispersionPlotAccessor",
+    "DispersionAnalyzeAccessor",
+    "LowestFrequencyResult",
+    "LowestFrequencyPlotAccessor",
+    # Bulk scanning
+    "BulkMinimumFrequencyResult",
+    "BulkMinimumPlotAccessor",
+    "scan_minimum_frequency",
 ]

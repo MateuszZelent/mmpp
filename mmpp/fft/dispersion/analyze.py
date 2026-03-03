@@ -575,6 +575,78 @@ class DispersionAnalyzeAccessor:
             side=side,
         )
 
+    def scan(
+        self,
+        sources,
+        param_values,
+        param_label: str = "parameter",
+        *,
+        filters: Optional[dict] = None,
+        compute_kwargs: Optional[dict] = None,
+        find_kwargs: Optional[dict] = None,
+        slice_spec=None,
+        verbose: bool = True,
+        on_error: str = "warn",
+    ):
+        """Bulk scan of minimum frequency across multiple sources/jobs.
+
+        Convenience wrapper around :func:`~mmpp.fft.dispersion.bulk.scan_minimum_frequency`.
+        The current result's filters and compute settings are used as defaults
+        (can be overridden via *filters* / *compute_kwargs*).
+
+        Parameters
+        ----------
+        sources : iterable
+            MMPP jobs, pre-computed :class:`DispersionResult1D` instances, or
+            callables returning ``DispersionResult1D``.
+        param_values : sequence of float
+            One value per source item.
+        param_label : str
+            Human-readable name for the scan parameter.
+        filters, compute_kwargs, find_kwargs : dict, optional
+            Override auto-detected settings from the current result.
+        slice_spec
+            Spatial slice applied to each job's magnetisation dataset.
+        verbose : bool
+            Print per-job progress.
+        on_error : ``"warn"`` | ``"raise"`` | ``"skip"``
+            How to handle per-job failures.
+
+        Returns
+        -------
+        BulkMinimumFrequencyResult
+
+        Examples
+        --------
+        >>> bulk = result.analyze.scan(
+        ...     jobs,
+        ...     param_values=[0, 10, 20, 30],
+        ...     param_label="B_ext [mT]",
+        ... )
+        >>> bulk.plot.summary()
+        """
+        from .bulk import scan_minimum_frequency
+
+        # Inherit config from current result where not overridden
+        res = self._result
+        _filters       = filters       or {}
+        _find_kwargs   = find_kwargs   or {}
+        _compute_kw    = compute_kwargs or dict(
+            axis=getattr(res, "axis", "x"),
+        )
+
+        return scan_minimum_frequency(
+            sources,
+            param_values=param_values,
+            param_label=param_label,
+            filters=_filters,
+            compute_kwargs=_compute_kw,
+            find_kwargs=_find_kwargs,
+            slice_spec=slice_spec,
+            verbose=verbose,
+            on_error=on_error,
+        )
+
     def __repr__(self) -> str:
         return "<DispersionAnalyzeAccessor: .find_lowest_possible_frequency(...)>"
 
