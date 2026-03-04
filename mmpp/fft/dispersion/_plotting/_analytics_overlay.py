@@ -62,10 +62,34 @@ def _get_model_func(name: str) -> Callable:
     return func
 
 
+def _is_mumax_pointer(val: Any) -> bool:
+    """Check if value is a mumax3 memory pointer string like '0xc00121ee70'."""
+    if not isinstance(val, str):
+        return False
+    return val.startswith("0x") and len(val) > 4
+
+
+def _safe_float(val: Any) -> Optional[float]:
+    """Convert value to float, handling strings and mumax3 pointers."""
+    if val is None:
+        return None
+    if _is_mumax_pointer(val):
+        return None  # Can't extract from pointer
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
     """Auto-extract material parameters from zarr attrs via DispersionResult1D back-reference.
 
     Traverses the chain: result._interface → parent_fft → job_result → zarr attrs.
+
+    Handles mumax3 quirks:
+    - Pointer strings (``'0xc00...'``) for spatially-varying quantities
+    - String-typed numbers (``'996000'`` instead of ``996000``)
+    - Fallback to ``Bmax`` when ``B_ext`` is a pointer
 
     Returns
     -------
@@ -77,7 +101,7 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
         "Ms": None,
         "d": None,
         "Aex": None,
-        "Ku": 0.0,  # default to 0 (not None) — most sims don't have anisotropy
+        "Ku": 0.0,  # default to 0 — most sims don't have uniaxial anisotropy
     }
 
     # Navigate back-reference chain
@@ -104,51 +128,76 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
         logger.debug("Failed to read zarr attrs: %s", exc)
         return params
 
-    # B_ext — might be scalar or array
+    # ── B_ext ─────────────────────────────────────────────────
     b_ext = attrs.get("B_ext")
-    if b_ext is not None:
+    b_val = None
+
+    if b_ext is not None and not _is_mumax_pointer(b_ext):
         try:
-            b_val = np.asarray(b_ext, dtype=float)
-            if b_val.ndim == 0:
-                params["B"] = float(b_val)
-            else:
-                # Vector → magnitude
-                params["B"] = float(np.linalg.norm(b_val))
+            b_arr = np.asarray(b_ext, dtype=float)
+            b_val = float(b_arr) if b_arr.ndim == 0 else float(np.linalg.norm(b_arr))
         except (TypeError, ValueError):
             pass
 
-    # Msat
-    msat = attrs.get("Msat")
-    if msat is not None:
-        try:
-            params["Ms"] = float(msat)
-        except (TypeError, ValueError):
-            pass
+    if b_val is None:
+        # Fallback: try Bmax (common mumax3 scalar attr for bias field)
+        bmax = _safe_float(attrs.get("Bmax"))
+        if bmax is not None:
+            b_val = abs(bmax)
+            logger.info("B_ext is a mumax3 pointer; using Bmax=%.4f T as fallback", b_val)
+        else:
+            # Try 'b' attr
+            b_scalar = _safe_float(attrs.get("b"))
+            if b_scalar is not None:
+                b_val = abs(b_scalar)
+                logger.info("B_ext is a mumax3 pointer; using |b|=%.4f T as fallback", b_val)
 
-    # Aex
-    aex = attrs.get("Aex")
-    if aex is not None:
-        try:
-            params["Aex"] = float(aex)
-        except (TypeError, ValueError):
-            pass
+    if b_val is None:
+        logger.warning(
+            "Cannot auto-detect B field (B_ext='%s' is a mumax3 pointer). "
+            "Please provide B= manually in add_analytics().",
+            b_ext,
+        )
+    params["B"] = b_val
 
-    # Thickness = Nz * dz
-    nz = attrs.get("Nz")
-    dz = attrs.get("dz")
-    if nz is not None and dz is not None:
-        try:
-            params["d"] = float(nz) * float(dz)
-        except (TypeError, ValueError):
-            pass
+    # ── Msat ──────────────────────────────────────────────────
+    ms_val = _safe_float(attrs.get("Msat"))
+    if ms_val is not None:
+        params["Ms"] = ms_val
+    else:
+        logger.warning("Cannot auto-detect Ms (Msat='%s')", attrs.get("Msat"))
 
-    # Anisotropy
-    ku = attrs.get("Ku") or attrs.get("kc1") or attrs.get("Ku1")
-    if ku is not None:
-        try:
-            params["Ku"] = float(ku)
-        except (TypeError, ValueError):
-            pass
+    # ── Aex ───────────────────────────────────────────────────
+    aex_val = _safe_float(attrs.get("Aex"))
+    if aex_val is not None:
+        params["Aex"] = aex_val
+
+    # ── Thickness ─────────────────────────────────────────────
+    # Prefer Tz (total thickness) if available, otherwise Nz * dz
+    tz = _safe_float(attrs.get("Tz"))
+    if tz is not None and tz > 0:
+        params["d"] = tz
+    else:
+        nz = _safe_float(attrs.get("Nz"))
+        dz = _safe_float(attrs.get("dz"))
+        if nz is not None and dz is not None:
+            params["d"] = nz * dz
+
+    # ── Anisotropy ────────────────────────────────────────────
+    # Try uniaxial Ku first, then check kc1 (cubic)
+    ku_val = _safe_float(attrs.get("Ku")) or _safe_float(attrs.get("Ku1"))
+    if ku_val is not None:
+        params["Ku"] = ku_val
+    else:
+        # kc1 (cubic) — only if it's a real number, not a pointer
+        kc1_val = _safe_float(attrs.get("kc1"))
+        if kc1_val is not None and kc1_val != 0.0:
+            # Approximate cubic as effective uniaxial: Ku_eff ≈ -Kc1/2 for in-plane
+            params["Ku"] = -kc1_val / 2.0
+            logger.info(
+                "Using cubic anisotropy kc1=%.1f as effective uniaxial Ku_eff=%.1f",
+                kc1_val, params["Ku"],
+            )
 
     detected = {k: v for k, v in params.items() if v is not None}
     logger.info("Auto-detected material params from zarr: %s", detected)
