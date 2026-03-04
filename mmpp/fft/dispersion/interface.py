@@ -1370,6 +1370,16 @@ class FFTDispersionInterface:
         """
         compute_kwargs = dict(kwargs)
 
+        # FFT backend configuration (also available via .dispersion(backend=...))
+        _backend = compute_kwargs.pop("backend", None)
+        _workers = compute_kwargs.pop("workers", None)
+        if _backend is not None or _workers is not None:
+            from ._fft_backend import set_backend, set_workers
+            if _backend is not None:
+                set_backend(_backend)
+            if _workers is not None:
+                set_workers(_workers)
+
         kmax = compute_kwargs.pop("kmax", None)
         force = bool(compute_kwargs.pop("force", False))
 
