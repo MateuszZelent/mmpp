@@ -133,31 +133,38 @@ def kalinikos(
     # Exchange length squared
     lex2 = _exchange_length_squared(Aex, Ms)
     
-    # Dipolar factor
+    # Dipolar factor P(kd)
     P = _dipolar_factor_P(k, d)
     
-    # Internal field (including anisotropy)
-    H0 = B / MU0 + 2.0 * Ku / (MU0 * Ms) - Ms
+    # Internal field H₀ (in A/m).
+    # For an in-plane magnetized thin film the in-plane demagnetizing
+    # factor is ~0, so H₀ = H_ext + H_anisotropy.
+    # The out-of-plane demagnetization enters through the dipolar
+    # matrix element F(k, φ), NOT through H₀.
+    H0 = B / MU0 + 2.0 * Ku / (MU0 * Ms)
     
-    # Denominator for dipolar calculation
-    denom = H0 + Ms * lex2 * (k * k)
+    # Exchange stiffness field contribution (varies with k)
+    H_ex = Ms * lex2 * (k * k)   # = 2A k²/(μ₀ Ms)
     
     # Angular factors
     c2 = np.cos(phi) ** 2
     s2 = np.sin(phi) ** 2
     
-    # Dipolar angular factor F
+    # Dipolar angular factor F_{00}(kd, φ) — Kalinikos eq. 9
+    # F = P sin²φ + (1-P)(1-P) sin²φ / denominator  ... simplified:
+    # F = 1 - P cos²φ + Ms P(1-P) sin²φ / (H0 + H_ex)
+    denom = H0 + H_ex
     with np.errstate(divide='ignore', invalid='ignore'):
         F = 1.0 - P * c2 + (Ms * P * (1.0 - P) / (denom + 1e-30)) * s2
     
-    # Characteristic frequencies
-    omega_H = gamma_val * (B + 2.0 * Ku / Ms - MU0 * Ms)
+    # Characteristic frequencies (rad/s)
+    omega_H = gamma_val * MU0 * H0
     omega_M = gamma_val * MU0 * Ms
     omega_ex = omega_M * lex2 * (k * k)
     
     omega0 = omega_H + omega_ex
     
-    # Final dispersion
+    # Final dispersion: ω² = ω₀(ω₀ + ω_M·F)
     under_sqrt = omega0 * (omega0 + omega_M * F)
     under_sqrt = np.maximum(under_sqrt, 0.0)
     omega = np.sqrt(under_sqrt)
@@ -182,6 +189,7 @@ def kalinikos_no_approx(
     Aex: float,
     Ku: float = 0.0,
     n: int = 0,
+    perpendicular: bool = False,
     g: float = 2.0,
 ) -> DispersionResult:
     """
@@ -189,13 +197,14 @@ def kalinikos_no_approx(
     
     Extends the standard formula to include perpendicular standing
     spin wave (PSSW) modes via the mode index n.
+    Supports both in-plane and out-of-plane geometries.
     
     Parameters
     ----------
     k : float or array
         In-plane wavevector in 1/m
     B : float
-        Applied magnetic field in Tesla (perpendicular)
+        Applied magnetic field in Tesla
     Ms : float
         Saturation magnetization in A/m
     d : float
@@ -207,6 +216,8 @@ def kalinikos_no_approx(
     n : int, optional
         PSSW mode index (default: 0 for fundamental mode)
         n > 0 includes quantization along thickness.
+    perpendicular : bool, optional
+        If True, use out-of-plane geometry (default: False)
     g : float, optional
         Landé g-factor (default: 2.0)
         
@@ -232,9 +243,13 @@ def kalinikos_no_approx(
     Ku = float(Ku)
     gamma_val = gamma(g)
     
-    if n == 0:
-        # Use standard perpendicular geometry formula
+    if n == 0 and not perpendicular:
+        # Use standard in-plane geometry formula (DE, phi=π/2)
         return kalinikos(k=k, B=B, Ms=Ms, d=d, Aex=Aex, Ku=Ku, phi=np.pi/2, g=g)
+    
+    if n == 0 and perpendicular:
+        # Delegate to forward_volume for fundamental OOP mode
+        return forward_volume(k=k, B=B, Ms=Ms, d=d, Aex=Aex, Ku=Ku, g=g)
     
     # PSSW mode: include k_z quantization
     kz = abs(n) * math.pi / d
@@ -254,21 +269,32 @@ def kalinikos_no_approx(
     # Internal fields
     H0 = B / MU0
     omega_M = gamma_val * MU0 * Ms
-    omega_0 = gamma_val * MU0 * (H0 - Ms + Han + Hex)
     
-    # Dispersion
-    under_sqrt = omega_0 * (omega_0 + omega_M * (1.0 - Fk))
-    under_sqrt = np.maximum(under_sqrt, 0.0)
+    if perpendicular:
+        # OOP: static demagnetization -Ms
+        H_static = np.maximum(0.0, H0 - Ms + Han + Hex)
+        omega_0 = gamma_val * MU0 * H_static
+        # Dynamic demagnetization for higher OOP modes:
+        # P_nn = k²/k_total² (diagonal approximation)
+        P_nn = (k * k) / (k_total_sq + 1e-30)
+        under_sqrt = np.maximum(omega_0 * (omega_0 + omega_M * P_nn), 0.0)
+    else:
+        # In-plane: same convention as kalinikos() — no in-plane
+        # demagnetization subtracted from H₀.
+        omega_0 = gamma_val * MU0 * (H0 + Han + Hex)
+        under_sqrt = np.maximum(omega_0 * (omega_0 + omega_M * (1.0 - Fk)), 0.0)
+    
     omega = np.sqrt(under_sqrt)
-    
     f_ghz = omega / (2.0 * math.pi * 1e9)
+    
+    geometry = "perpendicular" if perpendicular else "in-plane"
     
     return DispersionResult(
         model_name=f"Kalinikos PSSW n={n}",
         k=k,
         f=f_ghz,
-        params={"B": B, "Ms": Ms, "d": d, "Aex": Aex, "Ku": Ku, "n": n, "g": g},
-        metadata={"geometry": "perpendicular", "mode_index": n},
+        params={"B": B, "Ms": Ms, "d": d, "Aex": Aex, "Ku": Ku, "n": n, "perpendicular": perpendicular, "g": g},
+        metadata={"geometry": geometry, "mode_index": n},
     )
 
 
@@ -390,6 +416,7 @@ def forward_volume(
     Ms: float,
     d: float,
     Aex: float = 0.0,
+    Ku: float = 0.0,
     g: float = 2.0,
 ) -> DispersionResult:
     """
@@ -409,6 +436,8 @@ def forward_volume(
         Film thickness in meters
     Aex : float, optional
         Exchange stiffness in J/m (default: 0)
+    Ku : float, optional
+        Uniaxial anisotropy in J/m³ (default: 0)
     g : float, optional
         Landé g-factor (default: 2.0)
         
@@ -425,7 +454,7 @@ def forward_volume(
     
         \\omega^2 = \\omega_0 (\\omega_0 + \\omega_M P(kd))
     
-    where ω₀ includes exchange for finite k.
+    where ω₀ = γ·max(0, B_int + B_ex), B_int = B − μ₀Ms + 2Ku/Ms.
         
     Examples
     --------
@@ -438,6 +467,7 @@ def forward_volume(
     Ms = float(Ms)
     d = float(d)
     Aex = float(Aex)
+    Ku = float(Ku)
     gamma_val = gamma(g)
     
     P = _dipolar_factor_P(k, d)
@@ -445,7 +475,11 @@ def forward_volume(
     # Exchange contribution
     B_ex = 2.0 * Aex * (k * k) / Ms if Aex > 0 else 0.0
     
-    omega0 = gamma_val * (B + B_ex)
+    # Internal field for OOP geometry: B_ext − μ₀Ms + 2Ku/Ms
+    h_anis = 2.0 * Ku / Ms
+    B_internal = B - MU0 * Ms + h_anis
+    
+    omega0 = gamma_val * np.maximum(0.0, B_internal + B_ex)
     omega_M = gamma_val * MU0 * Ms
     
     under_sqrt = omega0 * (omega0 + omega_M * P)
@@ -458,7 +492,7 @@ def forward_volume(
         model_name="Forward Volume (FVMSW)",
         k=k,
         f=f_ghz,
-        params={"B": B, "Ms": Ms, "d": d, "Aex": Aex, "g": g},
+        params={"B": B, "Ms": Ms, "d": d, "Aex": Aex, "Ku": Ku, "g": g},
         metadata={"geometry": "M ⟂ film plane"},
     )
 
@@ -471,19 +505,21 @@ def bottcher(
     d: float,
     Aex: float,
     Ku: float = 0.0,
+    perpendicular: bool = False,
     g: float = 2.0,
 ) -> DispersionResult:
     """
-    Böttcher et al. 2021 perpendicular dipole-exchange dispersion.
+    Böttcher et al. 2021 dipole-exchange dispersion.
     
     Accurate formula for ultrathin films without DMI.
+    Supports both in-plane and out-of-plane (perpendicular) geometries.
     
     Parameters
     ----------
     k : float or array
         Wavevector in 1/m
     B : float
-        Applied magnetic field in Tesla (perpendicular)
+        Applied magnetic field in Tesla
     Ms : float
         Saturation magnetization in A/m
     d : float
@@ -492,6 +528,8 @@ def bottcher(
         Exchange stiffness in J/m
     Ku : float, optional
         Uniaxial anisotropy in J/m³ (default: 0)
+    perpendicular : bool, optional
+        If True, use out-of-plane geometry (default: False)
     g : float, optional
         Landé g-factor (default: 2.0)
         
@@ -524,9 +562,15 @@ def bottcher(
     H_u = 2.0 * Ku / (MU0 * Ms)
     H_ext = B / MU0
     
-    # Two terms under the square root
-    term1 = H_ext + lam_ex * k * k + Ms * gk
-    term2 = H_ext - H_u + lam_ex * k * k + Ms - Ms * gk
+    if perpendicular:
+        # OOP: H_int = H_ext - Ms + H_u
+        H_int = np.maximum(0.0, H_ext - Ms + H_u)
+        term1 = H_int + lam_ex * k * k
+        term2 = H_int + lam_ex * k * k + Ms * gk
+    else:
+        # In-plane Böttcher
+        term1 = H_ext + lam_ex * k * k + Ms * gk
+        term2 = H_ext - H_u + lam_ex * k * k + Ms - Ms * gk
     
     radicand = term1 * term2
     radicand = np.maximum(radicand, 0.0)
@@ -534,12 +578,14 @@ def bottcher(
     omega = gamma_val * MU0 * np.sqrt(radicand)
     f_ghz = omega / (2.0 * math.pi * 1e9)
     
+    geometry = "perpendicular" if perpendicular else "in-plane"
+    
     return DispersionResult(
         model_name="Böttcher 2021",
         k=k,
         f=f_ghz,
-        params={"B": B, "Ms": Ms, "d": d, "Aex": Aex, "Ku": Ku, "g": g},
-        metadata={"geometry": "perpendicular", "reference": "IEEE Trans. Magn. 57, 9427561 (2021)"},
+        params={"B": B, "Ms": Ms, "d": d, "Aex": Aex, "Ku": Ku, "perpendicular": perpendicular, "g": g},
+        metadata={"geometry": geometry, "reference": "IEEE Trans. Magn. 57, 9427561 (2021)"},
     )
 
 

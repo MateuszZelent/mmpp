@@ -41,8 +41,9 @@ def gamma(g_factor: float = G_FACTOR_DEFAULT) -> float:
     >>> gamma(2.1)  # Typical for Fe, Co, Ni
     1.848902612e+11
     """
-    # γ = g * (e / 2m_e) = g * 87.9447e9 rad/s/T
-    return 87.9447e9 * g_factor
+    # γ = g * (e / 2m_e) = g * γ_e / 2
+    # Using GAMMA_E / 2 for consistency with backend/frontend.
+    return GAMMA_E / 2.0 * g_factor
 
 
 def gamma_to_ghz_per_t(g_factor: float = G_FACTOR_DEFAULT) -> float:
