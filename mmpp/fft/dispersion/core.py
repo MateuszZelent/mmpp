@@ -11,6 +11,7 @@ import zarr
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 import logging
+import os
 
 from ._fft_backend import fft as _fft, ifft as _ifft, fft2 as _fft2, rfft as _rfft, fftfreq as _fftfreq, rfftfreq as _rfftfreq, fftshift as _fftshift
 
@@ -327,6 +328,10 @@ class SpinWaveAnalyzer:
             raise ValueError("No magnetization reference available")
 
         indexer = self._indexer_for_tmax(tmax)
+
+        # ── Pre-flight RAM check ──────────────────────────────
+        self._check_memory(self._M_ref, indexer)
+
         try:
             data = self._M_ref if indexer is None else self._M_ref[indexer]
         except TypeError:
@@ -343,6 +348,106 @@ class SpinWaveAnalyzer:
             tmax,
         )
         return normalized
+
+    # ── Memory estimation ─────────────────────────────────────
+
+    @staticmethod
+    def _get_available_ram_bytes() -> Optional[int]:
+        """Return available RAM in bytes (Linux only)."""
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) * 1024  # kB → bytes
+        except (OSError, ValueError):
+            pass
+        # Fallback: try psutil
+        try:
+            import psutil  # type: ignore[import-untyped]
+            return psutil.virtual_memory().available
+        except ImportError:
+            return None
+
+    def _check_memory(
+        self,
+        zarr_ref: Any,
+        indexer: Any,
+    ) -> None:
+        """Estimate peak RAM usage and warn/abort if insufficient.
+
+        Multiplier breakdown for dispersion pipeline:
+          1× raw data (float32)
+          1× complex64 cast
+          1× spatial FFT result
+          1× temporal FFT result
+          0.5× power spectrum (float32)
+        Total ≈ 4.5× raw data size.
+        """
+        PEAK_MULTIPLIER = 4.5
+        SAFETY_MARGIN = 0.85  # leave 15% headroom
+
+        # Get shape and dtype from zarr metadata (no data loaded)
+        shape = zarr_ref.shape
+        dtype = zarr_ref.dtype
+
+        # Apply indexer to estimate sliced shape
+        if indexer is not None:
+            try:
+                dummy = np.empty(0, dtype=dtype)
+                # Create a fake array with just shape info to compute output shape
+                sliced_shape = []
+                for i, (s, idx) in enumerate(zip(shape, indexer if isinstance(indexer, tuple) else (indexer,))):
+                    if isinstance(idx, slice):
+                        sliced_shape.append(len(range(*idx.indices(s))))
+                    elif isinstance(idx, int):
+                        pass  # dimension dropped
+                    else:
+                        sliced_shape.append(s)
+                if not sliced_shape:
+                    sliced_shape = list(shape)
+            except Exception:
+                sliced_shape = list(shape)
+        else:
+            sliced_shape = list(shape)
+
+        raw_bytes = int(np.prod(sliced_shape)) * np.dtype(dtype).itemsize
+        peak_bytes = int(raw_bytes * PEAK_MULTIPLIER)
+        avail = self._get_available_ram_bytes()
+
+        raw_gb = raw_bytes / (1024**3)
+        peak_gb = peak_bytes / (1024**3)
+
+        logger.info(
+            "Memory estimate: raw data %.1f GB (shape %s, %s), "
+            "peak FFT pipeline ~%.1f GB (%.1f× multiplier)",
+            raw_gb, sliced_shape, dtype, peak_gb, PEAK_MULTIPLIER,
+        )
+
+        if avail is not None:
+            avail_gb = avail / (1024**3)
+            logger.info(
+                "Available system RAM: %.1f GB (need %.1f GB, headroom %.0f%%)",
+                avail_gb, peak_gb, (avail_gb / peak_gb * 100) if peak_gb > 0 else 100,
+            )
+
+            if peak_bytes > avail * SAFETY_MARGIN:
+                msg = (
+                    f"\n{'='*65}\n"
+                    f"  ⚠  INSUFFICIENT MEMORY for dispersion computation\n"
+                    f"{'='*65}\n"
+                    f"  Data shape:     {tuple(sliced_shape)} ({dtype})\n"
+                    f"  Raw data size:  {raw_gb:.1f} GB\n"
+                    f"  Peak estimate:  {peak_gb:.1f} GB\n"
+                    f"  Available RAM:  {avail_gb:.1f} GB\n"
+                    f"{'='*65}\n"
+                    f"  Suggestions:\n"
+                    f"    • Reduce time steps: m[:500,...] instead of m[:1500,...]\n"
+                    f"    • Subsample space: m[:, :, ::2, ::2, :]\n"
+                    f"    • Free other memory first\n"
+                    f"{'='*65}"
+                )
+                logger.error(msg)
+                raise MemoryError(msg)
 
     def _ensure_data_loaded(self, tmax: int = 100) -> None:
         """Ensure magnetization data is loaded up to requested tmax."""
