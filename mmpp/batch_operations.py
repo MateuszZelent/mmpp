@@ -160,10 +160,10 @@ class BatchFFT:
 
         # ── header ──────────────────────────────────────────────
         html = (
-            '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
+            '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
+            'border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;'
+            'background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);'
+            'color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),'
             '0 0 0 1px rgba(148,163,184,0.1) inset;">'
         )
         html += (
@@ -550,7 +550,14 @@ class BatchDatasetWrapper:
     def __getitem__(self, key):
         """Capture slice information, returning a new wrapper (immutable pattern)."""
         new = BatchDatasetWrapper(self.results, self.mmpp_ref, self.dataset_name)
-        new.slice_info = key
+        # Compose with any previous slice to support chaining: m[0:100][::2]
+        if self.slice_info is not None:
+            if isinstance(self.slice_info, tuple):
+                new.slice_info = self.slice_info + (key,) if not isinstance(key, tuple) else self.slice_info + key
+            else:
+                new.slice_info = (self.slice_info, key)
+        else:
+            new.slice_info = key
         return new
     
     @property
@@ -762,10 +769,10 @@ class BatchOperations:
 
         # ── header ──────────────────────────────────────────────
         html = (
-            '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
+            '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
+            'border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;'
+            'background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);'
+            'color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),'
             '0 0 0 1px rgba(148,163,184,0.1) inset;">'
         )
         html += (

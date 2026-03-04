@@ -81,6 +81,20 @@ def _extract_compact(
     f_pos = f_axis[pos_f]
     S_pos = S[:, pos_f]
 
+    # Apply same fmin cutoff as find_lowest_possible_frequency
+    fmin_hz = find_kwargs.get("fmin_hz", "auto")
+    if fmin_hz == "auto":
+        fmin_cutoff = 0.05 * float(f_pos.max()) if f_pos.size else 0.0
+    elif fmin_hz is not None and fmin_hz > 0:
+        fmin_cutoff = float(fmin_hz)
+    else:
+        fmin_cutoff = 0.0
+
+    if fmin_cutoff > 0:
+        f_keep = f_pos >= fmin_cutoff
+        f_pos = f_pos[f_keep]
+        S_pos = S_pos[:, f_keep]
+
     # Cross-section at f_min
     idx_fmin = int(np.abs(f_pos - lowest.f_min_hz).argmin())
     cs_at_fmin = S_pos[:, idx_fmin].copy()

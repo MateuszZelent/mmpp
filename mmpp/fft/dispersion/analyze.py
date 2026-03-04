@@ -449,7 +449,7 @@ class DispersionAnalyzeAccessor:
         k_min_rad_um: float = 0.0,
         k_max_rad_um: Optional[float] = None,
         peak_method: str = "argmax",
-        fmin_hz: Optional[float] = "auto",
+        fmin_hz: float | str | None = "auto",
     ) -> LowestFrequencyResult:
         """Find the lowest frequency reachable on the spin-wave dispersion.
 
