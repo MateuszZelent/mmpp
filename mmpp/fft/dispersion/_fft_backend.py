@@ -97,7 +97,7 @@ def _resolve_default_workers() -> int:
 _BACKEND = _resolve_default_backend()
 _WORKERS = _resolve_default_workers()
 
-logger.debug("FFT backend: %s (workers=%s)", _BACKEND, _WORKERS)
+logger.info("FFT backend: %s (workers=%s, cpu_count=%s)", _BACKEND, _WORKERS, os.cpu_count())
 
 
 # ---------------------------------------------------------------------------
@@ -154,11 +154,14 @@ def fft(
 ) -> np.ndarray:
     """Forward 1-D FFT, multi-threaded when possible."""
     w = workers if workers is not None else _WORKERS
-    _threads = os.cpu_count() or 1 if w <= 0 else w
+    _threads = (os.cpu_count() or 1) if w <= 0 else w
     if _BACKEND == "scipy":
+        logger.debug("fft: scipy workers=%d shape=%s axis=%d", w, a.shape, axis)
         return _sp_fft.fft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
+        logger.debug("fft: pyfftw threads=%d shape=%s axis=%d", _threads, a.shape, axis)
         return _pw_fft.fft(a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
+    logger.debug("fft: numpy (single-thread) shape=%s axis=%d", a.shape, axis)
     return np.fft.fft(a, n=n, axis=axis)
 
 
@@ -170,7 +173,7 @@ def ifft(
 ) -> np.ndarray:
     """Inverse 1-D FFT."""
     w = workers if workers is not None else _WORKERS
-    _threads = os.cpu_count() or 1 if w <= 0 else w
+    _threads = (os.cpu_count() or 1) if w <= 0 else w
     if _BACKEND == "scipy":
         return _sp_fft.ifft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
@@ -186,7 +189,7 @@ def fft2(
 ) -> np.ndarray:
     """Forward 2-D FFT."""
     w = workers if workers is not None else _WORKERS
-    _threads = os.cpu_count() or 1 if w <= 0 else w
+    _threads = (os.cpu_count() or 1) if w <= 0 else w
     if _BACKEND == "scipy":
         return _sp_fft.fft2(a, s=s, axes=axes, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
@@ -202,7 +205,7 @@ def rfft(
 ) -> np.ndarray:
     """Forward real-input 1-D FFT."""
     w = workers if workers is not None else _WORKERS
-    _threads = os.cpu_count() or 1 if w <= 0 else w
+    _threads = (os.cpu_count() or 1) if w <= 0 else w
     if _BACKEND == "scipy":
         return _sp_fft.rfft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":

@@ -425,7 +425,7 @@ class DispersionPlotAccessor:
             "Ms":  Ms  if Ms  is not None else auto_params.get("Ms"),
             "Aex": Aex if Aex is not None else auto_params.get("Aex"),
             "d":   d   if d   is not None else auto_params.get("d"),
-            "Ku":  Ku  if Ku  is not None else auto_params.get("Ku", 0.0),
+            "Ku":  Ku  if Ku  is not None else (auto_params.get("Ku") or 0.0),
             "g":   g,
         }
 

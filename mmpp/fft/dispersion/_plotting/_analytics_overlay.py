@@ -77,7 +77,7 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
         "Ms": None,
         "d": None,
         "Aex": None,
-        "Ku": None,
+        "Ku": 0.0,  # default to 0 (not None) — most sims don't have anisotropy
     }
 
     # Navigate back-reference chain
@@ -235,9 +235,14 @@ def compute_analytical_dispersion(
             try:
                 disp_result = model_func(**kwargs)
             except TypeError as exc:
-                # Model might not accept some kwargs
-                logger.warning("Model %s call failed: %s — retrying with minimal params", func_name, exc)
-                minimal = {k: v for k, v in kwargs.items() if k in ("k", "B", "Ms", "d", "Aex", "g")}
+                # Model might not accept some kwargs — retry preserving phi
+                logger.warning(
+                    "Model %s call failed: %s — retrying without Ku",
+                    func_name, exc,
+                )
+                # Keep phi but drop Ku (most common cause of TypeError)
+                safe_keys = {"k", "B", "Ms", "d", "Aex", "g", "phi", "D"}
+                minimal = {k: v for k, v in kwargs.items() if k in safe_keys and v is not None}
                 disp_result = model_func(**minimal)
 
         mode_label = config_label if n == 0 else f"{config_label} (n={n})"
