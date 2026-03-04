@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 
 _BACKEND: str = "numpy"  # effective backend name
 _WORKERS: int = -1        # -1 = all cores
+# FFTW planner effort: FFTW_ESTIMATE (fast, default) or FFTW_MEASURE (slow planning, faster execution)
+# FFTW_MEASURE benchmarks hundreds of algorithm variants per array shape — can take MINUTES for large arrays.
+# Only use FFTW_MEASURE if you're running the same transform shape many times and can amortize the planning cost.
+_PLANNER_EFFORT: str = os.environ.get("MMPP_FFT_PLANNER", "FFTW_ESTIMATE").strip()
 
 # scipy.fft
 try:
@@ -154,7 +158,7 @@ def fft(
     if _BACKEND == "scipy":
         return _sp_fft.fft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.fft(a, n=n, axis=axis, threads=_threads)  # type: ignore[union-attr]
+        return _pw_fft.fft(a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
     return np.fft.fft(a, n=n, axis=axis)
 
 
@@ -170,7 +174,7 @@ def ifft(
     if _BACKEND == "scipy":
         return _sp_fft.ifft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.ifft(a, n=n, axis=axis, threads=_threads)  # type: ignore[union-attr]
+        return _pw_fft.ifft(a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
     return np.fft.ifft(a, n=n, axis=axis)
 
 
@@ -186,7 +190,7 @@ def fft2(
     if _BACKEND == "scipy":
         return _sp_fft.fft2(a, s=s, axes=axes, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.fft2(a, s=s, axes=axes, threads=_threads)  # type: ignore[union-attr]
+        return _pw_fft.fft2(a, s=s, axes=axes, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
     return np.fft.fft2(a, s=s, axes=axes)
 
 
@@ -202,7 +206,7 @@ def rfft(
     if _BACKEND == "scipy":
         return _sp_fft.rfft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.rfft(a, n=n, axis=axis, threads=_threads)  # type: ignore[union-attr]
+        return _pw_fft.rfft(a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
     return np.fft.rfft(a, n=n, axis=axis)
 
 
