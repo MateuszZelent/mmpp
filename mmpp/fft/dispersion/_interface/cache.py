@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING, cast
 
@@ -232,7 +232,7 @@ class CacheManager:
         result_group.attrs["axis"] = result.axis
         result_group.attrs["dx"] = result.dx
         result_group.attrs["context_signature"] = context_signature
-        result_group.attrs["saved_at"] = datetime.utcnow().isoformat()
+        result_group.attrs["saved_at"] = datetime.now(timezone.utc).isoformat()
         
         logger.info("Saved dispersion to cache: %s", context_hash)
         return True

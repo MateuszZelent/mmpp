@@ -129,6 +129,12 @@ class DispersionResult1D:
             raise IndexError(f"Orthogonal index {index} out of bounds (0..{self.S_local.shape[0]-1})")
 
         slice_notes = list(self.notes or []) + [f"Orthogonal slice #{index}"]
+
+        # Extract per-slice S_complex if available
+        slice_S_complex = None
+        if self.S_complex is not None and self.S_complex.ndim == 3:
+            slice_S_complex = self.S_complex[index]  # (Nk, Nf)
+
         slice_result = DispersionResult1D(
             S=self.S_local[index],
             k_axis=self.k_axis,
@@ -139,8 +145,11 @@ class DispersionResult1D:
             S_folded=self.S_folded,
             k_folded=self.k_folded,
             fold_period=self.fold_period,
+            S_complex=slice_S_complex,
+            orth_axis_label=self.orth_axis_label,
             dt=self.dt,
             dx=self.dx,
+            flipx=self.flipx,
             notes=slice_notes,
         )
         return slice_result
@@ -509,13 +518,9 @@ class DispersionBranch:
             # Use gradient with smoothing
             vg = 2 * np.pi * np.gradient(self.f_values, self.k_path)
         else:
-            # Simple finite differences
-            dk = np.diff(self.k_path)
-            df = np.diff(self.f_values)
-            vg_interior = 2 * np.pi * df / dk
-            # Pad edges
-            vg = np.concatenate([[vg_interior[0]], vg_interior, [vg_interior[-1]]])
-            
+            # Simple finite differences with edge handling
+            vg = 2 * np.pi * np.gradient(self.f_values, self.k_path)
+
         self.group_velocity = vg
         return vg
         

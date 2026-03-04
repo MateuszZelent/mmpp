@@ -150,10 +150,11 @@ def fft(
 ) -> np.ndarray:
     """Forward 1-D FFT, multi-threaded when possible."""
     w = workers if workers is not None else _WORKERS
+    _threads = os.cpu_count() or 1 if w <= 0 else w
     if _BACKEND == "scipy":
         return _sp_fft.fft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.fft(a, n=n, axis=axis, threads=max(w, 0) or os.cpu_count() or 1)  # type: ignore[union-attr]
+        return _pw_fft.fft(a, n=n, axis=axis, threads=_threads)  # type: ignore[union-attr]
     return np.fft.fft(a, n=n, axis=axis)
 
 
@@ -165,10 +166,11 @@ def ifft(
 ) -> np.ndarray:
     """Inverse 1-D FFT."""
     w = workers if workers is not None else _WORKERS
+    _threads = os.cpu_count() or 1 if w <= 0 else w
     if _BACKEND == "scipy":
         return _sp_fft.ifft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.ifft(a, n=n, axis=axis, threads=max(w, 0) or os.cpu_count() or 1)  # type: ignore[union-attr]
+        return _pw_fft.ifft(a, n=n, axis=axis, threads=_threads)  # type: ignore[union-attr]
     return np.fft.ifft(a, n=n, axis=axis)
 
 
@@ -180,10 +182,11 @@ def fft2(
 ) -> np.ndarray:
     """Forward 2-D FFT."""
     w = workers if workers is not None else _WORKERS
+    _threads = os.cpu_count() or 1 if w <= 0 else w
     if _BACKEND == "scipy":
         return _sp_fft.fft2(a, s=s, axes=axes, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.fft2(a, s=s, axes=axes, threads=max(w, 0) or os.cpu_count() or 1)  # type: ignore[union-attr]
+        return _pw_fft.fft2(a, s=s, axes=axes, threads=_threads)  # type: ignore[union-attr]
     return np.fft.fft2(a, s=s, axes=axes)
 
 
@@ -195,10 +198,11 @@ def rfft(
 ) -> np.ndarray:
     """Forward real-input 1-D FFT."""
     w = workers if workers is not None else _WORKERS
+    _threads = os.cpu_count() or 1 if w <= 0 else w
     if _BACKEND == "scipy":
         return _sp_fft.rfft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.rfft(a, n=n, axis=axis, threads=max(w, 0) or os.cpu_count() or 1)  # type: ignore[union-attr]
+        return _pw_fft.rfft(a, n=n, axis=axis, threads=_threads)  # type: ignore[union-attr]
     return np.fft.rfft(a, n=n, axis=axis)
 
 

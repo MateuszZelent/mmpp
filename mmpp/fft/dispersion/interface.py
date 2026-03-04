@@ -16,7 +16,7 @@ import re
 import threading
 import warnings
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape as _html_escape
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, TYPE_CHECKING, Union, cast
@@ -763,7 +763,7 @@ class FFTDispersionInterface:
             # Store metadata about source
             dataset_group.attrs["source_job"] = str(self.parent_fft.job_result.path)
             dataset_group.attrs["dataset_name"] = self.dataset_name or "__global__"
-            dataset_group.attrs["created"] = datetime.utcnow().isoformat()
+            dataset_group.attrs["created"] = datetime.now(timezone.utc).isoformat()
             logger.info("Created external cache at %s", cache_path)
         elif hasattr(dataset_node, "get"):
             dataset_group = dataset_node
@@ -1073,7 +1073,7 @@ class FFTDispersionInterface:
         entry.attrs["context_hash"] = context_hash
         entry.attrs["dataset_name"] = self.dataset_name
         entry.attrs["slice_info"] = json.dumps(self._serialize_for_json(self.slice_info))
-        entry.attrs["cached_at"] = datetime.utcnow().isoformat() + "Z"
+        entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat()
         entry.attrs["job_name"] = getattr(self.parent_fft.job_result, "name", "")
         entry.attrs["zarr_path"] = str(self.parent_fft.job_result.path)
         store = getattr(dataset_group, "store", None)
@@ -1101,7 +1101,7 @@ class FFTDispersionInterface:
             job_name = self._sanitize_name(str(getattr(self.parent_fft.job_result, "name", "job")))
             dataset_part = self._sanitize_name(self.dataset_name or "global")
             component_part = self._sanitize_name(result.component or "perp")
-            timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             filename = f"{job_name}_{dataset_part}_dispersion_{axis}_{component_part}_{timestamp}.png"
             return base_dir / filename
 
