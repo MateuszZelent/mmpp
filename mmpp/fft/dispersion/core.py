@@ -12,6 +12,8 @@ from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 import logging
 
+from ._fft_backend import fft as _fft, ifft as _ifft, fft2 as _fft2, rfft as _rfft, fftfreq as _fftfreq, rfftfreq as _rfftfreq, fftshift as _fftshift
+
 from .models import DispersionResult1D, DispersionResult2D, DispersionBranch, DispersionConfig
 from .utils import (
     normalize_magnetization_components,
@@ -689,14 +691,14 @@ class SpinWaveAnalyzer:
         else:
             spatial_axis = 2 if axis == "x" else 1
 
-        sig_k = np.fft.fftshift(np.fft.fft(spatial_signal, axis=spatial_axis), axes=spatial_axis)
+        sig_k = _fftshift(_fft(spatial_signal, axis=spatial_axis), axes=spatial_axis)
         k_axis = k_axis_from_grid(N_space, dx, shift=True)
 
         # Temporal full FFT at each k
         T_len = sig_k.shape[0]
-        f_axis = np.fft.fftshift(np.fft.fftfreq(T_len, self.dt))
-        Sk_full = np.fft.fft(sig_k, axis=0)
-        Sk_shift = np.fft.fftshift(Sk_full, axes=0)
+        f_axis = _fftshift(_fftfreq(T_len, self.dt))
+        Sk_full = _fft(sig_k, axis=0)
+        Sk_shift = _fftshift(Sk_full, axes=0)
 
         # Store complex spectrum BEFORE taking abs (needed for mode reconstruction)
         # Shape: (Nk, Nf) or (Nk, N_orth, Nf) depending on keep_orthogonal_dimension
@@ -925,19 +927,19 @@ class SpinWaveAnalyzer:
         signal = apply_window_1d(signal, axis=0, window=time_window)
         
         # 2D spatial FFT  
-        sig_k = np.fft.fftshift(np.fft.fft2(signal, axes=(1, 2)), axes=(1, 2))
+        sig_k = _fftshift(_fft2(signal, axes=(1, 2)), axes=(1, 2))
         ky_axis = k_axis_from_grid(sig_k.shape[1], dy, shift=True)
         kx_axis = k_axis_from_grid(sig_k.shape[2], dx, shift=True)
 
         T_len = sig_k.shape[0]
         use_complex = np.iscomplexobj(sig_k)
         if use_complex:
-            Sk_full = np.fft.fft(sig_k, axis=0)
+            Sk_full = _fft(sig_k, axis=0)
             Sk_pos = Sk_full[: T_len // 2 + 1]
-            f_axis = np.abs(np.fft.fftfreq(T_len, self.dt)[: Sk_pos.shape[0]])
+            f_axis = np.abs(_fftfreq(T_len, self.dt)[: Sk_pos.shape[0]])
         else:
-            Sk_pos = np.fft.rfft(sig_k, axis=0)
-            f_axis = np.fft.rfftfreq(T_len, self.dt)
+            Sk_pos = _rfft(sig_k, axis=0)
+            f_axis = _rfftfreq(T_len, self.dt)
 
         power = np.abs(Sk_pos) ** 2
         S = power.transpose(2, 1, 0).astype(np.float64, copy=False)

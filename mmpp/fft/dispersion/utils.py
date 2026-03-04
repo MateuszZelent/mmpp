@@ -10,6 +10,7 @@ from typing import Tuple, List, Optional, Sequence, Any
 import logging
 import numpy as np
 
+from ._fft_backend import fft as _fft, fftfreq as _fftfreq, fftshift as _fftshift
 
 logger = logging.getLogger(__name__)
 
@@ -705,8 +706,8 @@ def compute_welch_power_spectrum(
     Returns the averaged power spectrum with frequency axis retained on ``axis``.
     """
     if signal_k.shape[axis] < 4:
-        spec = np.fft.fft(signal_k, axis=axis)
-        spec = np.fft.fftshift(spec, axes=axis)
+        spec = _fft(signal_k, axis=axis)
+        spec = _fftshift(spec, axes=axis)
         return np.abs(spec) ** 2
 
     moved = np.moveaxis(signal_k, axis, 0)
@@ -743,8 +744,8 @@ def compute_welch_power_spectrum(
         elif seg_work.shape[0] > n_fft_eff:
             seg_work = seg_work[:n_fft_eff]
 
-        spectrum = np.fft.fft(seg_work, axis=0)
-        spectrum = np.fft.fftshift(spectrum, axes=0)
+        spectrum = _fft(seg_work, axis=0)
+        spectrum = _fftshift(spectrum, axes=0)
         power = np.abs(spectrum) ** 2
         if acc is None:
             acc = power
@@ -753,8 +754,8 @@ def compute_welch_power_spectrum(
         count += 1
 
     if acc is None or count <= 0:
-        spec = np.fft.fft(signal_k, axis=axis)
-        spec = np.fft.fftshift(spec, axes=axis)
+        spec = _fft(signal_k, axis=axis)
+        spec = _fftshift(spec, axes=axis)
         return np.abs(spec) ** 2
 
     averaged = acc / float(count)
@@ -779,8 +780,8 @@ def fftfreq_axis(n: int, d: float, shift: bool = True) -> np.ndarray:
     np.ndarray
         Frequency axis [Hz]
     """
-    f = np.fft.fftfreq(n, d)
-    return np.fft.fftshift(f) if shift else f
+    f = _fftfreq(n, d)
+    return _fftshift(f) if shift else f
 
 
 def k_axis_from_grid(n: int, d: float, shift: bool = True) -> np.ndarray:
@@ -801,8 +802,8 @@ def k_axis_from_grid(n: int, d: float, shift: bool = True) -> np.ndarray:
     np.ndarray
         Wavevector axis k [rad/m], range approximately [-π/d, π/d)
     """
-    k = 2.0 * np.pi * np.fft.fftfreq(n, d)
-    return np.fft.fftshift(k) if shift else k
+    k = 2.0 * np.pi * _fftfreq(n, d)
+    return _fftshift(k) if shift else k
 
 
 def fold_k_to_bz(k: np.ndarray, a: float) -> np.ndarray:

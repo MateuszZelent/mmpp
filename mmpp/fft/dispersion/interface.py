@@ -229,6 +229,39 @@ class FFTDispersionInterface:
         self._last_plot_result: Optional[DispersionResult1D] = None
         self._cache_dir: Optional[str] = None  # External cache directory
 
+    def __call__(
+        self,
+        *,
+        backend: Optional[str] = None,
+        workers: Optional[int] = None,
+    ) -> "FFTDispersionInterface":
+        """Configure FFT backend for this dispersion pipeline.
+
+        Parameters
+        ----------
+        backend : ``"scipy"`` | ``"pyfftw"`` | ``"fftw"`` | ``"numpy"``, optional
+            FFT backend to use.  ``"fftw"`` is an alias for ``"pyfftw"``.
+        workers : int, optional
+            Number of threads (``-1`` = all cores).
+
+        Returns
+        -------
+        FFTDispersionInterface
+            Self, for fluent chaining.
+
+        Examples
+        --------
+        >>> job[0].fft.dispersion(backend="fftw").compute_1d(axis="x")
+        >>> job[0].fft.dispersion(backend="scipy", workers=4).filters(...).compute_1d()
+        """
+        from ._fft_backend import set_backend, set_workers
+
+        if backend is not None:
+            set_backend(backend)
+        if workers is not None:
+            set_workers(workers)
+        return self
+
     def clone_for_dataset(
         self,
         dataset_name: Optional[str],
