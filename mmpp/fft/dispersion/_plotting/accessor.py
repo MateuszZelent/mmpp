@@ -340,14 +340,171 @@ class DispersionPlotAccessor:
         return fig, axes
 
     # ------------------------------------------------------------------
+    # Analytical overlay
+    # ------------------------------------------------------------------
+
+    def add_analytics(
+        self,
+        ax: "Axes",
+        *,
+        model: str = "kalinikos",
+        sw_config: str = "DE",
+        n_modes: int = 1,
+        color: str = "white",
+        linestyle: str = "--",
+        linewidth: float = 1.5,
+        alpha: float = 0.8,
+        label: Optional[str] = None,
+        # Material parameter overrides (auto-detected from zarr if None):
+        B: Optional[float] = None,
+        Ms: Optional[float] = None,
+        Aex: Optional[float] = None,
+        d: Optional[float] = None,
+        Ku: Optional[float] = None,
+        g: float = 2.0,
+        phi: Optional[float] = None,
+        D: Optional[float] = None,
+        k_points: int = 500,
+        kscale: str = "rad_um",
+        f_units: str = "GHz",
+    ) -> tuple["Figure", "Axes"]:
+        """Overlay analytical dispersion curve(s) on an existing axes.
+
+        Material parameters are auto-extracted from zarr simulation attributes.
+        Any parameter explicitly passed overrides the auto-detected value.
+
+        Parameters
+        ----------
+        ax : Axes
+            Matplotlib axes (from a previous ``.heatmap()`` call).
+        model : str
+            Analytical model: ``"kalinikos"`` (default), ``"damon_eshbach"``,
+            ``"backward_volume"``, ``"forward_volume"``, ``"bottcher"``,
+            ``"kim"``, ``"cortes_ortuno"``.
+        sw_config : str
+            Spin-wave geometry preset:
+            ``"DE"`` (k⊥M, φ=π/2), ``"BV"`` (k∥M, φ=0), ``"FV"`` (M⊥film).
+        n_modes : int
+            Number of PSSW modes to overlay (n=0, 1, …, n_modes-1).
+        color, linestyle, linewidth, alpha
+            Line styling for the overlay curves.
+        label : str, optional
+            Legend label. Auto-generated from model+sw_config if *None*.
+        B, Ms, Aex, d, Ku, g, phi, D
+            Material/geometry overrides. ``None`` = auto-detect from zarr.
+        k_points : int
+            Number of k-points for the analytical curve.
+        kscale : str
+            Must match the kscale used in heatmap (``"rad_um"`` | ``"rad"``).
+        f_units : str
+            Must match f_units used in heatmap (``"GHz"`` | ``"Hz"``).
+
+        Returns
+        -------
+        fig, ax
+
+        Examples
+        --------
+        >>> fig, ax = disp.plot.heatmap(fmax=10, lognorm=True)
+        >>> disp.plot.add_analytics(ax, sw_config="DE")
+        >>> disp.plot.add_analytics(ax, sw_config="BV", color="red")
+        >>> disp.plot.add_analytics(ax, model="kalinikos", n_modes=3, sw_config="DE")
+        """
+        from ._analytics_overlay import (
+            compute_analytical_dispersion,
+            extract_material_params,
+        )
+
+        result = self._result
+        fig = ax.get_figure()
+
+        # Auto-extract params from zarr, then apply user overrides
+        auto_params = extract_material_params(result)
+        effective = {
+            "B":   B   if B   is not None else auto_params.get("B"),
+            "Ms":  Ms  if Ms  is not None else auto_params.get("Ms"),
+            "Aex": Aex if Aex is not None else auto_params.get("Aex"),
+            "d":   d   if d   is not None else auto_params.get("d"),
+            "Ku":  Ku  if Ku  is not None else auto_params.get("Ku", 0.0),
+            "g":   g,
+        }
+
+        # Validate required params
+        missing = [k for k in ("B", "Ms", "Aex", "d") if effective[k] is None]
+        if missing:
+            raise ValueError(
+                f"Cannot auto-detect material parameter(s): {missing}. "
+                f"Please provide them explicitly, e.g.: "
+                f"add_analytics(ax, B=0.1, Ms=8e5, Aex=13e-12, d=100e-9)"
+            )
+
+        # Get k-range from axes limits (in display units → back to rad/m)
+        k_lo, k_hi = ax.get_xlim()
+        if kscale == "rad_um":
+            k_range = (k_lo * 1e6, k_hi * 1e6)  # rad/μm → rad/m
+        elif kscale == "meter":
+            k_range = (k_lo * 2 * np.pi, k_hi * 2 * np.pi)
+        else:
+            k_range = (k_lo, k_hi)
+
+        # Compute analytical curves
+        curves = compute_analytical_dispersion(
+            k_range=k_range,
+            model=model,
+            sw_config=sw_config,
+            n_modes=n_modes,
+            k_points=k_points,
+            phi=phi,
+            D=D,
+            B=effective["B"],
+            Ms=effective["Ms"],
+            d=effective["d"],
+            Aex=effective["Aex"],
+            Ku=effective["Ku"],
+            g=effective["g"],
+        )
+
+        # Plot each mode
+        for i, (k_arr, f_ghz, mode_label) in enumerate(curves):
+            # Convert to display units
+            if kscale == "rad_um":
+                k_plot = k_arr / 1e6
+            elif kscale == "meter":
+                k_plot = k_arr / (2 * np.pi)
+            else:
+                k_plot = k_arr
+
+            if f_units == "GHz":
+                f_plot = f_ghz  # already in GHz
+            else:
+                f_plot = f_ghz * 1e9  # → Hz
+
+            curve_label = label if label is not None else mode_label
+            if n_modes > 1 and label is not None and i > 0:
+                curve_label = f"{label} (n={i})"
+
+            ax.plot(
+                k_plot,
+                f_plot,
+                color=color,
+                linestyle=linestyle,
+                linewidth=linewidth,
+                alpha=alpha - 0.15 * i,  # lighter for higher modes
+                label=curve_label,
+            )
+
+        ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
+        return fig, ax
+
+    # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
 
     def _save_fig(self, fig: "Figure", save: Any, result: "DispersionResult1D") -> None:
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         if isinstance(save, bool):
-            ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             path = Path(f"dispersion_{result.axis}_{result.component}_{ts}.png")
         else:
             path = Path(save)
@@ -356,7 +513,7 @@ class DispersionPlotAccessor:
 
     def __repr__(self) -> str:
         return (
-            "<DispersionPlotAccessor: .heatmap(...), .branch(branch, ...)>"
+            "<DispersionPlotAccessor: .heatmap(...), .branch(branch, ...), .add_analytics(ax, ...)>"
         )
 
     def _repr_html_(self) -> str:
@@ -372,6 +529,10 @@ class DispersionPlotAccessor:
             (".heatmap(orth_index=0, lognorm=True)",
              "Single y-slice heatmap",
              "Select one orthogonal slice from S_local. Only available when result was computed with avg_over_orthogonal=False."),
+            (".add_analytics(ax, sw_config='DE')",
+             "Overlay analytical dispersion curve",
+             "Auto-detects B, Ms, Aex, d from zarr attrs. sw_config: 'DE' (k⊥M), 'BV' (k∥M), 'FV' (M⊥film). "
+             "model: 'kalinikos' (default), 'bottcher', 'kim', 'cortes_ortuno'. n_modes: PSSW mode count."),
             (".branch(branch, kscale='rad_um')",
              "Dispersion branch + v_g panel",
              "Two-panel plot: f(k) on left, group velocity dω/dk [km/s] on right. Pass a DispersionBranch from track_branch()."),
@@ -397,3 +558,4 @@ class DispersionPlotAccessor:
             "and accept <code style='color:#bae6fd;'>save=</code> path."
             "</div></div>"
         )
+

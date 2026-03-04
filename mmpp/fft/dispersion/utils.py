@@ -1160,7 +1160,7 @@ def log_transform_dispersion(
     np.ndarray
         Transformed spectrum with compressed dynamic range.
     """
-    data = np.abs(S_fk).astype(np.float64)
+    data = np.abs(S_fk).astype(np.float32)
     
     if method == "log1p":
         return np.log1p(data * scale)
@@ -1204,7 +1204,7 @@ def gamma_correction_dispersion(
     np.ndarray
         Gamma-corrected spectrum normalized to [0, 1].
     """
-    data = np.abs(S_fk).astype(np.float64)
+    data = np.abs(S_fk).astype(np.float32)
     dmin, dmax = data.min(), data.max()
     
     if dmax - dmin < 1e-20:
@@ -1249,13 +1249,13 @@ def clahe_dispersion(
             "clahe requires scikit-image; install with: pip install scikit-image"
         )
         # Fallback: simple histogram stretching
-        data = np.abs(S_fk).astype(np.float64)
+        data = np.abs(S_fk).astype(np.float32)
         dmin, dmax = data.min(), data.max()
         if dmax - dmin < 1e-20:
             return np.zeros_like(data)
         return (data - dmin) / (dmax - dmin)
     
-    data = np.abs(S_fk).astype(np.float64)
+    data = np.abs(S_fk).astype(np.float32)
     dmin, dmax = data.min(), data.max()
     
     if dmax - dmin < 1e-20:
@@ -1306,7 +1306,7 @@ def local_contrast_normalization(
         logger.warning("local_contrast requires scipy.ndimage")
         return np.abs(S_fk)
     
-    data = np.abs(S_fk).astype(np.float64)
+    data = np.abs(S_fk).astype(np.float32)
     sigma_val = max(1.0, sigma)
     
     local_mean = gaussian_filter(data, sigma=sigma_val)
@@ -1356,7 +1356,7 @@ def unsharp_mask_dispersion(
         logger.warning("unsharp_mask requires scipy.ndimage")
         return np.abs(S_fk)
     
-    data = np.abs(S_fk).astype(np.float64)
+    data = np.abs(S_fk).astype(np.float32)
     sigma_val = max(0.5, sigma)
     alpha_val = max(0.0, alpha)
     
@@ -1396,7 +1396,7 @@ def percentile_autoscale(
     tuple[np.ndarray, float, float]
         (clipped_data, vmin, vmax) - data clipped to percentile range.
     """
-    data = np.abs(S_fk).astype(np.float64)
+    data = np.abs(S_fk).astype(np.float32)
     valid = data[~np.isnan(data)]
     
     if valid.size == 0:
@@ -1441,7 +1441,7 @@ def soft_threshold_dispersion(
     np.ndarray
         Soft-thresholded spectrum.
     """
-    data = np.abs(S_fk).astype(np.float64)
+    data = np.abs(S_fk).astype(np.float32)
     
     threshold = float(np.percentile(data, max(0.0, min(100.0, threshold_percentile))))
     smoothness_val = max(0.1, smoothness)
@@ -2033,7 +2033,7 @@ def extract_magnetization_component(
     if M.shape[-1] == 1:
         if component is None or component == "auto":
             # Already single component, just return it
-            return M[..., 0].astype(np.complex128)
+            return M[..., 0].astype(np.complex64)
         else:
             # User specified component but data already has only 1 component
             # This is fine - just use what we have
@@ -2043,7 +2043,7 @@ def extract_magnetization_component(
                 f"Magnetization data already has single component (shape[-1]=1). "
                 f"Ignoring component='{component}' parameter and using existing data."
             )
-            return M[..., 0].astype(np.complex128)
+            return M[..., 0].astype(np.complex64)
     
     # Standard case: M has 3 components
     if M.shape[-1] != 3:
@@ -2057,15 +2057,15 @@ def extract_magnetization_component(
     mz = M[..., 2]
 
     if component == "perp" or component is None:
-        return (mx + 1j * my).astype(np.complex128)
+        return (mx + 1j * my).astype(np.complex64)
     elif component == "mx":
-        return mx.astype(np.complex128)
+        return mx.astype(np.complex64)
     elif component == "my":
-        return my.astype(np.complex128)
+        return my.astype(np.complex64)
     elif component == "mz":
-        return mz.astype(np.complex128)
+        return mz.astype(np.complex64)
     elif component == "sum":
-        return ((mx + 1j * my) + mz).astype(np.complex128)
+        return ((mx + 1j * my) + mz).astype(np.complex64)
     else:
         raise ValueError(f"Unknown component '{component}'. Use 'perp', 'mx', 'my', 'mz', or 'sum'.")
 

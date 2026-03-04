@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, TypeVar, Union
 import logging
@@ -250,7 +250,7 @@ def _save_to_zarr_cache(
         entry.attrs["dataset_name"] = cache_key.dataset_name
         entry.attrs["z_layer"] = cache_key.z_layer
         entry.attrs["method"] = cache_key.method
-        entry.attrs["cached_at"] = datetime.utcnow().isoformat() + "Z"
+        entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
         entry.attrs["computation_time_s"] = computation_time
         
         # Save config

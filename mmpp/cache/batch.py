@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 import logging
@@ -77,7 +77,7 @@ class BatchCacheEntry:
         z.attrs["job_paths"] = self.job_paths
         z.attrs["n_jobs"] = len(self.job_paths)
         z.attrs["cache_key"] = cache_key.to_string()
-        z.attrs["cached_at"] = datetime.utcnow().isoformat() + "Z"
+        z.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
         
         # Save config
         if self.config is not None:

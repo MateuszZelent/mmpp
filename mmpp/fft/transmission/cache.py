@@ -8,7 +8,7 @@ import inspect
 import json
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, cast
 
@@ -478,7 +478,7 @@ class TransmissionCache:
         entry.attrs["metadata_json"] = json.dumps(result.metadata)
         entry.attrs["dataset_name"] = self.dataset_name
         entry.attrs["slice_info"] = json.dumps(self._serialize_for_json(slice_info))
-        entry.attrs["cached_at"] = datetime.utcnow().isoformat() + "Z"
+        entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
         entry.attrs["job_name"] = getattr(self.job_result, "name", "")
         entry.attrs["zarr_path"] = str(self.job_result.path)
 

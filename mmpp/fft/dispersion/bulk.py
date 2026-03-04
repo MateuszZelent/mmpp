@@ -856,9 +856,9 @@ class BulkMinimumPlotAccessor:
     # ------------------------------------------------------------------
 
     def _save(self, fig: "Figure", save: Any) -> None:
-        from datetime import datetime
+        from datetime import datetime, timezone
         if isinstance(save, bool):
-            ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             path = Path(f"bulk_dispersion_{ts}.png")
         else:
             path = Path(save)

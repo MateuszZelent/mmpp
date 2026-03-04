@@ -637,11 +637,11 @@ class SpinWaveAnalyzer:
 
         # Preserve complex information for perpendicular analysis
         if np.iscomplexobj(signal):
-            signal = signal.astype(np.complex128, copy=False)
-            logger.info("Complex signal detected, preserving full complex values")
+            signal = signal.astype(np.complex64, copy=False)
+            logger.info("Complex signal detected, preserving complex values (complex64)")
         else:
-            signal = signal.astype(np.float64, copy=False)
-            logger.info("Real-valued signal detected; continuing with float64 precision")
+            signal = signal.astype(np.float32, copy=False)
+            logger.info("Real-valued signal detected; continuing with float32 precision")
 
         logger.debug(f"Signal dtype after casting: {signal.dtype}, shape: {signal.shape}")
 
@@ -728,15 +728,15 @@ class SpinWaveAnalyzer:
         power = np.moveaxis(power, 0, -1)  # -> (..., Nf)
 
         if not keep_orthogonal_dimension:
-            S = power.astype(np.float64, copy=False)
-            S_complex = S_complex_raw.astype(np.complex128, copy=False)
+            S = power.astype(np.float32, copy=False)
+            S_complex = S_complex_raw.astype(np.complex64, copy=False)
         else:
             if axis == "x":
-                orthogonal_spectra = power.astype(np.float64, copy=False)
-                S_complex_orth = S_complex_raw.astype(np.complex128, copy=False)
+                orthogonal_spectra = power.astype(np.float32, copy=False)
+                S_complex_orth = S_complex_raw.astype(np.complex64, copy=False)
             else:
-                orthogonal_spectra = np.moveaxis(power, 1, 0).astype(np.float64, copy=False)
-                S_complex_orth = np.moveaxis(S_complex_raw, 1, 0).astype(np.complex128, copy=False)
+                orthogonal_spectra = np.moveaxis(power, 1, 0).astype(np.float32, copy=False)
+                S_complex_orth = np.moveaxis(S_complex_raw, 1, 0).astype(np.complex64, copy=False)
 
             if store_local_spectra:
                 S_local = orthogonal_spectra
@@ -863,7 +863,7 @@ class SpinWaveAnalyzer:
         np.ndarray
             Collapsed spectrum with shape (Nk, Nf).
         """
-        spectra = spectra.astype(np.float64, copy=False)
+        spectra = spectra.astype(np.float32, copy=False)
         if mode == "fft_power":
             return np.mean(spectra, axis=0)
         if mode == "fft_abs":
@@ -942,7 +942,7 @@ class SpinWaveAnalyzer:
             f_axis = _rfftfreq(T_len, self.dt)
 
         power = np.abs(Sk_pos) ** 2
-        S = power.transpose(2, 1, 0).astype(np.float64, copy=False)
+        S = power.transpose(2, 1, 0).astype(np.float32, copy=False)
 
         logger.info(f"Computed 2D dispersion: S.shape={S.shape}")
         
