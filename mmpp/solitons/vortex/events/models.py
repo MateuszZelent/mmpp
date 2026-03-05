@@ -182,3 +182,11 @@ class DwellTimePlotAccessor:
         ax.set_title(f"Dwell-time distribution: {self._result.state}")
         apply_axes_style(ax, style_kwargs)
         return ax
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("DwellTimePlotAccessor", [
+            (".dwell_histogram(bins=20, as_ns=True)",
+             "Dwell-time distribution histogram",
+             "bins: number of histogram bins. as_ns: convert to nanoseconds. Accepts matplotlib kwargs."),
+        ])

@@ -174,6 +174,14 @@ class EnergyPlotAccessor:
         apply_axes_style(ax, style_kwargs)
         return ax
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("EnergyPlotAccessor", [
+            (".time_resolved(channels=['E_total','E_exch'])",
+             "Energy channels vs time",
+             "channels: list of channel names (None = all). Accepts matplotlib kwargs."),
+        ])
+
 
 class EffectivePotentialPlotAccessor:
     """Plot helpers for :class:`EffectivePotentialResult`."""
@@ -218,6 +226,17 @@ class EffectivePotentialPlotAccessor:
         apply_axes_style(ax, style_kwargs)
         return ax
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("EffectivePotentialPlotAccessor", [
+            (".potential(as_nev=False)",
+             "Effective potential U(r) vs radius",
+             "as_nev: convert energy to neV."),
+            (".probability()",
+             "Radial probability density p(r)",
+             "Used for Boltzmann inversion."),
+        ])
+
 
 class PinningPlotAccessor:
     """Plot helpers for :class:`PinningResult`."""
@@ -238,6 +257,14 @@ class PinningPlotAccessor:
         ax.scatter(x, y, color="tab:red", s=35, zorder=5, label="pinning site")
         ax.legend()
         return ax
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("PinningPlotAccessor", [
+            (".potential_with_sites(as_nev=False)",
+             "Effective potential with pinning site markers",
+             "as_nev: convert to neV. Marks local minima as pinning sites."),
+        ])
 
 
 __all__ = [

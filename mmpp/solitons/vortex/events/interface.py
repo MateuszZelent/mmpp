@@ -304,3 +304,14 @@ class EventsPlotAccessor:
         """Plot dwell-time histogram for selected state."""
         result = self._interface.dwell_times(state=state, trajectory=trajectory)
         return result.plt.dwell_histogram(ax=ax, **kwargs)
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("EventsPlotAccessor", [
+            (".event_timeline()",
+             "Trajectory + event markers (polarity, state, expulsion)",
+             "trajectory: optional pre-computed TrajectoryResult."),
+            (".dwell_histogram(state='G-state')",
+             "Dwell-time distribution histogram",
+             "state: 'G-state' or 'C-state'. bins, as_ns kwargs."),
+        ])

@@ -433,6 +433,17 @@ class DispersionModePlotAccessor:
     def __repr__(self) -> str:
         return "<DispersionModePlotAccessor: .imshow(...), .phase(...), .interactive()>"
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("DispersionModePlotAccessor", [
+            (".imshow(mode_type='abs', cmap='RdBu_r')",
+             "Mode spatial profile |ψ(x,y)|",
+             "mode_type: 'abs', 'real', 'imag', 'phase'. cmap, figsize, title."),
+            (".phase(**kw)",
+             "Phase ∠ψ(x,y) with hsv colormap",
+             "Shortcut for .imshow(mode_type='phase', cmap='hsv')."),
+        ])
+
 
 # ---------------------------------------------------------------------------
 # DispersionModesPlotAccessor  –  overview plots for all modes
@@ -450,3 +461,11 @@ class DispersionModesPlotAccessor:
 
     def __repr__(self) -> str:
         return "<DispersionModesPlotAccessor: .animation(peaks=[0,1])>"
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("DispersionModesPlotAccessor", [
+            (".animation(peaks=[0,1])",
+             "Animate mode profiles across peaks",
+             "peaks: list of peak indices to animate."),
+        ])

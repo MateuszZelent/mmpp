@@ -1821,6 +1821,7 @@ MMPP Plotter:
         zero: Optional[int] = None,
         cmap: Optional[str] = None,
         component: Optional[int] = None,
+        dpi: int = 100,
     ) -> Axes:
         """
         Create a snapshot visualization of magnetization or scalar data.
@@ -1952,7 +1953,7 @@ MMPP Plotter:
 
             if ax is None:
                 shape_ratio = arr.shape[1] / arr.shape[0]
-                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
+                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=dpi)
 
             alphas = -np.abs(w) + 1
             hsl = np.ones((u.shape[0], u.shape[1], 3), dtype=np.float32)
@@ -1997,7 +1998,7 @@ MMPP Plotter:
 
             if ax is None:
                 shape_ratio = arr.shape[1] / arr.shape[0]
-                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
+                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=dpi)
 
             im = ax.imshow(
                 arr,

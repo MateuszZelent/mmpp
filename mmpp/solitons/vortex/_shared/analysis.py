@@ -55,6 +55,14 @@ class _DirectionalSpectrumPlotAccessor:
         ax.legend()
         return ax
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("DirectionalSpectrumPlotAccessor", [
+            (".power_spectrum(unit='hz')",
+             "CCW/CW/total directional power spectrum",
+             "unit: 'hz' or 'ghz'. Accepts matplotlib kwargs."),
+        ])
+
 
 class TrajectoryOrbitAccessor:
     """Orbit fit methods for trajectory analysis."""

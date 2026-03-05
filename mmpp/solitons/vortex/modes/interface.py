@@ -221,3 +221,14 @@ class VortexModesPlotAccessor:
                 }
             )
         return rows
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("VortexModesPlotAccessor", [
+            (".mode_map(f=None, unit='ghz')",
+             "Frequency-power bar chart of detected modes",
+             "f: optional target frequency marker. unit: 'ghz' or 'hz'."),
+            (".mode_table()",
+             "Returns list of dicts with mode details",
+             "rank, mode, m, n, f_ghz, power, confidence, source."),
+        ])

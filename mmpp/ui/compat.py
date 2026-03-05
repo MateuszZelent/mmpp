@@ -46,6 +46,16 @@ def has_k3d() -> bool:
     return has_module("k3d")
 
 
+def has_holoviews() -> bool:
+    """Return True when holoviews is installed."""
+    return has_module("holoviews")
+
+
+def has_pyvista() -> bool:
+    """Return True when pyvista is installed."""
+    return has_module("pyvista")
+
+
 def in_notebook() -> bool:
     """Best-effort notebook detection."""
     try:
@@ -67,6 +77,8 @@ def dependency_report() -> dict[str, bool]:
         "cmcrameri": has_cmcrameri(),
         "cmocean": has_cmocean(),
         "k3d": has_k3d(),
+        "holoviews": has_holoviews(),
+        "pyvista": has_pyvista(),
         "notebook": in_notebook(),
     }
 
@@ -80,6 +92,8 @@ __all__ = [
     "has_cmcrameri",
     "has_cmocean",
     "has_k3d",
+    "has_holoviews",
+    "has_pyvista",
     "in_notebook",
     "dependency_report",
 ]

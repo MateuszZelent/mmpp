@@ -163,6 +163,14 @@ class MagnetoresistancePlotAccessor:
         apply_axes_style(ax, style_kwargs)
         return ax
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("MagnetoresistancePlotAccessor", [
+            (".time_trace(as_mohm=False)",
+             "Resistance R(t) vs time",
+             "as_mohm: convert to mOhm. Accepts matplotlib kwargs."),
+        ])
+
 
 class VoltagePlotAccessor:
     """Plot helpers for :class:`VoltageResult`."""
@@ -189,6 +197,14 @@ class VoltagePlotAccessor:
         ax.set_title("Voltage trace")
         apply_axes_style(ax, style_kwargs)
         return ax
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("VoltagePlotAccessor", [
+            (".time_trace(as_mv=False)",
+             "Voltage V(t) vs time",
+             "as_mv: convert to mV. Accepts matplotlib kwargs."),
+        ])
 
 
 class SignalSpectrumPlotAccessor:
@@ -217,6 +233,14 @@ class SignalSpectrumPlotAccessor:
         ax.set_title(f"Signal spectrum ({self._result.quantity})")
         apply_axes_style(ax, style_kwargs)
         return ax
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("SignalSpectrumPlotAccessor", [
+            (".power_spectrum(as_ghz=True)",
+             "One-sided power spectrum",
+             "as_ghz: frequency in GHz. Accepts matplotlib kwargs."),
+        ])
 
 
 __all__ = [

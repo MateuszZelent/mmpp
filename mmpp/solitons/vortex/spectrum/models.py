@@ -95,6 +95,14 @@ class VortexSpectrumPlotAccessor:
         apply_axes_style(ax, style_kwargs)
         return ax
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("VortexSpectrumPlotAccessor", [
+            (".power_spectrum(as_ghz=True, log_scale=False)",
+             "Power spectrum of vortex gyration",
+             "as_ghz: frequency in GHz. log_scale: log10 power axis. Accepts matplotlib kwargs."),
+        ])
+
 
 class VortexSpectrogramPlotAccessor:
     """Plot helpers for :class:`VortexSpectrogramResult`."""
@@ -125,3 +133,11 @@ class VortexSpectrogramPlotAccessor:
             ax.figure.colorbar(mesh, ax=ax, **colorbar_kwargs)
         apply_axes_style(ax, style_kwargs)
         return ax
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("VortexSpectrogramPlotAccessor", [
+            (".spectrogram(as_ghz=True, db_scale=True)",
+             "Time-frequency spectrogram of vortex dynamics",
+             "as_ghz: frequency in GHz. db_scale: 10*log10 power. colorbar, colorbar_kwargs."),
+        ])

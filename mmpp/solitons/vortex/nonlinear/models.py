@@ -141,6 +141,17 @@ class AmplitudePlotAccessor:
         apply_axes_style(ax, style_kwargs)
         return ax
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("AmplitudePlotAccessor", [
+            (".power_vs_time()", "p(t)=|c(t)|² generation power vs time",
+             "Accepts matplotlib kwargs."),
+            (".phase_vs_time(as_unwrapped=True)", "Phase vs time",
+             "as_unwrapped: True for cumulative, False for wrapped [-π,π]."),
+            (".complex_plane()", "Complex amplitude c(t) in Re-Im plane",
+             "Equal aspect ratio. Accepts matplotlib kwargs."),
+        ])
+
 
 class STPlotAccessor:
     """Plot helpers for :class:`STParametersResult`."""
@@ -165,6 +176,14 @@ class STPlotAccessor:
         ax.set_title("Slavin-Tiberkevich: power vs current")
         apply_axes_style(ax, style_kwargs)
         return ax
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("STPlotAccessor", [
+            (".power_vs_current(current_a=...)",
+             "Single-point generation power at given current",
+             "current_a: current value in Amperes. Falls back to metadata if None."),
+        ])
 
 
 class STBatchPlotAccessor:
@@ -227,8 +246,17 @@ class STBatchPlotAccessor:
         apply_axes_style(ax, style_kwargs)
         return ax
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("STBatchPlotAccessor", [
+            (".power_vs_current()", "Generation power p_gen vs current I",
+             "Plots full sweep. Accepts matplotlib kwargs."),
+            (".linewidth_vs_current(as_mhz=True)", "Linewidth Δf vs current I",
+             "as_mhz: convert to MHz."),
+            (".frequency_vs_current(as_ghz=True)", "Dominant frequency f₀ vs current I",
+             "as_ghz: convert to GHz."),
+        ])
 
-@dataclass
 class ThieleForceBalanceResult:
     """Force decomposition from the Thiele equation on a tracked trajectory."""
 
@@ -346,3 +374,11 @@ class ThieleForcePlotAccessor:
         ax.legend()
         apply_axes_style(ax, style_kwargs)
         return ax
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("ThieleForcePlotAccessor", [
+            (".force_balance(as_norm=True)",
+             "Force decomposition (gyro, conservative, dissipative, residual) vs time",
+             "as_norm: True for |F| norms, False for x/y components."),
+        ])

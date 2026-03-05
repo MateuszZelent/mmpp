@@ -108,3 +108,14 @@ class PhasePlotAccessor:
         ax.set_title("Instantaneous frequency")
         apply_axes_style(ax, style_kwargs)
         return ax
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("PhasePlotAccessor", [
+            (".phase_portrait()",
+             "Phase portrait cos(φ) vs d(cos(φ))/dt",
+             "Reconstructs phase-space trajectory."),
+            (".frequency_vs_time(unit='hz')",
+             "Instantaneous frequency vs time",
+             "unit: 'hz', 'ghz', or 'rad/s'."),
+        ])

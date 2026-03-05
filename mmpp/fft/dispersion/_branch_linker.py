@@ -748,3 +748,17 @@ class BranchesPlotAccessor:
 
     def __repr__(self) -> str:
         return "<BranchesPlotAccessor: .heatmap(), .overlay(ax), .branches()>"
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("BranchesPlotAccessor", [
+            (".heatmap(cmap='cmc.davos', lognorm=True)",
+             "S(k,f) heatmap with all branches overlaid",
+             "kscale, f_units, fmax, linewidth, show_legend, save."),
+            (".overlay(ax, kscale='rad_um')",
+             "Overlay branch curves on existing axes",
+             "f_units, linewidth, colors, show_legend."),
+            (".branches(kscale='rad_um')",
+             "Plot only extracted branches (no heatmap)",
+             "f_units, dpi, title."),
+        ])

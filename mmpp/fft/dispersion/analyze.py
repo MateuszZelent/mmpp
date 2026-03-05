@@ -418,7 +418,18 @@ class LowestFrequencyPlotAccessor:
         return fig, ax
 
     def __repr__(self) -> str:
-        return "<LowestFrequencyPlotAccessor: .heatmap(...), .branch(...)>"
+        return "<LowestFrequencyPlotAccessor: .heatmap(), .branch()>"
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("LowestFrequencyPlotAccessor", [
+            (".heatmap(lognorm=True, show_k0=True)",
+             "S(k,f) heatmap with f_min marker",
+             "marker_color, marker_size, show_k0 (mark FMR point), fmax, lognorm, kscale, cmap, k_xlim, save."),
+            (".branch(kscale='rad_um')",
+             "f_peak(k) dispersion branch with minimum highlighted",
+             "Shows the extracted branch and marks (k*, f_min). kscale, f_units, marker_color, save."),
+        ])
 
 
 # ---------------------------------------------------------------------------

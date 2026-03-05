@@ -149,3 +149,14 @@ class SpectrumInterfacePlotAccessor:
         """Compute and plot spectrogram."""
         result = self._interface.spectrogram()
         return result.plt.spectrogram(**kwargs)
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("SpectrumInterfacePlotAccessor", [
+            (".power_spectrum()",
+             "Compute + plot gyration power spectrum",
+             "Delegates to VortexSpectrumResult.plt.power_spectrum()."),
+            (".spectrogram()",
+             "Compute + plot time-frequency spectrogram",
+             "Delegates to VortexSpectrogramResult.plt.spectrogram()."),
+        ])

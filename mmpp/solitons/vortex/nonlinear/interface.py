@@ -340,3 +340,17 @@ class NonlinearInterfacePlotAccessor:
 
         result = self._interface.thiele.force_balance(**compute_kwargs)
         return result.plt.force_balance(**plot_kwargs)
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("NonlinearInterfacePlotAccessor", [
+            (".power_vs_current()",
+             "Generation power P(I) from batch or single ST result",
+             "Uses latest batch if available, else single-point."),
+            (".linewidth_vs_current(as_mhz=True)",
+             "Linewidth Δf(I) from batch or single-point",
+             "as_mhz: convert to MHz."),
+            (".force_balance(as_norm=True)",
+             "Thiele force decomposition vs time",
+             "as_norm: True for |F| norms. Accepts compute_kwargs dict."),
+        ])

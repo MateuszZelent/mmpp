@@ -347,5 +347,19 @@ class SignalsPlotAccessor:
         result = self._interface.power_spectrum()
         return result.plt.power_spectrum(**kwargs)
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("SignalsPlotAccessor", [
+            (".magnetoresistance()",
+             "Compute + plot resistance R(t) trace",
+             "Delegates to MagnetoresistanceResult.plt.time_trace()."),
+            (".voltage()",
+             "Compute + plot voltage V(t) trace",
+             "Delegates to VoltageResult.plt.time_trace()."),
+            (".power_spectrum()",
+             "Compute + plot electrical signal PSD",
+             "Delegates to SignalSpectrumResult.plt.power_spectrum()."),
+        ])
+
 
 __all__ = ["SignalsInterface"]

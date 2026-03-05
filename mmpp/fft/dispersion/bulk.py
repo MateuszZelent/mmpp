@@ -221,6 +221,9 @@ class BulkMinimumFrequencyResult:
     analytical_f_k0_hz: np.ndarray | None = None
     analytical_model: str | None = None
     analytical_params: dict[str, Any] | None = None
+    # Multiple overlays: list of dicts with keys:
+    #   label, f_min_hz, k_star_rad_m, f_k0_hz, model, params
+    analytical_overlays: list[dict[str, Any]] = field(default_factory=list)
 
     # ------------------------------------------------------------------
     # Convenience properties
@@ -251,7 +254,7 @@ class BulkMinimumFrequencyResult:
     @property
     def has_analytical(self) -> bool:
         """Whether analytical overlay data is available."""
-        return self.analytical_f_min_hz is not None
+        return self.analytical_f_min_hz is not None or len(self.analytical_overlays) > 0
 
     @property
     def analytical_f_min_ghz(self) -> np.ndarray | None:
@@ -289,6 +292,7 @@ class BulkMinimumFrequencyResult:
         phi_ani: float = 0.0,
         g: float = 2.0,
         model: str = "kalinikos",
+        label: str | None = None,
         param_is_mT: bool = False,
         k_range: tuple[float, float] | None = None,
         n_k: int = 500,
@@ -296,8 +300,8 @@ class BulkMinimumFrequencyResult:
     ) -> "BulkMinimumFrequencyResult":
         """Compute analytical dispersion overlay on existing results.
 
-        This avoids re-running the simulation bulk scan — only the
-        lightweight analytical model is evaluated at each parameter value.
+        Can be called **multiple times** to stack several overlays on the
+        same plot (e.g. with/without anisotropy).
 
         Parameters
         ----------
@@ -305,6 +309,9 @@ class BulkMinimumFrequencyResult:
             Material parameters (same meaning as in ``mmpp.analytical``).
         model : str
             Analytical model name (default ``"kalinikos"``).
+        label : str, optional
+            Display label for the overlay legend.  Defaults to the *model*
+            name if omitted.
         param_is_mT : bool
             If True, ``param_values`` are in mT and divided by 1000 for T.
         k_range : tuple, optional
@@ -317,7 +324,7 @@ class BulkMinimumFrequencyResult:
         Returns
         -------
         self
-            Returns self for chaining: ``bulk.add_analytical(...).plot.f_min_vs_param()``
+            Returns self for chaining.
         """
         from mmpp.analytical import dispersion as _an_disp
 
@@ -370,12 +377,23 @@ class BulkMinimumFrequencyResult:
             except Exception:
                 pass
 
+        overlay_label = label or model
+        overlay = {
+            "label": overlay_label,
+            "f_min_hz": an_f_min,
+            "k_star_rad_m": an_k_star,
+            "f_k0_hz": an_f_k0,
+            "model": model,
+            "params": {**mat, "model": model, "param_is_mT": param_is_mT},
+        }
+        self.analytical_overlays.append(overlay)
+
+        # Keep legacy single-overlay fields updated (latest overlay)
         self.analytical_f_min_hz = an_f_min
         self.analytical_k_star_rad_m = an_k_star
         self.analytical_f_k0_hz = an_f_k0
-        self.analytical_model = model
-        self.analytical_params = {**mat, "model": model,
-                                  "param_is_mT": param_is_mT}
+        self.analytical_model = overlay_label
+        self.analytical_params = overlay["params"]
         return self
 
     @property
@@ -841,15 +859,22 @@ class BulkMinimumPlotAccessor:
         if show_fk0:
             ax.plot(p, f_k0, "s--", color="#22d3ee", linewidth=1.5, markersize=5, label="f(k=0) (sim)")
 
-        # Analytical overlay
-        if bulk.has_analytical:
-            an_f_min = (bulk.analytical_f_min_ghz if f_units == "GHz" else bulk.analytical_f_min_hz)[self._idx]
-            ax.plot(p, an_f_min, "x--", color="#a3e635", linewidth=2, markersize=7,
-                    label=f"f_min ({bulk.analytical_model or 'analytical'})")
-            if show_fk0 and bulk.analytical_f_k0_hz is not None:
-                an_f_k0 = (bulk.analytical_f_k0_ghz if f_units == "GHz" else bulk.analytical_f_k0_hz)[self._idx]
-                ax.plot(p, an_f_k0, "+:", color="#86efac", linewidth=1.5, markersize=6,
-                        label=f"f(k=0) ({bulk.analytical_model or 'analytical'})")
+        # Analytical overlays (multiple)
+        _an_colors = ["#a3e635", "#f472b6", "#38bdf8", "#fbbf24", "#c084fc", "#34d399"]
+        _an_markers_f = ["x", "v", "^", "d", "p", "h"]
+        _an_markers_k0 = ["+", "1", "2", "3", "4", "*"]
+        for oi, ov in enumerate(bulk.analytical_overlays):
+            c = _an_colors[oi % len(_an_colors)]
+            mf = _an_markers_f[oi % len(_an_markers_f)]
+            mk = _an_markers_k0[oi % len(_an_markers_k0)]
+            lbl = ov["label"]
+            an_f = (ov["f_min_hz"] / 1e9 if f_units == "GHz" else ov["f_min_hz"])[self._idx]
+            ax.plot(p, an_f, f"{mf}--", color=c, linewidth=2, markersize=7,
+                    label=f"f_min ({lbl})")
+            if show_fk0 and ov["f_k0_hz"] is not None:
+                an_fk = (ov["f_k0_hz"] / 1e9 if f_units == "GHz" else ov["f_k0_hz"])[self._idx]
+                ax.plot(p, an_fk, f"{mk}:", color=c, linewidth=1.5, markersize=6,
+                        label=f"f(k=0) ({lbl})")
 
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel(f_label)
@@ -860,9 +885,12 @@ class BulkMinimumPlotAccessor:
             ax2 = ax.twinx()
             df = bulk.delta_f_mhz[self._idx]
             ax2.plot(p, df, "^:", color="#a78bfa", linewidth=1.5, markersize=4, label="Δf (sim) [MHz]")
-            if bulk.has_analytical and bulk.analytical_delta_f_mhz is not None:
-                ax2.plot(p, bulk.analytical_delta_f_mhz[self._idx], "v:", color="#d8b4fe",
-                         linewidth=1.5, markersize=4, label="Δf (analytical) [MHz]")
+            for oi, ov in enumerate(bulk.analytical_overlays):
+                c = _an_colors[oi % len(_an_colors)]
+                lbl = ov["label"]
+                an_df = (ov["f_k0_hz"] - ov["f_min_hz"]) / 1e6
+                ax2.plot(p, an_df[self._idx], "v:", color=c,
+                         linewidth=1.5, markersize=4, label=f"Δf ({lbl}) [MHz]")
             ax2.set_ylabel("Δf = f(k=0) − f_min  [MHz]", color="#a78bfa")
             ax2.tick_params(axis="y", labelcolor="#a78bfa")
 
@@ -907,11 +935,17 @@ class BulkMinimumPlotAccessor:
         k_label = r"$k^*$ [rad/μm]" if kscale == "rad_um" else r"$k^*$ [rad/m]"
 
         ax.plot(p, k_data, "D-", color="#4ade80", linewidth=2, markersize=6, label="k* (sim)")
-        if bulk.has_analytical and bulk.analytical_k_star_rad_m is not None:
-            an_k = (bulk.analytical_k_star_rad_um if kscale == "rad_um" else bulk.analytical_k_star_rad_m)[self._idx]
-            ax.plot(p, an_k, "x--", color="#a3e635", linewidth=2, markersize=7,
-                    label=f"k* ({bulk.analytical_model or 'analytical'})")
-            ax.legend(fontsize=9)
+        _an_colors = ["#a3e635", "#f472b6", "#38bdf8", "#fbbf24", "#c084fc", "#34d399"]
+        _an_markers = ["x", "v", "^", "d", "p", "h"]
+        for oi, ov in enumerate(bulk.analytical_overlays):
+            c = _an_colors[oi % len(_an_colors)]
+            m = _an_markers[oi % len(_an_markers)]
+            an_k_data = ov["k_star_rad_m"]
+            if kscale == "rad_um":
+                an_k_data = an_k_data / 1e6
+            ax.plot(p, an_k_data[self._idx], f"{m}--", color=c, linewidth=2, markersize=7,
+                    label=f"k* ({ov['label']})")
+        ax.legend(fontsize=9)
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel(k_label)
         ax.set_title(title or f"k* (wave-vector at f_min)  vs  {bulk.param_label}")
@@ -947,10 +981,15 @@ class BulkMinimumPlotAccessor:
 
         p = bulk.param_values[self._idx]
         ax.plot(p, bulk.delta_f_mhz[self._idx], "o-", color="#a78bfa", linewidth=2, markersize=6, label="Δf (sim)")
-        if bulk.has_analytical and bulk.analytical_delta_f_mhz is not None:
-            ax.plot(p, bulk.analytical_delta_f_mhz[self._idx], "x--", color="#d8b4fe",
-                    linewidth=2, markersize=7, label=f"Δf ({bulk.analytical_model or 'analytical'})")
-            ax.legend(fontsize=9)
+        _an_colors = ["#a3e635", "#f472b6", "#38bdf8", "#fbbf24", "#c084fc", "#34d399"]
+        _an_markers = ["x", "v", "^", "d", "p", "h"]
+        for oi, ov in enumerate(bulk.analytical_overlays):
+            c = _an_colors[oi % len(_an_colors)]
+            m = _an_markers[oi % len(_an_markers)]
+            an_df = (ov["f_k0_hz"] - ov["f_min_hz"]) / 1e6
+            ax.plot(p, an_df[self._idx], f"{m}--", color=c,
+                    linewidth=2, markersize=7, label=f"Δf ({ov['label']})")
+        ax.legend(fontsize=9)
         ax.axhline(0, color="#475569", linestyle="--", linewidth=1.0, alpha=0.6)
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel("Δf = f(k=0) − f_min  [MHz]")
@@ -1110,11 +1149,33 @@ class BulkMinimumPlotAccessor:
         fig.savefig(str(path), dpi=150, bbox_inches="tight")
 
     def __repr__(self) -> str:
-        return (
-            "<BulkMinimumPlotAccessor: .heatmap(), .f_min_vs_param(), "
-            ".k_star_vs_param(), .delta_f_vs_param(), .vg_vs_param(), "
-            ".branches(), .summary()>"
-        )
+        return f"<BulkMinimumPlotAccessor(n={self._bulk.n})>"
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+        return plot_accessor_html("BulkMinimumPlotAccessor", [
+            (".heatmap(which='fmin', lognorm=True)",
+             "S(k) cross-section heatmap vs scan parameter",
+             "which: 'fmin' or 'fk0'. lognorm, cmap, vmin/vmax, k_xlim, annotate_fmin, save."),
+            (".f_min_vs_param(show_fk0=True, show_delta_f=False)",
+             "f_min (and f(k=0)) vs scan parameter",
+             "show_fk0: overlay f(k=0). show_delta_f: second y-axis with Δf. f_units: 'GHz'|'Hz'. Supports multiple analytical overlays."),
+            (".k_star_vs_param(kscale='rad_um')",
+             "k* (wave-vector at f_min) vs scan parameter",
+             "kscale: 'rad_um' or 'rad_m'. Includes analytical overlays if present."),
+            (".delta_f_vs_param()",
+             "Δf = f(k=0) − f_min [MHz] vs scan parameter",
+             "Shows sim and all analytical overlay Δf curves."),
+            (".vg_vs_param()",
+             "Group velocity at k* [km/s] vs scan parameter",
+             "Estimated vg = dω/dk at the frequency minimum."),
+            (".branches(cmap='viridis')",
+             "All f_peak(k) branches coloured by parameter",
+             "cmap, alpha, linewidth, colorbar, f_units. Overlays all branches."),
+            (".summary()",
+             "4-panel summary: heatmap + f_min + k* + Δf",
+             "Creates a (14×10) figure with four sub-plots."),
+        ])
 
 
 # ---------------------------------------------------------------------------

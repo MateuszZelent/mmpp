@@ -53,10 +53,14 @@ interactive = [
     "jupyter",
     "ipywidgets",
     "k3d",
+    "holoviews",
+    "pyvista",
 ]
 plotting = [
     "cmocean",
     "k3d",
+    "holoviews",
+    "pyvista",
 ]
 tui = [
     "textual>=0.40.0",
@@ -65,6 +69,8 @@ full = [
     "textual>=0.40.0",
     "cmocean",
     "k3d",
+    "holoviews",
+    "pyvista",
     "itables",
     "IPython",
     "jupyter",
