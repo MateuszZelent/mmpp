@@ -5,6 +5,8 @@ Main CLI entry point for MMPP library.
 import argparse
 import sys
 
+from .. import __version__
+
 try:
     import yaml
 except ImportError:
@@ -17,7 +19,9 @@ def main() -> None:
         description="MMPP - Micro Magnetic Post Processing Library", prog="mmpp"
     )
 
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -46,12 +50,10 @@ def main() -> None:
     )
 
     # Auth status command
-    auth_status_parser = auth_subparsers.add_parser(
-        "status", help="Show current authentication status"
-    )
+    auth_subparsers.add_parser("status", help="Show current authentication status")
 
     # Auth logout command
-    auth_logout_parser = auth_subparsers.add_parser(
+    auth_subparsers.add_parser(
         "logout", help="Remove stored authentication credentials"
     )
 
@@ -62,12 +64,9 @@ def main() -> None:
     )
 
     # Jobs list command (default)
-    jobs_list_parser = jobs_subparsers.add_parser(
-        "list", help="List active jobs"
-    )
+    jobs_list_parser = jobs_subparsers.add_parser("list", help="List active jobs")
     jobs_list_parser.add_argument(
-        "--server", "-s",
-        help="Server URL (uses stored credentials if not provided)"
+        "--server", "-s", help="Server URL (uses stored credentials if not provided)"
     )
 
     # Swap command group
@@ -78,56 +77,39 @@ def main() -> None:
 
     # Run command group
     run_parser = subparsers.add_parser("run", help="Run simulations and manage jobs")
-    
+
     # Add direct file argument FIRST (this will catch files before subparsers)
     run_parser.add_argument(
         "files_or_command",
         nargs="*",
-        help="MX3 file(s)/pattern to run (e.g., 'test.mx3', 'test*.mx3') OR command (status/check)"
+        help="MX3 file(s)/pattern to run (e.g., 'test.mx3', 'test*.mx3') OR command (status/check)",
     )
-    
+
     # Options for simulation execution
     run_parser.add_argument(
-        "-d", "--detach",
+        "-d",
+        "--detach",
         action="store_true",
-        help="Don't wait for completion (detached mode)"
+        help="Don't wait for completion (detached mode)",
     )
     run_parser.add_argument(
-        "-t", "--time",
-        help="Time limit (e.g., '10h', '2d', '30m', '24:00:00')"
+        "-t", "--time", help="Time limit (e.g., '10h', '2d', '30m', '24:00:00')"
+    )
+    run_parser.add_argument("--name", help="Custom task name (defaults to filename)")
+    run_parser.add_argument(
+        "--cpus", type=int, default=5, help="Number of CPU cores (default: 5)"
     )
     run_parser.add_argument(
-        "--name",
-        help="Custom task name (defaults to filename)"
+        "--memory", type=int, default=24, help="Memory in GB (default: 24)"
     )
     run_parser.add_argument(
-        "--cpus",
-        type=int,
-        default=5,
-        help="Number of CPU cores (default: 5)"
+        "--gpus", type=int, default=1, help="Number of GPUs (default: 1)"
     )
     run_parser.add_argument(
-        "--memory",
-        type=int,
-        default=24,
-        help="Memory in GB (default: 24)"
+        "--partition", default="proxima", help="SLURM partition (default: proxima)"
     )
     run_parser.add_argument(
-        "--gpus",
-        type=int,
-        default=1,
-        help="Number of GPUs (default: 1)"
-    )
-    run_parser.add_argument(
-        "--partition",
-        default="proxima",
-        help="SLURM partition (default: proxima)"
-    )
-    run_parser.add_argument(
-        "--priority",
-        type=int,
-        default=0,
-        help="Task priority (default: 0)"
+        "--priority", type=int, default=0, help="Task priority (default: 0)"
     )
 
     # Swap init command
@@ -198,15 +180,19 @@ def main() -> None:
         show_info()
     elif args.command == "auth":
         from .auth import handle_auth_command
+
         handle_auth_command(args)
     elif args.command == "jobs":
         from .jobs import handle_jobs_command
+
         handle_jobs_command(args)
     elif args.command == "run":
         from .run import handle_run_command
+
         handle_run_command(args)
     elif args.command == "swap":
         from .swap import handle_swap_command
+
         handle_swap_command(args)
     elif args.command is None:
         parser.print_help()

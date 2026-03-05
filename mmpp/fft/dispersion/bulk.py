@@ -37,7 +37,9 @@ Or from a single result via the .analyze accessor::
 from __future__ import annotations
 
 import gc
+import threading
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, Sequence, Union
@@ -213,6 +215,13 @@ class BulkMinimumFrequencyResult:
     errors: dict[int, str] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
+    # --- Analytical overlay (optional) ---
+    analytical_f_min_hz: np.ndarray | None = None
+    analytical_k_star_rad_m: np.ndarray | None = None
+    analytical_f_k0_hz: np.ndarray | None = None
+    analytical_model: str | None = None
+    analytical_params: dict[str, Any] | None = None
+
     # ------------------------------------------------------------------
     # Convenience properties
     # ------------------------------------------------------------------
@@ -238,6 +247,30 @@ class BulkMinimumFrequencyResult:
     def delta_f_mhz(self) -> np.ndarray:
         """Δf = f(k=0) − f_min  [MHz]."""
         return (self.f_at_k0_hz - self.f_min_hz) / 1e6
+
+    @property
+    def has_analytical(self) -> bool:
+        """Whether analytical overlay data is available."""
+        return self.analytical_f_min_hz is not None
+
+    @property
+    def analytical_f_min_ghz(self) -> np.ndarray | None:
+        return self.analytical_f_min_hz / 1e9 if self.analytical_f_min_hz is not None else None
+
+    @property
+    def analytical_f_k0_ghz(self) -> np.ndarray | None:
+        return self.analytical_f_k0_hz / 1e9 if self.analytical_f_k0_hz is not None else None
+
+    @property
+    def analytical_k_star_rad_um(self) -> np.ndarray | None:
+        return self.analytical_k_star_rad_m / 1e6 if self.analytical_k_star_rad_m is not None else None
+
+    @property
+    def analytical_delta_f_mhz(self) -> np.ndarray | None:
+        """Analytical Δf = f(k=0) − f_min  [MHz]."""
+        if self.analytical_f_k0_hz is None or self.analytical_f_min_hz is None:
+            return None
+        return (self.analytical_f_k0_hz - self.analytical_f_min_hz) / 1e6
 
     @property
     def plot(self) -> "BulkMinimumPlotAccessor":
@@ -667,9 +700,20 @@ class BulkMinimumPlotAccessor:
         f_k0   = bulk.f_at_k0_ghz if f_units == "GHz" else bulk.f_at_k0_hz
         f_label = "f [GHz]"      if f_units == "GHz" else "f [Hz]"
 
-        ax.plot(p, f_min, "o-", color="#f97316", linewidth=2, markersize=6, label="f_min")
+        ax.plot(p, f_min, "o-", color="#f97316", linewidth=2, markersize=6, label="f_min (sim)")
         if show_fk0:
-            ax.plot(p, f_k0, "s--", color="#22d3ee", linewidth=1.5, markersize=5, label="f(k=0)")
+            ax.plot(p, f_k0, "s--", color="#22d3ee", linewidth=1.5, markersize=5, label="f(k=0) (sim)")
+
+        # Analytical overlay
+        if bulk.has_analytical:
+            an_f_min = bulk.analytical_f_min_ghz if f_units == "GHz" else bulk.analytical_f_min_hz
+            ax.plot(p, an_f_min, "x--", color="#a3e635", linewidth=2, markersize=7,
+                    label=f"f_min ({bulk.analytical_model or 'analytical'})")
+            if show_fk0 and bulk.analytical_f_k0_hz is not None:
+                an_f_k0 = bulk.analytical_f_k0_ghz if f_units == "GHz" else bulk.analytical_f_k0_hz
+                ax.plot(p, an_f_k0, "+:", color="#86efac", linewidth=1.5, markersize=6,
+                        label=f"f(k=0) ({bulk.analytical_model or 'analytical'})")
+
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel(f_label)
         ax.set_title(title or f"f_min  vs  {bulk.param_label}")
@@ -679,7 +723,10 @@ class BulkMinimumPlotAccessor:
         if show_delta_f:
             ax2 = ax.twinx()
             df = bulk.delta_f_mhz
-            ax2.plot(p, df, "^:", color="#a78bfa", linewidth=1.5, markersize=4, label="Δf [MHz]")
+            ax2.plot(p, df, "^:", color="#a78bfa", linewidth=1.5, markersize=4, label="Δf (sim) [MHz]")
+            if bulk.has_analytical and bulk.analytical_delta_f_mhz is not None:
+                ax2.plot(p, bulk.analytical_delta_f_mhz, "v:", color="#d8b4fe",
+                         linewidth=1.5, markersize=4, label="Δf (analytical) [MHz]")
             ax2.set_ylabel("Δf = f(k=0) − f_min  [MHz]", color="#a78bfa")
             ax2.tick_params(axis="y", labelcolor="#a78bfa")
 
@@ -715,7 +762,12 @@ class BulkMinimumPlotAccessor:
         k_data  = bulk.k_star_rad_um if kscale == "rad_um" else bulk.k_star_rad_m
         k_label = r"$k^*$ [rad/μm]" if kscale == "rad_um" else r"$k^*$ [rad/m]"
 
-        ax.plot(bulk.param_values, k_data, "D-", color="#4ade80", linewidth=2, markersize=6)
+        ax.plot(bulk.param_values, k_data, "D-", color="#4ade80", linewidth=2, markersize=6, label="k* (sim)")
+        if bulk.has_analytical and bulk.analytical_k_star_rad_m is not None:
+            an_k = bulk.analytical_k_star_rad_um if kscale == "rad_um" else bulk.analytical_k_star_rad_m
+            ax.plot(bulk.param_values, an_k, "x--", color="#a3e635", linewidth=2, markersize=7,
+                    label=f"k* ({bulk.analytical_model or 'analytical'})")
+            ax.legend(fontsize=9)
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel(k_label)
         ax.set_title(title or f"k* (wave-vector at f_min)  vs  {bulk.param_label}")
@@ -749,7 +801,11 @@ class BulkMinimumPlotAccessor:
         else:
             fig = ax.get_figure()
 
-        ax.plot(bulk.param_values, bulk.delta_f_mhz, "o-", color="#a78bfa", linewidth=2, markersize=6)
+        ax.plot(bulk.param_values, bulk.delta_f_mhz, "o-", color="#a78bfa", linewidth=2, markersize=6, label="Δf (sim)")
+        if bulk.has_analytical and bulk.analytical_delta_f_mhz is not None:
+            ax.plot(bulk.param_values, bulk.analytical_delta_f_mhz, "x--", color="#d8b4fe",
+                    linewidth=2, markersize=7, label=f"Δf ({bulk.analytical_model or 'analytical'})")
+            ax.legend(fontsize=9)
         ax.axhline(0, color="#475569", linestyle="--", linewidth=1.0, alpha=0.6)
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel("Δf = f(k=0) − f_min  [MHz]")
@@ -931,6 +987,8 @@ def scan_minimum_frequency(
     slice_spec: Any | None = None,
     dataset: str = "m",
     z_slice: Any | None = None,
+    analytical_params: dict[str, Any] | None = None,
+    n_workers: int = 1,
     verbose: bool = True,
     on_error: str = "warn",
 ) -> BulkMinimumFrequencyResult:
@@ -982,6 +1040,28 @@ def scan_minimum_frequency(
         Dataset name on the simulation object (default ``"m"``).
     z_slice : optional
         Legacy alias for *slice_spec*.
+    analytical_params : dict, optional
+        Material parameters for the analytical dispersion model.  When
+        provided, an analytical f_min(B) curve is computed alongside the
+        simulation results and stored in the result for overlay plotting.
+
+        Required keys: ``Ms``, ``d``, ``Aex``.  Optional: ``Ku``, ``Kc1``,
+        ``Kc2``, ``phi``, ``phi_ani``, ``g``.
+
+        Special keys:
+
+        * ``model`` – analytical model name (default ``"kalinikos"``).
+          Also accepts ``"backward_volume"``, ``"damon_eshbach"``, etc.
+        * ``param_is_mT`` – if ``True``, divide ``param_values`` by 1000
+          to convert mT → T before passing to the model (default ``False``).
+        * ``k_range`` – ``(k_min, k_max)`` in rad/m (default: from simulation).
+        * ``n_k`` – number of k points (default: 500).
+        * ``side`` – ``"positive"`` or ``"both"`` (default: from ``find_kwargs``).
+    n_workers : int
+        Number of concurrent threads for processing jobs (default: 1 =
+        sequential).  Threading is effective because numpy FFT, zarr I/O,
+        and scipy all release the GIL.  Recommended: 2‒4 for I/O-bound
+        workloads; avoid very large values to control peak RAM usage.
     verbose : bool
         Print progress to stdout.
     on_error : ``"warn"`` | ``"raise"`` | ``"skip"``
@@ -1081,100 +1161,254 @@ def scan_minimum_frequency(
     k_axes:        list[np.ndarray] = []
     errors: dict[int, str] = {}
 
-    for i, src in enumerate(sources):
-        if verbose:
-            print(f"[{i+1}/{len(sources)}]  {param_label}={param_values_arr[i]}", end="  ")
+    # ── Helper : process a single job (may run in a worker thread) ─────
+    def _process_one_job(
+        i: int,
+        src: Any,
+    ) -> dict[str, Any]:
+        """Process job *i* and return compact data or an error dict."""
+        iface = None
+        result = None
+        compact = None
         try:
-            # --- Resolve DispersionResult1D ---------------------------------
-            iface = None  # track the interface for cleanup
             if callable(src) and not hasattr(src, "fft"):
-                result = src()  # type: ignore[assignment]
+                result = src()
             elif hasattr(src, "S") and hasattr(src, "k_axis"):
-                result = src  # type: ignore[assignment]
+                result = src
             else:
-                # ZarrJobResult (or compatible): access dataset + optional slice
-                data_accessor = getattr(src, dataset)  # e.g. src.m
+                data_accessor = getattr(src, dataset)
                 if slice_spec is not None:
                     data_accessor = data_accessor[slice_spec]
 
                 iface = data_accessor.fft.dispersion
                 chain = iface.filters(**filters)
 
-                # IMPORTANT: use_cache=False prevents storing the large S(k,f)
-                # array in the in-memory cache, which would otherwise accumulate
-                # across iterations and cause OOM for large sweeps.
                 _ck = dict(compute_kwargs)
                 _ck["use_cache"] = False
                 _ck["disk_cache"] = False
-                _ck.setdefault("store_complex", False)
+                _ck["save"] = False
+                _ck["save_result"] = False
+                _ck["store_complex"] = False
                 if _ck.get("avg_over_orthogonal", True) is False:
                     warnings.warn(
-                        "scan_minimum_frequency received avg_over_orthogonal=False. "
-                        "This is memory-intensive because local spectra are retained; "
-                        "use avg_over_orthogonal=True for compact scans.",
+                        "scan_minimum_frequency overrides avg_over_orthogonal=False to "
+                        "avg_over_orthogonal=True to avoid storing large local spectra.",
                         stacklevel=2,
                     )
+                _ck["avg_over_orthogonal"] = True
                 result = chain.compute_1d(**_ck)
                 del chain, data_accessor, _ck
 
-            # Break the back-reference result._interface → FFTDispersionInterface
-            # → SpinWaveAnalyzer → M_data (full magnetization array) only for
-            # results we computed in this loop iteration.
             if iface is not None:
                 try:
                     object.__delattr__(result, "_interface")
                 except (AttributeError, TypeError):
                     pass
 
-            # --- Extract compact data (S(k,f) freed immediately) ----------
-            compact = _extract_compact(result, find_kwargs)  # type: ignore[arg-type]
+            compact = _extract_compact(result, find_kwargs)
 
-            f_min_arr[i]  = compact["f_min_hz"]
-            k_star_arr[i] = compact["k_star_rad_m"]
-            vg_arr_out[i] = compact["vg_at_min_m_s"]
-            f_k0_arr[i]   = compact["f_at_k0_hz"]
-            cs_fmin_list.append(compact["crosssection_at_fmin"])
-            cs_fk0_list.append(compact["crosssection_at_fk0"])
-            branches_f.append(compact["branch_f"])
-            branches_k.append(compact["branch_k"])
-            k_axes.append(compact["k_axis"])
-
-            if verbose:
-                print(f"  f_min={f_min_arr[i]/1e9:.4f} GHz  k*={k_star_arr[i]/1e6:.3f} rad/μm")
-
-            # Free the large S(k,f) array and all intermediate objects
+            out: dict[str, Any] = {
+                "ok": True,
+                "i": i,
+                "f_min_hz": compact["f_min_hz"],
+                "k_star_rad_m": compact["k_star_rad_m"],
+                "vg_at_min_m_s": compact["vg_at_min_m_s"],
+                "f_at_k0_hz": compact["f_at_k0_hz"],
+                "crosssection_at_fmin": compact["crosssection_at_fmin"],
+                "crosssection_at_fk0": compact["crosssection_at_fk0"],
+                "branch_f": compact["branch_f"],
+                "branch_k": compact["branch_k"],
+                "k_axis": compact["k_axis"],
+            }
             del result, compact
+            return out
 
-            # Release the raw magnetization data from the analyzer.
-            # SpinWaveAnalyzer.M_data can be several GB for large simulations.
+        except Exception as exc:
+            return {"ok": False, "i": i, "error": f"{type(exc).__name__}: {exc}", "exc": exc}
+
+        finally:
             if iface is not None:
                 try:
                     iface.release_memory(clear_memory_cache=True, unload_raw_data=True)
                 except Exception:
                     pass
-                del iface
+                iface = None
+            result = None
+            compact = None
+            gc.collect()
 
-        except Exception as exc:
-            msg = f"{type(exc).__name__}: {exc}"
-            errors[i] = msg
-            cs_fmin_list.append(np.array([]))
-            cs_fk0_list.append(np.array([]))
-            branches_f.append(np.array([]))
-            branches_k.append(np.array([]))
-            k_axes.append(np.array([]))
-            if on_error == "raise":
-                raise
-            elif on_error == "warn":
-                warnings.warn(f"Job {i} ({param_label}={param_values_arr[i]}) failed: {msg}", stacklevel=2)
+    # ── Run jobs (sequential or parallel) ─────────────────────────────
+    n_total = len(sources)
+    n_workers_eff = max(1, min(n_workers, n_total))
+
+    if n_workers_eff <= 1:
+        # Sequential path — keep the simple progress output
+        for i, src in enumerate(sources):
             if verbose:
-                print(f"  ERROR: {msg}")
+                print(f"[{i+1}/{n_total}]  {param_label}={param_values_arr[i]}", end="  ")
+            out = _process_one_job(i, src)
+            if out["ok"]:
+                f_min_arr[i] = out["f_min_hz"]
+                k_star_arr[i] = out["k_star_rad_m"]
+                vg_arr_out[i] = out["vg_at_min_m_s"]
+                f_k0_arr[i] = out["f_at_k0_hz"]
+                cs_fmin_list.append(out["crosssection_at_fmin"])
+                cs_fk0_list.append(out["crosssection_at_fk0"])
+                branches_f.append(out["branch_f"])
+                branches_k.append(out["branch_k"])
+                k_axes.append(out["k_axis"])
+                if verbose:
+                    print(f"  f_min={out['f_min_hz']/1e9:.4f} GHz  k*={out['k_star_rad_m']/1e6:.3f} rad/μm")
+            else:
+                errors[i] = out["error"]
+                cs_fmin_list.append(np.array([]))
+                cs_fk0_list.append(np.array([]))
+                branches_f.append(np.array([]))
+                branches_k.append(np.array([]))
+                k_axes.append(np.array([]))
+                if on_error == "raise":
+                    raise out["exc"]
+                elif on_error == "warn":
+                    warnings.warn(f"Job {i} ({param_label}={param_values_arr[i]}) failed: {out['error']}", stacklevel=2)
+                if verbose:
+                    print(f"  ERROR: {out['error']}")
+    else:
+        # Parallel path — ThreadPoolExecutor
+        if verbose:
+            print(f"Processing {n_total} jobs with {n_workers_eff} threads...")
 
-        # Force garbage collection to reclaim memory between jobs.
-        # Each iteration can consume 100+ MB (S(k,f)) to several GB (M_data);
-        # without explicit gc, Python's generational collector may delay
-        # reclamation and accumulate 2-3 jobs worth of arrays in RAM.
-        gc.collect()
+        # Pre-allocate placeholder lists (will be filled by index)
+        results_by_idx: dict[int, dict[str, Any]] = {}
+        _progress_lock = threading.Lock()
+        _done_count = [0]  # mutable counter for threads
 
+        def _worker(i_src: tuple[int, Any]) -> dict[str, Any]:
+            i, src = i_src
+            out = _process_one_job(i, src)
+            with _progress_lock:
+                _done_count[0] += 1
+                if verbose:
+                    status = "OK" if out["ok"] else "ERR"
+                    pv = param_values_arr[i]
+                    extra = ""
+                    if out["ok"]:
+                        extra = f"  f_min={out['f_min_hz']/1e9:.4f} GHz"
+                    print(f"  [{_done_count[0]}/{n_total}] {param_label}={pv}  {status}{extra}")
+            return out
+
+        with ThreadPoolExecutor(max_workers=n_workers_eff) as pool:
+            futures = {pool.submit(_worker, (i, src)): i for i, src in enumerate(sources)}
+            for future in as_completed(futures):
+                out = future.result()
+                results_by_idx[out["i"]] = out
+
+        # Collect results in order
+        for i in range(n_total):
+            out = results_by_idx[i]
+            if out["ok"]:
+                f_min_arr[i] = out["f_min_hz"]
+                k_star_arr[i] = out["k_star_rad_m"]
+                vg_arr_out[i] = out["vg_at_min_m_s"]
+                f_k0_arr[i] = out["f_at_k0_hz"]
+                cs_fmin_list.append(out["crosssection_at_fmin"])
+                cs_fk0_list.append(out["crosssection_at_fk0"])
+                branches_f.append(out["branch_f"])
+                branches_k.append(out["branch_k"])
+                k_axes.append(out["k_axis"])
+            else:
+                errors[i] = out["error"]
+                cs_fmin_list.append(np.array([]))
+                cs_fk0_list.append(np.array([]))
+                branches_f.append(np.array([]))
+                branches_k.append(np.array([]))
+                k_axes.append(np.array([]))
+                if on_error == "raise":
+                    raise out.get("exc", RuntimeError(out["error"]))
+                elif on_error == "warn":
+                    warnings.warn(f"Job {i} ({param_label}={param_values_arr[i]}) failed: {out['error']}", stacklevel=2)
+
+        if verbose:
+            n_ok = n_total - len(errors)
+            print(f"Done: {n_ok}/{n_total} succeeded, {len(errors)} errors")
+
+
+    # ── Analytical dispersion overlay ─────────────────────────────────
+    an_f_min_arr: np.ndarray | None = None
+    an_k_star_arr: np.ndarray | None = None
+    an_f_k0_arr: np.ndarray | None = None
+    an_model_name: str | None = None
+
+    if analytical_params is not None:
+        an_p = dict(analytical_params)  # don't mutate caller's dict
+        an_model_name = str(an_p.pop("model", "kalinikos"))
+        param_is_mT = bool(an_p.pop("param_is_mT", False))
+        an_k_range = an_p.pop("k_range", None)
+        an_n_k = int(an_p.pop("n_k", 500))
+        an_side = an_p.pop("side", find_kwargs.get("side", "positive"))
+
+        # Resolve k range from simulation or user
+        if an_k_range is not None:
+            k_lo, k_hi = an_k_range
+        elif k_axes and k_axes[0].size > 0:
+            k_all = k_axes[0]
+            if an_side == "positive":
+                k_lo, k_hi = 0.0, float(k_all.max())
+            elif an_side == "negative":
+                k_lo, k_hi = float(k_all.min()), 0.0
+            else:
+                k_lo, k_hi = float(k_all.min()), float(k_all.max())
+        else:
+            k_lo, k_hi = 0.0, 10e6  # fallback 0‥10 rad/μm
+
+        k_an = np.linspace(k_lo, k_hi, an_n_k)
+
+        # Import the requested model
+        from mmpp.analytical import dispersion as _an_disp
+        model_func = getattr(_an_disp, an_model_name, None)
+        if model_func is None:
+            raise ValueError(
+                f"Unknown analytical model {an_model_name!r}. "
+                f"Available: kalinikos, backward_volume, damon_eshbach, forward_volume, bottcher"
+            )
+
+        an_f_min_arr = np.full(len(sources), np.nan)
+        an_k_star_arr = np.full(len(sources), np.nan)
+        an_f_k0_arr = np.full(len(sources), np.nan)
+
+        for i in range(len(param_values_arr)):
+            B_val = float(param_values_arr[i])
+            if param_is_mT:
+                B_val = B_val / 1000.0  # mT → T
+
+            try:
+                res_an = model_func(k=k_an, B=B_val, **an_p)
+                f_ghz = res_an.f  # GHz
+
+                # Find f_min on the analytical curve
+                if an_side == "positive":
+                    mask = k_an > 0
+                elif an_side == "negative":
+                    mask = k_an < 0
+                else:
+                    mask = np.ones(len(k_an), dtype=bool)
+
+                if np.any(mask) and np.any(np.isfinite(f_ghz[mask])):
+                    f_masked = f_ghz[mask]
+                    k_masked = k_an[mask]
+                    idx_min = int(np.nanargmin(f_masked))
+                    an_f_min_arr[i] = f_masked[idx_min] * 1e9  # → Hz
+                    an_k_star_arr[i] = k_masked[idx_min]
+
+                    # f at k≈0
+                    idx_k0 = int(np.argmin(np.abs(k_an)))
+                    an_f_k0_arr[i] = f_ghz[idx_k0] * 1e9  # → Hz
+            except Exception as exc:
+                if verbose:
+                    print(f"  [analytical] B={B_val:.4f}T failed: {exc}")
+
+        if verbose:
+            n_ok = int(np.isfinite(an_f_min_arr).sum())
+            print(f"\nAnalytical ({an_model_name}): {n_ok}/{len(param_values_arr)} points computed")
 
     return BulkMinimumFrequencyResult(
         param_values=param_values_arr,
@@ -1194,4 +1428,9 @@ def scan_minimum_frequency(
             "compute_kwargs":  compute_kwargs,
             "find_kwargs":     find_kwargs,
         },
+        analytical_f_min_hz=an_f_min_arr,
+        analytical_k_star_rad_m=an_k_star_arr,
+        analytical_f_k0_hz=an_f_k0_arr,
+        analytical_model=an_model_name,
+        analytical_params=analytical_params,
     )
