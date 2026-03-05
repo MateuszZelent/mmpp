@@ -598,6 +598,76 @@ class DispersionAnalyzeAccessor:
             side=side,
         )
 
+    def find_branches(
+        self,
+        *,
+        n_branches: int = 5,
+        side: str = "both",
+        min_prominence: float = 0.02,
+        min_peak_distance: int = 3,
+        max_df_ghz: float = 0.5,
+        min_branch_length: int = 10,
+        smooth_sigma: Optional[float] = 2.0,
+        fmin_hz: float | str | None = "auto",
+        k_min_rad_um: float = 0.0,
+        k_max_rad_um: Optional[float] = None,
+    ) -> "BranchesResult":
+        """Detect multiple dispersion branches via Hungarian peak linking.
+
+        For each k-bin, detects up to *n_branches* spectral peaks, then
+        links them across adjacent k-bins using optimal assignment
+        (``scipy.optimize.linear_sum_assignment``).  This correctly
+        resolves mode crossings and tracks multiple branches simultaneously.
+
+        Parameters
+        ----------
+        n_branches : int
+            Maximum number of peaks to detect per k-bin.
+        side : ``"positive"`` | ``"negative"`` | ``"both"``
+            Which half of the k-axis to search.
+        min_prominence : float
+            Relative prominence threshold for peak detection.
+        min_peak_distance : int
+            Minimum frequency bins between detected peaks.
+        max_df_ghz : float
+            Maximum allowed frequency jump [GHz] between adjacent k-bins.
+        min_branch_length : int
+            Discard branches shorter than this many points.
+        smooth_sigma : float or None
+            Gaussian smoothing sigma (k-bins) on final branches.
+        fmin_hz : float, ``"auto"``, or None
+            Lower frequency cutoff.
+        k_min_rad_um, k_max_rad_um : float
+            k-window [rad/μm].
+
+        Returns
+        -------
+        BranchesResult
+            Object with ``.branches`` list and ``.plot`` accessor.
+
+        Examples
+        --------
+        >>> br = result.analyze.find_branches(n_branches=3)
+        >>> br.plot()                # heatmap + overlay
+        >>> br.plot.branches()       # branches only
+        >>> br.plot.overlay(ax)      # overlay on existing axes
+        """
+        from ._branch_linker import find_branches as _find_branches
+
+        return _find_branches(
+            self._result,
+            n_branches=n_branches,
+            side=side,
+            min_prominence=min_prominence,
+            min_peak_distance=min_peak_distance,
+            max_df_ghz=max_df_ghz,
+            min_branch_length=min_branch_length,
+            smooth_sigma=smooth_sigma,
+            fmin_hz=fmin_hz,
+            k_min_rad_um=k_min_rad_um,
+            k_max_rad_um=k_max_rad_um,
+        )
+
     def scan(
         self,
         sources,
