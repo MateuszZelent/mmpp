@@ -36,6 +36,7 @@ Or from a single result via the .analyze accessor::
 
 from __future__ import annotations
 
+import gc
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -77,9 +78,24 @@ def _extract_compact(
     f_axis = result.f_axis
     k_axis = result.k_axis
 
-    pos_f = f_axis >= 0
-    f_pos = f_axis[pos_f]
-    S_pos = S[:, pos_f]
+    # Prefer slice-based frequency selection to avoid duplicating S[:, pos_f].
+    if np.all(np.diff(f_axis) >= 0):
+        f_selector: slice | np.ndarray = slice(int(np.searchsorted(f_axis, 0.0, side="left")), None)
+        f_pos = f_axis[f_selector]
+    else:
+        pos_idx = np.flatnonzero(f_axis >= 0)
+        if pos_idx.size == 0:
+            raise ValueError("Frequency axis does not contain non-negative values.")
+        if int(pos_idx[-1] - pos_idx[0] + 1) == int(pos_idx.size):
+            f_selector = slice(int(pos_idx[0]), int(pos_idx[-1]) + 1)
+            f_pos = f_axis[f_selector]
+        else:
+            f_selector = pos_idx
+            f_pos = f_axis[pos_idx]
+
+    if f_pos.size == 0:
+        raise ValueError("No positive frequencies available for compact extraction.")
+    f_axis_monotonic = bool(np.all(np.diff(f_pos) >= 0))
 
     # Apply same fmin cutoff as find_lowest_possible_frequency
     fmin_hz = find_kwargs.get("fmin_hz", "auto")
@@ -91,17 +107,43 @@ def _extract_compact(
         fmin_cutoff = 0.0
 
     if fmin_cutoff > 0:
-        f_keep = f_pos >= fmin_cutoff
-        f_pos = f_pos[f_keep]
-        S_pos = S_pos[:, f_keep]
+        if f_axis_monotonic:
+            start_idx = int(np.searchsorted(f_pos, fmin_cutoff, side="left"))
+            if start_idx >= f_pos.size:
+                raise ValueError(
+                    f"fmin_hz={fmin_cutoff:.3e} exceeds available positive-frequency range "
+                    f"[{float(f_pos.min()):.3e}, {float(f_pos.max()):.3e}] Hz.",
+                )
+            f_pos = f_pos[start_idx:]
+            if isinstance(f_selector, slice):
+                base_start = int(f_selector.start or 0)
+                f_selector = slice(base_start + start_idx, f_selector.stop, f_selector.step)
+            else:
+                f_selector = f_selector[start_idx:]
+        else:
+            f_keep = f_pos >= fmin_cutoff
+            if not np.any(f_keep):
+                raise ValueError(
+                    f"fmin_hz={fmin_cutoff:.3e} exceeds available positive-frequency values.",
+                )
+            f_pos = f_pos[f_keep]
+            if isinstance(f_selector, slice):
+                idx_full = np.arange(f_axis.shape[0], dtype=int)[f_selector]
+                f_selector = idx_full[f_keep]
+            else:
+                f_selector = f_selector[f_keep]
 
-    # Cross-section at f_min
-    idx_fmin = int(np.abs(f_pos - lowest.f_min_hz).argmin())
-    cs_at_fmin = S_pos[:, idx_fmin].copy()
+    if isinstance(f_selector, slice):
+        abs_start = int(f_selector.start or 0)
+        idx_fmin_abs = abs_start + int(np.abs(f_pos - lowest.f_min_hz).argmin())
+        idx_fk0_abs = abs_start + int(np.abs(f_pos - lowest.f_at_k0_hz).argmin())
+    else:
+        idx_fmin_abs = int(f_selector[int(np.abs(f_pos - lowest.f_min_hz).argmin())])
+        idx_fk0_abs = int(f_selector[int(np.abs(f_pos - lowest.f_at_k0_hz).argmin())])
 
-    # Cross-section at f(k=0)
-    idx_fk0 = int(np.abs(f_pos - lowest.f_at_k0_hz).argmin())
-    cs_at_fk0 = S_pos[:, idx_fk0].copy()
+    # Cross-sections at requested frequencies
+    cs_at_fmin = S[:, idx_fmin_abs].copy()
+    cs_at_fk0 = S[:, idx_fk0_abs].copy()
 
     return {
         "f_min_hz":              lowest.f_min_hz,
@@ -1044,18 +1086,45 @@ def scan_minimum_frequency(
             print(f"[{i+1}/{len(sources)}]  {param_label}={param_values_arr[i]}", end="  ")
         try:
             # --- Resolve DispersionResult1D ---------------------------------
+            iface = None  # track the interface for cleanup
             if callable(src) and not hasattr(src, "fft"):
-                result = src()  # type: ignore[assignment]  # callable -> DispersionResult1D
+                result = src()  # type: ignore[assignment]
             elif hasattr(src, "S") and hasattr(src, "k_axis"):
-                # Already a DispersionResult1D
                 result = src  # type: ignore[assignment]
             else:
                 # ZarrJobResult (or compatible): access dataset + optional slice
                 data_accessor = getattr(src, dataset)  # e.g. src.m
                 if slice_spec is not None:
                     data_accessor = data_accessor[slice_spec]
-                chain = data_accessor.fft.dispersion.filters(**filters)
-                result = chain.compute_1d(**compute_kwargs)
+
+                iface = data_accessor.fft.dispersion
+                chain = iface.filters(**filters)
+
+                # IMPORTANT: use_cache=False prevents storing the large S(k,f)
+                # array in the in-memory cache, which would otherwise accumulate
+                # across iterations and cause OOM for large sweeps.
+                _ck = dict(compute_kwargs)
+                _ck["use_cache"] = False
+                _ck["disk_cache"] = False
+                _ck.setdefault("store_complex", False)
+                if _ck.get("avg_over_orthogonal", True) is False:
+                    warnings.warn(
+                        "scan_minimum_frequency received avg_over_orthogonal=False. "
+                        "This is memory-intensive because local spectra are retained; "
+                        "use avg_over_orthogonal=True for compact scans.",
+                        stacklevel=2,
+                    )
+                result = chain.compute_1d(**_ck)
+                del chain, data_accessor, _ck
+
+            # Break the back-reference result._interface → FFTDispersionInterface
+            # → SpinWaveAnalyzer → M_data (full magnetization array) only for
+            # results we computed in this loop iteration.
+            if iface is not None:
+                try:
+                    object.__delattr__(result, "_interface")
+                except (AttributeError, TypeError):
+                    pass
 
             # --- Extract compact data (S(k,f) freed immediately) ----------
             compact = _extract_compact(result, find_kwargs)  # type: ignore[arg-type]
@@ -1073,13 +1142,21 @@ def scan_minimum_frequency(
             if verbose:
                 print(f"  f_min={f_min_arr[i]/1e9:.4f} GHz  k*={k_star_arr[i]/1e6:.3f} rad/μm")
 
-            # Free the large array immediately
-            del result
+            # Free the large S(k,f) array and all intermediate objects
+            del result, compact
+
+            # Release the raw magnetization data from the analyzer.
+            # SpinWaveAnalyzer.M_data can be several GB for large simulations.
+            if iface is not None:
+                try:
+                    iface.release_memory(clear_memory_cache=True, unload_raw_data=True)
+                except Exception:
+                    pass
+                del iface
 
         except Exception as exc:
             msg = f"{type(exc).__name__}: {exc}"
             errors[i] = msg
-            # Insert placeholder arrays
             cs_fmin_list.append(np.array([]))
             cs_fk0_list.append(np.array([]))
             branches_f.append(np.array([]))
@@ -1091,6 +1168,13 @@ def scan_minimum_frequency(
                 warnings.warn(f"Job {i} ({param_label}={param_values_arr[i]}) failed: {msg}", stacklevel=2)
             if verbose:
                 print(f"  ERROR: {msg}")
+
+        # Force garbage collection to reclaim memory between jobs.
+        # Each iteration can consume 100+ MB (S(k,f)) to several GB (M_data);
+        # without explicit gc, Python's generational collector may delay
+        # reclamation and accumulate 2-3 jobs worth of arrays in RAM.
+        gc.collect()
+
 
     return BulkMinimumFrequencyResult(
         param_values=param_values_arr,

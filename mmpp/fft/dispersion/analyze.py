@@ -497,10 +497,26 @@ class DispersionAnalyzeAccessor:
         k_axis = result.k_axis  # rad/m
         f_axis = result.f_axis  # Hz
 
-        # Restrict to positive frequencies
-        pos_f = f_axis >= 0
-        f_axis_pos = f_axis[pos_f]
-        S_pos = S[:, pos_f]
+        # Restrict to positive frequencies. Prefer slice-based selection to
+        # avoid materializing an (Nk, Nf_pos) copy via boolean indexing.
+        if np.all(np.diff(f_axis) >= 0):
+            f_selector: slice | np.ndarray = slice(int(np.searchsorted(f_axis, 0.0, side="left")), None)
+            f_axis_pos = f_axis[f_selector]
+        else:
+            pos_idx = np.flatnonzero(f_axis >= 0)
+            if pos_idx.size == 0:
+                raise ValueError("Frequency axis does not contain non-negative values.")
+            if int(pos_idx[-1] - pos_idx[0] + 1) == int(pos_idx.size):
+                f_selector = slice(int(pos_idx[0]), int(pos_idx[-1]) + 1)
+                f_axis_pos = f_axis[f_selector]
+            else:
+                # Fallback for non-monotonic/non-contiguous axes.
+                f_selector = pos_idx
+                f_axis_pos = f_axis[pos_idx]
+
+        if f_axis_pos.size == 0:
+            raise ValueError("No non-negative frequencies available for branch extraction.")
+        f_axis_monotonic = bool(np.all(np.diff(f_axis_pos) >= 0))
 
         # Apply fmin cutoff to avoid DC artifacts
         if fmin_hz == "auto":
@@ -511,9 +527,33 @@ class DispersionAnalyzeAccessor:
             fmin_cutoff = 0.0
 
         if fmin_cutoff > 0:
-            f_keep = f_axis_pos >= fmin_cutoff
-            f_axis_pos = f_axis_pos[f_keep]
-            S_pos = S_pos[:, f_keep]
+            if f_axis_monotonic:
+                start_idx = int(np.searchsorted(f_axis_pos, fmin_cutoff, side="left"))
+                if start_idx >= f_axis_pos.size:
+                    raise ValueError(
+                        f"fmin_hz={fmin_cutoff:.3e} exceeds available positive-frequency range "
+                        f"[{float(f_axis_pos.min()):.3e}, {float(f_axis_pos.max()):.3e}] Hz.",
+                    )
+                f_axis_pos = f_axis_pos[start_idx:]
+                if isinstance(f_selector, slice):
+                    base_start = int(f_selector.start or 0)
+                    f_selector = slice(base_start + start_idx, f_selector.stop, f_selector.step)
+                else:
+                    f_selector = f_selector[start_idx:]
+            else:
+                f_keep = f_axis_pos >= fmin_cutoff
+                if not np.any(f_keep):
+                    raise ValueError(
+                        f"fmin_hz={fmin_cutoff:.3e} exceeds available positive-frequency values.",
+                    )
+                f_axis_pos = f_axis_pos[f_keep]
+                if isinstance(f_selector, slice):
+                    idx_full = np.arange(f_axis.shape[0], dtype=int)[f_selector]
+                    f_selector = idx_full[f_keep]
+                else:
+                    f_selector = f_selector[f_keep]
+
+        S_pos = S[:, f_selector]
 
 
         # Convert search window to rad/m

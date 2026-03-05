@@ -588,6 +588,7 @@ class SpinWaveAnalyzer:
         fold_agg: Optional[str] = None,
         filters: Optional[dict[str, Any]] = None,
         flipx: bool = True,
+        store_complex: bool = True,
     ) -> DispersionResult1D:
         """
         Compute 1D spin-wave dispersion S(k,f) along specified axis.
@@ -633,6 +634,9 @@ class SpinWaveAnalyzer:
             Apply mirror flip to k-axis (k → -k) to correct NumPy FFT convention.
             When True (default), applies S[:,::-1] to swap positive/negative wave vectors.
             Also applies to COMSOL overlay data when active.
+        store_complex : bool, default=True
+            Store the phase-preserving complex spectrum in ``result.S_complex``.
+            Disable to reduce peak and retained memory when only ``S(k,f)`` is needed.
             
         Returns
         -------
@@ -673,6 +677,7 @@ class SpinWaveAnalyzer:
         detrend = detrend or self.config.detrend
         fold_period = fold_period if fold_period is not None else self.config.fold_period
         fold_agg = fold_agg or self.config.fold_agg
+        store_complex = bool(store_complex)
         
         if self.M_data is None:
             raise ValueError("No magnetization data loaded")
@@ -804,10 +809,11 @@ class SpinWaveAnalyzer:
         f_axis = _fftshift(_fftfreq(T_len, self.dt))
         Sk_full = _fft(sig_k, axis=0)
         Sk_shift = _fftshift(Sk_full, axes=0)
+        del Sk_full
 
         # Store complex spectrum BEFORE taking abs (needed for mode reconstruction)
         # Shape: (Nk, Nf) or (Nk, N_orth, Nf) depending on keep_orthogonal_dimension
-        S_complex_raw = np.moveaxis(Sk_shift, 0, -1)  # Move freq to last axis
+        S_complex_raw = np.moveaxis(Sk_shift, 0, -1) if store_complex else None
 
         # Compute power spectrum for visualization (optionally Welch-averaged).
         welch_cfg = pre_filters.get("welch_average")
@@ -826,26 +832,37 @@ class SpinWaveAnalyzer:
                 n_fft=T_len,
                 apply_hann=bool(welch_options.get("apply_hann", True)),
             )
-            power = np.abs(power_shift)
+            power = np.abs(power_shift).astype(np.float32, copy=False)
         else:
-            power = np.abs(Sk_shift) ** 2
+            power = np.abs(Sk_shift).astype(np.float32, copy=False)
+            power *= power
+
+        if not store_complex:
+            del Sk_shift
 
         power = np.moveaxis(power, 0, -1)  # -> (..., Nf)
 
         if not keep_orthogonal_dimension:
             S = power.astype(np.float32, copy=False)
-            S_complex = S_complex_raw.astype(np.complex64, copy=False)
+            S_complex = (
+                S_complex_raw.astype(np.complex64, copy=False)
+                if (store_complex and S_complex_raw is not None)
+                else None
+            )
         else:
+            S_complex_orth = None
             if axis == "x":
                 orthogonal_spectra = power.astype(np.float32, copy=False)
-                S_complex_orth = S_complex_raw.astype(np.complex64, copy=False)
+                if store_complex and S_complex_raw is not None:
+                    S_complex_orth = S_complex_raw.astype(np.complex64, copy=False)
             else:
                 orthogonal_spectra = np.moveaxis(power, 1, 0).astype(np.float32, copy=False)
-                S_complex_orth = np.moveaxis(S_complex_raw, 1, 0).astype(np.complex64, copy=False)
+                if store_complex and S_complex_raw is not None:
+                    S_complex_orth = np.moveaxis(S_complex_raw, 1, 0).astype(np.complex64, copy=False)
 
             if store_local_spectra:
                 S_local = orthogonal_spectra
-                S_complex = S_complex_orth
+                S_complex = S_complex_orth if store_complex else None
             else:
                 S_complex = None
             S = self._collapse_orthogonal_spectra(orthogonal_spectra, orthogonal_avg_mode)
@@ -922,6 +939,8 @@ class SpinWaveAnalyzer:
             notes.append(f"Post-filters: {', '.join(active_post)}")
         if active_live:
             notes.append(f"Live-capable filters configured: {', '.join(active_live)}")
+        if not store_complex:
+            notes.append("Complex spectrum disabled (store_complex=False)")
 
         # Create result object
         result = DispersionResult1D(

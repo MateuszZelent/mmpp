@@ -310,6 +310,34 @@ class FFTDispersionInterface:
             )
         return self._analyzer
 
+    def release_memory(
+        self,
+        *,
+        clear_memory_cache: bool = False,
+        unload_raw_data: bool = True,
+    ) -> None:
+        """Release heavy in-memory references held by this interface.
+
+        Parameters
+        ----------
+        clear_memory_cache : bool
+            Clear ``_memory_cache`` entries storing ``DispersionResult1D``.
+        unload_raw_data : bool
+            Drop loaded ``SpinWaveAnalyzer.M_data`` to free raw magnetization RAM.
+        """
+        if clear_memory_cache:
+            self._memory_cache.clear()
+
+        self._last_plot_result = None
+
+        if unload_raw_data and self._analyzer is not None:
+            self._analyzer.M_data = None
+            self._analyzer._loaded_time = 0
+
+    def _clear_cache(self) -> None:
+        """Compatibility helper used by interactive tools."""
+        self.release_memory(clear_memory_cache=True, unload_raw_data=False)
+
     @property
     def last_plot_result(self) -> Optional[DispersionResult1D]:
         """
@@ -1353,6 +1381,9 @@ class FFTDispersionInterface:
             Use in-memory cache when available (default True).
         disk_cache : bool, optional (via kwargs)
             Check on-disk cache (default True). Alias ``use_disk_cache`` is accepted.
+        store_complex : bool, optional (via kwargs)
+            Store complex FFT spectrum in ``result.S_complex`` (default True).
+            Set to ``False`` to reduce memory when phase reconstruction is not needed.
         kmax : float, optional (via kwargs)
             Trim returned data to |k| ≤ kmax (rad/m) without affecting cached data.
             Note: Input in rad/m regardless of display units (rad_um, meter, etc.)
