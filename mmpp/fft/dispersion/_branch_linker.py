@@ -2,10 +2,12 @@
 
 Detects multiple dispersion branches simultaneously by:
 1. Finding spectral peaks per k-bin (scipy.signal.find_peaks)
-2. Linking peaks across adjacent k-bins via optimal assignment
-   (scipy.optimize.linear_sum_assignment)
-3. Handling branch birth/death when peaks appear/disappear
-4. Optional Gaussian smoothing of final branches
+2. SNR gating: skip k-bins with weak signal
+3. Linking peaks across adjacent k-bins via optimal assignment
+   (scipy.optimize.linear_sum_assignment) with amplitude-weighted cost
+4. Handling branch birth/death when peaks appear/disappear
+5. Quality filtering: discard noisy/short branches
+6. Optional Gaussian smoothing of final branches
 
 Usage::
 
@@ -40,16 +42,22 @@ def _find_peaks_column(
     spectrum: np.ndarray,
     f_axis: np.ndarray,
     *,
-    n_peaks: int = 5,
-    min_prominence_rel: float = 0.02,
-    min_distance_bins: int = 3,
+    n_peaks: int = 3,
+    min_prominence_rel: float = 0.05,
+    min_distance_bins: int = 5,
     fmin_hz: float = 0.0,
+    global_max: float = 1.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Find up to *n_peaks* spectral peaks in a single k‑bin.
 
+    Parameters
+    ----------
+    global_max : float
+        The *global* S maximum across ALL k-bins, used to set a proper
+        prominence threshold (not just the local column max).
+
     Returns (f_peak_hz, amplitudes) sorted by amplitude descending.
     """
-    # Restrict to positive / above fmin
     keep = f_axis >= fmin_hz
     spec = spectrum[keep]
     f_sub = f_axis[keep]
@@ -57,32 +65,36 @@ def _find_peaks_column(
     if spec.size < 3:
         return np.array([]), np.array([])
 
-    global_max = float(spec.max())
-    if global_max <= 0:
+    col_max = float(spec.max())
+    if col_max <= 0:
         return np.array([]), np.array([])
+
+    # Use GLOBAL max for prominence — avoids detecting noise peaks
+    # in k-bins where the signal is inherently weak.
+    prominence = min_prominence_rel * global_max
 
     try:
         from scipy.signal import find_peaks as _scipy_find_peaks
 
-        prominence = min_prominence_rel * global_max
         idx, props = _scipy_find_peaks(
             spec,
             distance=min_distance_bins,
             prominence=prominence,
         )
     except ImportError:
-        # Fallback: simple local‑max scan
         idx = []
         for i in range(1, len(spec) - 1):
             if spec[i] > spec[i - 1] and spec[i] > spec[i + 1]:
-                if spec[i] > min_prominence_rel * global_max:
+                if spec[i] > prominence:
                     idx.append(i)
         idx = np.asarray(idx, dtype=int)
-        props = {}
 
     if len(idx) == 0:
-        # If nothing found, take global max
-        idx = np.array([int(np.argmax(spec))])
+        # Only return global max if it's above the prominence threshold
+        if col_max >= prominence:
+            idx = np.array([int(np.argmax(spec))])
+        else:
+            return np.array([]), np.array([])
 
     # Sort by amplitude descending, keep top n_peaks
     order = np.argsort(spec[idx])[::-1][:n_peaks]
@@ -92,7 +104,7 @@ def _find_peaks_column(
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Hungarian linking
+# Hungarian linking with amplitude‑weighted cost
 # ──────────────────────────────────────────────────────────────────────
 
 _UNLINKED_COST = 1e18
@@ -100,16 +112,18 @@ _UNLINKED_COST = 1e18
 
 def _link_peaks(
     prev_f: np.ndarray,
+    prev_amp: np.ndarray,
     curr_f: np.ndarray,
+    curr_amp: np.ndarray,
     max_df_hz: float,
+    amp_weight: float = 0.3,
 ) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
     """Link peaks between two adjacent k‑bins.
 
-    Returns
-    -------
-    matches : list of (prev_idx, curr_idx) pairs
-    unmatched_prev : indices of peaks in prev that got no match
-    unmatched_curr : indices of peaks in curr that got no match (new branches)
+    Cost = |Δf| / max_df - amp_weight * (amp_curr / amp_max)
+
+    The amplitude term biases the assignment toward linking
+    to stronger peaks, reducing jumps to noise.
     """
     n_prev = len(prev_f)
     n_curr = len(curr_f)
@@ -119,25 +133,30 @@ def _link_peaks(
     if n_curr == 0:
         return [], list(range(n_prev)), []
 
-    # Build cost matrix |Δf|, with gating
+    # Normalise amplitudes for the weighting term
+    all_amp = np.concatenate([prev_amp, curr_amp])
+    amp_max = float(all_amp.max()) if len(all_amp) > 0 else 1.0
+
     cost = np.full((n_prev, n_curr), _UNLINKED_COST)
     for i in range(n_prev):
         for j in range(n_curr):
             df = abs(prev_f[i] - curr_f[j])
             if df <= max_df_hz:
-                cost[i, j] = df
+                # Frequency distance (normalised) + penalty for weak peaks
+                freq_cost = df / (max_df_hz + 1e-30)
+                # Bonus for strong current peak (0..1)
+                amp_bonus = amp_weight * (curr_amp[j] / (amp_max + 1e-30))
+                cost[i, j] = freq_cost - amp_bonus
 
     try:
         from scipy.optimize import linear_sum_assignment
-
         row_ind, col_ind = linear_sum_assignment(cost)
     except ImportError:
-        # Greedy fallback
         row_ind, col_ind = _greedy_assign(cost)
 
     matches = []
-    matched_prev = set()
-    matched_curr = set()
+    matched_prev: set = set()
+    matched_curr: set = set()
 
     for r, c in zip(row_ind, col_ind):
         if cost[r, c] < _UNLINKED_COST:
@@ -173,7 +192,43 @@ def _greedy_assign(cost: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Full multi‑branch tracker
+# Branch quality scoring
+# ──────────────────────────────────────────────────────────────────────
+
+def _branch_quality(k_arr: np.ndarray, f_arr: np.ndarray, amp_arr: np.ndarray) -> float:
+    """Score a branch: higher = better. Used for final filtering.
+
+    Components (all normalised to ~[0, 1]):
+    - coverage: fraction of k-range covered (long branches score higher)
+    - smoothness: 1 / (1 + relative variance of df/dk)
+    - amplitude: mean amplitude relative to max
+    """
+    n = len(k_arr)
+    if n < 3:
+        return 0.0
+
+    # Coverage: length in k-axis relative to total range
+    dk_total = float(k_arr.max() - k_arr.min())
+    coverage = dk_total / (dk_total + 1e-30)  # Always ~1 for long branches
+
+    # Smoothness: penalise strong jumps in f(k)
+    df = np.diff(f_arr)
+    f_range = float(f_arr.max() - f_arr.min()) + 1e-30
+    roughness = float(np.std(df)) / f_range
+    smoothness = 1.0 / (1.0 + 10.0 * roughness)
+
+    # Amplitude: mean relative to max peak
+    amp_max = float(amp_arr.max()) + 1e-30
+    amp_score = float(amp_arr.mean()) / amp_max
+
+    # Length bonus: log(n) to reward longer branches
+    length_score = math.log10(max(n, 1)) / 3.0  # log10(1000)/3 = 1.0
+
+    return float(0.3 * length_score + 0.3 * smoothness + 0.2 * amp_score + 0.2 * coverage)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Data classes
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -185,6 +240,7 @@ class TrackedBranch:
     f_hz: np.ndarray
     amplitude: np.ndarray
     branch_id: int = 0
+    quality: float = 0.0
 
     @property
     def f_ghz(self) -> np.ndarray:
@@ -205,15 +261,13 @@ class BranchesResult:
     Attributes
     ----------
     branches : list[TrackedBranch]
-        All detected branches, sorted by mean frequency (ascending).
+        All detected branches, sorted by quality (best first).
     result : DispersionResult1D
         Back-reference to the dispersion data.
     """
 
     branches: List[TrackedBranch]
     result: "DispersionResult1D"
-
-    # ---- convenience ----
 
     def __len__(self) -> int:
         return len(self.branches)
@@ -235,7 +289,8 @@ class BranchesResult:
             f_max = float(br.f_hz.max()) / 1e9
             lines.append(
                 f"  branch {br.branch_id}: "
-                f"{len(br)} pts, f=[{f_min:.3f}..{f_max:.3f}] GHz"
+                f"{len(br)} pts, f=[{f_min:.3f}..{f_max:.3f}] GHz, "
+                f"quality={br.quality:.3f}"
             )
         return "\n".join(lines)
 
@@ -248,12 +303,15 @@ class BranchesResult:
             f_max = float(br.f_hz.max()) / 1e9
             k_lo = float(br.k.min()) / 1e6
             k_hi = float(br.k.max()) / 1e6
+            q_bar = "█" * int(br.quality * 10) + "░" * (10 - int(br.quality * 10))
             rows.append(
                 f"<tr>"
                 f"<td style='padding:3px 10px;color:#93c5fd;font-weight:700;'>{br.branch_id}</td>"
                 f"<td style='padding:3px 10px;'>{len(br)} pts</td>"
                 f"<td style='padding:3px 10px;'>{f_min:.3f} – {f_max:.3f} GHz</td>"
                 f"<td style='padding:3px 10px;'>{k_lo:.2f} – {k_hi:.2f} rad/μm</td>"
+                f"<td style='padding:3px 10px;font-family:monospace;font-size:.75em;'>"
+                f"<span style='color:#22c55e;'>{q_bar}</span> {br.quality:.2f}</td>"
                 f"</tr>"
             )
         tbody = "".join(rows)
@@ -261,7 +319,7 @@ class BranchesResult:
             "<div style='font-family:sans-serif;border:2px solid #1e3a5f;"
             "border-left:4px solid #a78bfa;border-radius:10px;padding:14px;"
             "margin:6px 0;background:linear-gradient(135deg,#0f172a,#0c1a35);"
-            "color:#e2e8f0;max-width:600px;'>"
+            "color:#e2e8f0;max-width:700px;'>"
             "<div style='font-weight:700;font-size:1.0em;color:#f1f5f9;"
             "margin-bottom:8px;'>🌊 BranchesResult</div>"
             f"<table style='width:100%;border-collapse:collapse;'>"
@@ -270,6 +328,7 @@ class BranchesResult:
             f"<th style='text-align:left;padding:3px 10px;color:#94a3b8;font-size:.8em;'>Points</th>"
             f"<th style='text-align:left;padding:3px 10px;color:#94a3b8;font-size:.8em;'>f range</th>"
             f"<th style='text-align:left;padding:3px 10px;color:#94a3b8;font-size:.8em;'>k range</th>"
+            f"<th style='text-align:left;padding:3px 10px;color:#94a3b8;font-size:.8em;'>Quality</th>"
             f"</tr>{tbody}</table>"
             "<div style='margin-top:6px;font-size:.78em;color:#64748b;'>"
             "Use <code>.plot()</code> or <code>.plot.overlay(ax)</code> to visualize.</div>"
@@ -285,13 +344,15 @@ class BranchesResult:
 def find_branches(
     result: "DispersionResult1D",
     *,
-    n_branches: int = 5,
+    n_branches: int = 3,
     side: str = "both",
-    min_prominence: float = 0.02,
-    min_peak_distance: int = 3,
-    max_df_ghz: float = 0.5,
-    min_branch_length: int = 10,
-    smooth_sigma: Optional[float] = 2.0,
+    min_prominence: float = 0.05,
+    min_peak_distance: int = 5,
+    max_df_ghz: float = 0.3,
+    min_branch_length: int = 30,
+    min_snr: float = 0.05,
+    min_quality: float = 0.15,
+    smooth_sigma: Optional[float] = 3.0,
     fmin_hz: Union[float, str, None] = "auto",
     k_min_rad_um: float = 0.0,
     k_max_rad_um: Optional[float] = None,
@@ -300,33 +361,41 @@ def find_branches(
 
     Algorithm
     ---------
-    1. For each k-bin, detect up to *n_branches* spectral peaks.
-    2. Walk along k (left→right) and link peaks between adjacent bins
-       using the Hungarian algorithm (optimal assignment minimizing |Δf|).
-    3. When a peak has no match, a new branch is born.
-    4. When a branch loses its match for too many consecutive k-bins,
+    1. Compute global SNR threshold. Skip k-bins below *min_snr*.
+    2. For each k-bin, detect up to *n_branches* spectral peaks using
+       prominence relative to the *global* max (not column max).
+    3. Walk along k (left→right) and link peaks between adjacent bins
+       using the Hungarian algorithm with amplitude-weighted cost.
+    4. When a peak has no match, a new branch is born.
+    5. When a branch loses its match for too many consecutive k-bins,
        it is terminated.
-    5. Optionally smooth each branch with a Gaussian filter.
-    6. Discard branches shorter than *min_branch_length*.
+    6. Optionally smooth each branch with a Gaussian filter.
+    7. Discard branches shorter than *min_branch_length*.
+    8. Score each branch by quality (smoothness + amplitude + coverage)
+       and discard those below *min_quality*.
 
     Parameters
     ----------
     result : DispersionResult1D
         Dispersion data.
     n_branches : int
-        Max peaks to detect per k-bin.
+        Max peaks to detect per k-bin (default: 3).
     side : ``"positive"`` | ``"negative"`` | ``"both"``
         Which k-half to search.
     min_prominence : float
-        Rel. prominence threshold for peak detection (fraction of max).
+        Prominence threshold relative to *global* max (default: 0.05 = 5%).
     min_peak_distance : int
-        Min frequency bins between peaks.
+        Min frequency bins between peaks (default: 5).
     max_df_ghz : float
-        Max allowed frequency jump between adjacent k-bins [GHz].
+        Max allowed frequency jump between adjacent k-bins [GHz] (default: 0.3).
     min_branch_length : int
-        Discard branches shorter than this many k-bins.
+        Discard branches shorter than this many k-bins (default: 30).
+    min_snr : float
+        SNR gate: skip k-bins where max(S) < min_snr * global_max (default: 0.05).
+    min_quality : float
+        Discard branches with quality score below this (default: 0.15).
     smooth_sigma : float or None
-        Gaussian smoothing sigma (in k-bins) on final branches.
+        Gaussian smoothing sigma (in k-bins) on final branches (default: 3.0).
     fmin_hz : float, ``"auto"``, or None
         Min frequency cutoff.
     k_min_rad_um, k_max_rad_um : float
@@ -373,9 +442,28 @@ def find_branches(
 
     max_df_hz = max_df_ghz * 1e9
 
+    # ── Global SNR computation ──
+    # Apply fmin_cutoff mask for SNR calculation
+    fmin_mask = f_pos >= fmin_cutoff
+    S_for_snr = S_pos[:, fmin_mask]
+    global_max = float(S_for_snr.max()) if S_for_snr.size > 0 else 1.0
+    snr_threshold = min_snr * global_max
+
+    # Per-k SNR gating: skip noisy k-bins
+    row_max = S_for_snr[k_idx].max(axis=1) if S_for_snr.shape[1] > 0 else np.zeros(len(k_idx))
+    snr_pass = row_max >= snr_threshold
+
+    logger.info(
+        "Branch search: %d k-bins, %d pass SNR gate (threshold=%.2e, %.1f%% of max)",
+        len(k_idx), int(snr_pass.sum()), snr_threshold, min_snr * 100,
+    )
+
     # ── Phase 1: per-column peak detection ──
     peaks_per_col: List[Tuple[np.ndarray, np.ndarray]] = []
-    for ik in k_idx:
+    for col_i, ik in enumerate(k_idx):
+        if not snr_pass[col_i]:
+            peaks_per_col.append((np.array([]), np.array([])))
+            continue
         fp, amp = _find_peaks_column(
             S_pos[ik],
             f_pos,
@@ -383,42 +471,47 @@ def find_branches(
             min_prominence_rel=min_prominence,
             min_distance_bins=min_peak_distance,
             fmin_hz=fmin_cutoff,
+            global_max=global_max,
         )
         peaks_per_col.append((fp, amp))
 
     # ── Phase 2: Hungarian linking ──
-    # active_branches: dict branch_id → {k_list, f_list, amp_list, last_f}
     active: dict[int, dict] = {}
     finished: list[dict] = []
     next_id = 0
-    MAX_GAP = 5  # max consecutive misses before terminating a branch
+    MAX_GAP = 3  # max consecutive misses before terminating a branch
 
     for col_i, ik in enumerate(k_idx):
         k_val = k_axis[ik]
         curr_f, curr_amp = peaks_per_col[col_i]
 
+        if len(curr_f) == 0:
+            # SNR-gated or no peaks: increment gap on all active branches
+            for bid in active:
+                active[bid]["gap"] += 1
+            # Terminate branches with too many gaps
+            to_remove = [bid for bid, br in active.items() if br["gap"] > MAX_GAP]
+            for bid in to_remove:
+                finished.append(active.pop(bid))
+            continue
+
         if len(active) == 0:
-            # Initialize all peaks as new branches
             for j in range(len(curr_f)):
                 active[next_id] = {
-                    "k": [k_val],
-                    "f": [curr_f[j]],
-                    "amp": [curr_amp[j]],
-                    "last_f": curr_f[j],
-                    "gap": 0,
+                    "k": [k_val], "f": [curr_f[j]], "amp": [curr_amp[j]],
+                    "last_f": curr_f[j], "last_amp": curr_amp[j], "gap": 0,
                 }
                 next_id += 1
             continue
 
-        # Build prev_f from active branches
         active_ids = list(active.keys())
         prev_f = np.array([active[bid]["last_f"] for bid in active_ids])
+        prev_amp = np.array([active[bid]["last_amp"] for bid in active_ids])
 
         matches, unmatched_prev, unmatched_curr = _link_peaks(
-            prev_f, curr_f, max_df_hz
+            prev_f, prev_amp, curr_f, curr_amp, max_df_hz
         )
 
-        # Update matched branches
         matched_ids = set()
         for pi, ci in matches:
             bid = active_ids[pi]
@@ -426,50 +519,46 @@ def find_branches(
             active[bid]["f"].append(curr_f[ci])
             active[bid]["amp"].append(curr_amp[ci])
             active[bid]["last_f"] = curr_f[ci]
+            active[bid]["last_amp"] = curr_amp[ci]
             active[bid]["gap"] = 0
             matched_ids.add(bid)
 
-        # Increment gap for unmatched active branches
         for pi in unmatched_prev:
             bid = active_ids[pi]
             if bid not in matched_ids:
                 active[bid]["gap"] += 1
 
-        # Terminate branches with too many gaps
-        to_remove = []
-        for bid, br in active.items():
-            if br["gap"] > MAX_GAP:
-                to_remove.append(bid)
+        to_remove = [bid for bid, br in active.items() if br["gap"] > MAX_GAP]
         for bid in to_remove:
             finished.append(active.pop(bid))
 
-        # Start new branches for unmatched current peaks
         for ci in unmatched_curr:
             active[next_id] = {
-                "k": [k_val],
-                "f": [curr_f[ci]],
-                "amp": [curr_amp[ci]],
-                "last_f": curr_f[ci],
-                "gap": 0,
+                "k": [k_val], "f": [curr_f[ci]], "amp": [curr_amp[ci]],
+                "last_f": curr_f[ci], "last_amp": curr_amp[ci], "gap": 0,
             }
             next_id += 1
 
-    # Move remaining active branches to finished
     for br in active.values():
         finished.append(br)
 
-    # ── Phase 3: build TrackedBranch objects ──
+    # ── Phase 3: build, score, filter ──
     tracked: List[TrackedBranch] = []
     for br_data in finished:
-        if len(br_data["k"]) < min_branch_length:
+        n_pts = len(br_data["k"])
+        if n_pts < min_branch_length:
             continue
 
         k_arr = np.array(br_data["k"])
         f_arr = np.array(br_data["f"])
         amp_arr = np.array(br_data["amp"])
 
+        quality = _branch_quality(k_arr, f_arr, amp_arr)
+        if quality < min_quality:
+            continue
+
         # Optional smoothing
-        if smooth_sigma and smooth_sigma > 0 and len(f_arr) > 3:
+        if smooth_sigma and smooth_sigma > 0 and len(f_arr) > 5:
             try:
                 from scipy.ndimage import gaussian_filter1d
                 f_arr = gaussian_filter1d(f_arr, sigma=smooth_sigma)
@@ -479,20 +568,18 @@ def find_branches(
                 f_arr = np.convolve(f_arr, kernel, mode="same")
 
         tracked.append(TrackedBranch(
-            k=k_arr,
-            f_hz=f_arr,
-            amplitude=amp_arr,
-            branch_id=len(tracked),
+            k=k_arr, f_hz=f_arr, amplitude=amp_arr,
+            branch_id=len(tracked), quality=quality,
         ))
 
-    # Sort by mean frequency
-    tracked.sort(key=lambda b: float(b.f_hz.mean()))
+    # Sort by quality (best first)
+    tracked.sort(key=lambda b: b.quality, reverse=True)
     for i, br in enumerate(tracked):
         br.branch_id = i
 
     logger.info(
-        "Found %d branches (from %d candidates, min_length=%d)",
-        len(tracked), len(finished), min_branch_length,
+        "Found %d branches (from %d candidates, min_length=%d, min_quality=%.2f)",
+        len(tracked), len(finished), min_branch_length, min_quality,
     )
 
     return BranchesResult(branches=tracked, result=result)
@@ -502,7 +589,6 @@ def find_branches(
 # Plot accessor
 # ──────────────────────────────────────────────────────────────────────
 
-# Default distinct colors for branches
 _BRANCH_COLORS = [
     "#f43f5e", "#3b82f6", "#22c55e", "#eab308", "#a855f7",
     "#06b6d4", "#f97316", "#ec4899", "#14b8a6", "#8b5cf6",
@@ -516,7 +602,6 @@ class BranchesPlotAccessor:
         self._br = branches_result
 
     def __call__(self, **kwargs) -> Tuple["Figure", "Axes"]:
-        """Default: overlay on heatmap."""
         return self.heatmap(**kwargs)
 
     def heatmap(
@@ -586,7 +671,7 @@ class BranchesPlotAccessor:
                 color=color,
                 linewidth=linewidth,
                 alpha=0.9,
-                label=f"branch {branch.branch_id}",
+                label=f"branch {branch.branch_id} (q={branch.quality:.2f})",
             )
 
         if show_legend:
@@ -629,7 +714,7 @@ class BranchesPlotAccessor:
                 k_plot, f_plot,
                 color=color, linewidth=2.0,
                 marker=".", markersize=3, alpha=0.8,
-                label=f"branch {branch.branch_id} ({len(branch)} pts)",
+                label=f"branch {branch.branch_id} ({len(branch)} pts, q={branch.quality:.2f})",
             )
 
         k_label = {"rad_um": r"$k$ [rad/μm]", "meter": r"$k$ [m$^{-1}$]"}.get(
