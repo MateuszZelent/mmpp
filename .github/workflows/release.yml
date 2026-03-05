@@ -3,120 +3,111 @@ name: Release to PyPI
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       test_pypi:
-        description: 'Upload to TestPyPI instead of PyPI'
+        description: "Upload to TestPyPI instead of PyPI"
         required: false
         default: false
         type: boolean
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.9', '3.10', '3.11','3.12']
 
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[dev]"
-    
-    - name: Auto-format code
-      run: |
-        python -m ruff format mmpp/ tests/ scripts/
-        python -m ruff check --fix mmpp/ tests/ scripts/
-    
-    - name: Lint with ruff
-      run: |
-        python -m ruff check mmpp/ tests/ scripts/
-    
-    - name: Type check with mypy
-      run: |
-        python -m mypy mmpp/ --ignore-missing-imports
-      continue-on-error: true
-    
-    - name: Test with pytest
-      run: |
-        python -m pytest tests/ -v --cov=mmpp --cov-report=xml
-      continue-on-error: true
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
-      if: matrix.python-version == '3.11'
-      with:
-        file: ./coverage.xml
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff format check
+        run: python -m ruff format --check mmpp/ tests/ scripts/
+
+      - name: Ruff lint
+        run: python -m ruff check mmpp/ tests/ scripts/
+
+      - name: MyPy
+        run: python -m mypy mmpp/
+
+      - name: Pytest
+        run: python -m pytest tests/ -q
 
   build:
-    needs: test
+    needs: verify
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    
-    - name: Install build dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install build twine
-    
-    - name: Build package
-      run: python -m build --sdist --wheel
-    
-    - name: Check package
-      run: python -m twine check dist/*
-    
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: dist
-        path: dist/
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  release:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package
+        run: python -m build --sdist --wheel
+
+      - name: Validate package
+        run: python -m twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
     needs: build
-    runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-    - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: dist
-        path: dist/
-    
-    - name: Publish to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        password: ${{ secrets.PYPI_API_TOKEN }}
-
-  release-test:
-    needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_pypi == 'true'
+    environment: pypi
 
     steps:
-    - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: dist
-        path: dist/
-    
-    - name: Publish to TestPyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        repository_url: https://test.pypi.org/legacy/
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish-testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_pypi == 'true'
+    runs-on: ubuntu-latest
+    environment: testpypi
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          repository_url: https://test.pypi.org/legacy/

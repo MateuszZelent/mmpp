@@ -80,15 +80,15 @@ release-test: prepare-release
 # Create and setup virtual environment
 setup-env:
     @echo "🐍 Setting up virtual environment..."
-    python -m venv venv
-    @echo "Activate with: source venv/bin/activate"
+    python -m venv .venv
+    @echo "Activate with: source .venv/bin/activate"
     @echo "Then run: just install-dev"
 
 # Show package info
 info:
     @echo "📊 Package Information:"
     @echo "Name: mmpp"
-    @echo "Version: 0.1.0"
+    @python -c "import mmpp; print(f\"Version: {mmpp.__version__}\")"
     @echo "Author: Mateusz Zelent"
     @python -c "import sys; print(f'Python: {sys.version}')"
 
@@ -100,7 +100,8 @@ size:
 # Generate documentation (if you add docs later)
 docs:
     @echo "📚 Generating documentation..."
-    @echo "Documentation generation not yet configured"
+    cd docs && sphinx-build -b html . _build --keep-going
+    @echo "✅ Documentation generated in docs/_build"
 
 # Quick development setup
 dev-setup: setup-env install-dev

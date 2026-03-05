@@ -51,9 +51,12 @@ interactive = [
     "itables",
     "IPython",
     "jupyter",
+    "ipywidgets",
+    "k3d",
 ]
 plotting = [
     "cmocean",
+    "k3d",
 ]
 tui = [
     "textual>=0.40.0",
@@ -61,9 +64,11 @@ tui = [
 full = [
     "textual>=0.40.0",
     "cmocean",
+    "k3d",
     "itables",
     "IPython",
     "jupyter",
+    "ipywidgets",
 ]
 
 [project.urls]
@@ -73,7 +78,7 @@ Issues = "https://github.com/mateuszzelent/mmpp/issues"
 
 [project.scripts]
 mmpp = "mmpp.cli:main"
-mmpp-tui = "mmpp.cli_new:main"
+mmpp-tui = "mmpp.tui:main"
 mmpp-classic = "mmpp.cli.main:main"
 
 [tool.setuptools]

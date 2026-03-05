@@ -324,6 +324,17 @@ class BulkMinimumFrequencyResult:
         arrays["errors_keys"]   = np.array(list(self.errors.keys()), dtype=int)
         arrays["errors_values"] = np.array(list(self.errors.values()), dtype=object)
 
+        # Analytical overlay
+        if self.analytical_f_min_hz is not None:
+            arrays["an_f_min_hz"]      = self.analytical_f_min_hz
+            arrays["an_k_star_rad_m"]  = self.analytical_k_star_rad_m
+            arrays["an_f_k0_hz"]       = self.analytical_f_k0_hz
+        if self.analytical_model is not None:
+            arrays["an_model"] = np.array([self.analytical_model])
+        if self.analytical_params is not None:
+            import json
+            arrays["an_params_json"] = np.array([json.dumps(self.analytical_params)])
+
         np.savez_compressed(str(path), **arrays)
         return path.resolve()
 
@@ -357,6 +368,19 @@ class BulkMinimumFrequencyResult:
         values = list(data.get("errors_values", np.array([], dtype=object)))
         errors = {int(k): str(v) for k, v in zip(keys, values)}
 
+        # Analytical overlay (may be absent in older files)
+        an_f_min = data["an_f_min_hz"] if "an_f_min_hz" in data else None
+        an_k_star = data["an_k_star_rad_m"] if "an_k_star_rad_m" in data else None
+        an_f_k0 = data["an_f_k0_hz"] if "an_f_k0_hz" in data else None
+        an_model = str(data["an_model"][0]) if "an_model" in data else None
+        an_params = None
+        if "an_params_json" in data:
+            import json
+            try:
+                an_params = json.loads(str(data["an_params_json"][0]))
+            except Exception:
+                pass
+
         return cls(
             param_values=param_values,
             param_label=param_label,
@@ -370,6 +394,11 @@ class BulkMinimumFrequencyResult:
             branches_k=branches_k,
             k_axes=k_axes,
             errors=errors,
+            analytical_f_min_hz=an_f_min,
+            analytical_k_star_rad_m=an_k_star,
+            analytical_f_k0_hz=an_f_k0,
+            analytical_model=an_model,
+            analytical_params=an_params,
         )
 
     # ------------------------------------------------------------------
@@ -539,6 +568,8 @@ class BulkMinimumPlotAccessor:
 
     def __init__(self, bulk: BulkMinimumFrequencyResult) -> None:
         self._bulk = bulk
+        # Cache sort order for all plot methods
+        self._idx = np.argsort(bulk.param_values)
 
     # ------------------------------------------------------------------
 
@@ -695,9 +726,9 @@ class BulkMinimumPlotAccessor:
         else:
             fig = ax.get_figure()
 
-        p = bulk.param_values
-        f_min  = bulk.f_min_ghz  if f_units == "GHz" else bulk.f_min_hz
-        f_k0   = bulk.f_at_k0_ghz if f_units == "GHz" else bulk.f_at_k0_hz
+        p = bulk.param_values[self._idx]
+        f_min  = (bulk.f_min_ghz  if f_units == "GHz" else bulk.f_min_hz)[self._idx]
+        f_k0   = (bulk.f_at_k0_ghz if f_units == "GHz" else bulk.f_at_k0_hz)[self._idx]
         f_label = "f [GHz]"      if f_units == "GHz" else "f [Hz]"
 
         ax.plot(p, f_min, "o-", color="#f97316", linewidth=2, markersize=6, label="f_min (sim)")
@@ -706,29 +737,35 @@ class BulkMinimumPlotAccessor:
 
         # Analytical overlay
         if bulk.has_analytical:
-            an_f_min = bulk.analytical_f_min_ghz if f_units == "GHz" else bulk.analytical_f_min_hz
+            an_f_min = (bulk.analytical_f_min_ghz if f_units == "GHz" else bulk.analytical_f_min_hz)[self._idx]
             ax.plot(p, an_f_min, "x--", color="#a3e635", linewidth=2, markersize=7,
                     label=f"f_min ({bulk.analytical_model or 'analytical'})")
             if show_fk0 and bulk.analytical_f_k0_hz is not None:
-                an_f_k0 = bulk.analytical_f_k0_ghz if f_units == "GHz" else bulk.analytical_f_k0_hz
+                an_f_k0 = (bulk.analytical_f_k0_ghz if f_units == "GHz" else bulk.analytical_f_k0_hz)[self._idx]
                 ax.plot(p, an_f_k0, "+:", color="#86efac", linewidth=1.5, markersize=6,
                         label=f"f(k=0) ({bulk.analytical_model or 'analytical'})")
 
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel(f_label)
         ax.set_title(title or f"f_min  vs  {bulk.param_label}")
-        ax.legend(fontsize=9)
         ax.grid(True, alpha=0.25)
 
         if show_delta_f:
             ax2 = ax.twinx()
-            df = bulk.delta_f_mhz
+            df = bulk.delta_f_mhz[self._idx]
             ax2.plot(p, df, "^:", color="#a78bfa", linewidth=1.5, markersize=4, label="Δf (sim) [MHz]")
             if bulk.has_analytical and bulk.analytical_delta_f_mhz is not None:
-                ax2.plot(p, bulk.analytical_delta_f_mhz, "v:", color="#d8b4fe",
+                ax2.plot(p, bulk.analytical_delta_f_mhz[self._idx], "v:", color="#d8b4fe",
                          linewidth=1.5, markersize=4, label="Δf (analytical) [MHz]")
             ax2.set_ylabel("Δf = f(k=0) − f_min  [MHz]", color="#a78bfa")
             ax2.tick_params(axis="y", labelcolor="#a78bfa")
+
+            # Merge legends from both axes
+            lines1, labels1 = ax.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax.legend(lines1 + lines2, labels1 + labels2, fontsize=9, loc="best")
+        else:
+            ax.legend(fontsize=9)
 
         try:
             fig.tight_layout()
@@ -759,13 +796,14 @@ class BulkMinimumPlotAccessor:
         else:
             fig = ax.get_figure()
 
-        k_data  = bulk.k_star_rad_um if kscale == "rad_um" else bulk.k_star_rad_m
+        p = bulk.param_values[self._idx]
+        k_data  = (bulk.k_star_rad_um if kscale == "rad_um" else bulk.k_star_rad_m)[self._idx]
         k_label = r"$k^*$ [rad/μm]" if kscale == "rad_um" else r"$k^*$ [rad/m]"
 
-        ax.plot(bulk.param_values, k_data, "D-", color="#4ade80", linewidth=2, markersize=6, label="k* (sim)")
+        ax.plot(p, k_data, "D-", color="#4ade80", linewidth=2, markersize=6, label="k* (sim)")
         if bulk.has_analytical and bulk.analytical_k_star_rad_m is not None:
-            an_k = bulk.analytical_k_star_rad_um if kscale == "rad_um" else bulk.analytical_k_star_rad_m
-            ax.plot(bulk.param_values, an_k, "x--", color="#a3e635", linewidth=2, markersize=7,
+            an_k = (bulk.analytical_k_star_rad_um if kscale == "rad_um" else bulk.analytical_k_star_rad_m)[self._idx]
+            ax.plot(p, an_k, "x--", color="#a3e635", linewidth=2, markersize=7,
                     label=f"k* ({bulk.analytical_model or 'analytical'})")
             ax.legend(fontsize=9)
         ax.set_xlabel(bulk.param_label)
@@ -801,9 +839,10 @@ class BulkMinimumPlotAccessor:
         else:
             fig = ax.get_figure()
 
-        ax.plot(bulk.param_values, bulk.delta_f_mhz, "o-", color="#a78bfa", linewidth=2, markersize=6, label="Δf (sim)")
+        p = bulk.param_values[self._idx]
+        ax.plot(p, bulk.delta_f_mhz[self._idx], "o-", color="#a78bfa", linewidth=2, markersize=6, label="Δf (sim)")
         if bulk.has_analytical and bulk.analytical_delta_f_mhz is not None:
-            ax.plot(bulk.param_values, bulk.analytical_delta_f_mhz, "x--", color="#d8b4fe",
+            ax.plot(p, bulk.analytical_delta_f_mhz[self._idx], "x--", color="#d8b4fe",
                     linewidth=2, markersize=7, label=f"Δf ({bulk.analytical_model or 'analytical'})")
             ax.legend(fontsize=9)
         ax.axhline(0, color="#475569", linestyle="--", linewidth=1.0, alpha=0.6)
@@ -840,9 +879,10 @@ class BulkMinimumPlotAccessor:
         else:
             fig = ax.get_figure()
 
-        vg_km_s = self._bulk.vg_at_min / 1e3
+        vg_km_s = self._bulk.vg_at_min[self._idx] / 1e3
+        p = bulk.param_values[self._idx]
 
-        ax.plot(bulk.param_values, vg_km_s, "s-", color="#fb923c", linewidth=2, markersize=6)
+        ax.plot(p, vg_km_s, "s-", color="#fb923c", linewidth=2, markersize=6)
         ax.axhline(0, color="#475569", linestyle="--", linewidth=1.0, alpha=0.6)
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel("v_g(k*)  [km/s]")

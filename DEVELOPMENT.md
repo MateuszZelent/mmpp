@@ -1,167 +1,100 @@
 # mmpp Development Guide
 
-## Setup Instructions
+This guide describes the current local workflow for developing `mmpp`.
 
-### Prerequisites
-- Python 3.9 or higher
-- Git
-- Just (command runner) - install with: `cargo install just` or `pip install just-install`
+## Prerequisites
+- Python 3.9+
+- `pip`
+- `git`
+- Optional: `just` command runner (`cargo install just` or `pip install just-install`)
 
-### Quick Start
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/mateuszzelent/mmpp.git
-   cd mmpp
-   ```
-
-2. **Setup development environment**
-   ```bash
-   just dev-setup
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Test the setup**
-   ```bash
-   python test_setup.py
-   ```
-
-## Development Workflow
-
-### Available Just Commands
-
-- `just build` - Build the package
-- `just install-local` - Install package locally for testing
-- `just test` - Run tests
-- `just lint` - Check code quality
-- `just format` - Format code with ruff
-- `just clean` - Clean build artifacts
-- `just prepare-release` - Prepare package for release
-- `just release` - Release to PyPI
-- `just release-test` - Release to TestPyPI for testing
-
-### Building and Testing Locally
+## Quick setup
 
 ```bash
-# Format code
+git clone https://github.com/mateuszzelent/mmpp.git
+cd mmpp
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+```
+
+Optional extras:
+
+```bash
+pip install -e ".[interactive,plotting,tui]"
+```
+
+## Daily workflow
+
+If you use `just`:
+
+```bash
 just format
-
-# Run linting
 just lint
-
-# Run tests
 just test
-
-# Build package
-just build
-
-# Install locally
-just install-local
-
-# Test installation
-python -c "import mmpp; print('Success!')"
 ```
 
-### Release Process
+Manual equivalents:
 
-1. **Prepare for release**
-   ```bash
-   just prepare-release
-   ```
-
-2. **Test on TestPyPI first**
-   ```bash
-   just release-test
-   ```
-
-3. **Create a git tag and push**
-   ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
-
-4. **GitHub Actions will automatically release to PyPI**
-
-## GitHub Actions
-
-### Automatic Releases
-
-1. **Set up PyPI tokens**:
-   - Go to PyPI.org and create an API token
-   - Add it to GitHub repository secrets as `PYPI_API_TOKEN`
-   - For TestPyPI, add `TEST_PYPI_API_TOKEN`
-
-2. **Create a release**:
-   - Push a tag starting with 'v' (e.g., v0.1.0)
-   - GitHub Actions will automatically build and release
-
-3. **Manual release**:
-   - Go to GitHub Actions tab
-   - Run "Release to PyPI" workflow manually
-   - Choose TestPyPI option for testing
-
-### CI/CD Pipeline
-
-- **Continuous Integration**: Runs on every push and PR
-- **Multi-platform testing**: Ubuntu, Windows, macOS
-- **Multi-Python testing**: Python 3.9, 3.10, 3.11
-- **Code quality checks**: ruff, mypy
-- **Test coverage**: pytest with coverage reporting
-
-## Package Structure
-
+```bash
+python -m ruff format mmpp/ tests/ scripts/
+python -m ruff check mmpp/ tests/ scripts/
+python -m mypy mmpp/
+python -m pytest tests/ -q
 ```
-mmpp/
-├── mmpp/                   # Main package
-│   ├── __init__.py        # Package initialization
-│   ├── core.py            # Core functionality (from main.py)
-│   ├── plotting.py        # Plotting utilities
-│   ├── simulation.py      # Simulation management (from swapper.py)
-│   ├── cli.py             # Command line interface
-│   ├── paper.mplstyle     # Matplotlib style
-│   └── fonts/             # Custom fonts
-├── tests/                 # Test suite
-├── .github/               # GitHub workflows
-├── pyproject.toml         # Modern Python package configuration
-├── setup.py              # Legacy setup (for compatibility)
-├── justfile              # Task automation
-├── README.md             # Package documentation
-├── LICENSE               # MIT license
-└── MANIFEST.in           # Package data inclusion
+
+## Documentation
+
+Build docs locally:
+
+```bash
+just docs
+# or
+cd docs && sphinx-build -b html . _build --keep-going
 ```
+
+## Useful `just` commands
+- `just install-dev` - install editable package with dev dependencies
+- `just format` - run ruff formatter
+- `just lint` - run ruff + mypy
+- `just test` - run pytest with coverage
+- `just build` - build sdist + wheel
+- `just check` - validate built package metadata
+- `just prepare-release` - format + lint + test + build + check
+- `just release-test` - publish to TestPyPI
+- `just release` - publish to PyPI
+
+## CI/CD expectations
+
+The GitHub workflows enforce:
+- style checks (`ruff format --check`, `ruff check`),
+- type checks (`mypy`),
+- test suite (`pytest`),
+- strict release verification before publishing.
+
+Do not rely on release workflows to auto-fix code formatting.
+
+## Release process
+
+1. Update version metadata and release notes.
+2. Run locally:
+
+```bash
+just prepare-release
+```
+
+3. Create and push a tag:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+4. Release workflow publishes to PyPI (or TestPyPI via manual dispatch).
 
 ## Troubleshooting
 
-### Common Issues
-
-1. **Import errors**: Make sure all dependencies are installed
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-2. **Font issues**: The package includes custom fonts, but system fonts will be used as fallback
-
-3. **Missing dependencies**: Use extras for optional features:
-   ```bash
-   pip install mmpp[plotting,interactive]
-   ```
-
-### Version Management
-
-```bash
-# Bump patch version (0.1.0 -> 0.1.1)
-just bump-patch
-
-# Bump minor version (0.1.0 -> 0.2.0)
-just bump-minor
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
-
-All contributions are welcome!
+- If imports fail, verify your virtualenv is active and dependencies are installed.
+- If docs fail with MyST link errors, install `linkify-it-py`.
+- If type checks fail after refactors, fix annotations instead of silencing checks.

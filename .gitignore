@@ -88,6 +88,7 @@ tests/**
 !tests/test_imports_vortex.py
 !tests/test_imports_hysteresis.py
 !tests/test_xy_convention_contract.py
+!tests/test_dataset_plotting_accessors.py
 
 # Translations
 *.mo
