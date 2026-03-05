@@ -981,6 +981,8 @@ def scan_minimum_frequency(
     param_label: str = "parameter",
     *,
     job_indices: Sequence[int] | None = None,
+    param_attr: str | None = None,
+    param_scale: float = 1.0,
     filters: dict[str, Any] | None = None,
     compute_kwargs: dict[str, Any] | None = None,
     find_kwargs: dict[str, Any] | None = None,
@@ -1017,13 +1019,22 @@ def scan_minimum_frequency(
         * A list of callables ``() -> DispersionResult1D`` — called once per job.
     param_values : sequence of float, optional
         Physical axis values — one entry per *selected* job.  If ``None``
-        (default), indices ``0, 1, 2, …`` are used as labels.
+        (default), indices ``0, 1, 2, …`` are used as labels unless
+        *param_attr* is set.
     job_indices : sequence of int, optional
         Select a subset of jobs from *sources* by integer index.  When
         provided, only those positions are processed and *param_values* must
         have the same length (or be ``None`` to auto-label with the indices).
         Example: ``job_indices=[0, 5, 10, 15, 20, 25, 30]`` picks 7 jobs from
         a 26-job MMPP container.
+    param_attr : str, optional
+        Name of an attribute on each job to read automatically as the
+        parameter value.  For example ``param_attr="b"`` reads
+        ``job.attrs["b"]`` for every job.  Combined with *param_scale* this
+        replaces passing *param_values* manually.
+    param_scale : float
+        Multiply the value read from *param_attr* by this factor before
+        storing.  Useful to convert units, e.g. Tesla → mT: ``param_scale=1000``.
     param_label : str
         Human-readable label for the scan parameter (used in plots).
     filters : dict, optional
@@ -1126,10 +1137,21 @@ def scan_minimum_frequency(
     else:
         sources = all_sources  # type: ignore[assignment]
 
-    # Param values: default to 0, 1, 2, … or the job_indices themselves ------
-    if param_values is None:
+    # Param values: read from attr, fall back to indices ----------------------
+    if param_values is None and param_attr is not None:
+        extracted: list[float] = []
+        for src in sources:  # type: ignore[union-attr]
+            try:
+                val = src.attrs[param_attr]
+            except Exception as exc:
+                raise AttributeError(
+                    f"Cannot read attrs[{param_attr!r}] from {src!r}: {exc}"
+                ) from exc
+            extracted.append(float(val) * param_scale)
+        param_values_arr = np.asarray(extracted, dtype=float)
+    elif param_values is None:
         param_values_arr = np.asarray(
-            job_indices if job_indices is not None else range(len(sources)),
+            job_indices if job_indices is not None else range(len(sources)),  # type: ignore[arg-type]
             dtype=float,
         )
     else:

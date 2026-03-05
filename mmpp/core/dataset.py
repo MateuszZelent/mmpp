@@ -1,6 +1,7 @@
 import zarr
 import numpy as np
 import inspect
+import warnings
 from html import escape as _html_escape
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -379,43 +380,335 @@ job[0].fft.modes  # Shows mode analysis options'''
         return html
 
 
-class DatasetPlotAccessor:
-    """Plot accessor for DatasetAwareWrapper.
+class _DatasetMatplotlibPlotAccessor:
+    """Matplotlib backend namespace for dataset-aware plotting."""
 
-    Provides convenient plotting methods pre-bound to a specific dataset
-    and slice context.  Accessed via ``job[0].geom[:].plot``.
-    """
-
-    def __init__(self, job_result, dataset_name: str, slice_info=None):
-        self._job_result = job_result
-        self._dataset_name = dataset_name
-        self._slice_info = slice_info
+    def __init__(self, parent: "DatasetPlotAccessor"):
+        self._parent = parent
 
     def snapshot(self, **kwargs):
-        """Create a snapshot visualisation.
+        return self._parent._snapshot_impl(**kwargs)
 
-        All keyword arguments are forwarded to
-        :meth:`MMPPlotter.snapshot`.  The ``dset`` parameter is
-        automatically filled from the parent dataset.
-        """
-        from ..plotting import MMPPlotter
+    def heatmap(self, **kwargs):
+        return self._parent._heatmap_impl(**kwargs)
 
-        kwargs.setdefault("dset", self._dataset_name)
-        plotter = MMPPlotter([self._job_result], getattr(self._job_result, "_mmpp_ref", None))
-        return plotter.snapshot(**kwargs)
+    def heamtp(self, **kwargs):
+        """Compatibility alias for a common typo: ``heatmap``."""
+        return self.heatmap(**kwargs)
 
     def __repr__(self):
-        return f"<DatasetPlotAccessor('{self._dataset_name}')>"
+        dset = self._parent._dataset.dataset_name
+        return f"<DatasetMplPlotAccessor('{dset}')>"
+
+
+class DatasetPlotAccessor:
+    """Plot accessor for :class:`DatasetAwareWrapper`.
+
+    Examples
+    --------
+    >>> job[0].m[:].plot.snapshot()
+    >>> job[0].m[:].plot.mpl.heatmap(component="mz")
+    >>> job[0].m[:].plot.mpl.heamtp()  # alias
+    """
+
+    def __init__(self, dataset_wrapper: "DatasetAwareWrapper"):
+        self._dataset = dataset_wrapper
+        self._mpl = None
+
+    @staticmethod
+    def _normalize_index(index: int, size: int) -> int:
+        idx = int(index)
+        if idx < 0:
+            idx = size + idx
+        return int(np.clip(idx, 0, max(size - 1, 0)))
+
+    def _resolve_dx_dy_nm(self) -> tuple[float, float]:
+        attrs = getattr(self._dataset.job_result, "attrs", {})
+        if hasattr(attrs, "get"):
+            dx = float(attrs.get("dx", 1e-9))
+            dy = float(attrs.get("dy", 1e-9))
+        else:
+            dx = 1e-9
+            dy = 1e-9
+        return dx * 1e9, dy * 1e9
+
+    def _extract_frame(
+        self,
+        *,
+        z: int = 0,
+        t: int = -1,
+        zero: Optional[int] = None,
+    ) -> np.ndarray:
+        data = self._dataset.numpy(copy=False, squeeze=False)
+        arr = np.asarray(data, dtype=np.float32)
+        ndim = arr.ndim
+
+        if ndim == 5:
+            t_idx = self._normalize_index(t, arr.shape[0])
+            z_idx = self._normalize_index(z, arr.shape[1])
+            frame = np.asarray(arr[t_idx, z_idx], dtype=np.float32)
+            if zero is not None:
+                zref_idx = self._normalize_index(zero, arr.shape[0])
+                frame = frame - np.asarray(arr[zref_idx, z_idx], dtype=np.float32)
+            return frame
+
+        if ndim == 4:
+            t_idx = self._normalize_index(t, arr.shape[0])
+            frame = np.asarray(arr[t_idx], dtype=np.float32)
+            if zero is not None:
+                zref_idx = self._normalize_index(zero, arr.shape[0])
+                frame = frame - np.asarray(arr[zref_idx], dtype=np.float32)
+            return frame
+
+        if ndim == 3:
+            if arr.shape[-1] <= 3:
+                return arr
+            z_idx = self._normalize_index(z, arr.shape[0])
+            return np.asarray(arr[z_idx], dtype=np.float32)
+
+        if ndim == 2:
+            return arr
+
+        raise ValueError(
+            f"Dataset '{self._dataset.dataset_name}' has unsupported shape {arr.shape} for plotting"
+        )
+
+    @staticmethod
+    def _component_image(
+        frame: np.ndarray,
+        component: Optional[Union[int, str]],
+        *,
+        default: str = "norm",
+    ) -> np.ndarray:
+        if frame.ndim == 2:
+            return np.asarray(frame, dtype=np.float32)
+
+        if frame.ndim < 2:
+            raise ValueError(f"Frame must be at least 2D, got shape {frame.shape}")
+
+        if frame.ndim > 3:
+            image = np.asarray(frame, dtype=np.float32)
+            while image.ndim > 2:
+                image = image[..., 0]
+            return image
+
+        n_comp = int(frame.shape[-1])
+        if n_comp < 1:
+            raise ValueError("Vector frame has no components")
+
+        comp = default if component is None else component
+
+        if isinstance(comp, (int, np.integer)) and not isinstance(comp, bool):
+            idx = int(comp)
+            if idx < 0 or idx >= n_comp:
+                raise IndexError(
+                    f"component={idx} is out of range for frame with {n_comp} components"
+                )
+            return np.asarray(frame[..., idx], dtype=np.float32)
+
+        if isinstance(comp, str):
+            key = comp.strip().lower()
+            mapping = {"x": 0, "mx": 0, "y": 1, "my": 1, "z": 2, "mz": 2}
+            if key in mapping:
+                idx = mapping[key]
+                if idx >= n_comp:
+                    raise IndexError(
+                        f"component='{comp}' requires component index {idx}, "
+                        f"but frame has only {n_comp} components"
+                    )
+                return np.asarray(frame[..., idx], dtype=np.float32)
+            if key in {"norm", "magnitude", "|m|", "snapshot"}:
+                return np.linalg.norm(frame[..., : min(3, n_comp)], axis=-1).astype(
+                    np.float32,
+                    copy=False,
+                )
+
+        raise ValueError(
+            f"Unsupported component selector: {component!r}. "
+            "Use int, x/y/z, mx/my/mz, norm/magnitude."
+        )
+
+    def _snapshot_impl(
+        self,
+        *,
+        z: int = 0,
+        t: int = -1,
+        ax=None,
+        repeat: int = 1,
+        zero: Optional[int] = None,
+        cmap: Optional[str] = None,
+        component: Optional[Union[int, str]] = None,
+        quiver_density: int = 20,
+        colorbar: bool = True,
+    ):
+        import matplotlib.pyplot as plt
+        from ..plotting import hsl2rgb
+
+        frame = self._extract_frame(z=z, t=t, zero=zero)
+        dx_nm, dy_nm = self._resolve_dx_dy_nm()
+        repeat_value = max(int(repeat), 1)
+
+        is_vector = frame.ndim == 3 and frame.shape[-1] >= 2 and component is None
+        if is_vector:
+            if frame.shape[-1] < 3:
+                padded = np.zeros(frame.shape[:-1] + (3,), dtype=np.float32)
+                padded[..., : frame.shape[-1]] = frame
+                frame = padded
+
+            vector = np.tile(frame, (repeat_value, repeat_value, 1))
+            u = vector[:, :, 0]
+            v = vector[:, :, 1]
+            w = vector[:, :, 2]
+
+            if ax is None:
+                shape_ratio = vector.shape[1] / max(vector.shape[0], 1)
+                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
+
+            alphas = np.clip(-np.abs(w) + 1, 0.0, 1.0)
+            hsl = np.ones((u.shape[0], u.shape[1], 3), dtype=np.float32)
+            hsl[:, :, 0] = np.angle(u + 1j * v) / np.pi / 2
+            hsl[:, :, 1] = np.clip(np.sqrt(u**2 + v**2 + w**2), 0.0, 1.0)
+            hsl[:, :, 2] = (w + 1) / 2
+            rgb = hsl2rgb(hsl)
+
+            dens = max(int(quiver_density), 1)
+            stepx = max(int(u.shape[1] / dens), 1)
+            stepy = max(int(u.shape[0] / dens), 1)
+            scale = 1 / max(stepx, stepy)
+            x, y = np.meshgrid(
+                np.arange(0, u.shape[1], stepx) * dx_nm,
+                np.arange(0, u.shape[0], stepy) * dy_nm,
+            )
+
+            ax.quiver(
+                x,
+                y,
+                u[::stepy, ::stepx],
+                v[::stepy, ::stepx],
+                alpha=alphas[::stepy, ::stepx],
+                angles="xy",
+                scale_units="xy",
+                scale=scale,
+            )
+            ax.imshow(
+                rgb,
+                interpolation="none",
+                origin="lower",
+                aspect="equal",
+                extent=(0, rgb.shape[1] * dx_nm, 0, rgb.shape[0] * dy_nm),
+            )
+        else:
+            image = self._component_image(frame, component, default="norm")
+            image = np.tile(image, (repeat_value, repeat_value))
+
+            if ax is None:
+                shape_ratio = image.shape[1] / max(image.shape[0], 1)
+                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
+
+            im = ax.imshow(
+                image,
+                interpolation="none",
+                origin="lower",
+                aspect="equal",
+                cmap=cmap or "viridis",
+                extent=(0, image.shape[1] * dx_nm, 0, image.shape[0] * dy_nm),
+            )
+            if colorbar:
+                plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        job_name = getattr(self._dataset.job_result, "name", "job")
+        dset = self._dataset.dataset_name
+        ax.set(title=f"{job_name} — {dset}", xlabel="x (nm)", ylabel="y (nm)")
+        return ax
+
+    def _heatmap_impl(
+        self,
+        *,
+        z: int = 0,
+        t: int = -1,
+        ax=None,
+        repeat: int = 1,
+        zero: Optional[int] = None,
+        component: Optional[Union[int, str]] = None,
+        cmap: str = "viridis",
+        colorbar: bool = True,
+        vmin: Optional[float] = None,
+        vmax: Optional[float] = None,
+    ):
+        import matplotlib.pyplot as plt
+
+        frame = self._extract_frame(z=z, t=t, zero=zero)
+        image = self._component_image(frame, component, default="norm")
+        repeat_value = max(int(repeat), 1)
+        image = np.tile(image, (repeat_value, repeat_value))
+        dx_nm, dy_nm = self._resolve_dx_dy_nm()
+
+        if ax is None:
+            shape_ratio = image.shape[1] / max(image.shape[0], 1)
+            _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
+
+        im = ax.imshow(
+            image,
+            interpolation="none",
+            origin="lower",
+            aspect="equal",
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            extent=(0, image.shape[1] * dx_nm, 0, image.shape[0] * dy_nm),
+        )
+        if colorbar:
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        comp_label = "norm" if component is None else str(component)
+        job_name = getattr(self._dataset.job_result, "name", "job")
+        dset = self._dataset.dataset_name
+        ax.set(
+            title=f"{job_name} — {dset} [{comp_label}]",
+            xlabel="x (nm)",
+            ylabel="y (nm)",
+        )
+        return ax
+
+    @property
+    def mpl(self):
+        if self._mpl is None:
+            self._mpl = _DatasetMatplotlibPlotAccessor(self)
+        return self._mpl
+
+    def snapshot(self, **kwargs):
+        """Convenience alias for ``plot.mpl.snapshot(...)``."""
+        return self.mpl.snapshot(**kwargs)
+
+    def heatmap(self, **kwargs):
+        """Convenience alias for ``plot.mpl.heatmap(...)``."""
+        return self.mpl.heatmap(**kwargs)
+
+    def heamtp(self, **kwargs):
+        """Compatibility alias for ``heatmap``."""
+        return self.mpl.heatmap(**kwargs)
+
+    def __repr__(self):
+        dset = self._dataset.dataset_name
+        return f"<DatasetPlotAccessor('{dset}'): .snapshot(), .heatmap(), .mpl>"
 
 
 class DatasetAwareWrapper:
     """Wrapper that acts like zarr.Array but has .fft property"""
 
-    def __init__(self, job_result, dataset_name, zarr_array, slice_info=None):
+    def __init__(
+        self,
+        job_result,
+        dataset_name,
+        zarr_array,
+        slice_info=None,
+        materialized_data: Optional[np.ndarray] = None,
+    ):
         self.job_result = job_result
         self.dataset_name = dataset_name
         self.zarr_array = zarr_array
         self.slice_info = slice_info  # Store slicing information
+        self._materialized_data = materialized_data
         self._fft = None
         self._solitons = None
         self._analyze = None
@@ -423,6 +716,10 @@ class DatasetAwareWrapper:
 
     def _resolve_source(self):
         """Return underlying data respecting the stored slice."""
+        if self._materialized_data is not None:
+            if self.slice_info is not None:
+                return self._materialized_data[self.slice_info]
+            return self._materialized_data
         if self.slice_info is not None:
             return self.zarr_array[self.slice_info]
         return self.zarr_array
@@ -433,6 +730,9 @@ class DatasetAwareWrapper:
         if name in ('dt', 'fft', 'analyze', 'shape', 'data', 'plot'):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
         
+        if self._materialized_data is not None:
+            source = self._resolve_source()
+            return getattr(source, name)
         if self.slice_info is not None:
             # If sliced, get attribute from sliced data
             sliced_data = self._resolve_source()
@@ -500,13 +800,23 @@ class DatasetAwareWrapper:
         This means the number of dimensions is always preserved after slicing.
         Use .squeeze() or .numpy(squeeze=True) to remove singleton dimensions.
         """
-        # Get source shape to properly handle ellipsis expansion
-        source_shape = self.zarr_array.shape
+        source = self._resolve_source()
+        source_shape = source.shape
         ndim = len(source_shape)
         
         # Normalize the slice to keep dimensions
         normalized_key = self._normalize_slice_to_keep_dims(key, ndim)
         
+        if self._materialized_data is not None:
+            sliced = np.asarray(source[normalized_key])
+            return DatasetAwareWrapper(
+                self.job_result,
+                self.dataset_name,
+                self.zarr_array,
+                slice_info=None,
+                materialized_data=sliced,
+            )
+
         # Combine with existing slice if present
         if self.slice_info is not None:
             # For now, we don't support chained slicing - use the new slice directly
@@ -519,7 +829,8 @@ class DatasetAwareWrapper:
             self.job_result,
             self.dataset_name,
             self.zarr_array,  # Keep original zarr reference
-            slice_info=combined_slice,
+                slice_info=combined_slice,
+                materialized_data=None,
         )
 
     @property
@@ -574,11 +885,7 @@ class DatasetAwareWrapper:
         >>> job[0].regions[:].plot.snapshot(cmap='tab10')
         """
         if self._plot is None:
-            self._plot = DatasetPlotAccessor(
-                self.job_result,
-                self.dataset_name,
-                slice_info=self.slice_info,
-            )
+            self._plot = DatasetPlotAccessor(self)
         return self._plot
 
     @property
@@ -589,6 +896,8 @@ class DatasetAwareWrapper:
     @property
     def shape(self):
         """Shape accounting for slicing"""
+        if self._materialized_data is not None:
+            return self._resolve_source().shape
         if self.slice_info is not None:
             sliced_data = self._resolve_source()
             return sliced_data.shape
@@ -677,9 +986,158 @@ class DatasetAwareWrapper:
         """Alias for numpy() to match common API naming."""
         return self.numpy(**kwargs)
 
+    @staticmethod
+    def _normalize_downsample_spec(spec: tuple[Any, ...], ndim: int) -> tuple[Optional[int], ...]:
+        if len(spec) == 1 and isinstance(spec[0], tuple):
+            tokens = list(spec[0])
+        elif len(spec) == 1 and isinstance(spec[0], list):
+            tokens = list(spec[0])
+        else:
+            tokens = list(spec)
+
+        if not tokens:
+            raise ValueError("downsample requires at least one axis specification")
+
+        if tokens.count(Ellipsis) > 1:
+            raise ValueError("downsample spec can contain at most one Ellipsis")
+
+        if Ellipsis in tokens:
+            idx = tokens.index(Ellipsis)
+            missing = ndim - (len(tokens) - 1)
+            if missing < 0:
+                raise ValueError(
+                    f"downsample spec has too many axes ({len(tokens)}) for ndim={ndim}"
+                )
+            tokens = tokens[:idx] + [slice(None)] * missing + tokens[idx + 1 :]
+
+        if len(tokens) < ndim:
+            tokens.extend([slice(None)] * (ndim - len(tokens)))
+
+        if len(tokens) != ndim:
+            raise ValueError(
+                f"downsample spec must describe exactly {ndim} axes, got {len(tokens)}"
+            )
+
+        normalized: list[Optional[int]] = []
+        for token in tokens:
+            if token is None:
+                normalized.append(None)
+                continue
+            if isinstance(token, str):
+                if token.strip() == ":":
+                    normalized.append(None)
+                    continue
+                raise TypeError(
+                    f"Invalid downsample token {token!r}; use ':'/None/slice(None) or int target size"
+                )
+            if isinstance(token, slice):
+                if token.start is None and token.stop is None and token.step is None:
+                    normalized.append(None)
+                    continue
+                raise TypeError(
+                    f"Unsupported downsample slice {token!r}; only full slice ':' is supported"
+                )
+            if isinstance(token, (int, np.integer)) and not isinstance(token, bool):
+                normalized.append(int(token))
+                continue
+            raise TypeError(
+                f"Invalid downsample token {token!r}; use ':'/None/slice(None) or int target size"
+            )
+
+        return tuple(normalized)
+
+    @staticmethod
+    def _block_mean_downsample_axis(
+        array: np.ndarray,
+        axis: int,
+        target: int,
+        *,
+        strict: bool = False,
+    ) -> np.ndarray:
+        source = int(array.shape[axis])
+        if target <= 0:
+            raise ValueError(f"Target size must be > 0 for axis {axis}, got {target}")
+        if target == source:
+            return array
+        if target > source:
+            if strict:
+                raise ValueError(
+                    f"Cannot increase axis {axis} from {source} to {target} with block downsample"
+                )
+            warnings.warn(
+                f"Skipping axis {axis}: target {target} > source {source}",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            return array
+
+        scale = source // target
+        if scale < 1:
+            raise ValueError(
+                f"Invalid downsample scale for axis {axis}: source={source}, target={target}"
+            )
+
+        trimmed = target * scale
+        if trimmed != source:
+            message = (
+                f"Axis {axis}: source size {source} is not divisible by target {target}; "
+                f"trimming to {trimmed} for block-mean downsampling"
+            )
+            if strict:
+                raise ValueError(message)
+            warnings.warn(message, RuntimeWarning, stacklevel=3)
+            indexer = [slice(None)] * array.ndim
+            indexer[axis] = slice(0, trimmed)
+            array = array[tuple(indexer)]
+
+        new_shape = array.shape[:axis] + (target, scale) + array.shape[axis + 1 :]
+        reduced = array.reshape(new_shape).mean(axis=axis + 1, dtype=np.float32)
+        return np.asarray(reduced, dtype=np.float32)
+
+    def downsample(self, *spec: Any, strict: bool = False) -> "DatasetAwareWrapper":
+        """Downsample current dataset view with block-mean aggregation.
+
+        Parameters
+        ----------
+        *spec :
+            Axis specification. For each axis:
+            - ``":"`` / ``None`` / ``slice(None)`` keeps original size.
+            - ``int`` sets target size for block-mean downsample.
+
+            Examples:
+            ``downsample(":", 1, 100, 100, ":")``
+            ``downsample(np.s_[:, 1, 100, 100, :])``
+        strict : bool, default False
+            If True, raises errors when axis size is not divisible by target
+            or when target > source. If False, trims trailing cells and skips
+            invalid upsampling axes.
+        """
+        source = self.numpy(copy=False, squeeze=False)
+        array = np.asarray(source, dtype=np.float32)
+        targets = self._normalize_downsample_spec(spec, array.ndim)
+
+        reduced = array
+        for axis, target in enumerate(targets):
+            if target is None:
+                continue
+            reduced = self._block_mean_downsample_axis(
+                reduced,
+                axis=axis,
+                target=int(target),
+                strict=bool(strict),
+            )
+
+        return DatasetAwareWrapper(
+            self.job_result,
+            self.dataset_name,
+            self.zarr_array,
+            slice_info=None,
+            materialized_data=np.asarray(reduced, dtype=np.float32),
+        )
+
     def as_zarr(self):
         """Return the underlying zarr.Array when no slicing is active."""
-        if self.slice_info is not None:
+        if self.slice_info is not None or self._materialized_data is not None:
             raise TypeError(
                 "Sliced view has no standalone zarr representation; use numpy() instead"
             )

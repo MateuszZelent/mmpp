@@ -722,6 +722,8 @@ class DispersionAnalyzeAccessor:
         param_label: str = "parameter",
         *,
         job_indices=None,
+        param_attr: str | None = None,
+        param_scale: float = 1.0,
         filters: dict | None = None,
         compute_kwargs: dict | None = None,
         find_kwargs: dict | None = None,
@@ -740,10 +742,16 @@ class DispersionAnalyzeAccessor:
         sources : mmpp.MMPP | list[ZarrJobResult] | list[DispersionResult1D]
             MMPP container, list of jobs, pre-computed results, or callables.
         param_values : sequence of float, optional
-            One value per *selected* job.  ``None`` → auto-label with indices.
+            One value per *selected* job.  ``None`` → read from *param_attr*
+            or fall back to job indices.
         job_indices : sequence of int, optional
-            Pick specific jobs from *sources* by index.  Must match length of
-            *param_values* when both are given.
+            Pick specific jobs from *sources* by index.
+        param_attr : str, optional
+            Attribute key on each job to use as the parameter value, e.g.
+            ``param_attr="b"`` reads ``job.attrs["b"]``.
+        param_scale : float
+            Scale factor applied to the value read from *param_attr*
+            (e.g. ``param_scale=1000`` converts T → mT).
         param_label : str
             Human-readable name for the scan parameter.
         filters, compute_kwargs, find_kwargs : dict, optional
@@ -762,14 +770,14 @@ class DispersionAnalyzeAccessor:
         Examples
         --------
         >>> jobs = mmpp.MMPP("/path/to/sweep/", debug=False)
-        >>> # Select 7 specific jobs from a 26-job container:
+        >>> # Auto-read B field from attrs, convert T → mT:
         >>> bulk = result.analyze.scan(
         ...     jobs,
-        ...     job_indices=[0, 5, 10, 15, 20, 25, 30],
-        ...     param_values=[0, 5, 10, 15, 20, 25, 30],
+        ...     param_attr="b",
+        ...     param_scale=1000,
         ...     param_label="B_ext [mT]",
         ...     filters=dict(remove_static=True),
-        ...     slice_spec=(slice(None), Ellipsis, slice(0, 1)),
+        ...     slice_spec=(slice(800), Ellipsis, 2),
         ... )
         >>> bulk.plot.summary()
         """
@@ -786,6 +794,8 @@ class DispersionAnalyzeAccessor:
             param_values=param_values,
             param_label=param_label,
             job_indices=job_indices,
+            param_attr=param_attr,
+            param_scale=param_scale,
             filters=_filters,
             compute_kwargs=_compute_kw,
             find_kwargs=_find_kwargs,
