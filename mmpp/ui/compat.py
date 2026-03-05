@@ -41,6 +41,11 @@ def has_cmocean() -> bool:
     return has_module("cmocean")
 
 
+def has_k3d() -> bool:
+    """Return True when k3d is installed."""
+    return has_module("k3d")
+
+
 def in_notebook() -> bool:
     """Best-effort notebook detection."""
     try:
@@ -61,6 +66,7 @@ def dependency_report() -> dict[str, bool]:
         "pillow": has_pillow(),
         "cmcrameri": has_cmcrameri(),
         "cmocean": has_cmocean(),
+        "k3d": has_k3d(),
         "notebook": in_notebook(),
     }
 
@@ -73,6 +79,7 @@ __all__ = [
     "has_pillow",
     "has_cmcrameri",
     "has_cmocean",
+    "has_k3d",
     "in_notebook",
     "dependency_report",
 ]

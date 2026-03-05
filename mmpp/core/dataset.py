@@ -401,6 +401,20 @@ class _DatasetMatplotlibPlotAccessor:
         return f"<DatasetMplPlotAccessor('{dset}')>"
 
 
+class _DatasetK3DPlotAccessor:
+    """K3D backend namespace for dataset-aware plotting."""
+
+    def __init__(self, parent: "DatasetPlotAccessor"):
+        self._parent = parent
+
+    def heatmap(self, **kwargs):
+        return self._parent._k3d_heatmap_impl(**kwargs)
+
+    def __repr__(self):
+        dset = self._parent._dataset.dataset_name
+        return f"<DatasetK3DPlotAccessor('{dset}')>"
+
+
 class DatasetPlotAccessor:
     """Plot accessor for :class:`DatasetAwareWrapper`.
 
@@ -414,6 +428,7 @@ class DatasetPlotAccessor:
     def __init__(self, dataset_wrapper: "DatasetAwareWrapper"):
         self._dataset = dataset_wrapper
         self._mpl = None
+        self._k3d = None
 
     @staticmethod
     def _normalize_index(index: int, size: int) -> int:
@@ -473,6 +488,46 @@ class DatasetPlotAccessor:
             f"Dataset '{self._dataset.dataset_name}' has unsupported shape {arr.shape} for plotting"
         )
 
+    def _extract_sequence(
+        self,
+        *,
+        z: int = 0,
+        zero: Optional[int] = None,
+    ) -> np.ndarray:
+        data = self._dataset.numpy(copy=False, squeeze=False)
+        arr = np.asarray(data, dtype=np.float32)
+
+        if arr.ndim == 5:
+            z_idx = self._normalize_index(z, arr.shape[1])
+            seq = np.asarray(arr[:, z_idx], dtype=np.float32)
+            if zero is not None:
+                zref_idx = self._normalize_index(zero, arr.shape[0])
+                seq = seq - np.asarray(arr[zref_idx, z_idx], dtype=np.float32)
+            return seq
+
+        if arr.ndim == 4:
+            # Typical magnetization after slicing: (t, y, x, c)
+            if arr.shape[-1] <= 4:
+                seq = np.asarray(arr, dtype=np.float32)
+                if zero is not None:
+                    zref_idx = self._normalize_index(zero, arr.shape[0])
+                    seq = seq - np.asarray(arr[zref_idx], dtype=np.float32)
+                return seq
+
+            # Scalar-with-z volume over time: (t, z, y, x)
+            z_idx = self._normalize_index(z, arr.shape[1])
+            seq = np.asarray(arr[:, z_idx], dtype=np.float32)
+            if zero is not None:
+                zref_idx = self._normalize_index(zero, arr.shape[0])
+                seq = seq - np.asarray(arr[zref_idx, z_idx], dtype=np.float32)
+            return seq
+
+        # No explicit time axis: wrap as single-frame sequence.
+        frame = self._extract_frame(z=z, t=-1, zero=None)
+        if zero is not None:
+            frame = frame - frame
+        return frame[np.newaxis, ...]
+
     @staticmethod
     def _component_image(
         frame: np.ndarray,
@@ -528,6 +583,127 @@ class DatasetPlotAccessor:
             "Use int, x/y/z, mx/my/mz, norm/magnitude."
         )
 
+    @staticmethod
+    def _normalize_mode(mode: str) -> str:
+        value = str(mode).strip().lower()
+        if value in {"snapshot", "vector", "quiver"}:
+            return "snapshot"
+        if value in {"heatmap", "scalar", "mpl_heatmap"}:
+            return "heatmap"
+        raise ValueError(f"Unsupported render mode: {mode!r}. Use 'snapshot' or 'heatmap'.")
+
+    def _render_frame(
+        self,
+        frame: np.ndarray,
+        *,
+        ax,
+        mode: str,
+        repeat: int = 1,
+        cmap: Optional[str] = None,
+        component: Optional[Union[int, str]] = None,
+        quiver_density: int = 20,
+        colorbar: bool = True,
+        vmin: Optional[float] = None,
+        vmax: Optional[float] = None,
+        title: Optional[str] = None,
+    ):
+        import matplotlib.pyplot as plt
+        from ..plotting import hsl2rgb
+
+        draw_mode = self._normalize_mode(mode)
+        ax.clear()
+        dx_nm, dy_nm = self._resolve_dx_dy_nm()
+        repeat_value = max(int(repeat), 1)
+
+        if draw_mode == "snapshot":
+            is_vector = frame.ndim == 3 and frame.shape[-1] >= 2 and component is None
+            if is_vector:
+                vec = np.asarray(frame, dtype=np.float32)
+                if vec.shape[-1] < 3:
+                    padded = np.zeros(vec.shape[:-1] + (3,), dtype=np.float32)
+                    padded[..., : vec.shape[-1]] = vec
+                    vec = padded
+
+                vector = np.tile(vec, (repeat_value, repeat_value, 1))
+                u = vector[:, :, 0]
+                v = vector[:, :, 1]
+                w = vector[:, :, 2]
+
+                alphas = np.clip(-np.abs(w) + 1, 0.0, 1.0)
+                hsl = np.ones((u.shape[0], u.shape[1], 3), dtype=np.float32)
+                hsl[:, :, 0] = np.angle(u + 1j * v) / np.pi / 2
+                hsl[:, :, 1] = np.clip(np.sqrt(u**2 + v**2 + w**2), 0.0, 1.0)
+                hsl[:, :, 2] = (w + 1) / 2
+                rgb = hsl2rgb(hsl)
+
+                dens = max(int(quiver_density), 1)
+                stepx = max(int(u.shape[1] / dens), 1)
+                stepy = max(int(u.shape[0] / dens), 1)
+                scale = 1 / max(stepx, stepy)
+                x, y = np.meshgrid(
+                    np.arange(0, u.shape[1], stepx) * dx_nm,
+                    np.arange(0, u.shape[0], stepy) * dy_nm,
+                )
+
+                ax.quiver(
+                    x,
+                    y,
+                    u[::stepy, ::stepx],
+                    v[::stepy, ::stepx],
+                    alpha=alphas[::stepy, ::stepx],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=scale,
+                )
+                ax.imshow(
+                    rgb,
+                    interpolation="none",
+                    origin="lower",
+                    aspect="equal",
+                    extent=(0, rgb.shape[1] * dx_nm, 0, rgb.shape[0] * dy_nm),
+                )
+            else:
+                image = self._component_image(frame, component, default="norm")
+                image = np.tile(image, (repeat_value, repeat_value))
+                im = ax.imshow(
+                    image,
+                    interpolation="none",
+                    origin="lower",
+                    aspect="equal",
+                    cmap=cmap or "viridis",
+                    vmin=vmin,
+                    vmax=vmax,
+                    extent=(0, image.shape[1] * dx_nm, 0, image.shape[0] * dy_nm),
+                )
+                if colorbar:
+                    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        else:
+            image = self._component_image(frame, component, default="norm")
+            image = np.tile(image, (repeat_value, repeat_value))
+            im = ax.imshow(
+                image,
+                interpolation="none",
+                origin="lower",
+                aspect="equal",
+                cmap=cmap or "viridis",
+                vmin=vmin,
+                vmax=vmax,
+                extent=(0, image.shape[1] * dx_nm, 0, image.shape[0] * dy_nm),
+            )
+            if colorbar:
+                plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        job_name = getattr(self._dataset.job_result, "name", "job")
+        dset = self._dataset.dataset_name
+        if title is None:
+            if draw_mode == "heatmap":
+                comp_label = "norm" if component is None else str(component)
+                title = f"{job_name} — {dset} [{comp_label}]"
+            else:
+                title = f"{job_name} — {dset}"
+        ax.set(title=title, xlabel="x (nm)", ylabel="y (nm)")
+        return ax
+
     def _snapshot_impl(
         self,
         *,
@@ -542,83 +718,22 @@ class DatasetPlotAccessor:
         colorbar: bool = True,
     ):
         import matplotlib.pyplot as plt
-        from ..plotting import hsl2rgb
 
         frame = self._extract_frame(z=z, t=t, zero=zero)
-        dx_nm, dy_nm = self._resolve_dx_dy_nm()
-        repeat_value = max(int(repeat), 1)
-
-        is_vector = frame.ndim == 3 and frame.shape[-1] >= 2 and component is None
-        if is_vector:
-            if frame.shape[-1] < 3:
-                padded = np.zeros(frame.shape[:-1] + (3,), dtype=np.float32)
-                padded[..., : frame.shape[-1]] = frame
-                frame = padded
-
-            vector = np.tile(frame, (repeat_value, repeat_value, 1))
-            u = vector[:, :, 0]
-            v = vector[:, :, 1]
-            w = vector[:, :, 2]
-
-            if ax is None:
-                shape_ratio = vector.shape[1] / max(vector.shape[0], 1)
-                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
-
-            alphas = np.clip(-np.abs(w) + 1, 0.0, 1.0)
-            hsl = np.ones((u.shape[0], u.shape[1], 3), dtype=np.float32)
-            hsl[:, :, 0] = np.angle(u + 1j * v) / np.pi / 2
-            hsl[:, :, 1] = np.clip(np.sqrt(u**2 + v**2 + w**2), 0.0, 1.0)
-            hsl[:, :, 2] = (w + 1) / 2
-            rgb = hsl2rgb(hsl)
-
-            dens = max(int(quiver_density), 1)
-            stepx = max(int(u.shape[1] / dens), 1)
-            stepy = max(int(u.shape[0] / dens), 1)
-            scale = 1 / max(stepx, stepy)
-            x, y = np.meshgrid(
-                np.arange(0, u.shape[1], stepx) * dx_nm,
-                np.arange(0, u.shape[0], stepy) * dy_nm,
-            )
-
-            ax.quiver(
-                x,
-                y,
-                u[::stepy, ::stepx],
-                v[::stepy, ::stepx],
-                alpha=alphas[::stepy, ::stepx],
-                angles="xy",
-                scale_units="xy",
-                scale=scale,
-            )
-            ax.imshow(
-                rgb,
-                interpolation="none",
-                origin="lower",
-                aspect="equal",
-                extent=(0, rgb.shape[1] * dx_nm, 0, rgb.shape[0] * dy_nm),
-            )
-        else:
-            image = self._component_image(frame, component, default="norm")
-            image = np.tile(image, (repeat_value, repeat_value))
-
-            if ax is None:
-                shape_ratio = image.shape[1] / max(image.shape[0], 1)
-                _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
-
-            im = ax.imshow(
-                image,
-                interpolation="none",
-                origin="lower",
-                aspect="equal",
-                cmap=cmap or "viridis",
-                extent=(0, image.shape[1] * dx_nm, 0, image.shape[0] * dy_nm),
-            )
-            if colorbar:
-                plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-        job_name = getattr(self._dataset.job_result, "name", "job")
-        dset = self._dataset.dataset_name
-        ax.set(title=f"{job_name} — {dset}", xlabel="x (nm)", ylabel="y (nm)")
+        if ax is None:
+            base = self._component_image(frame, component, default="norm")
+            shape_ratio = base.shape[1] / max(base.shape[0], 1)
+            _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
+        ax = self._render_frame(
+            frame,
+            ax=ax,
+            mode="snapshot",
+            repeat=repeat,
+            cmap=cmap,
+            component=component,
+            quiver_density=quiver_density,
+            colorbar=colorbar,
+        )
         return ax
 
     def _heatmap_impl(
@@ -638,43 +753,273 @@ class DatasetPlotAccessor:
         import matplotlib.pyplot as plt
 
         frame = self._extract_frame(z=z, t=t, zero=zero)
-        image = self._component_image(frame, component, default="norm")
-        repeat_value = max(int(repeat), 1)
-        image = np.tile(image, (repeat_value, repeat_value))
-        dx_nm, dy_nm = self._resolve_dx_dy_nm()
-
         if ax is None:
+            image = self._component_image(frame, component, default="norm")
             shape_ratio = image.shape[1] / max(image.shape[0], 1)
             _, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=100)
-
-        im = ax.imshow(
-            image,
-            interpolation="none",
-            origin="lower",
-            aspect="equal",
+        ax = self._render_frame(
+            frame,
+            ax=ax,
+            mode="heatmap",
+            repeat=repeat,
             cmap=cmap,
+            component=component,
+            colorbar=colorbar,
             vmin=vmin,
             vmax=vmax,
-            extent=(0, image.shape[1] * dx_nm, 0, image.shape[0] * dy_nm),
-        )
-        if colorbar:
-            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-        comp_label = "norm" if component is None else str(component)
-        job_name = getattr(self._dataset.job_result, "name", "job")
-        dset = self._dataset.dataset_name
-        ax.set(
-            title=f"{job_name} — {dset} [{comp_label}]",
-            xlabel="x (nm)",
-            ylabel="y (nm)",
         )
         return ax
+
+    def _k3d_heatmap_impl(
+        self,
+        *,
+        z: int = 0,
+        t: int = -1,
+        repeat: int = 1,
+        zero: Optional[int] = None,
+        component: Optional[Union[int, str]] = None,
+        show_vectors: bool = False,
+        quiver_density: int = 20,
+        height_scale: float = 0.0,
+    ):
+        try:
+            import k3d
+        except Exception as exc:
+            raise ImportError(
+                "k3d is required for plot.k3d.heatmap(). Install with: pip install k3d"
+            ) from exc
+
+        frame = self._extract_frame(z=z, t=t, zero=zero)
+        image = self._component_image(frame, component, default="norm")
+        image = np.tile(image, (max(int(repeat), 1), max(int(repeat), 1))).astype(
+            np.float32,
+            copy=False,
+        )
+
+        if float(height_scale) != 0.0:
+            surface = (image * float(height_scale)).astype(np.float32, copy=False)
+        else:
+            surface = np.zeros_like(image, dtype=np.float32)
+
+        plot = k3d.plot(name=f"{self._dataset.dataset_name} heatmap")
+        try:
+            plot += k3d.surface(surface, attribute=image)
+        except Exception:
+            # Fallback for k3d versions without `attribute`.
+            plot += k3d.surface(image.astype(np.float32, copy=False))
+
+        if show_vectors and frame.ndim == 3 and frame.shape[-1] >= 2:
+            vec = np.asarray(frame, dtype=np.float32)
+            if vec.shape[-1] < 3:
+                padded = np.zeros(vec.shape[:-1] + (3,), dtype=np.float32)
+                padded[..., : vec.shape[-1]] = vec
+                vec = padded
+            u = vec[:, :, 0]
+            v = vec[:, :, 1]
+            stepx = max(int(u.shape[1] / max(int(quiver_density), 1)), 1)
+            stepy = max(int(u.shape[0] / max(int(quiver_density), 1)), 1)
+            grid_x, grid_y = np.meshgrid(
+                np.arange(0, u.shape[1], stepx, dtype=np.float32),
+                np.arange(0, u.shape[0], stepy, dtype=np.float32),
+            )
+            origins = np.stack(
+                [grid_x.ravel(), grid_y.ravel(), np.zeros(grid_x.size, dtype=np.float32)],
+                axis=1,
+            ).astype(np.float32)
+            vectors = np.stack(
+                [
+                    u[::stepy, ::stepx].ravel(),
+                    v[::stepy, ::stepx].ravel(),
+                    np.zeros(grid_x.size, dtype=np.float32),
+                ],
+                axis=1,
+            ).astype(np.float32)
+            try:
+                plot += k3d.vectors(origins, vectors)
+            except Exception:
+                pass
+
+        return plot
+
+    def interactive(
+        self,
+        *,
+        mode: str = "snapshot",
+        component: Optional[Union[int, str]] = None,
+        z: int = 0,
+        repeat: int = 1,
+        zero: Optional[int] = None,
+        cmap: str = "viridis",
+        quiver_density: int = 20,
+        fps: int = 20,
+        toolbar: bool = True,
+    ):
+        import matplotlib.pyplot as plt
+        from matplotlib import animation as mpl_animation
+        from matplotlib.widgets import Button, Slider
+
+        sequence = self._extract_sequence(z=z, zero=zero)
+        n_frames = int(sequence.shape[0])
+        first = np.asarray(sequence[0], dtype=np.float32)
+        base = self._component_image(first, component, default="norm")
+        shape_ratio = base.shape[1] / max(base.shape[0], 1)
+
+        fig, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=110)
+        if toolbar:
+            plt.subplots_adjust(bottom=0.18)
+            slider_ax = fig.add_axes([0.15, 0.07, 0.55, 0.04])
+            button_ax = fig.add_axes([0.74, 0.065, 0.12, 0.05])
+            frame_slider = Slider(
+                slider_ax,
+                "Frame",
+                valmin=0,
+                valmax=max(n_frames - 1, 0),
+                valinit=0,
+                valstep=1,
+            )
+            play_btn = Button(button_ax, "Play", color="#e5e7eb", hovercolor="#d1d5db")
+        else:
+            frame_slider = None
+            play_btn = None
+
+        state = {"index": 0, "playing": False}
+        render_mode = self._normalize_mode(mode)
+
+        def _draw(index: int) -> None:
+            idx = int(np.clip(int(index), 0, max(n_frames - 1, 0)))
+            state["index"] = idx
+            frame = np.asarray(sequence[idx], dtype=np.float32)
+            title = f"{self._dataset.dataset_name} [{idx + 1}/{n_frames}]"
+            self._render_frame(
+                frame,
+                ax=ax,
+                mode=render_mode,
+                repeat=repeat,
+                cmap=cmap,
+                component=component,
+                quiver_density=quiver_density,
+                colorbar=False,
+                title=title,
+            )
+            if frame_slider is not None and int(round(frame_slider.val)) != idx:
+                frame_slider.eventson = False
+                frame_slider.set_val(idx)
+                frame_slider.eventson = True
+            fig.canvas.draw_idle()
+
+        def _on_slider(val):
+            _draw(int(round(float(val))))
+
+        def _on_toggle(_event):
+            state["playing"] = not state["playing"]
+            if play_btn is not None:
+                play_btn.label.set_text("Pause" if state["playing"] else "Play")
+                fig.canvas.draw_idle()
+
+        def _tick(_frame):
+            if not state["playing"]:
+                return ()
+            _draw((state["index"] + 1) % max(n_frames, 1))
+            return ()
+
+        if frame_slider is not None:
+            frame_slider.on_changed(_on_slider)
+        if play_btn is not None:
+            play_btn.on_clicked(_on_toggle)
+
+        anim = mpl_animation.FuncAnimation(
+            fig,
+            _tick,
+            interval=1000.0 / max(int(fps), 1),
+            blit=False,
+            cache_frame_data=False,
+        )
+        fig._mmpp_interactive = {
+            "slider": frame_slider,
+            "play_button": play_btn,
+            "animation": anim,
+            "state": state,
+        }
+        _draw(0)
+        return fig
+
+    def animate(
+        self,
+        *,
+        mode: str = "snapshot",
+        component: Optional[Union[int, str]] = None,
+        z: int = 0,
+        repeat: int = 1,
+        zero: Optional[int] = None,
+        cmap: str = "viridis",
+        quiver_density: int = 20,
+        fps: int = 20,
+        save_path: Optional[str] = None,
+        dpi: int = 120,
+    ):
+        import matplotlib.pyplot as plt
+        from matplotlib import animation as mpl_animation
+
+        sequence = self._extract_sequence(z=z, zero=zero)
+        n_frames = int(sequence.shape[0])
+        first = np.asarray(sequence[0], dtype=np.float32)
+        base = self._component_image(first, component, default="norm")
+        shape_ratio = base.shape[1] / max(base.shape[0], 1)
+        fig, ax = plt.subplots(1, 1, figsize=(4 * shape_ratio, 4), dpi=dpi)
+        render_mode = self._normalize_mode(mode)
+
+        def _update(frame_idx: int):
+            idx = int(frame_idx) % max(n_frames, 1)
+            frame = np.asarray(sequence[idx], dtype=np.float32)
+            title = f"{self._dataset.dataset_name} [{idx + 1}/{n_frames}]"
+            self._render_frame(
+                frame,
+                ax=ax,
+                mode=render_mode,
+                repeat=repeat,
+                cmap=cmap,
+                component=component,
+                quiver_density=quiver_density,
+                colorbar=False,
+                title=title,
+            )
+            return []
+
+        anim = mpl_animation.FuncAnimation(
+            fig,
+            _update,
+            frames=max(n_frames, 1),
+            interval=1000.0 / max(int(fps), 1),
+            repeat=True,
+            blit=False,
+        )
+
+        if save_path is None:
+            return anim
+
+        path = str(save_path)
+        suffix = path.lower().rsplit(".", 1)[-1] if "." in path else ""
+        if suffix == "mp4":
+            writer = mpl_animation.FFMpegWriter(fps=max(int(fps), 1), bitrate=2000)
+        elif suffix == "gif":
+            writer = mpl_animation.PillowWriter(fps=max(int(fps), 1))
+        else:
+            raise ValueError("save_path extension must be .mp4 or .gif")
+
+        anim.save(path, writer=writer, dpi=dpi)
+        return path
 
     @property
     def mpl(self):
         if self._mpl is None:
             self._mpl = _DatasetMatplotlibPlotAccessor(self)
         return self._mpl
+
+    @property
+    def k3d(self):
+        if self._k3d is None:
+            self._k3d = _DatasetK3DPlotAccessor(self)
+        return self._k3d
 
     def snapshot(self, **kwargs):
         """Convenience alias for ``plot.mpl.snapshot(...)``."""
@@ -690,7 +1035,10 @@ class DatasetPlotAccessor:
 
     def __repr__(self):
         dset = self._dataset.dataset_name
-        return f"<DatasetPlotAccessor('{dset}'): .snapshot(), .heatmap(), .mpl>"
+        return (
+            f"<DatasetPlotAccessor('{dset}'): .snapshot(), .heatmap(), "
+            ".interactive(), .animate(), .mpl, .k3d>"
+        )
 
 
 class DatasetAwareWrapper:

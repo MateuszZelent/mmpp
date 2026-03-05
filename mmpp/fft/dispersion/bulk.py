@@ -1149,6 +1149,11 @@ def scan_minimum_frequency(
                 ) from exc
             extracted.append(float(val) * param_scale)
         param_values_arr = np.asarray(extracted, dtype=float)
+
+        # Sort sources by ascending parameter value
+        sort_idx = np.argsort(param_values_arr)
+        param_values_arr = param_values_arr[sort_idx]
+        sources = [sources[i] for i in sort_idx]  # type: ignore[index]
     elif param_values is None:
         param_values_arr = np.asarray(
             job_indices if job_indices is not None else range(len(sources)),  # type: ignore[arg-type]

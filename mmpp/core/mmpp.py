@@ -725,10 +725,68 @@ class MMPP:
                 )
                 
             log.info(f"Loaded database from {db_path} ({len(self.zarr_results)} valid entries)")
+            self._sort_zarr_results()
             return True
         except Exception as e:
             log.warning(f"Failed to load database: {e}")
             return False
+
+    def _sort_zarr_results(self) -> None:
+        """Sort ``zarr_results`` by the first varying numeric parameter.
+
+        When the folder structure encodes a swept parameter (e.g.
+        ``b_0.010/``, ``b_0.020/``), this method detects that parameter
+        from the parsed attributes and sorts in ascending order.
+
+        Falls back to alphabetical path sorting when no single varying
+        parameter is found.
+        """
+        if len(self.zarr_results) < 2:
+            return
+
+        # Collect numeric attributes for each job
+        all_attrs: list[dict[str, Any]] = []
+        for r in self.zarr_results:
+            all_attrs.append(
+                {k: v for k, v in r.attributes.items()
+                 if isinstance(v, (int, float)) and k != "path"}
+            )
+
+        # Find the attribute(s) that actually vary across jobs
+        if not all_attrs:
+            self.zarr_results.sort(key=lambda r: r.path)
+            return
+
+        common_keys = set(all_attrs[0].keys())
+        for a in all_attrs[1:]:
+            common_keys &= set(a.keys())
+
+        varying: list[tuple[str, int]] = []
+        for key in common_keys:
+            vals = {a[key] for a in all_attrs}
+            if len(vals) > 1:
+                varying.append((key, len(vals)))
+
+        if len(varying) == 1:
+            sort_key = varying[0][0]
+            log.info(f"Auto-sorting {len(self.zarr_results)} jobs by '{sort_key}'")
+            self.zarr_results.sort(
+                key=lambda r: float(r.attributes.get(sort_key, 0))
+            )
+        elif len(varying) > 1:
+            # Multiple varying params — pick the one with most unique values
+            sort_key = max(varying, key=lambda x: x[1])[0]
+            log.info(
+                f"Multiple varying params detected ({[v[0] for v in varying]}); "
+                f"sorting by '{sort_key}' (most unique values: {max(v[1] for v in varying)})"
+            )
+            self.zarr_results.sort(
+                key=lambda r: float(r.attributes.get(sort_key, 0))
+            )
+        else:
+            # No numeric variation — sort by path
+            self.zarr_results.sort(key=lambda r: r.path)
+
 
     def scan(self, force: bool = False) -> pd.DataFrame:
         """
@@ -761,6 +819,10 @@ class MMPP:
                 result = ZarrJobResult(res.path, res.attributes)
                 result._set_mmpp_ref(self)
                 self.zarr_results.append(result)
+
+        # Sort by the first varying numeric parameter (auto-detected),
+        # or fall back to path for deterministic ordering.
+        self._sort_zarr_results()
 
         self._save_database()
         return self.df
