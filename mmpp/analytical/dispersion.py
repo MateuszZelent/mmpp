@@ -56,6 +56,76 @@ def _exchange_length_squared(Aex: float, Ms: float) -> float:
 
 
 # ==============================================================================
+# Cubic anisotropy helpers
+# ==============================================================================
+
+def _cubic_energy_deriv1(phi_M: float, Kc1: float, phi_ani: float) -> float:
+    """First derivative of in-plane cubic energy w.r.t. φ (torque).
+
+    For α₃ ≈ 0 (in-plane film):
+        E_cub ≈ (Kc1/4) sin²(2(φ − φ_ani))
+        dE/dφ = (Kc1/2) sin(4(φ − φ_ani))
+    """
+    return 0.5 * Kc1 * math.sin(4.0 * (phi_M - phi_ani))
+
+
+def _cubic_energy_deriv2(phi_M: float, Kc1: float, phi_ani: float) -> float:
+    """Second derivative of in-plane cubic energy w.r.t. φ (stiffness).
+
+        d²E/dφ² = 2 Kc1 cos(4(φ − φ_ani))
+    """
+    return 2.0 * Kc1 * math.cos(4.0 * (phi_M - phi_ani))
+
+
+def _cubic_equilibrium_angle(
+    B: float,
+    Ms: float,
+    Kc1: float,
+    phi_H: float,
+    phi_ani: float,
+    tol: float = 1e-10,
+    max_iter: int = 200,
+) -> float:
+    """Solve the in-plane equilibrium angle φ_M via Newton iteration.
+
+    Equation:  H_ext sin(φ_M − φ_H) + (Kc1 / (2μ₀Ms)) sin(4(φ_M − φ_ani)) = 0
+
+    If |Kc1| is negligible compared to H_ext, φ_M ≈ φ_H.
+    """
+    H_ext = B / MU0
+    coeff = Kc1 / (2.0 * MU0 * Ms)
+
+    # Skip iteration if anisotropy is negligible
+    if abs(coeff) < 1e-6 * max(abs(H_ext), 1.0):
+        return phi_H
+
+    phi_M = phi_H  # initial guess
+    for _ in range(max_iter):
+        f_val = H_ext * math.sin(phi_M - phi_H) + coeff * math.sin(4.0 * (phi_M - phi_ani))
+        df_val = H_ext * math.cos(phi_M - phi_H) + 4.0 * coeff * math.cos(4.0 * (phi_M - phi_ani))
+        if abs(df_val) < 1e-30:
+            break
+        delta = f_val / df_val
+        phi_M -= delta
+        if abs(delta) < tol:
+            break
+    return phi_M
+
+
+def _cubic_stiffness_field(
+    phi_M: float,
+    Kc1: float,
+    Ms: float,
+    phi_ani: float,
+) -> float:
+    """In-plane stiffness field from cubic anisotropy [A/m].
+
+    H_cub^(φφ) = (1 / μ₀Ms) d²E_cub/dφ² = (2Kc1 / μ₀Ms) cos(4(φ_M − φ_ani))
+    """
+    return _cubic_energy_deriv2(phi_M, Kc1, phi_ani) / (MU0 * Ms)
+
+
+# ==============================================================================
 # Dispersion models
 # ==============================================================================
 
@@ -67,11 +137,15 @@ def kalinikos(
     d: float,
     Aex: float,
     Ku: float = 0.0,
+    Kc1: float = 0.0,
+    Kc2: float = 0.0,
     phi: float = np.pi / 2,
+    phi_ani: float = 0.0,
     g: float = 2.0,
 ) -> DispersionResult:
     """
-    Kalinikos-Slavin dipole-exchange dispersion (1986).
+    Kalinikos-Slavin dipole-exchange dispersion (1986)
+    with optional cubic anisotropy (Kc1, Kc2).
     
     General in-plane magnetized thin film dispersion with arbitrary
     propagation angle phi between k and M.
@@ -90,10 +164,21 @@ def kalinikos(
         Exchange stiffness in J/m
     Ku : float, optional
         Uniaxial anisotropy in J/m³ (default: 0)
+    Kc1 : float, optional
+        First-order cubic anisotropy constant in J/m³ (default: 0).
+        Enters as in-plane four-fold stiffness field.
+    Kc2 : float, optional
+        Second-order cubic anisotropy constant in J/m³ (default: 0).
+        Reserved — currently only Kc1 is used in the dispersion.
     phi : float, optional
-        Angle between k and M in radians (default: π/2 for DE geometry)
-        phi=0: BVMSW (k ∥ M)
-        phi=π/2: MSSW/DE (k ⟂ M)
+        Angle of wavevector k relative to the **applied field** direction,
+        in radians (default: π/2 for DE geometry).
+        phi=0: BVMSW (k ∥ H), phi=π/2: MSSW/DE (k ⟂ H).
+        When cubic anisotropy is present, the equilibrium magnetization
+        direction φ_M may differ from φ_H; this is handled automatically.
+    phi_ani : float, optional
+        Orientation of the first cubic axis c1 in the film plane,
+        in radians (default: 0). Matches mumax3 ``anisC1`` convention.
     g : float, optional
         Landé g-factor (default: 2.0)
         
@@ -104,19 +189,29 @@ def kalinikos(
         
     Notes
     -----
-    The dispersion relation is:
+    When Kc1 ≠ 0 the model:
     
-    .. math::
+    1. Solves the in-plane equilibrium angle φ_M from the torque equation
+       H_ext·sin(φ_M − φ_H) + (Kc1 / 2μ₀Ms)·sin(4(φ_M − φ_ani)) = 0.
+    2. Adds the cubic stiffness field
+       H_cub = (2Kc1 / μ₀Ms)·cos(4(φ_M − φ_ani)) to the internal field.
+    3. Reinterprets the dipolar angle as the angle between k and the
+       equilibrium M direction.
     
-        \\omega = \\sqrt{\\omega_0 (\\omega_0 + \\omega_M F)}
-    
-    where F is the angular dipolar factor depending on phi.
+    For Kc1 = Kc2 = 0 the formula reduces to the standard Kalinikos-Slavin.
     
     Examples
     --------
     >>> k = np.linspace(-1e7, 1e7, 500)
     >>> disp = mmpp.analytical.kalinikos(k=k, B=0.1, Ms=8e5, d=100e-9, Aex=13e-12)
     >>> disp.plt.plot()
+    
+    With cubic anisotropy (Fe-like, easy axes along [100]/[010]):
+    
+    >>> disp = mmpp.analytical.kalinikos(
+    ...     k=k, B=0.04, Ms=996e3, d=20e-9, Aex=25.5e-12,
+    ...     Kc1=-8.1e3, phi_ani=np.pi/4, phi=0.0,
+    ... )
     
     References
     ----------
@@ -128,6 +223,9 @@ def kalinikos(
     d = float(d)
     Aex = float(Aex)
     Ku = float(Ku)
+    Kc1 = float(Kc1)
+    Kc2 = float(Kc2)
+    phi_ani = float(phi_ani)
     gamma_val = gamma(g)
     
     # Exchange length squared
@@ -136,29 +234,44 @@ def kalinikos(
     # Dipolar factor P(kd)
     P = _dipolar_factor_P(k, d)
     
+    # ── Cubic anisotropy: equilibrium angle & stiffness ──────
+    # phi is the angle of k relative to H direction.
+    # If Kc1 != 0, equilibrium M may rotate away from H.
+    phi_H = 0.0  # H defines our reference direction
+    phi_M = 0.0  # magnetization equilibrium angle (relative to H)
+    H_cub = 0.0  # cubic stiffness field [A/m]
+
+    if abs(Kc1) > 0:
+        # The user-supplied phi is angle(k, H).  We need angle(k, M).
+        # Solve equilibrium: phi_M is measured from the lab x-axis;
+        # we set H along x (phi_H = 0) so that phi = angle(k, H) = angle(k, x).
+        phi_M = _cubic_equilibrium_angle(B, Ms, Kc1, phi_H, phi_ani)
+        H_cub = _cubic_stiffness_field(phi_M, Kc1, Ms, phi_ani)
+
+    # Effective dipolar angle = angle between k and equilibrium M
+    phi_eff = phi - phi_M
+
     # Internal field H₀ (in A/m).
-    # For an in-plane magnetized thin film the in-plane demagnetizing
-    # factor is ~0, so H₀ = H_ext + H_anisotropy.
-    # The out-of-plane demagnetization enters through the dipolar
-    # matrix element F(k, φ), NOT through H₀.
-    H0 = B / MU0 + 2.0 * Ku / (MU0 * Ms)
+    # For an in-plane magnetized thin film: H₀ = H_ext_parallel + H_uni + H_cub
+    H_ext_par = B / MU0  # for small phi_M this ≈ B/μ₀
+    if abs(phi_M) > 1e-10:
+        H_ext_par = (B / MU0) * math.cos(phi_M - phi_H)
+    H0 = H_ext_par + 2.0 * Ku / (MU0 * Ms) + H_cub
     
     # Exchange stiffness field contribution (varies with k)
     H_ex = Ms * lex2 * (k * k)   # = 2A k²/(μ₀ Ms)
     
-    # Angular factors
-    c2 = np.cos(phi) ** 2
-    s2 = np.sin(phi) ** 2
+    # Angular factors (using effective angle between k and M)
+    c2 = np.cos(phi_eff) ** 2
+    s2 = np.sin(phi_eff) ** 2
     
-    # Dipolar angular factor F_{00}(kd, φ) — Kalinikos eq. 9
-    # F = P sin²φ + (1-P)(1-P) sin²φ / denominator  ... simplified:
-    # F = 1 - P cos²φ + Ms P(1-P) sin²φ / (H0 + H_ex)
+    # Dipolar angular factor F_{00}(kd, φ_eff) — Kalinikos eq. 9
     denom = H0 + H_ex
     with np.errstate(divide='ignore', invalid='ignore'):
         F = 1.0 - P * c2 + (Ms * P * (1.0 - P) / (denom + 1e-30)) * s2
     
     # Characteristic frequencies (rad/s)
-    omega_H = gamma_val * MU0 * H0
+    omega_H = gamma_val * MU0 * max(H0, 0.0)
     omega_M = gamma_val * MU0 * Ms
     omega_ex = omega_M * lex2 * (k * k)
     
@@ -171,12 +284,26 @@ def kalinikos(
     
     f_ghz = omega / (2.0 * math.pi * 1e9)
     
+    params_dict = {
+        "B": B, "Ms": Ms, "d": d, "Aex": Aex, "Ku": Ku,
+        "phi": phi, "g": g,
+    }
+    meta = {
+        "geometry": f"phi_k={phi:.3f} rad",
+        "reference": "J. Phys. C 19, 7013 (1986)",
+    }
+    if abs(Kc1) > 0 or abs(Kc2) > 0:
+        params_dict.update({"Kc1": Kc1, "Kc2": Kc2, "phi_ani": phi_ani})
+        meta["phi_M"] = f"{phi_M:.4f} rad"
+        meta["H_cub"] = f"{MU0 * H_cub * 1e3:.2f} mT"
+        meta["phi_eff"] = f"{phi_eff:.4f} rad"
+    
     return DispersionResult(
         model_name="Kalinikos-Slavin 1986",
         k=k,
         f=f_ghz,
-        params={"B": B, "Ms": Ms, "d": d, "Aex": Aex, "Ku": Ku, "phi": phi, "g": g},
-        metadata={"geometry": f"phi={phi:.3f} rad", "reference": "J. Phys. C 19, 7013 (1986)"},
+        params=params_dict,
+        metadata=meta,
     )
 
 

@@ -184,20 +184,26 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
             params["d"] = nz * dz
 
     # ── Anisotropy ────────────────────────────────────────────
-    # Try uniaxial Ku first, then check kc1 (cubic)
+    # Uniaxial
     ku_val = _safe_float(attrs.get("Ku")) or _safe_float(attrs.get("Ku1"))
     if ku_val is not None:
         params["Ku"] = ku_val
-    else:
-        # kc1 (cubic) — only if it's a real number, not a pointer
-        kc1_val = _safe_float(attrs.get("kc1"))
-        if kc1_val is not None and kc1_val != 0.0:
-            # Approximate cubic as effective uniaxial: Ku_eff ≈ -Kc1/2 for in-plane
-            params["Ku"] = -kc1_val / 2.0
-            logger.info(
-                "Using cubic anisotropy kc1=%.1f as effective uniaxial Ku_eff=%.1f",
-                kc1_val, params["Ku"],
-            )
+
+    # Cubic anisotropy — extract Kc1/Kc2 and phi_ani directly
+    # (kalinikos now handles cubic natively, no Ku_eff approximation)
+    kc1_val = _safe_float(attrs.get("kc1"))
+    kc2_val = _safe_float(attrs.get("kc2"))
+    if kc1_val is not None and kc1_val != 0.0:
+        params["Kc1"] = kc1_val
+        logger.info("Detected cubic anisotropy Kc1=%.1f J/m³", kc1_val)
+    if kc2_val is not None and kc2_val != 0.0:
+        params["Kc2"] = kc2_val
+
+    # phi_ani from zarr (mumax3 convention: angle of anisC1 in-plane)
+    phi_ani_val = _safe_float(attrs.get("phi_ani"))
+    if phi_ani_val is not None:
+        params["phi_ani"] = phi_ani_val
+        logger.info("Detected cubic axis angle phi_ani=%.4f rad", phi_ani_val)
 
     detected = {k: v for k, v in params.items() if v is not None}
     logger.info("Auto-detected material params from zarr: %s", detected)
@@ -219,6 +225,9 @@ def compute_analytical_dispersion(
     d: float,
     Aex: float,
     Ku: float = 0.0,
+    Kc1: float = 0.0,
+    Kc2: float = 0.0,
+    phi_ani: float = 0.0,
     g: float = 2.0,
 ) -> list[tuple[np.ndarray, np.ndarray, str]]:
     """Compute analytical dispersion curve(s).
@@ -257,6 +266,11 @@ def compute_analytical_dispersion(
         # Add phi for models that accept it
         if func_name in ("kalinikos",):
             kwargs["phi"] = effective_phi
+            # Pass cubic anisotropy if non-zero
+            if abs(Kc1) > 0 or abs(Kc2) > 0:
+                kwargs["Kc1"] = Kc1
+                kwargs["Kc2"] = Kc2
+                kwargs["phi_ani"] = phi_ani
         elif func_name == "cortes_ortuno":
             kwargs["phi"] = effective_phi
             if D is not None:

@@ -361,6 +361,9 @@ class DispersionPlotAccessor:
         Aex: Optional[float] = None,
         d: Optional[float] = None,
         Ku: Optional[float] = None,
+        Kc1: Optional[float] = None,
+        Kc2: Optional[float] = None,
+        phi_ani: Optional[float] = None,
         g: float = 2.0,
         phi: Optional[float] = None,
         D: Optional[float] = None,
@@ -426,6 +429,9 @@ class DispersionPlotAccessor:
             "Aex": Aex if Aex is not None else auto_params.get("Aex"),
             "d":   d   if d   is not None else auto_params.get("d"),
             "Ku":  Ku  if Ku  is not None else (auto_params.get("Ku") or 0.0),
+            "Kc1": Kc1 if Kc1 is not None else (auto_params.get("Kc1") or 0.0),
+            "Kc2": Kc2 if Kc2 is not None else (auto_params.get("Kc2") or 0.0),
+            "phi_ani": phi_ani if phi_ani is not None else (auto_params.get("phi_ani") or 0.0),
             "g":   g,
         }
 
@@ -461,6 +467,9 @@ class DispersionPlotAccessor:
             d=effective["d"],
             Aex=effective["Aex"],
             Ku=effective["Ku"],
+            Kc1=effective["Kc1"],
+            Kc2=effective["Kc2"],
+            phi_ani=effective["phi_ani"],
             g=effective["g"],
         )
 
