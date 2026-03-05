@@ -601,23 +601,24 @@ class DispersionAnalyzeAccessor:
     def find_branches(
         self,
         *,
-        n_branches: int = 5,
+        n_branches: int = 3,
         side: str = "both",
-        min_prominence: float = 0.02,
-        min_peak_distance: int = 3,
+        min_prominence_log: float = 0.3,
+        min_peak_distance: int = 5,
         max_df_ghz: float = 0.5,
-        min_branch_length: int = 10,
-        smooth_sigma: Optional[float] = 2.0,
+        min_branch_length: int = 20,
+        noise_floor_percentile: float = 5.0,
+        min_quality: float = 0.10,
+        smooth_sigma: Optional[float] = 3.0,
         fmin_hz: float | str | None = "auto",
         k_min_rad_um: float = 0.0,
         k_max_rad_um: Optional[float] = None,
     ) -> "BranchesResult":
         """Detect multiple dispersion branches via Hungarian peak linking.
 
-        For each k-bin, detects up to *n_branches* spectral peaks, then
-        links them across adjacent k-bins using optimal assignment
-        (``scipy.optimize.linear_sum_assignment``).  This correctly
-        resolves mode crossings and tracks multiple branches simultaneously.
+        Peak detection works in **log₁₀(S)** space to handle the wide
+        dynamic range of dispersion data (typically 5–7 orders of magnitude).
+        Peaks are linked across k-bins using the Hungarian algorithm.
 
         Parameters
         ----------
@@ -625,14 +626,18 @@ class DispersionAnalyzeAccessor:
             Maximum number of peaks to detect per k-bin.
         side : ``"positive"`` | ``"negative"`` | ``"both"``
             Which half of the k-axis to search.
-        min_prominence : float
-            Relative prominence threshold for peak detection.
+        min_prominence_log : float
+            Peak prominence in log₁₀(S) units (default: 0.3 ≈ factor-of-2).
         min_peak_distance : int
             Minimum frequency bins between detected peaks.
         max_df_ghz : float
             Maximum allowed frequency jump [GHz] between adjacent k-bins.
         min_branch_length : int
             Discard branches shorter than this many points.
+        noise_floor_percentile : float
+            Percentile of S used as noise floor (default: 5).
+        min_quality : float
+            Discard branches below this quality score (default: 0.10).
         smooth_sigma : float or None
             Gaussian smoothing sigma (k-bins) on final branches.
         fmin_hz : float, ``"auto"``, or None
@@ -658,10 +663,12 @@ class DispersionAnalyzeAccessor:
             self._result,
             n_branches=n_branches,
             side=side,
-            min_prominence=min_prominence,
+            min_prominence_log=min_prominence_log,
             min_peak_distance=min_peak_distance,
             max_df_ghz=max_df_ghz,
             min_branch_length=min_branch_length,
+            noise_floor_percentile=noise_floor_percentile,
+            min_quality=min_quality,
             smooth_sigma=smooth_sigma,
             fmin_hz=fmin_hz,
             k_min_rad_um=k_min_rad_um,

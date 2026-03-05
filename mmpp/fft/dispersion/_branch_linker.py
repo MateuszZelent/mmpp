@@ -43,18 +43,25 @@ def _find_peaks_column(
     f_axis: np.ndarray,
     *,
     n_peaks: int = 3,
-    min_prominence_rel: float = 0.05,
+    min_prominence_log: float = 0.3,
     min_distance_bins: int = 5,
     fmin_hz: float = 0.0,
-    global_max: float = 1.0,
+    noise_floor: float = 0.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Find up to *n_peaks* spectral peaks in a single k‑bin.
 
+    Works in **log₁₀(S)** space so that peaks at high |k| (where S is
+    orders of magnitude weaker) are detected just as reliably as at k≈0.
+
     Parameters
     ----------
-    global_max : float
-        The *global* S maximum across ALL k-bins, used to set a proper
-        prominence threshold (not just the local column max).
+    min_prominence_log : float
+        Minimum prominence in log₁₀(S) units (default: 0.3 ≈ factor-of-2
+        above the local baseline).  A value of 1.0 would require the peak
+        to be 10× above its neighbours.
+    noise_floor : float
+        Absolute floor below which the spectrum is considered pure noise
+        (in linear S units).  Columns whose max < noise_floor return no peaks.
 
     Returns (f_peak_hz, amplitudes) sorted by amplitude descending.
     """
@@ -66,41 +73,42 @@ def _find_peaks_column(
         return np.array([]), np.array([])
 
     col_max = float(spec.max())
-    if col_max <= 0:
+    if col_max <= 0 or col_max < noise_floor:
         return np.array([]), np.array([])
 
-    # Use GLOBAL max for prominence — avoids detecting noise peaks
-    # in k-bins where the signal is inherently weak.
-    prominence = min_prominence_rel * global_max
+    # Work in log scale — key insight for wide dynamic range data
+    spec_log = np.log10(np.maximum(spec, 1e-30))
 
     try:
         from scipy.signal import find_peaks as _scipy_find_peaks
 
         idx, props = _scipy_find_peaks(
-            spec,
+            spec_log,
             distance=min_distance_bins,
-            prominence=prominence,
+            prominence=min_prominence_log,
         )
     except ImportError:
+        # Fallback: simple local-max scan in log space
         idx = []
-        for i in range(1, len(spec) - 1):
-            if spec[i] > spec[i - 1] and spec[i] > spec[i + 1]:
-                if spec[i] > prominence:
+        for i in range(1, len(spec_log) - 1):
+            if spec_log[i] > spec_log[i - 1] and spec_log[i] > spec_log[i + 1]:
+                # Rough prominence check: compare to min of neighbours
+                local_base = min(spec_log[max(0, i-3):i].min(),
+                                 spec_log[i+1:min(len(spec_log), i+4)].min())
+                if spec_log[i] - local_base >= min_prominence_log:
                     idx.append(i)
         idx = np.asarray(idx, dtype=int)
 
     if len(idx) == 0:
-        # Only return global max if it's above the prominence threshold
-        if col_max >= prominence:
-            idx = np.array([int(np.argmax(spec))])
-        else:
-            return np.array([]), np.array([])
+        # Always return the dominant peak in the column (it exists since col_max > noise_floor)
+        idx = np.array([int(np.argmax(spec))])
 
-    # Sort by amplitude descending, keep top n_peaks
+    # Sort by amplitude descending (in linear space), keep top n_peaks
     order = np.argsort(spec[idx])[::-1][:n_peaks]
     idx = idx[order]
 
     return f_sub[idx], spec[idx]
+
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -346,12 +354,12 @@ def find_branches(
     *,
     n_branches: int = 3,
     side: str = "both",
-    min_prominence: float = 0.05,
+    min_prominence_log: float = 0.3,
     min_peak_distance: int = 5,
-    max_df_ghz: float = 0.3,
-    min_branch_length: int = 30,
-    min_snr: float = 0.05,
-    min_quality: float = 0.15,
+    max_df_ghz: float = 0.5,
+    min_branch_length: int = 20,
+    noise_floor_percentile: float = 5.0,
+    min_quality: float = 0.10,
     smooth_sigma: Optional[float] = 3.0,
     fmin_hz: Union[float, str, None] = "auto",
     k_min_rad_um: float = 0.0,
@@ -361,9 +369,10 @@ def find_branches(
 
     Algorithm
     ---------
-    1. Compute global SNR threshold. Skip k-bins below *min_snr*.
-    2. For each k-bin, detect up to *n_branches* spectral peaks using
-       prominence relative to the *global* max (not column max).
+    1. Compute noise floor from the *noise_floor_percentile* of S(k,f).
+       k-bins whose max < noise_floor are skipped.
+    2. For each k-bin, detect up to *n_branches* spectral peaks in
+       **log₁₀(S)** space (handles wide dynamic range naturally).
     3. Walk along k (left→right) and link peaks between adjacent bins
        using the Hungarian algorithm with amplitude-weighted cost.
     4. When a peak has no match, a new branch is born.
@@ -382,18 +391,20 @@ def find_branches(
         Max peaks to detect per k-bin (default: 3).
     side : ``"positive"`` | ``"negative"`` | ``"both"``
         Which k-half to search.
-    min_prominence : float
-        Prominence threshold relative to *global* max (default: 0.05 = 5%).
+    min_prominence_log : float
+        Minimum peak prominence in log₁₀(S) units (default: 0.3).
+        0.3 ≈ factor-of-2 above local baseline;  1.0 = 10× above.
     min_peak_distance : int
         Min frequency bins between peaks (default: 5).
     max_df_ghz : float
-        Max allowed frequency jump between adjacent k-bins [GHz] (default: 0.3).
+        Max allowed frequency jump between adjacent k-bins [GHz] (default: 0.5).
     min_branch_length : int
-        Discard branches shorter than this many k-bins (default: 30).
-    min_snr : float
-        SNR gate: skip k-bins where max(S) < min_snr * global_max (default: 0.05).
+        Discard branches shorter than this many k-bins (default: 20).
+    noise_floor_percentile : float
+        Percentile of S used as the absolute noise floor (default: 5).
+        k-bins with max(S) below this level are skipped entirely.
     min_quality : float
-        Discard branches with quality score below this (default: 0.15).
+        Discard branches with quality score below this (default: 0.10).
     smooth_sigma : float or None
         Gaussian smoothing sigma (in k-bins) on final branches (default: 3.0).
     fmin_hz : float, ``"auto"``, or None
@@ -442,23 +453,24 @@ def find_branches(
 
     max_df_hz = max_df_ghz * 1e9
 
-    # ── Global SNR computation ──
-    # Apply fmin_cutoff mask for SNR calculation
+    # ── Noise floor from percentile ──
     fmin_mask = f_pos >= fmin_cutoff
     S_for_snr = S_pos[:, fmin_mask]
-    global_max = float(S_for_snr.max()) if S_for_snr.size > 0 else 1.0
-    snr_threshold = min_snr * global_max
+    if S_for_snr.size > 0:
+        noise_floor = float(np.percentile(S_for_snr[S_for_snr > 0], noise_floor_percentile))
+    else:
+        noise_floor = 0.0
 
-    # Per-k SNR gating: skip noisy k-bins
+    # Per-k noise gating
     row_max = S_for_snr[k_idx].max(axis=1) if S_for_snr.shape[1] > 0 else np.zeros(len(k_idx))
-    snr_pass = row_max >= snr_threshold
+    snr_pass = row_max > noise_floor
 
     logger.info(
-        "Branch search: %d k-bins, %d pass SNR gate (threshold=%.2e, %.1f%% of max)",
-        len(k_idx), int(snr_pass.sum()), snr_threshold, min_snr * 100,
+        "Branch search: %d k-bins, %d pass noise gate (floor=%.2e = P%.0f)",
+        len(k_idx), int(snr_pass.sum()), noise_floor, noise_floor_percentile,
     )
 
-    # ── Phase 1: per-column peak detection ──
+    # ── Phase 1: per-column peak detection (log-scale) ──
     peaks_per_col: List[Tuple[np.ndarray, np.ndarray]] = []
     for col_i, ik in enumerate(k_idx):
         if not snr_pass[col_i]:
@@ -468,10 +480,10 @@ def find_branches(
             S_pos[ik],
             f_pos,
             n_peaks=n_branches,
-            min_prominence_rel=min_prominence,
+            min_prominence_log=min_prominence_log,
             min_distance_bins=min_peak_distance,
             fmin_hz=fmin_cutoff,
-            global_max=global_max,
+            noise_floor=noise_floor,
         )
         peaks_per_col.append((fp, amp))
 
@@ -479,7 +491,7 @@ def find_branches(
     active: dict[int, dict] = {}
     finished: list[dict] = []
     next_id = 0
-    MAX_GAP = 3  # max consecutive misses before terminating a branch
+    MAX_GAP = 8  # max consecutive misses before terminating a branch
 
     for col_i, ik in enumerate(k_idx):
         k_val = k_axis[ik]
