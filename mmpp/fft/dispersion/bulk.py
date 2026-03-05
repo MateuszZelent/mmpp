@@ -272,6 +272,112 @@ class BulkMinimumFrequencyResult:
             return None
         return (self.analytical_f_k0_hz - self.analytical_f_min_hz) / 1e6
 
+    # ------------------------------------------------------------------
+    # Analytical overlay (post-hoc)
+    # ------------------------------------------------------------------
+
+    def add_analytical(
+        self,
+        *,
+        Ms: float,
+        d: float,
+        Aex: float,
+        Ku: float = 0.0,
+        Kc1: float = 0.0,
+        Kc2: float = 0.0,
+        phi: float = np.pi / 2,
+        phi_ani: float = 0.0,
+        g: float = 2.0,
+        model: str = "kalinikos",
+        param_is_mT: bool = False,
+        k_range: tuple[float, float] | None = None,
+        n_k: int = 500,
+        side: str = "positive",
+    ) -> "BulkMinimumFrequencyResult":
+        """Compute analytical dispersion overlay on existing results.
+
+        This avoids re-running the simulation bulk scan — only the
+        lightweight analytical model is evaluated at each parameter value.
+
+        Parameters
+        ----------
+        Ms, d, Aex, Ku, Kc1, Kc2, phi, phi_ani, g
+            Material parameters (same meaning as in ``mmpp.analytical``).
+        model : str
+            Analytical model name (default ``"kalinikos"``).
+        param_is_mT : bool
+            If True, ``param_values`` are in mT and divided by 1000 for T.
+        k_range : tuple, optional
+            ``(k_min, k_max)`` in rad/m.  Default: from simulation k_axes.
+        n_k : int
+            Number of k points (default 500).
+        side : str
+            ``"positive"``, ``"negative"``, or ``"both"``.
+
+        Returns
+        -------
+        self
+            Returns self for chaining: ``bulk.add_analytical(...).plot.f_min_vs_param()``
+        """
+        from mmpp.analytical import dispersion as _an_disp
+
+        model_func = getattr(_an_disp, model, None)
+        if model_func is None:
+            raise ValueError(f"Unknown model {model!r}")
+
+        # Resolve k range
+        if k_range is not None:
+            k_lo, k_hi = k_range
+        elif self.k_axes and self.k_axes[0].size > 0:
+            k_all = self.k_axes[0]
+            if side == "positive":
+                k_lo, k_hi = 0.0, float(k_all.max())
+            elif side == "negative":
+                k_lo, k_hi = float(k_all.min()), 0.0
+            else:
+                k_lo, k_hi = float(k_all.min()), float(k_all.max())
+        else:
+            k_lo, k_hi = 0.0, 10e6
+
+        k_an = np.linspace(k_lo, k_hi, n_k)
+        mat = dict(Ms=Ms, d=d, Aex=Aex, Ku=Ku, Kc1=Kc1, Kc2=Kc2,
+                   phi=phi, phi_ani=phi_ani, g=g)
+
+        an_f_min = np.full(self.n, np.nan)
+        an_k_star = np.full(self.n, np.nan)
+        an_f_k0 = np.full(self.n, np.nan)
+
+        for i in range(self.n):
+            B_val = float(self.param_values[i])
+            if param_is_mT:
+                B_val /= 1000.0
+            B_val = abs(B_val)  # model requires positive B (field magnitude)
+            try:
+                res = model_func(k=k_an, B=B_val, **mat)
+                if side == "positive":
+                    mask = k_an > 0
+                elif side == "negative":
+                    mask = k_an < 0
+                else:
+                    mask = np.ones(len(k_an), dtype=bool)
+
+                f_masked = res.f[mask]
+                k_masked = k_an[mask]
+                idx = int(np.nanargmin(f_masked))
+                an_f_min[i] = f_masked[idx] * 1e9
+                an_k_star[i] = k_masked[idx]
+                an_f_k0[i] = res.f[np.argmin(np.abs(k_an))] * 1e9
+            except Exception:
+                pass
+
+        self.analytical_f_min_hz = an_f_min
+        self.analytical_k_star_rad_m = an_k_star
+        self.analytical_f_k0_hz = an_f_k0
+        self.analytical_model = model
+        self.analytical_params = {**mat, "model": model,
+                                  "param_is_mT": param_is_mT}
+        return self
+
     @property
     def plot(self) -> "BulkMinimumPlotAccessor":
         return BulkMinimumPlotAccessor(self)
@@ -1446,6 +1552,7 @@ def scan_minimum_frequency(
             B_val = float(param_values_arr[i])
             if param_is_mT:
                 B_val = B_val / 1000.0  # mT → T
+            B_val = abs(B_val)  # model requires positive B (field magnitude)
 
             try:
                 res_an = model_func(k=k_an, B=B_val, **an_p)
