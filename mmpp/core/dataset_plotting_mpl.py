@@ -74,6 +74,115 @@ class DatasetPlotMplMixin:
             plt.savefig(str(filename), bbox_inches="tight", pad_inches=0.02)
         return ax
 
+    def _mpl_magnetization_impl(
+        self,
+        *,
+        ax=None,
+        figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
+        dpi: int = 100,
+        multiplier: Optional[float] = None,
+        z: int = 0,
+        t: int = -1,
+        zero: Optional[int] = None,
+        scalar_component: Optional[Union[int, str]] = "mz",
+        vector_vdims: tuple[Optional[Union[int, str]], Optional[Union[int, str]]] = ("mx", "my"),
+        filter_field: Any = "norm",
+        cmap: str = "viridis",
+        colorbar: bool = True,
+        colorbar_label: str = "z-component",
+        quiver_density: int = 20,
+        vector_color: Any = "black",
+        vector_width: float = 0.003,
+        headwidth: float = 3.5,
+        headlength: float = 4.5,
+        headaxislength: float = 4.0,
+        background_color: Optional[str] = "#e9e9ef",
+        cell_grid: bool = False,
+        cell_grid_color: str = "white",
+        cell_grid_alpha: float = 0.12,
+        cell_grid_linewidth: float = 0.35,
+        title: Optional[str] = None,
+        scalar_kwargs: Optional[dict[str, Any]] = None,
+        vector_kwargs: Optional[dict[str, Any]] = None,
+        filename: Optional[str] = None,
+    ):
+        import matplotlib.pyplot as plt
+
+        scalar_kw = {} if scalar_kwargs is None else dict(scalar_kwargs)
+        vector_kw = {} if vector_kwargs is None else dict(vector_kwargs)
+
+        filter_ref = filter_field
+        if isinstance(filter_field, (int, np.integer, str)):
+            filter_ref = (self._dataset, filter_field)
+
+        if ax is None:
+            _, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
+
+        scalar_kw.setdefault("component", scalar_component)
+        scalar_kw.setdefault("cmap", cmap)
+        scalar_kw.setdefault("colorbar", bool(colorbar))
+        scalar_kw.setdefault("colorbar_label", colorbar_label)
+        scalar_kw.setdefault("filter_field", filter_ref)
+        scalar_kw.setdefault("interpolation", "none")
+        scalar_kw.setdefault("title", None if title is None else str(title))
+
+        self._mpl_scalar_impl(
+            z=z,
+            t=t,
+            ax=ax,
+            figsize=figsize,
+            dpi=dpi,
+            multiplier=multiplier,
+            zero=zero,
+            **scalar_kw,
+        )
+
+        vector_kw.setdefault("vdims", vector_vdims)
+        vector_kw.setdefault("use_color", False)
+        vector_kw.setdefault("color", vector_color)
+        vector_kw.setdefault("colorbar", False)
+        vector_kw.setdefault("quiver_density", quiver_density)
+        vector_kw.setdefault("filter_field", filter_ref)
+        vector_kw.setdefault("pivot", "mid")
+        vector_kw.setdefault("width", float(vector_width))
+        vector_kw.setdefault("headwidth", float(headwidth))
+        vector_kw.setdefault("headlength", float(headlength))
+        vector_kw.setdefault("headaxislength", float(headaxislength))
+        vector_kw.setdefault("title", None if title is None else str(title))
+
+        self._mpl_vector_impl(
+            z=z,
+            t=t,
+            ax=ax,
+            figsize=figsize,
+            dpi=dpi,
+            multiplier=multiplier,
+            zero=zero,
+            **vector_kw,
+        )
+
+        if background_color is not None:
+            ax.set_facecolor(str(background_color))
+
+        if cell_grid:
+            frame = self._extract_frame(z=z, t=t, zero=zero)
+            base = self._component_image(frame, scalar_component, default="norm")
+            self._mpl_add_cell_grid(
+                ax,
+                base.shape,
+                multiplier=multiplier,
+                color=cell_grid_color,
+                alpha=float(cell_grid_alpha),
+                linewidth=float(cell_grid_linewidth),
+            )
+
+        if title is not None:
+            ax.set_title(str(title))
+
+        if filename is not None:
+            plt.savefig(str(filename), bbox_inches="tight", pad_inches=0.02)
+        return ax
+
     def _mpl_scalar_impl(
         self,
         *,
@@ -105,7 +214,7 @@ class DatasetPlotMplMixin:
         image = np.asarray(image, dtype=np.float32)
 
         if filter_field is not None:
-            mask = self._coerce_mask(filter_field, image.shape)
+            mask = self._coerce_mask(filter_field, image.shape, t=t, z=z, zero=zero)
             image = np.where(mask, image, np.nan)
 
         if "clim" in imshow_kwargs and (vmin is None and vmax is None):
@@ -233,7 +342,7 @@ class DatasetPlotMplMixin:
         w = np.asarray(vec[:, :, 2], dtype=np.float32) if n_comp >= 3 else np.zeros_like(u)
 
         if filter_field is not None:
-            mask = self._coerce_mask(filter_field, u.shape)
+            mask = self._coerce_mask(filter_field, u.shape, t=t, z=z, zero=zero)
         else:
             mask = np.ones_like(u, dtype=bool)
 
@@ -250,13 +359,14 @@ class DatasetPlotMplMixin:
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
 
-        dx_u, dy_u, _, axis_multiplier, unit_label = self._resolve_plot_geometry(
+        dx_u, dy_u, extent, axis_multiplier, unit_label = self._resolve_plot_geometry(
             u.shape,
             multiplier=multiplier,
         )
+        x0_u, _, y0_u, _ = extent
         x, y = np.meshgrid(
-            np.arange(0, u.shape[1], stepx) * dx_u,
-            np.arange(0, u.shape[0], stepy) * dy_u,
+            x0_u + (np.arange(0, u.shape[1], stepx) + 0.5) * dx_u,
+            y0_u + (np.arange(0, u.shape[0], stepy) + 0.5) * dy_u,
         )
 
         c_ds = None
@@ -289,10 +399,15 @@ class DatasetPlotMplMixin:
                 else:
                     c_full = self._component_image(vec, color_field, default="norm")
             else:
-                c_full = np.asarray(color_field, dtype=np.float32)
-                c_full = np.squeeze(c_full)
-                if c_full.shape != u.shape:
-                    c_full = np.broadcast_to(c_full, u.shape)
+                c_full = self._coerce_scalar_field(
+                    color_field,
+                    u.shape,
+                    t=t,
+                    z=z,
+                    zero=zero,
+                    component=None,
+                    default="norm",
+                )
             if use_color:
                 c_ds = np.asarray(c_full[::stepy, ::stepx], dtype=np.float32)
                 c_ds = np.where(mask_ds, c_ds, np.nan)
@@ -380,18 +495,19 @@ class DatasetPlotMplMixin:
         image = np.asarray(image, dtype=np.float32)
 
         if filter_field is not None:
-            mask = self._coerce_mask(filter_field, image.shape)
+            mask = self._coerce_mask(filter_field, image.shape, t=t, z=z, zero=zero)
             image = np.where(mask, image, np.nan)
 
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
 
-        dx_u, dy_u, _, _, unit_label = self._resolve_plot_geometry(
+        dx_u, dy_u, extent, _, unit_label = self._resolve_plot_geometry(
             image.shape,
             multiplier=multiplier,
         )
-        x = np.arange(image.shape[1], dtype=np.float32) * dx_u
-        y = np.arange(image.shape[0], dtype=np.float32) * dy_u
+        x0_u, _, y0_u, _ = extent
+        x = x0_u + (np.arange(image.shape[1], dtype=np.float32) + 0.5) * dx_u
+        y = y0_u + (np.arange(image.shape[0], dtype=np.float32) + 0.5) * dy_u
 
         if filled:
             cp = ax.contourf(
@@ -522,6 +638,34 @@ class DatasetPlotMplMixin:
             cbar.ax.set_ylabel(str(colorbar_label))
         return cbar
 
+    def _mpl_add_cell_grid(
+        self,
+        ax,
+        shape_xy: tuple[int, int],
+        *,
+        multiplier: Optional[float] = None,
+        color: str = "white",
+        alpha: float = 0.12,
+        linewidth: float = 0.35,
+    ) -> None:
+        dx_u, dy_u, extent, _, _ = self._resolve_plot_geometry(
+            shape_xy,
+            multiplier=multiplier,
+        )
+        x0_u, x1_u, y0_u, y1_u = extent
+        x_edges = x0_u + np.arange(int(shape_xy[1]) + 1, dtype=np.float32) * dx_u
+        y_edges = y0_u + np.arange(int(shape_xy[0]) + 1, dtype=np.float32) * dy_u
+
+        ax.set_xticks(x_edges, minor=True)
+        ax.set_yticks(y_edges, minor=True)
+        ax.grid(
+            which="minor",
+            color=str(color),
+            linewidth=float(linewidth),
+            alpha=float(alpha),
+        )
+        ax.tick_params(which="minor", length=0)
+
     def _mpl_lightness_impl(
         self,
         *,
@@ -594,7 +738,7 @@ class DatasetPlotMplMixin:
         )
 
         if filter_field is not None:
-            mask = self._coerce_mask(filter_field, hue.shape)
+            mask = self._coerce_mask(filter_field, hue.shape, t=t, z=z, zero=zero)
         else:
             mask = np.ones_like(hue, dtype=bool)
 
@@ -716,9 +860,10 @@ class DatasetPlotMplMixin:
                     stepy=stepy,
                     axis_multiplier=axis_multiplier,
                 )
+                x0_u, _, y0_u, _ = extent
                 x, y = np.meshgrid(
-                    np.arange(0, u.shape[1], stepx) * dx_u,
-                    np.arange(0, u.shape[0], stepy) * dy_u,
+                    x0_u + (np.arange(0, u.shape[1], stepx) + 0.5) * dx_u,
+                    y0_u + (np.arange(0, u.shape[0], stepy) + 0.5) * dy_u,
                 )
 
                 ax.quiver(

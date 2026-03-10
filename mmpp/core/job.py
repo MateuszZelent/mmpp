@@ -14,6 +14,7 @@ from ..cli.logging_config import get_mmpp_logger
 from .constants import SPECIAL_ATTRS, ArraySlice, npf32, npc64, np1d, np2d, np3d, np4d, np5d, np4dc, RICH_AVAILABLE, FFT_AVAILABLE
 from .attributes import AttributesView
 from .dataset import DatasetAwareWrapper
+from .dataset_geometry import AxisGeometry, DatasetGeometry
 
 if RICH_AVAILABLE:
     from rich.console import Console
@@ -78,6 +79,89 @@ class ZarrJobResult:
         self._path_obj = None
         self._name = None
         self._analyze = None
+        self._mock_data = None
+
+    def _build_mock_data_wrapper(self) -> DatasetAwareWrapper:
+        """Create a deterministic in-memory dataset for plotting/debug parity work.
+
+        The geometry follows MuMax3-style positive coordinates: the domain
+        starts at the lower-left-bottom cell corner instead of being centred
+        around the origin.
+        """
+        a, b, c = 5e-9, 3e-9, 2e-9
+        cell = np.array((0.5e-9, 0.5e-9, 0.5e-9), dtype=float)
+        pmin = np.array((0.0, 0.0, 0.0), dtype=float)
+        pmax = np.array((2.0 * a, 2.0 * b, 2.0 * c), dtype=float)
+        counts = np.rint((pmax - pmin) / cell).astype(int)
+
+        xs = pmin[0] + (np.arange(counts[0], dtype=float) + 0.5) * cell[0]
+        ys = pmin[1] + (np.arange(counts[1], dtype=float) + 0.5) * cell[1]
+        zs = pmin[2] + (np.arange(counts[2], dtype=float) + 0.5) * cell[2]
+        zz, yy, xx = np.meshgrid(zs, ys, xs, indexing="ij")
+
+        x_rel = xx - a
+        y_rel = yy - b
+        z_rel = zz - c
+
+        mask = ((x_rel / a) ** 2 + (y_rel / b) ** 2 + (z_rel / c) ** 2) <= 1.0
+        volume_zyxc = np.stack(
+            (-1e9 * y_rel, 1e9 * x_rel, 1e9 * z_rel),
+            axis=-1,
+        ).astype(np.float32)
+        volume_zyxc[~mask] = 0.0
+        data = volume_zyxc[np.newaxis, ...]  # (t, z, y, x, c)
+
+        geometry = DatasetGeometry(
+            shape=tuple(int(v) for v in data.shape),
+            spatial_axes={"x": 3, "y": 2, "z": 1},
+            axes={
+                "x": AxisGeometry(
+                    axis="x",
+                    name="x",
+                    index=3,
+                    size=int(counts[0]),
+                    min_m=float(pmin[0]),
+                    max_m=float(pmax[0]),
+                    cell_m=float(cell[0]),
+                ),
+                "y": AxisGeometry(
+                    axis="y",
+                    name="y",
+                    index=2,
+                    size=int(counts[1]),
+                    min_m=float(pmin[1]),
+                    max_m=float(pmax[1]),
+                    cell_m=float(cell[1]),
+                ),
+                "z": AxisGeometry(
+                    axis="z",
+                    name="z",
+                    index=1,
+                    size=int(counts[2]),
+                    min_m=float(pmin[2]),
+                    max_m=float(pmax[2]),
+                    cell_m=float(cell[2]),
+                ),
+            },
+        )
+
+        wrapper = DatasetAwareWrapper(
+            self,
+            "mock_data",
+            data,
+            geometry_override=geometry,
+        )
+        wrapper.attrs = {
+            "dx": float(cell[0]),
+            "dy": float(cell[1]),
+            "dz": float(cell[2]),
+            "pmin": tuple(float(v) for v in pmin),
+            "pmax": tuple(float(v) for v in pmax),
+            "x_name": "x",
+            "y_name": "y",
+            "z_name": "z",
+        }
+        return wrapper
 
     def _ensure_zarr_loaded(self) -> None:
         """Lazy load zarr group when needed."""
@@ -284,6 +368,18 @@ class ZarrJobResult:
         """List top-level array datasets in this zarr group."""
         self._ensure_zarr_loaded()
         return sorted(list(self._z.array_keys()))
+
+    @property
+    def mock_data(self) -> DatasetAwareWrapper:
+        """Hidden in-memory debug dataset for plotting parity checks.
+
+        This helper is intentionally not stored in the zarr tree and therefore
+        does not appear in ``job.p`` or ``job.datasets``. It is available only
+        through explicit access: ``job.mock_data``.
+        """
+        if self._mock_data is None:
+            self._mock_data = self._build_mock_data_wrapper()
+        return self._mock_data
 
     def keys(self) -> list[str]:
         """List top-level members (datasets and groups) in this zarr group."""

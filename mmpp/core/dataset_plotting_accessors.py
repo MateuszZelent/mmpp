@@ -33,6 +33,9 @@ class _DatasetMatplotlibPlotAccessor:
     def lightness(self, **kwargs):
         return self._parent._mpl_lightness_impl(**self._with_mpl_defaults(kwargs))
 
+    def magnetization(self, **kwargs):
+        return self._parent._mpl_magnetization_impl(**self._with_mpl_defaults(kwargs))
+
     def snapshot(self, **kwargs):
         return self._parent._snapshot_impl(**self._with_mpl_defaults(kwargs))
 
@@ -54,6 +57,8 @@ class _DatasetMatplotlibPlotAccessor:
              "z, t, repeat, zero, cmap, component, figsize, dpi."),
             (".scalar(**kw)", "Scalar component heatmap", "component, cmap, vmin/vmax, colorbar."),
             (".vector(**kw)", "Vector field quiver plot", "step, scale, color, alpha."),
+            (".magnetization(**kw)", "Micromagnetic 2-D view (scalar + quiver)",
+             "scalar_component='mz', vector_vdims=('mx','my'), filter_field='norm', cell_grid."),
             (".contour(**kw)", "Contour plot of scalar component", "component, levels, cmap, filled."),
             (".lightness(**kw)", "Lightness-based mz visualisation", "Renders mz as lightness."),
             (".heatmap(**kw)", "2-D component heatmap over time", "component, cmap, vmin/vmax, aspect."),
@@ -91,6 +96,14 @@ class _DatasetK3DPlotAccessor:
         """3-D voxels coloured by scalar with arrows overlaid inside."""
         return self._parent._k3d_voxels_vectors_impl(**self._with_k3d_defaults(kwargs))
 
+    def magnetization(self, **kwargs):
+        """Micromagnetic 3-D view: voxel colouring + optional vector overlay."""
+        return self._parent._k3d_magnetization_impl(**self._with_k3d_defaults(kwargs))
+
+    def stack(self, **kwargs):
+        """Overlay multiple physical slices on one k3d plot."""
+        return self._parent._k3d_stack_impl(**self._with_k3d_defaults(kwargs))
+
     def __repr__(self):
         dset = self._parent._dataset.dataset_name
         return f"<DatasetK3DPlotAccessor('{dset}')>"
@@ -98,10 +111,15 @@ class _DatasetK3DPlotAccessor:
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
         return plot_accessor_html("K3D Plot Backend", [
-            (".scalar(**kw)", "3-D scalar voxel plot", "component, cmap, opacity."),
+            (".scalar(**kw)", "3-D scalar voxel plot", "component, cmap, opacity, hide_zeros, grid_from_centers."),
             (".vector(**kw)", "3-D vector field (arrows)", "step, scale, color."),
             (".voxels_vectors(**kw)", "Voxels + arrows — combined 3-D view",
              "scalar_component, cmap, voxel_opacity, quiver_density, vector_scale."),
+            (".magnetization(**kw)", "Micromagnetic default 3-D view",
+             "style='hsl'|'mz'|'norm', show_vectors, voxel_opacity, quiver_density, "
+             "color_field/filter_field can be (wrapper, 'mz')."),
+            (".stack(**kw)", "Overlay multiple physical slices on one scene",
+             "axis, positions, mode='magnetization'|'vector'|'scalar', slice_kwargs."),
             (".nonzero(**kw)", "Plot non-zero voxels", "threshold, color."),
             (".heatmap(**kw)", "3-D heatmap", "component, cmap."),
         ], accent="#059669", title_color="#34d399")

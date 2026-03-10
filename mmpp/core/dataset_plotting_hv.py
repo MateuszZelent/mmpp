@@ -79,7 +79,13 @@ class DatasetPlotHVMixin:
                 copy=False,
             )
             if filter_field is not None:
-                mask = self._coerce_mask(filter_field, image.shape)
+                mask = self._coerce_mask(
+                    filter_field,
+                    image.shape,
+                    t=t_local,
+                    z=z_local,
+                    zero=zero,
+                )
                 image = np.where(mask, image, np.nan)
 
             _, _, extent, _, unit = self._resolve_plot_geometry(
@@ -194,7 +200,13 @@ class DatasetPlotHVMixin:
             )
 
             if filter_field is not None:
-                mask = self._coerce_mask(filter_field, u.shape)
+                mask = self._coerce_mask(
+                    filter_field,
+                    u.shape,
+                    t=t_local,
+                    z=z_local,
+                    zero=zero,
+                )
             else:
                 mask = np.ones_like(u, dtype=bool)
 
@@ -275,4 +287,3 @@ class DatasetPlotHVMixin:
             return hv_contours(scalar, levels=max(levels, 2))
         except Exception:
             return scalar
-

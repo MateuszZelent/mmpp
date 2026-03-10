@@ -7,6 +7,8 @@ from typing import Any, Optional, Union
 
 import numpy as np
 
+from .dataset_geometry import _dataset_attrs
+
 class DatasetPlotPyVistaMixin:
     @staticmethod
     def _pyvista_import():
@@ -42,7 +44,7 @@ class DatasetPlotPyVistaMixin:
             )
 
         nz, ny, nx = scalar.shape
-        attrs = getattr(self._dataset.job_result, "attrs", {})
+        attrs = _dataset_attrs(self._dataset)
         if hasattr(attrs, "get"):
             dx = float(attrs.get("dx", 1e-9))
             dy = float(attrs.get("dy", 1e-9))
@@ -93,7 +95,7 @@ class DatasetPlotPyVistaMixin:
 
         mask = (np.abs(scalar) > float(threshold)).astype(np.float32)
         nz, ny, nx = mask.shape
-        attrs = getattr(self._dataset.job_result, "attrs", {})
+        attrs = _dataset_attrs(self._dataset)
         if hasattr(attrs, "get"):
             dx = float(attrs.get("dx", 1e-9))
             dy = float(attrs.get("dy", 1e-9))
@@ -215,7 +217,7 @@ class DatasetPlotPyVistaMixin:
             else np.zeros_like(xx, dtype=np.float32)
         )
 
-        attrs = getattr(self._dataset.job_result, "attrs", {})
+        attrs = _dataset_attrs(self._dataset)
         if hasattr(attrs, "get"):
             dx = float(attrs.get("dx", 1e-9))
             dy = float(attrs.get("dy", 1e-9))
@@ -270,4 +272,3 @@ class DatasetPlotPyVistaMixin:
         if show and plotter is None:
             p.show()
         return p
-

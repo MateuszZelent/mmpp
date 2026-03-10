@@ -72,6 +72,10 @@ class DatasetPlotAccessor(
         """Convenience alias for ``plot.mpl.lightness(...)``."""
         return self.mpl.lightness(**kwargs)
 
+    def magnetization(self, **kwargs):
+        """Convenience alias for ``plot.mpl.magnetization(...)``."""
+        return self.mpl.magnetization(**kwargs)
+
     def heatmap(self, **kwargs):
         """Convenience alias for ``plot.mpl.heatmap(...)``."""
         return self.mpl.heatmap(**kwargs)
@@ -83,7 +87,7 @@ class DatasetPlotAccessor(
     def __repr__(self):
         dset = self._dataset.dataset_name
         return (
-            f"<DatasetPlotAccessor('{dset}'): .snapshot(), .scalar(), .vector(), "
+            f"<DatasetPlotAccessor('{dset}'): .snapshot(), .scalar(), .vector(), .magnetization(), "
             ".contour(), .lightness(), .heatmap(), .interactive(), .animate(), "
             ".mpl, .k3d, .hv, .pyvista>"
         )
@@ -103,6 +107,9 @@ class DatasetPlotAccessor(
             (".vector(**kw)",
              "Vector field quiver plot (delegates to .mpl.vector)",
              "step: arrow spacing, scale: arrow size, color, alpha."),
+            (".magnetization(**kw)",
+             "Micromagnetic 2-D view (delegates to .mpl.magnetization)",
+             "scalar_component='mz', vector_vdims=('mx','my'), filter_field='norm', cell_grid."),
             (".contour(**kw)",
              "Contour plot of scalar component",
              "component, levels, cmap, filled."),
@@ -112,6 +119,13 @@ class DatasetPlotAccessor(
             (".heatmap(**kw)",
              "2-D heatmap of selected component over time",
              "component, cmap, vmin/vmax, aspect."),
+            (".k3d.magnetization(**kw)",
+             "Micromagnetic 3-D view with voxel colouring and vectors",
+             "style='hsl'|'mz'|'norm', show_vectors, voxel_opacity, quiver_density, "
+             "color_field/filter_field can be (wrapper, 'mz')."),
+            (".k3d.stack(**kw)",
+             "Overlay multiple physical slices on one k3d scene",
+             "axis, positions, mode='magnetization'|'vector'|'scalar', slice_kwargs."),
         ], footer=(
             "Backends: <code style='color:#bae6fd;'>.mpl</code>, "
             "<code style='color:#bae6fd;'>.k3d</code>, "

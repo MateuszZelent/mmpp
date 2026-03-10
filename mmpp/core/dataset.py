@@ -6,6 +6,13 @@ from html import escape as _html_escape
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from .constants import ArraySlice, FFT_AVAILABLE, RICH_AVAILABLE
+from .dataset_geometry import (
+    compose_index_keys,
+    has_only_simple_slices,
+    normalize_index_key,
+    resolve_dataset_geometry,
+    shape_after_index,
+)
 
 if TYPE_CHECKING:
     from .job import ZarrJobResult
@@ -392,16 +399,44 @@ class DatasetAwareWrapper:
         zarr_array,
         slice_info=None,
         materialized_data: Optional[np.ndarray] = None,
+        geometry_override=None,
     ):
         self.job_result = job_result
         self.dataset_name = dataset_name
         self.zarr_array = zarr_array
         self.slice_info = slice_info  # Store slicing information
         self._materialized_data = materialized_data
+        self._geometry_override = geometry_override
         self._fft = None
         self._solitons = None
         self._analyze = None
         self._plot = None
+
+    def _base_shape(self) -> tuple[int, ...]:
+        """Shape of the immediate backing store before ``slice_info``."""
+        if self._materialized_data is not None:
+            return tuple(int(v) for v in np.asarray(self._materialized_data).shape)
+
+        shape = getattr(self.zarr_array, "shape", None)
+        if shape is not None:
+            return tuple(int(v) for v in shape)
+
+        resolved = self._resolve_source()
+        shape = getattr(resolved, "shape", None)
+        if shape is None:
+            raise AttributeError("Cannot determine source shape for dataset wrapper")
+        return tuple(int(v) for v in shape)
+
+    def _current_shape(self) -> tuple[int, ...]:
+        """Shape of the current view without forcing zarr materialization."""
+        base_shape = self._base_shape()
+        if self.slice_info is None:
+            return base_shape
+        try:
+            return shape_after_index(base_shape, self.slice_info)
+        except Exception:
+            resolved = self._resolve_source()
+            return tuple(int(v) for v in getattr(resolved, "shape", ()))
 
     def _resolve_source(self):
         """Return underlying data respecting the stored slice."""
@@ -416,7 +451,7 @@ class DatasetAwareWrapper:
     def __getattr__(self, name):
         """Delegate to zarr_array for most attributes (but not our own properties)"""
         # Don't delegate properties that are defined on this class
-        if name in ('dt', 'fft', 'analyze', 'shape', 'data', 'plot'):
+        if name in ("dt", "fft", "analyze", "shape", "data", "plot", "geometry", "region", "cell"):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
         
         if self._materialized_data is not None:
@@ -448,35 +483,7 @@ class DatasetAwareWrapper:
         tuple
             Normalized indexing tuple with integers converted to single-item slices
         """
-        # Handle single element (not tuple)
-        if not isinstance(key, tuple):
-            key = (key,)
-        
-        # Expand Ellipsis to fill missing dimensions
-        # Count non-ellipsis elements to determine how many dims ellipsis should expand to
-        n_ellipsis = sum(1 for k in key if k is Ellipsis)
-        if n_ellipsis > 1:
-            raise IndexError("an index can only have a single ellipsis ('...')")
-        
-        if n_ellipsis == 1:
-            # Find ellipsis position and expand it
-            ellipsis_idx = key.index(Ellipsis)
-            n_explicit = len(key) - 1  # excluding ellipsis
-            n_expand = max(0, ndim - n_explicit)
-            expanded = key[:ellipsis_idx] + (slice(None),) * n_expand + key[ellipsis_idx + 1:]
-            key = expanded
-        
-        # Now convert integers to single-item slices
-        result = []
-        for k in key:
-            if isinstance(k, (int, np.integer)):
-                # Convert integer index to slice to keep dimension
-                # Handle negative indices
-                result.append(slice(k, k + 1 if k != -1 else None))
-            else:
-                result.append(k)
-        
-        return tuple(result)
+        return normalize_index_key(key, ndim, keep_dims=True)
 
     def __getitem__(self, key):
         """Return new DatasetAwareWrapper with slicing info preserved.
@@ -489,37 +496,54 @@ class DatasetAwareWrapper:
         This means the number of dimensions is always preserved after slicing.
         Use .squeeze() or .numpy(squeeze=True) to remove singleton dimensions.
         """
-        source = self._resolve_source()
-        source_shape = source.shape
+        source_shape = self._current_shape()
         ndim = len(source_shape)
         
         # Normalize the slice to keep dimensions
         normalized_key = self._normalize_slice_to_keep_dims(key, ndim)
         
         if self._materialized_data is not None:
-            sliced = np.asarray(source[normalized_key])
+            sliced = np.asarray(self._materialized_data[normalized_key])
+            geometry_override = None
+            try:
+                geometry_override = self.geometry.sliced(normalized_key)
+            except Exception:
+                geometry_override = self._geometry_override
             return DatasetAwareWrapper(
                 self.job_result,
                 self.dataset_name,
                 self.zarr_array,
                 slice_info=None,
                 materialized_data=sliced,
+                geometry_override=geometry_override,
             )
 
-        # Combine with existing slice if present
-        if self.slice_info is not None:
-            # For now, we don't support chained slicing - use the new slice directly
-            # This could be enhanced in the future to properly compose slices
-            combined_slice = normalized_key
-        else:
-            combined_slice = normalized_key
+        if not has_only_simple_slices(normalized_key, ndim):
+            sliced = np.asarray(self._resolve_source()[normalized_key])
+            geometry_override = None
+            try:
+                geometry_override = self.geometry.sliced(normalized_key)
+            except Exception:
+                geometry_override = self._geometry_override
+            return DatasetAwareWrapper(
+                self.job_result,
+                self.dataset_name,
+                self.zarr_array,
+                slice_info=None,
+                materialized_data=sliced,
+                geometry_override=geometry_override,
+            )
+
+        base_shape = self._base_shape()
+        combined_slice = compose_index_keys(self.slice_info, normalized_key, base_shape)
 
         return DatasetAwareWrapper(
             self.job_result,
             self.dataset_name,
             self.zarr_array,  # Keep original zarr reference
-                slice_info=combined_slice,
-                materialized_data=None,
+            slice_info=combined_slice,
+            materialized_data=None,
+            geometry_override=self._geometry_override,
         )
 
     @property
@@ -585,12 +609,25 @@ class DatasetAwareWrapper:
     @property
     def shape(self):
         """Shape accounting for slicing"""
-        if self._materialized_data is not None:
-            return self._resolve_source().shape
-        if self.slice_info is not None:
-            sliced_data = self._resolve_source()
-            return sliced_data.shape
-        return self.zarr_array.shape
+        return self._current_shape()
+
+    @property
+    def geometry(self):
+        """Physical geometry of the current dataset view."""
+        return resolve_dataset_geometry(self, include_slice=True)
+
+    @property
+    def region(self):
+        """Alias for ``geometry`` for field-style workflows."""
+        return self.geometry
+
+    @property
+    def cell(self):
+        """Spatial cell size of the current dataset view in meters."""
+        geometry = self.geometry
+        if not geometry.axes:
+            return None
+        return geometry.cell_xyz_m()
 
     @property
     def dt(self):
@@ -674,6 +711,102 @@ class DatasetAwareWrapper:
     def to_numpy(self, **kwargs):
         """Alias for numpy() to match common API naming."""
         return self.numpy(**kwargs)
+
+    @staticmethod
+    def _normalize_frame_token(token: Any, *, axis: str):
+        if token is None:
+            return slice(None)
+        if isinstance(token, slice):
+            return token
+        if isinstance(token, (tuple, list)):
+            if len(token) == 2:
+                return slice(token[0], token[1])
+            if len(token) == 3:
+                return slice(token[0], token[1], token[2])
+            raise ValueError(
+                f"frame selection for axis {axis!r} must have length 2 or 3, got {len(token)}"
+            )
+        if isinstance(token, (int, np.integer)) and not isinstance(token, bool):
+            return int(token)
+        raise TypeError(
+            f"Unsupported frame selection for axis {axis!r}: {token!r}. "
+            "Use int, slice, None, or (start, stop[, step])."
+        )
+
+    def frame(
+        self,
+        *,
+        t: Any = 0,
+        z: Any = 0,
+        y: Any = None,
+        x: Any = None,
+        c: Any = None,
+    ) -> "DatasetAwareWrapper":
+        """Create an exact index-based analysis view without materialising the full dataset.
+
+        This is intended for large simulation datasets such as ``m``, where plotting
+        should start from an explicit ``t/z/y/x`` subset rather than from the whole field.
+
+        Examples
+        --------
+        >>> view = job[0].m.frame(t=0, z=0, y=(0, 100), x=(0, 300))
+        >>> view.plot.mpl.magnetization(multiplier=1e-9)
+        """
+        shape = self._current_shape()
+        ndim = len(shape)
+        y_key = self._normalize_frame_token(y, axis="y")
+        x_key = self._normalize_frame_token(x, axis="x")
+        c_key = self._normalize_frame_token(c, axis="c")
+
+        if ndim == 5:
+            return self[
+                self._normalize_frame_token(t, axis="t"),
+                self._normalize_frame_token(z, axis="z"),
+                y_key,
+                x_key,
+                c_key,
+            ]
+
+        if ndim == 4:
+            if int(shape[-1]) <= 4:
+                if z not in (None, 0):
+                    raise ValueError(
+                        "frame(z=...) is not available on a 4D vector view shaped like (t, y, x, c); "
+                        "slice z earlier or call frame(...) on the original 5D dataset."
+                    )
+                return self[
+                    self._normalize_frame_token(t, axis="t"),
+                    y_key,
+                    x_key,
+                    c_key,
+                ]
+            return self[
+                self._normalize_frame_token(t, axis="t"),
+                self._normalize_frame_token(z, axis="z"),
+                y_key,
+                x_key,
+            ]
+
+        if ndim == 3:
+            if int(shape[-1]) <= 4:
+                if t not in (None, 0) or z not in (None, 0):
+                    raise ValueError(
+                        "frame(t=..., z=...) is not available on a 3D vector plane shaped like (y, x, c)."
+                    )
+                return self[y_key, x_key, c_key]
+            if t not in (None, 0):
+                raise ValueError(
+                    "frame(t=...) is not available on a 3D scalar volume shaped like (z, y, x)."
+                )
+            return self[
+                self._normalize_frame_token(z, axis="z"),
+                y_key,
+                x_key,
+            ]
+
+        raise ValueError(
+            f"frame(...) expects a 3D, 4D, or 5D dataset view, got shape {shape}"
+        )
 
     @staticmethod
     def _normalize_downsample_spec(spec: tuple[Any, ...], ndim: int) -> tuple[Optional[int], ...]:
@@ -816,13 +949,75 @@ class DatasetAwareWrapper:
                 strict=bool(strict),
             )
 
+        geometry_override = None
+        try:
+            geometry_override = self.geometry.resampled(tuple(reduced.shape))
+        except Exception:
+            geometry_override = None
+
         return DatasetAwareWrapper(
             self.job_result,
             self.dataset_name,
             self.zarr_array,
             slice_info=None,
             materialized_data=np.asarray(reduced, dtype=np.float32),
+            geometry_override=geometry_override,
         )
+
+    def sel(self, *axes: str, **coords: Any) -> "DatasetAwareWrapper":
+        """Select spatial region using physical coordinates, similar to discretisedfield.
+
+        Examples
+        --------
+        >>> job[0].m.sel("z")
+        >>> job[0].m.sel(x=25e-9, z=(0.0, 5e-9))
+        """
+        geometry = self.geometry
+        if geometry.spatial_axes is None or not geometry.axes:
+            raise TypeError(
+                f"Dataset '{self.dataset_name}' has no resolvable spatial geometry for sel(...)"
+            )
+
+        selections: dict[str, Any] = {}
+        for axis in axes:
+            canonical = geometry.canonical_axis(axis)
+            if canonical in selections:
+                raise ValueError(f"Axis {axis!r} specified more than once")
+            selections[canonical] = "__center__"
+
+        for axis, value in coords.items():
+            canonical = geometry.canonical_axis(axis)
+            if canonical in selections:
+                raise ValueError(f"Axis {axis!r} specified more than once")
+            selections[canonical] = value
+
+        if not selections:
+            return self
+
+        key = [slice(None)] * len(self.shape)
+        for axis, value in selections.items():
+            axis_geom = geometry.axes[axis]
+            if value == "__center__":
+                key[axis_geom.index] = axis_geom.center_slice()
+                continue
+            if isinstance(value, slice):
+                key[axis_geom.index] = value
+                continue
+            if isinstance(value, (tuple, list)) and len(value) == 2:
+                key[axis_geom.index] = axis_geom.select_range(
+                    float(value[0]),
+                    float(value[1]),
+                )
+                continue
+            if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+                key[axis_geom.index] = axis_geom.select_value(float(value))
+                continue
+            raise TypeError(
+                f"Unsupported selection for axis {axis!r}: {value!r}. "
+                "Use an axis name, scalar coordinate, or (min, max) tuple."
+            )
+
+        return self[tuple(key)]
 
     def as_zarr(self):
         """Return the underlying zarr.Array when no slicing is active."""

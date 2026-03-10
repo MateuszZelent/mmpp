@@ -7,6 +7,8 @@ from typing import Any, Optional, Union
 
 import numpy as np
 
+from .dataset_geometry import _dataset_attrs, resolve_dataset_geometry
+
 class DatasetPlotCoreMixin:
     _SI_PREFIX_BY_EXP = {
         -15: "f",
@@ -29,7 +31,7 @@ class DatasetPlotCoreMixin:
         return int(np.clip(idx, 0, max(size - 1, 0)))
 
     def _resolve_dx_dy_nm(self) -> tuple[float, float]:
-        attrs = getattr(self._dataset.job_result, "attrs", {})
+        attrs = _dataset_attrs(self._dataset)
         if hasattr(attrs, "get"):
             dx = float(attrs.get("dx", 1e-9))
             dy = float(attrs.get("dy", 1e-9))
@@ -39,7 +41,7 @@ class DatasetPlotCoreMixin:
         return dx * 1e9, dy * 1e9
 
     def _resolve_dx_dy_m(self) -> tuple[float, float]:
-        attrs = getattr(self._dataset.job_result, "attrs", {})
+        attrs = _dataset_attrs(self._dataset)
         if hasattr(attrs, "get"):
             dx = float(attrs.get("dx", 1e-9))
             dy = float(attrs.get("dy", 1e-9))
@@ -49,7 +51,7 @@ class DatasetPlotCoreMixin:
         return dx, dy
 
     def _resolve_axis_names(self) -> tuple[str, str]:
-        attrs = getattr(self._dataset.job_result, "attrs", {})
+        attrs = _dataset_attrs(self._dataset)
         if hasattr(attrs, "get"):
             x_name = str(attrs.get("x_name", "x"))
             y_name = str(attrs.get("y_name", "y"))
@@ -91,13 +93,32 @@ class DatasetPlotCoreMixin:
         *,
         multiplier: Optional[float] = None,
     ) -> tuple[float, float, tuple[float, float, float, float], float, str]:
-        dx_m, dy_m = self._resolve_dx_dy_m()
         ny, nx = int(shape_xy[0]), int(shape_xy[1])
+        geometry = resolve_dataset_geometry(self._dataset, include_slice=True)
+
+        if geometry.axes:
+            x_min_m = float(geometry.axes["x"].min_m)
+            y_min_m = float(geometry.axes["y"].min_m)
+            dx_m = float(geometry.axes["x"].cell_m)
+            dy_m = float(geometry.axes["y"].cell_m)
+        else:
+            dx_m, dy_m = self._resolve_dx_dy_m()
+            x_min_m = 0.0
+            y_min_m = 0.0
+
         size_x = float(nx) * dx_m
         size_y = float(ny) * dy_m
 
         if multiplier is None:
-            m = self._auto_si_multiplier((size_x, size_y))
+            if geometry.axes:
+                m = self._auto_si_multiplier(
+                    (
+                        float(geometry.axes["x"].extent_m),
+                        float(geometry.axes["y"].extent_m),
+                    )
+                )
+            else:
+                m = self._auto_si_multiplier((size_x, size_y))
         else:
             m = float(multiplier)
             if m <= 0:
@@ -105,7 +126,14 @@ class DatasetPlotCoreMixin:
 
         dx_u = dx_m / m
         dy_u = dy_m / m
-        extent = (0.0, float(nx) * dx_u, 0.0, float(ny) * dy_u)
+        x_min_u = float(x_min_m / m)
+        y_min_u = float(y_min_m / m)
+        extent = (
+            x_min_u,
+            x_min_u + float(nx) * dx_u,
+            y_min_u,
+            y_min_u + float(ny) * dy_u,
+        )
         unit_label = self._unit_label_from_multiplier(m)
         return dx_u, dy_u, extent, m, unit_label
 
@@ -120,8 +148,10 @@ class DatasetPlotCoreMixin:
         z: int = 0,
         t: int = -1,
         zero: Optional[int] = None,
+        dataset_obj=None,
     ) -> np.ndarray:
-        data = self._dataset.numpy(copy=False, squeeze=False)
+        dataset = self._dataset if dataset_obj is None else dataset_obj
+        data = dataset.numpy(copy=False, squeeze=False)
         arr = np.asarray(data, dtype=np.float32)
         ndim = arr.ndim
 
@@ -160,8 +190,10 @@ class DatasetPlotCoreMixin:
         *,
         z: int = 0,
         zero: Optional[int] = None,
+        dataset_obj=None,
     ) -> np.ndarray:
-        data = self._dataset.numpy(copy=False, squeeze=False)
+        dataset = self._dataset if dataset_obj is None else dataset_obj
+        data = dataset.numpy(copy=False, squeeze=False)
         arr = np.asarray(data, dtype=np.float32)
 
         if arr.ndim == 5:
@@ -190,7 +222,7 @@ class DatasetPlotCoreMixin:
             return seq
 
         # No explicit time axis: wrap as single-frame sequence.
-        frame = self._extract_frame(z=z, t=-1, zero=None)
+        frame = self._extract_frame(z=z, t=-1, zero=None, dataset_obj=dataset)
         if zero is not None:
             frame = frame - frame
         return frame[np.newaxis, ...]
@@ -200,9 +232,11 @@ class DatasetPlotCoreMixin:
         *,
         t: int = -1,
         zero: Optional[int] = None,
+        dataset_obj=None,
     ) -> np.ndarray:
         """Extract 3d (scalar) or 4d (vector) volume for volumetric plotting."""
-        data = self._dataset.numpy(copy=False, squeeze=False)
+        dataset = self._dataset if dataset_obj is None else dataset_obj
+        data = dataset.numpy(copy=False, squeeze=False)
         arr = np.asarray(data, dtype=np.float32)
 
         if arr.ndim == 5:
@@ -286,31 +320,199 @@ class DatasetPlotCoreMixin:
         )
 
     @staticmethod
-    def _coerce_mask(mask_like: Any, target_shape: tuple[int, ...]) -> np.ndarray:
+    def _unwrap_field_like_component(
+        field_like: Any,
+        component: Optional[Union[int, str]] = None,
+    ) -> tuple[Any, Optional[Union[int, str]]]:
+        """Unpack compact field spec ``(field_like, component)`` if provided."""
+        source = field_like
+        comp = component
+
+        if (
+            comp is None
+            and isinstance(field_like, tuple)
+            and len(field_like) == 2
+            and isinstance(field_like[1], (int, np.integer, str))
+        ):
+            source, comp = field_like
+
+        return source, comp
+
+    @staticmethod
+    def _spatial_axes_for_ndim(dataset_obj: Any, spatial_ndim: int):
+        geometry = getattr(dataset_obj, "geometry", None)
+        if geometry is None or not getattr(geometry, "axes", None):
+            return None
+        if int(spatial_ndim) == 2:
+            return (geometry.axes["y"], geometry.axes["x"])
+        if int(spatial_ndim) == 3:
+            return (geometry.axes["z"], geometry.axes["y"], geometry.axes["x"])
+        return None
+
+    @staticmethod
+    def _split_target_shape_and_repeat(
+        target_shape: tuple[int, ...],
+        base_shape: tuple[int, ...],
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        if len(target_shape) != len(base_shape):
+            return tuple(int(v) for v in target_shape), (1,) * len(target_shape)
+
+        repeat: list[int] = []
+        for target, base in zip(target_shape, base_shape):
+            target_i = int(target)
+            base_i = int(base)
+            if base_i <= 0 or target_i <= 0 or target_i % base_i != 0:
+                return tuple(int(v) for v in target_shape), (1,) * len(target_shape)
+            repeat.append(target_i // base_i)
+
+        return tuple(int(v) for v in base_shape), tuple(int(v) for v in repeat)
+
+    @staticmethod
+    def _resample_scalar_by_geometry(
+        scalar: np.ndarray,
+        *,
+        source_axes,
+        target_axes,
+        target_shape: tuple[int, ...],
+    ) -> np.ndarray:
+        arr = np.asarray(scalar, dtype=np.float32)
+        expected = tuple(int(ax.size) for ax in source_axes)
+        if arr.shape != expected:
+            raise ValueError(
+                f"Source scalar shape {arr.shape} does not match source geometry {expected}"
+            )
+
+        target_base_shape = tuple(int(ax.size) for ax in target_axes)
+        effective_shape, repeats = DatasetPlotCoreMixin._split_target_shape_and_repeat(
+            target_shape,
+            target_base_shape,
+        )
+
+        resampled = arr
+        for axis, (target_axis, source_axis) in enumerate(zip(target_axes, source_axes)):
+            count = int(effective_shape[axis])
+            centers = float(target_axis.min_m) + (
+                np.arange(count, dtype=np.float32) + 0.5
+            ) * float(target_axis.cell_m)
+            source_cell = max(float(source_axis.cell_m), 1e-30)
+            indices = np.floor(
+                (centers - float(source_axis.min_m)) / source_cell
+            ).astype(int)
+            indices = np.clip(indices, 0, max(int(source_axis.size) - 1, 0))
+            resampled = np.take(resampled, indices, axis=axis)
+
+        if any(int(rep) > 1 for rep in repeats):
+            resampled = np.tile(resampled, repeats)
+        return np.asarray(resampled, dtype=np.float32)
+
+    def _coerce_scalar_field(
+        self,
+        field_like: Any,
+        target_shape: tuple[int, ...],
+        *,
+        t: int = -1,
+        z: int = 0,
+        zero: Optional[int] = None,
+        component: Optional[Union[int, str]] = None,
+        default: str = "norm",
+    ) -> np.ndarray:
+        field_like, component = self._unwrap_field_like_component(field_like, component)
+        spatial_ndim = len(target_shape)
+        if spatial_ndim not in {2, 3}:
+            raise ValueError(f"Only 2D/3D scalar coercion is supported, got {target_shape}")
+
+        source_axes = None
+        if hasattr(field_like, "numpy"):
+            if spatial_ndim == 2:
+                source = self._extract_frame(
+                    z=z,
+                    t=t,
+                    zero=zero,
+                    dataset_obj=field_like,
+                )
+                scalar = self._component_image(source, component, default=default)
+            else:
+                source = self._extract_volume(
+                    t=t,
+                    zero=zero,
+                    dataset_obj=field_like,
+                )
+                scalar = self._component_volume(source, component, default=default)
+            source_axes = self._spatial_axes_for_ndim(field_like, spatial_ndim)
+        else:
+            scalar = np.asarray(field_like, dtype=np.float32)
+            scalar = np.squeeze(scalar)
+            if scalar.ndim == spatial_ndim + 1 and scalar.shape[-1] <= 4:
+                if spatial_ndim == 2:
+                    scalar = self._component_image(scalar, component, default=default)
+                else:
+                    scalar = self._component_volume(scalar, component, default=default)
+
+        scalar = np.asarray(scalar, dtype=np.float32)
+        target_shape = tuple(int(v) for v in target_shape)
+        if scalar.shape == target_shape:
+            return scalar
+
+        target_axes = self._spatial_axes_for_ndim(self._dataset, spatial_ndim)
+        if source_axes is not None and target_axes is not None:
+            return self._resample_scalar_by_geometry(
+                scalar,
+                source_axes=source_axes,
+                target_axes=target_axes,
+                target_shape=target_shape,
+            )
+
+        try:
+            return np.asarray(np.broadcast_to(scalar, target_shape), dtype=np.float32)
+        except ValueError as exc:
+            raise ValueError(
+                f"Field shape {scalar.shape} is not compatible with target shape {target_shape}"
+            ) from exc
+
+    def _coerce_mask(
+        self,
+        mask_like: Any,
+        target_shape: tuple[int, ...],
+        *,
+        t: int = -1,
+        z: int = 0,
+        zero: Optional[int] = None,
+    ) -> np.ndarray:
         """Convert mask-like input to boolean array broadcastable to target shape."""
         if mask_like is None:
             return np.ones(target_shape, dtype=bool)
 
-        raw = mask_like.numpy(copy=False, squeeze=False) if hasattr(mask_like, "numpy") else mask_like
-        mask = np.asarray(raw, dtype=np.float32)
-        mask = np.squeeze(mask)
+        mask_like, component = self._unwrap_field_like_component(mask_like, None)
 
-        # If vector mask is provided, use its norm.
-        if mask.ndim == len(target_shape) + 1 and mask.shape[-1] <= 4:
-            mask = np.linalg.norm(mask[..., : min(3, mask.shape[-1])], axis=-1)
+        if hasattr(mask_like, "numpy"):
+            mask = self._coerce_scalar_field(
+                mask_like,
+                target_shape,
+                t=t,
+                z=z,
+                zero=zero,
+                component=component,
+                default="norm",
+            )
+            return np.asarray(mask != 0, dtype=bool)
 
-        if mask.shape != target_shape:
+        raw = np.asarray(mask_like, dtype=np.float32)
+        raw = np.squeeze(raw)
+        if raw.ndim == len(target_shape) + 1 and raw.shape[-1] <= 4:
+            raw = np.linalg.norm(raw[..., : min(3, raw.shape[-1])], axis=-1)
+
+        if raw.shape != target_shape:
             try:
-                mask = np.broadcast_to(mask, target_shape)
+                raw = np.broadcast_to(raw, target_shape)
             except ValueError as exc:
                 raise ValueError(
-                    f"Mask shape {mask.shape} is not broadcastable to target shape {target_shape}"
+                    f"Mask shape {raw.shape} is not broadcastable to target shape {target_shape}"
                 ) from exc
 
-        return np.asarray(mask != 0, dtype=bool)
+        return np.asarray(raw != 0, dtype=bool)
 
     def _resolve_dxyz_nm(self) -> tuple[float, float, float]:
-        attrs = getattr(self._dataset.job_result, "attrs", {})
+        attrs = _dataset_attrs(self._dataset)
         if hasattr(attrs, "get"):
             dx = float(attrs.get("dx", 1e-9))
             dy = float(attrs.get("dy", 1e-9))
@@ -587,4 +789,3 @@ class DatasetPlotCoreMixin:
                 plot -= obj
             except Exception:
                 continue
-
