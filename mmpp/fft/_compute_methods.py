@@ -38,13 +38,24 @@ def run_fft_method1(
     apply_window: Callable[[np.ndarray, str], np.ndarray],
     compute_fft: Callable[..., tuple[np.ndarray, np.ndarray, int]],
 ) -> MethodExecutionResult:
-    """FFT method 1: filter+window -> FFT -> spatial average."""
+    """FFT method 1: filter -> spatial average -> window -> FFT.
+
+    Averages the magnetization over space first, then computes FFT
+    on the spatially-averaged time series.  Each component is kept
+    separately (only y, x axes are averaged).
+    """
     start_time = time.time()
     selected_engine = engine or determine_engine(data.size)
 
     data_filtered = apply_filter(data, filter_type)
-    data_windowed = apply_window(data_filtered, window)
+    if data_filtered.ndim > 2:
+        # Average over spatial axes (y, x), keep time (0) and component (-1)
+        spatial_axes = tuple(range(1, data_filtered.ndim - 1))
+        data_averaged = np.mean(data_filtered, axis=spatial_axes) if spatial_axes else data_filtered
+    else:
+        data_averaged = data_filtered
 
+    data_windowed = apply_window(data_averaged, window)
     frequencies, fft_data, fft_length = compute_fft(
         data_windowed,
         dt,
@@ -53,19 +64,9 @@ def run_fft_method1(
         nfft=nfft,
     )
 
-    spectrum = fft_data
-    if spectrum.ndim > 2:
-        spatial_axes = tuple(range(1, spectrum.ndim - 1))
-        if spatial_axes:
-            # Average POWER spectra (|FFT|²) per pixel, then take sqrt.
-            # This is physically different from method 2 (average signal, then FFT)
-            # because <|FFT(x_i)|²> ≠ |FFT(<x_i>)|² in general.
-            power = np.abs(spectrum) ** 2
-            spectrum = np.sqrt(np.mean(power, axis=spatial_axes))
-
     return MethodExecutionResult(
         frequencies=frequencies,
-        spectrum=spectrum,
+        spectrum=fft_data,
         fft_length=fft_length,
         selected_engine=selected_engine,
         calculation_time=time.time() - start_time,
@@ -86,18 +87,20 @@ def run_fft_method2(
     apply_window: Callable[[np.ndarray, str], np.ndarray],
     compute_fft: Callable[..., tuple[np.ndarray, np.ndarray, int]],
 ) -> MethodExecutionResult:
-    """FFT method 2: filter -> spatial average -> window -> FFT."""
+    """FFT method 2: filter+window -> FFT per pixel -> spatial average of |FFT|².
+
+    Computes FFT for every pixel independently, then averages the
+    power spectra (|FFT|²) over space.  Each component is kept
+    separately (only y, x axes are averaged).  The result is real-valued
+    sqrt(mean(|FFT|²)) so that downstream ``np.abs(spectrum)**2``
+    still recovers the averaged power.
+    """
     start_time = time.time()
     selected_engine = engine or determine_engine(data.size)
 
     data_filtered = apply_filter(data, filter_type)
-    if data_filtered.ndim > 2:
-        spatial_axes = tuple(range(1, data_filtered.ndim - 1))
-        data_averaged = np.mean(data_filtered, axis=spatial_axes) if spatial_axes else data_filtered
-    else:
-        data_averaged = data_filtered
+    data_windowed = apply_window(data_filtered, window)
 
-    data_windowed = apply_window(data_averaged, window)
     frequencies, fft_data, fft_length = compute_fft(
         data_windowed,
         dt,
@@ -106,9 +109,20 @@ def run_fft_method2(
         nfft=nfft,
     )
 
+    spectrum = fft_data
+    if spectrum.ndim > 2:
+        # Average over spatial axes (y, x), keep freq (0) and component (-1)
+        spatial_axes = tuple(range(1, spectrum.ndim - 1))
+        if spatial_axes:
+            # Average POWER spectra (|FFT|²) per pixel, then take sqrt.
+            # This is physically different from method 1 (average signal, then FFT)
+            # because <|FFT(x_i)|²> ≠ |FFT(<x_i>)|² in general.
+            power = np.abs(spectrum) ** 2
+            spectrum = np.sqrt(np.mean(power, axis=spatial_axes))
+
     return MethodExecutionResult(
         frequencies=frequencies,
-        spectrum=fft_data,
+        spectrum=spectrum,
         fft_length=fft_length,
         selected_engine=selected_engine,
         calculation_time=time.time() - start_time,
@@ -145,4 +159,3 @@ def build_fft_metadata(
         ),
         "fft_length": fft_length,
     }
-

@@ -54,7 +54,7 @@ class _SpectrumQuickPlot:
 
         # ── compute params (forwarded to spectrum()) ─────────────
         compute_params = [
-            ("method", "1", "1: per-pixel FFT → avg power; 2: avg signal → FFT"),
+            ("method", "1", "1: avg signal → FFT; 2: per-pixel FFT → avg |FFT|²"),
             ("dset", "'m'", "Dataset name"),
             ("z_layer", "-1", "Z-layer index"),
             ("tmin / tmax", "None", "Time range (indices)"),
@@ -188,7 +188,7 @@ class SpectrumHelper:
 
         groups: list[tuple[str, list[tuple[str, str]]]] = [
             ("Compute Parameters", [
-                ("method", "1: per-pixel FFT → avg |FFT|²;  2: avg signal → FFT (default: 1)"),
+                ("method", "1: avg signal → FFT;  2: per-pixel FFT → avg |FFT|² (default: 1)"),
                 ("dset", "Dataset name (default: 'm')"),
                 ("z_layer", "Z-layer index (default: -1, last layer)"),
                 ("tmin / tmax", "Time range as indices"),

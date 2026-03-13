@@ -503,7 +503,7 @@ class FFTCompute:
         zero_padding: bool = True,
         nfft: Optional[int] = None,
     ) -> FFTComputeResult:
-        """FFT Method 1: apply filter+window, FFT, then spatial averaging."""
+        """FFT Method 1: filter, spatial averaging, window, then FFT."""
         execution = run_fft_method1(
             data=data,
             dt=dt,
@@ -554,7 +554,7 @@ class FFTCompute:
         zero_padding: bool = True,
         nfft: Optional[int] = None,
     ) -> FFTComputeResult:
-        """FFT Method 2: apply filter, spatial averaging, window, then FFT."""
+        """FFT Method 2: filter+window, FFT per pixel, then spatial average of |FFT|²."""
         execution = run_fft_method2(
             data=data,
             dt=dt,
