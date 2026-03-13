@@ -57,7 +57,11 @@ def run_fft_method1(
     if spectrum.ndim > 2:
         spatial_axes = tuple(range(1, spectrum.ndim - 1))
         if spatial_axes:
-            spectrum = np.mean(spectrum, axis=spatial_axes)
+            # Average POWER spectra (|FFT|²) per pixel, then take sqrt.
+            # This is physically different from method 2 (average signal, then FFT)
+            # because <|FFT(x_i)|²> ≠ |FFT(<x_i>)|² in general.
+            power = np.abs(spectrum) ** 2
+            spectrum = np.sqrt(np.mean(power, axis=spatial_axes))
 
     return MethodExecutionResult(
         frequencies=frequencies,
