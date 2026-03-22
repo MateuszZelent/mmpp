@@ -257,6 +257,7 @@ class STBatchPlotAccessor:
              "as_ghz: convert to GHz."),
         ])
 
+@dataclass
 class ThieleForceBalanceResult:
     """Force decomposition from the Thiele equation on a tracked trajectory."""
 

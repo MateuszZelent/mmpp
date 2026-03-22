@@ -11,12 +11,19 @@ This script demonstrates the new batch operations capabilities:
 import os
 import sys
 
+import matplotlib
+import numpy as np
+import zarr
+
+matplotlib.use("Agg")
+
 # Add the current directory to Python path for testing
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from mmpp.batch_operations import BatchOperations
     from mmpp.core import MMPP, ZarrJobResult
+    from mmpp.plotting import PlotterProxy
 
     print("✅ Successfully imported MMPP classes")
 except ImportError as e:
@@ -172,6 +179,120 @@ def demonstrate_usage():
         print(f"   ⚠️  Would work with real FFT: {e}")
 
     print("\n✅ All syntax patterns are supported!")
+
+
+def _make_find_job(tmp_path):
+    root = tmp_path / "find_batch_ops"
+    root.mkdir()
+
+    for idx, current in enumerate((2.0, 3.0)):
+        zarr_path = root / f"case_{idx}.zarr"
+        group = zarr.open_group(str(zarr_path), mode="w")
+        group.create_dataset(
+            "m",
+            data=np.zeros((2, 1, 1, 1, 3), dtype=np.float32),
+            chunks=(2, 1, 1, 1, 3),
+        )
+        group.attrs["addoe"] = 1
+        group.attrs["i_pillar_ma"] = current
+        group.attrs["ni"] = 256
+        group.attrs["dx"] = 2e-9
+        group.attrs["dy"] = 2e-9
+        group.attrs["t_sampl"] = 1e-12
+
+    return MMPP(str(root))
+
+
+def _make_find_vortex_job(tmp_path):
+    root = tmp_path / "find_batch_vortex"
+    root.mkdir()
+
+    time = np.arange(512, dtype=float) * 5e-12
+    diameter = 256e-9
+
+    for idx, current in enumerate((2.0, 3.0, 4.0)):
+        zarr_path = root / f"vortex_case_{idx}.zarr"
+        group = zarr.open_group(str(zarr_path), mode="w")
+        table = group.create_group("table")
+
+        base_radius = (1.5 + idx) * 1e-9
+        x = base_radius * np.cos(2.0 * np.pi * 0.45e9 * time)
+        y = base_radius * np.sin(2.0 * np.pi * 0.45e9 * time)
+
+        table.create_dataset("t", data=time, chunks=time.shape)
+        table.create_dataset("ext_coreposx", data=x, chunks=x.shape)
+        table.create_dataset("ext_coreposy", data=y, chunks=y.shape)
+        table.create_dataset("ext_coreposz", data=np.ones_like(time), chunks=time.shape)
+
+        group.attrs["addoe"] = 1
+        group.attrs["i_pillar_ma"] = current
+        group.attrs["ni"] = 256
+        group.attrs["D"] = diameter
+        group.attrs["dx"] = 2e-9
+        group.attrs["dy"] = 2e-9
+        group.attrs["t_sampl"] = 5e-12
+
+    return MMPP(str(root))
+
+
+def test_find_returns_batch_operations_and_preserves_plotting(tmp_path):
+    job = _make_find_job(tmp_path)
+
+    found = job.find(addoe=1)
+
+    assert isinstance(found, BatchOperations)
+    assert len(found) == 2
+    assert found.get_summary()["count"] == 2
+    assert found[0].path.endswith(".zarr")
+    assert isinstance(found[:1], BatchOperations)
+    assert hasattr(found, "mpl")
+    assert hasattr(found, "plot")
+    assert hasattr(found, "fft")
+
+
+def test_plotter_proxy_remains_batch_compatible(tmp_path):
+    job = _make_find_job(tmp_path)
+
+    compat = PlotterProxy(job.zarr_results, job)
+
+    assert isinstance(compat, BatchOperations)
+    assert hasattr(compat, "mpl")
+    assert hasattr(compat, "fft")
+    assert hasattr(compat, "get")
+    assert callable(compat.process)
+
+
+def test_batch_operations_expose_solitons_vortex_namespace(tmp_path):
+    job = _make_find_vortex_job(tmp_path)
+
+    found = job.find(addoe=1)
+    summary = found.solitons.vortex.summary(show_progress=False)
+    spectrum_map = found.solitons.vortex.spectrum_map(show_progress=False)
+
+    assert isinstance(found, BatchOperations)
+    assert hasattr(found, "solitons")
+    assert hasattr(found, "vortex")
+    assert len(summary) == 3
+    assert "regime" in summary.columns
+    assert "peak_gyr_ghz" in summary.columns
+    assert spectrum_map.coordinate.shape == (3,)
+    assert spectrum_map.power.shape[0] == 3
+    assert spectrum_map.power.shape[1] > 0
+
+
+def test_batch_vortex_plot_accessor(tmp_path):
+    job = _make_find_vortex_job(tmp_path)
+    found = job.find(addoe=1)
+
+    fig, axes, frame = found.vortex.plt.dashboard(show_progress=False)
+    regime_ax = found.vortex.plt.regimes(show_progress=False)
+    spectrum_ax = found.vortex.plt.spectrum_map(show_progress=False)
+
+    assert frame.shape[0] == 3
+    assert axes.shape == (2, 2)
+    assert hasattr(fig, "axes")
+    assert hasattr(regime_ax, "scatter")
+    assert hasattr(spectrum_ax, "pcolormesh")
 
 
 if __name__ == "__main__":

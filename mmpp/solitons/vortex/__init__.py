@@ -1,6 +1,7 @@
 """Vortex analysis namespace."""
 
 from ._utils import XYConvention, grid_xy
+from .autofit import AutofitConfig, AutofitInterface, VortexAutofitResult
 from .config import (
     EnergyConfig,
     ModesConfig,
@@ -17,6 +18,11 @@ from .interface import VortexInterface
 from .model import VortexModelInterface
 from .numerical.energy import EnergyInterface
 from .numerical.signals import SignalsInterface
+from .plotting import (
+    VortexAnalyticalComparison,
+    VortexOrbitPlotHandle,
+    VortexPlotInterface,
+)
 
 __all__ = [
     "VortexInterface",
@@ -35,4 +41,10 @@ __all__ = [
     "NonlinearConfig",
     "SignalsConfig",
     "EnergyConfig",
+    "VortexPlotInterface",
+    "VortexOrbitPlotHandle",
+    "VortexAnalyticalComparison",
+    "AutofitInterface",
+    "AutofitConfig",
+    "VortexAutofitResult",
 ]

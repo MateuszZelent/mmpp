@@ -29,6 +29,7 @@ dependencies = [
     "pandas>=1.3.0",
     "matplotlib>=3.5.0",
     "zarr>=3.0.0",
+    "h5py>=3.0.0",
     "rich",
     "tqdm",
     "PyYAML>=5.4.0",

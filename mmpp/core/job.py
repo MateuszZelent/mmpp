@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..pyzfn import Pyzfn
+from ..pyzfn.h5_backend import detect_h5_quantities
 from ..cli.logging_config import get_mmpp_logger
 from .constants import SPECIAL_ATTRS, ArraySlice, npf32, npc64, np1d, np2d, np3d, np4d, np5d, np4dc, RICH_AVAILABLE, FFT_AVAILABLE
 from .attributes import AttributesView
@@ -76,6 +77,7 @@ class ZarrJobResult:
         self.attributes = attributes
         self._mmpp_ref = None
         self._z = None
+        self._h5_groups: dict | None = None
         self._path_obj = None
         self._name = None
         self._analyze = None
@@ -175,10 +177,18 @@ class ZarrJobResult:
             self._z = z
             self._path_obj = Path(self.path).absolute()
             self._name = self._path_obj.name.replace(self._path_obj.suffix, "")
+            # Detect H5-backed quantities (amumax H5 storage mode)
+            self._h5_groups = detect_h5_quantities(self.path)
 
     def _get_zarr_member(self, key: str) -> Union[zarr.Array, zarr.Group]:
-        """Safely retrieve a dataset or subgroup from the underlying zarr store."""
+        """Safely retrieve a dataset or subgroup from the underlying zarr store.
+
+        H5-backed quantities (from amumax H5 storage mode) are checked first.
+        """
         self._ensure_zarr_loaded()
+        # Check H5-backed quantities first
+        if self._h5_groups and key in self._h5_groups:
+            return self._h5_groups[key]
         try:
             return self._z[key]
         except KeyError as exc:
@@ -356,18 +366,23 @@ class ZarrJobResult:
         return AttributesView(self._z.attrs)
 
     def __contains__(self, key: str) -> bool:
-        """Return True if key exists as dataset/group or attribute."""
+        """Return True if key exists as dataset/group, attribute, or H5 quantity."""
         self._ensure_zarr_loaded()
         try:
+            if self._h5_groups and key in self._h5_groups:
+                return True
             return key in self._z or key in self._z.attrs
         except Exception:
             return False
 
     @property
     def datasets(self) -> list[str]:
-        """List top-level array datasets in this zarr group."""
+        """List top-level array datasets in this zarr group (including H5-backed)."""
         self._ensure_zarr_loaded()
-        return sorted(list(self._z.array_keys()))
+        names = set(self._z.array_keys())
+        if self._h5_groups:
+            names.update(self._h5_groups.keys())
+        return sorted(names)
 
     @property
     def mock_data(self) -> DatasetAwareWrapper:
@@ -382,9 +397,12 @@ class ZarrJobResult:
         return self._mock_data
 
     def keys(self) -> list[str]:
-        """List top-level members (datasets and groups) in this zarr group."""
+        """List top-level members (datasets, groups, and H5 quantities)."""
         self._ensure_zarr_loaded()
-        return list(self._z.keys())
+        names = set(self._z.keys())
+        if self._h5_groups:
+            names.update(self._h5_groups.keys())
+        return sorted(names)
 
     def has_dataset(self, name: str) -> bool:
         """Check if a dataset (zarr.Array) with given name exists.
@@ -530,6 +548,7 @@ class ZarrJobResult:
         """
         Get raw zarr dataset or data using direct indexing.
         Handles datasets with special characters (like minus) in names.
+        Also supports H5-backed quantities from amumax H5 storage mode.
 
         Parameters:
         -----------
@@ -551,6 +570,13 @@ class ZarrJobResult:
         data = result.get_raw("m_z5-8", slice(0, 100))
         """
         self._ensure_zarr_loaded()
+        # Check H5-backed quantities first
+        if self._h5_groups and dset in self._h5_groups:
+            dataset = self._h5_groups[dset]
+            if slices == slice(None):
+                return dataset
+            else:
+                return dataset[slices]
         try:
             # Direct access using zarr indexing
             dataset = self._z[dset]
@@ -814,6 +840,11 @@ class ZarrJobResult:
         return SolitonInterface(self, self._mmpp_ref)
 
     @property
+    def vortex(self):
+        """Shortcut alias for ``self.solitons.vortex``."""
+        return self.solitons.vortex
+
+    @property
     def analyze(self):
         """Get unified analysis namespace for this result."""
         if self._analyze is None:
@@ -835,5 +866,43 @@ class ZarrJobResult:
         str
             Name of the largest m dataset (e.g., "m_z5-8", "m-12", or fallback "m")
         """
-        from ..plotting import _find_largest_m_dataset
-        return _find_largest_m_dataset(self.path)
+        try:
+            self._ensure_zarr_loaded()
+            available_keys = list(self._z.keys())
+
+            m_datasets = []
+            for key in available_keys:
+                if key.startswith("m") and not key.startswith("m_"):
+                    m_datasets.append(key)
+                elif key.startswith("m_"):
+                    m_datasets.append(key)
+
+            if not m_datasets:
+                log.warning(f"No m datasets found in {self.path}, using fallback 'm'")
+                return "m"
+
+            largest_dataset = "m"
+            largest_time_size = 0
+
+            for dataset_name in m_datasets:
+                try:
+                    dataset = self._z[dataset_name]
+                    if hasattr(dataset, "shape") and len(dataset.shape) >= 1:
+                        time_size = dataset.shape[0]
+                        if time_size > largest_time_size:
+                            largest_time_size = time_size
+                            largest_dataset = dataset_name
+                except Exception as e:
+                    log.debug(f"Could not check dataset {dataset_name}: {e}")
+                    continue
+
+            log.info(
+                f"Auto-selected dataset '{largest_dataset}' with {largest_time_size} time steps"
+            )
+            return largest_dataset
+
+        except Exception as e:
+            log.warning(
+                f"Error finding largest m dataset in {self.path}: {e}, using fallback 'm'"
+            )
+            return "m"

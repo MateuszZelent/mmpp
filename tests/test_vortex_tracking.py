@@ -83,6 +83,46 @@ def _create_job(tmp_path, data: np.ndarray, *, dx: float, dy: float, dt: float):
     return ZarrJobResult(str(zarr_path), {})
 
 
+def _create_table_job(
+    tmp_path,
+    *,
+    x: np.ndarray,
+    y: np.ndarray,
+    t: np.ndarray,
+    polarity_signal: np.ndarray | None = None,
+):
+    zarr_path = tmp_path / "vortex_tracking_table_only.zarr"
+    z = zarr.open(str(zarr_path), mode="w")
+    table = z.create_group("table")
+    table.create_dataset("ext_coreposx", data=np.asarray(x, dtype=float))
+    table.create_dataset("ext_coreposy", data=np.asarray(y, dtype=float))
+    table.create_dataset("t", data=np.asarray(t, dtype=float))
+    if polarity_signal is not None:
+        table.create_dataset("ext_coreposz", data=np.asarray(polarity_signal, dtype=float))
+    dt = float(np.median(np.diff(t))) if np.asarray(t).size >= 2 else 1e-12
+    z.attrs["dx"] = 1e-9
+    z.attrs["dy"] = 1e-9
+    z.attrs["t_sampl"] = dt
+    return ZarrJobResult(str(zarr_path), {})
+
+
+def _attach_table_corepos(
+    job: ZarrJobResult,
+    *,
+    x: np.ndarray,
+    y: np.ndarray,
+    t: np.ndarray,
+    polarity_signal: np.ndarray | None = None,
+):
+    z = zarr.open(job.path, mode="a")
+    table = z.create_group("table")
+    table.create_dataset("ext_coreposx", data=np.asarray(x, dtype=float))
+    table.create_dataset("ext_coreposy", data=np.asarray(y, dtype=float))
+    table.create_dataset("t", data=np.asarray(t, dtype=float))
+    if polarity_signal is not None:
+        table.create_dataset("ext_coreposz", data=np.asarray(polarity_signal, dtype=float))
+
+
 @pytest.mark.parametrize(
     "method,max_rmse",
     [
@@ -276,3 +316,52 @@ def test_polarity_series_contains_switch_metadata():
     assert len(traj.metadata["switch_times_s"]) >= 1
     assert int(traj.polarity[0]) == 1
     assert int(traj.polarity[-1]) == -1
+
+
+def test_table_tracking_auto_supports_table_only_jobs(tmp_path):
+    t = np.linspace(0.0, 40e-9, 129)
+    x = 8e-9 * np.cos(2.0 * np.pi * 0.7e9 * t)
+    y = 5e-9 * np.sin(2.0 * np.pi * 0.7e9 * t)
+    polarity_signal = np.ones_like(t)
+    polarity_signal[t >= 20e-9] = -1.0
+
+    job = _create_table_job(
+        tmp_path,
+        x=x,
+        y=y,
+        t=t,
+        polarity_signal=polarity_signal,
+    )
+
+    traj = job.solitons.vortex.track()
+
+    assert traj.method == "table"
+    assert np.allclose(traj.time, t)
+    assert np.allclose(traj.x, x)
+    assert np.allclose(traj.y, y)
+    assert traj.metadata["source"] == "table"
+    assert traj.metadata["requested_method"] == "auto"
+    assert traj.metadata["x_column"] == "ext_coreposx"
+    assert traj.metadata["y_column"] == "ext_coreposy"
+    assert traj.metadata["polarity_column"] == "ext_coreposz"
+    assert traj.metadata["p_switch_count"] >= 1
+    assert int(traj.polarity[0]) == 1
+    assert int(traj.polarity[-1]) == -1
+
+
+def test_auto_prefers_time_resolved_dataset_when_available(tmp_path):
+    data, x_expected, y_expected, dx, dy, dt = _make_orbit_data(nt=32)
+    job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    t = np.arange(x_expected.size, dtype=float) * dt
+    _attach_table_corepos(
+        job,
+        x=x_expected + 50e-9,
+        y=y_expected - 50e-9,
+        t=t,
+        polarity_signal=np.ones_like(t),
+    )
+
+    traj = job.solitons.vortex.track()
+
+    assert traj.metadata["source"] == "dataset"
+    assert traj.metadata["requested_method"] == "auto"

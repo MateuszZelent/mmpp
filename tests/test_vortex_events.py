@@ -65,6 +65,24 @@ def _create_job(tmp_path, name: str, data: np.ndarray, *, dx: float, dy: float, 
     return ZarrJobResult(str(zarr_path), {})
 
 
+def _create_table_only_job(tmp_path, name: str, *, dt: float = 8.0e-12, diameter: float = 80.0e-9):
+    zarr_path = tmp_path / f"{name}.zarr"
+    z = zarr.open(str(zarr_path), mode="w")
+    table = z.create_group("table")
+    t = np.arange(16, dtype=float) * dt
+    zeros = np.zeros_like(t)
+    ones = np.ones_like(t)
+    table.create_dataset("t", data=t, chunks=t.shape)
+    table.create_dataset("ext_coreposx", data=zeros, chunks=zeros.shape)
+    table.create_dataset("ext_coreposy", data=zeros, chunks=zeros.shape)
+    table.create_dataset("ext_coreposz", data=ones, chunks=ones.shape)
+    z.attrs["dx"] = 1.0e-9
+    z.attrs["dy"] = 1.0e-9
+    z.attrs["t_sampl"] = dt
+    z.attrs["D"] = diameter
+    return ZarrJobResult(str(zarr_path), {})
+
+
 def test_events_polarity_switch_detection_and_timeline_plot(tmp_path):
     data, dx, dy, dt = _make_polarity_switch_data()
     job = _create_job(tmp_path, "vortex_events_switch", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
@@ -175,3 +193,28 @@ def test_events_core_expulsion_detection(tmp_path):
     assert len(events) >= 1
     assert events[0].radius >= events[0].threshold
     assert events[0].time >= 0.0
+
+
+def test_events_core_expulsion_infers_radius_from_diameter_attr(tmp_path):
+    job = _create_table_only_job(tmp_path, "vortex_events_table_radius", diameter=80.0e-9)
+
+    time = np.linspace(0.0, 8.0e-9, 200)
+    radius = np.linspace(1.0e-9, 39.0e-9, 200)
+    traj = TrajectoryResult(
+        time=time,
+        x=radius,
+        y=np.zeros_like(radius),
+        polarity=np.ones_like(time, dtype=int),
+        method="synthetic",
+        confidence=np.ones_like(time, dtype=float),
+        metadata={"source": "test"},
+    )
+
+    events = job.solitons.vortex.events.core_expulsions(
+        trajectory=traj,
+        expulsion_ratio=0.95,
+        refractory=0.0,
+    )
+
+    assert len(events) >= 1
+    assert abs(events[0].threshold - 38.0e-9) < 1e-12

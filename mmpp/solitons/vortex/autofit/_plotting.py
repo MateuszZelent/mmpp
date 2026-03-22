@@ -1,0 +1,538 @@
+"""Plotting accessors and live monitors for autofit diagnostics."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from .._plotting import (
+    apply_axes_style,
+    ensure_axis,
+    pop_axes_style_kwargs,
+    pop_figure_kwargs,
+)
+from .features import extract_features
+
+if TYPE_CHECKING:
+    from .result import VortexAutofitResult
+
+
+def _records_to_arrays(records: list[dict[str, Any]]) -> dict[str, np.ndarray]:
+    if not records:
+        empty = np.array([], dtype=float)
+        return {
+            "eval": empty,
+            "loss": empty,
+            "best_loss": empty,
+            "freq_ghz": empty,
+            "radius_nm": empty,
+            "max_radius_nm": empty,
+            "core_distance_nm": empty,
+            "max_core_distance_nm": empty,
+            "drift_ratio": empty,
+        }
+
+    def _arr(key: str) -> np.ndarray:
+        values = [float(rec.get(key, np.nan)) for rec in records]
+        return np.asarray(values, dtype=float)
+
+    return {
+        "eval": _arr("eval"),
+        "loss": _arr("loss"),
+        "best_loss": _arr("best_loss"),
+        "freq_ghz": _arr("freq_ghz"),
+        "radius_nm": _arr("radius_nm"),
+        "max_radius_nm": _arr("max_radius_nm"),
+        "core_distance_nm": _arr("core_distance_nm"),
+        "max_core_distance_nm": _arr("max_core_distance_nm"),
+        "drift_ratio": _arr("drift_ratio"),
+    }
+
+
+def _text_block_from_record(record: dict[str, Any] | None) -> str:
+    if not record:
+        return "No evaluations yet."
+
+    params = record.get("params", {})
+    lines = [
+        f"eval = {int(record.get('eval', 0))}",
+        f"loss = {float(record.get('loss', np.nan)):.4g}",
+        f"best = {float(record.get('best_loss', np.nan)):.4g}",
+        f"f = {float(record.get('freq_ghz', np.nan)):.4f} GHz",
+        f"r = {float(record.get('radius_nm', np.nan)):.2f} nm",
+        f"rmax = {float(record.get('max_radius_nm', np.nan)):.2f} nm",
+        f"|r| = {float(record.get('core_distance_nm', np.nan)):.2f} nm",
+        f"|r|max = {float(record.get('max_core_distance_nm', np.nan)):.2f} nm",
+        f"drift = {float(record.get('drift_ratio', np.nan)):.3f}",
+    ]
+    for key, value in params.items():
+        if not np.isfinite(float(value)):
+            continue
+        lines.append(f"{key} = {float(value):.4g}")
+    if bool(record.get("edge_limited", False)):
+        hit_time = record.get("edge_hit_time_ns")
+        if hit_time is None or not np.isfinite(float(hit_time)):
+            lines.append("state = edge-limited")
+        else:
+            lines.append(f"state = edge-limited @ {float(hit_time):.2f} ns")
+    return "\n".join(lines)
+
+
+_TABLE_SPECS: tuple[tuple[str, str, float, float, str], ...] = (
+    ("freq_ghz", "f [GHz]", 0.02, 0.05, "{:.4f}"),
+    ("radius_nm", "orbit [nm]", 2.0, 0.12, "{:.2f}"),
+    ("core_distance_nm", "|r| [nm]", 2.0, 0.12, "{:.2f}"),
+    ("max_radius_nm", "orbit max [nm]", 2.0, 0.12, "{:.2f}"),
+    ("max_core_distance_nm", "|r|max [nm]", 2.0, 0.12, "{:.2f}"),
+    ("drift_ratio", "drift [-]", 0.05, 0.10, "{:.3f}"),
+)
+
+
+def _acceptance_label(numerical: float, analytical: float, *, atol: float, rtol: float) -> str:
+    if not np.isfinite(numerical) or not np.isfinite(analytical):
+        return "N/A"
+    delta = abs(float(analytical) - float(numerical))
+    tol = max(float(atol), float(rtol) * max(abs(float(numerical)), 1e-30))
+    return "OK" if delta <= tol else "NO"
+
+
+def _build_comparison_table(
+    *,
+    numerical_features,
+    record: dict[str, Any] | None,
+) -> tuple[list[list[str]], list[str], list[str]]:
+    if numerical_features is None or record is None:
+        return [], [], []
+
+    rows: list[list[str]] = []
+    row_labels: list[str] = []
+    col_labels = ["Numerical", "Analytical", "Delta", "Acceptance"]
+
+    for key, label, atol, rtol, fmt in _TABLE_SPECS:
+        num_value = {
+            "freq_ghz": float(getattr(numerical_features, "dominant_freq_hz", np.nan)) * 1e-9,
+            "radius_nm": float(getattr(numerical_features, "mean_radius", np.nan)) * 1e9,
+            "core_distance_nm": float(getattr(numerical_features, "mean_core_distance", np.nan)) * 1e9,
+            "max_radius_nm": float(getattr(numerical_features, "max_radius", np.nan)) * 1e9,
+            "max_core_distance_nm": float(getattr(numerical_features, "max_core_distance", np.nan)) * 1e9,
+            "drift_ratio": float(getattr(numerical_features, "radius_drift_ratio", np.nan)),
+        }[key]
+        ana_value = float(record.get(key, np.nan))
+        delta = ana_value - num_value if np.isfinite(num_value) and np.isfinite(ana_value) else np.nan
+        rows.append(
+            [
+                fmt.format(num_value) if np.isfinite(num_value) else "N/A",
+                fmt.format(ana_value) if np.isfinite(ana_value) else "N/A",
+                fmt.format(delta) if np.isfinite(delta) else "N/A",
+                _acceptance_label(num_value, ana_value, atol=atol, rtol=rtol),
+            ]
+        )
+        row_labels.append(label)
+
+    return rows, row_labels, col_labels
+
+
+def _draw_dashboard(
+    axes,
+    *,
+    records: list[dict[str, Any]],
+    numerical_features=None,
+    numerical_trajectory=None,
+    analytical_trajectory=None,
+    title: str,
+) -> None:
+    ax_loss, ax_metrics, ax_orbit, ax_text = np.asarray(axes).reshape(-1)[:4]
+    for ax in (ax_loss, ax_metrics, ax_orbit, ax_text):
+        ax.clear()
+
+    arrays = _records_to_arrays(records)
+    last_record = records[-1] if records else None
+
+    if arrays["eval"].size:
+        ax_loss.plot(arrays["eval"], arrays["loss"], color="#94a3b8", linewidth=1.0, label="loss")
+        ax_loss.plot(arrays["eval"], arrays["best_loss"], color="#2563eb", linewidth=1.6, label="best")
+        ax_loss.set_yscale("log")
+        ax_loss.set_xlabel("Evaluation")
+        ax_loss.set_ylabel("Loss")
+        ax_loss.set_title("Convergence")
+        ax_loss.legend(loc="best")
+    else:
+        ax_loss.text(0.5, 0.5, "No evaluations yet", transform=ax_loss.transAxes, ha="center", va="center")
+
+    if arrays["eval"].size:
+        target_freq = float(getattr(numerical_features, "dominant_freq_hz", 0.0)) * 1e-9
+        target_r = float(getattr(numerical_features, "mean_radius", 0.0)) * 1e9
+        target_rmax = float(getattr(numerical_features, "max_radius", 0.0)) * 1e9
+        target_core = float(getattr(numerical_features, "mean_core_distance", 0.0)) * 1e9
+        target_core_max = float(getattr(numerical_features, "max_core_distance", 0.0)) * 1e9
+        target_drift = float(getattr(numerical_features, "radius_drift_ratio", 1.0))
+
+        ax_metrics.plot(arrays["eval"], arrays["freq_ghz"], "o-", color="#2563eb", markersize=3, label="f ana [GHz]")
+        ax_metrics.axhline(target_freq, color="#2563eb", linestyle="--", linewidth=1, alpha=0.6, label="f num")
+
+        ax_metrics.plot(arrays["eval"], arrays["radius_nm"], "o-", color="#dc2626", markersize=3, label="r ana [nm]")
+        ax_metrics.axhline(target_r, color="#dc2626", linestyle="--", linewidth=1, alpha=0.6, label="r num")
+
+        ax_metrics.plot(arrays["eval"], arrays["core_distance_nm"], "o-", color="#16a34a", markersize=3, label="|r| ana [nm]")
+        ax_metrics.axhline(target_core, color="#16a34a", linestyle="--", linewidth=1, alpha=0.6, label="|r| num")
+
+        ax_metrics.plot(arrays["eval"], arrays["max_core_distance_nm"], "o-", color="#ea580c", markersize=3, label="|r|max ana [nm]")
+        ax_metrics.axhline(target_core_max, color="#ea580c", linestyle="--", linewidth=1, alpha=0.4, label="|r|max num")
+
+        ax_metrics.plot(arrays["eval"], arrays["drift_ratio"], "o-", color="#7c3aed", markersize=3, label="drift ana")
+        ax_metrics.axhline(target_drift, color="#7c3aed", linestyle="--", linewidth=1, alpha=0.6, label="drift num")
+
+        ax_metrics.set_xlabel("Evaluation")
+        ax_metrics.set_title("Frequency / orbit / core distance / stability")
+        ax_metrics.legend(loc="best", fontsize=8, ncol=2)
+    else:
+        ax_metrics.text(0.5, 0.5, "No metric history", transform=ax_metrics.transAxes, ha="center", va="center")
+
+    def _centered_xy(traj):
+        if traj is None:
+            return None, None
+        x = np.asarray(traj.x, dtype=float)
+        y = np.asarray(traj.y, dtype=float)
+        if x.size == 0:
+            return x, y
+        return x - float(np.mean(x)), y - float(np.mean(y))
+
+    disk_radius = None
+    if numerical_features is not None:
+        disk_radius = numerical_features.metadata.get("reference_radius")
+    if disk_radius is None and analytical_trajectory is not None:
+        disk_radius = analytical_trajectory.metadata.get("disk_radius")
+    if disk_radius is None and numerical_trajectory is not None:
+        disk_radius = numerical_trajectory.metadata.get("disk_radius")
+
+    from matplotlib.patches import Circle
+
+    if disk_radius is not None and np.isfinite(float(disk_radius)) and float(disk_radius) > 0.0:
+        ax_orbit.add_patch(
+            Circle(
+                (0.0, 0.0),
+                float(disk_radius),
+                facecolor="none",
+                edgecolor="0.35",
+                linestyle=":",
+                linewidth=1.25,
+                label="nanodot radius",
+            )
+        )
+
+    if numerical_trajectory is not None:
+        x_num, y_num = _centered_xy(numerical_trajectory)
+        ax_orbit.plot(x_num, y_num, color="#1d4ed8", linewidth=1.5, label="numerical")
+        if np.asarray(x_num).size:
+            ax_orbit.scatter(
+                [float(np.asarray(x_num)[0])],
+                [float(np.asarray(y_num)[0])],
+                color="#1d4ed8",
+                s=28,
+                zorder=4,
+            )
+    if analytical_trajectory is not None:
+        x_ana, y_ana = _centered_xy(analytical_trajectory)
+        ax_orbit.plot(x_ana, y_ana, color="#dc2626", linestyle="--", linewidth=1.5, label="analytical")
+        if np.asarray(x_ana).size:
+            ax_orbit.scatter(
+                [float(np.asarray(x_ana)[0])],
+                [float(np.asarray(y_ana)[0])],
+                facecolors="white",
+                edgecolors="#dc2626",
+                marker="s",
+                linewidths=1.2,
+                s=36,
+                zorder=5,
+            )
+    ax_orbit.set_xlabel("X [m]")
+    ax_orbit.set_ylabel("Y [m]")
+    ax_orbit.set_title("Orbit overlay (centered)")
+    ax_orbit.set_aspect("equal")
+    if numerical_trajectory is not None or analytical_trajectory is not None:
+        ax_orbit.legend(loc="best")
+
+    ax_text.axis("off")
+    summary = _text_block_from_record(last_record)
+    rows, row_labels, col_labels = _build_comparison_table(
+        numerical_features=numerical_features,
+        record=last_record,
+    )
+    if rows:
+        eval_id = int(last_record.get("eval", 0))
+        loss = float(last_record.get("loss", np.nan))
+        best = float(last_record.get("best_loss", np.nan))
+        ax_text.set_title(f"Latest comparison  eval={eval_id}  loss={loss:.4g}  best={best:.4g}", fontsize=10)
+        table = ax_text.table(
+            cellText=rows,
+            rowLabels=row_labels,
+            colLabels=col_labels,
+            cellLoc="center",
+            colLoc="center",
+            loc="upper left",
+            bbox=[0.0, 0.26, 1.0, 0.70],
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(8.5)
+        for (row, col), cell in table.get_celld().items():
+            if row == 0:
+                cell.set_facecolor("#e2e8f0")
+                cell.set_text_props(weight="bold")
+            if col == 3 and row > 0:
+                token = cell.get_text().get_text()
+                if token == "OK":
+                    cell.set_facecolor("#dcfce7")
+                elif token == "NO":
+                    cell.set_facecolor("#fee2e2")
+                else:
+                    cell.set_facecolor("#f8fafc")
+        ax_text.text(
+            0.02,
+            0.21,
+            summary,
+            ha="left",
+            va="top",
+            family="monospace",
+            fontsize=8.5,
+        )
+    else:
+        ax_text.text(
+            0.02,
+            0.98,
+            summary,
+            ha="left",
+            va="top",
+            family="monospace",
+            fontsize=9,
+        )
+
+    axes[0, 0].figure.suptitle(title)
+    axes[0, 0].figure.tight_layout()
+
+
+class AutofitLiveMonitor:
+    """Notebook-friendly live dashboard updated during optimisation."""
+
+    def __init__(
+        self,
+        *,
+        numerical_features,
+        numerical_trajectory,
+        enabled: bool,
+        update_every: int = 5,
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.update_every = max(int(update_every), 1)
+        self._records: list[dict[str, Any]] = []
+        self._numerical_features = numerical_features
+        self._numerical_trajectory = numerical_trajectory
+        self._best_loss = float("inf")
+        self._best_trajectory = None
+        self._latest_trajectory = None
+        self._display_handle = None
+        self.fig = None
+        self.axes = None
+
+        if not self.enabled:
+            return
+
+        try:
+            import matplotlib.pyplot as plt
+            from IPython.display import display
+        except Exception:
+            self.enabled = False
+            return
+
+        self.fig, self.axes = plt.subplots(2, 2, figsize=(12, 8))
+        _draw_dashboard(
+            self.axes,
+            records=[],
+            numerical_features=self._numerical_features,
+            numerical_trajectory=self._numerical_trajectory,
+            analytical_trajectory=None,
+            title="Autofit live dashboard",
+        )
+        self._display_handle = display(self.fig, display_id=True)
+
+    @property
+    def records(self) -> list[dict[str, Any]]:
+        return list(self._records)
+
+    def update(
+        self,
+        record: dict[str, Any],
+        *,
+        analytical_trajectory=None,
+        force: bool = False,
+    ) -> None:
+        self._records.append(dict(record))
+        self._latest_trajectory = analytical_trajectory
+        if float(record.get("loss", np.inf)) <= self._best_loss:
+            self._best_loss = float(record["loss"])
+            self._best_trajectory = analytical_trajectory
+
+        if not self.enabled:
+            return
+        if not force and (int(record.get("eval", 0)) % self.update_every != 0):
+            return
+
+        _draw_dashboard(
+            self.axes,
+            records=self._records,
+            numerical_features=self._numerical_features,
+            numerical_trajectory=self._numerical_trajectory,
+            analytical_trajectory=self._latest_trajectory,
+            title="Autofit live dashboard",
+        )
+        try:
+            self._display_handle.update(self.fig)
+        except Exception:
+            try:
+                self.fig.canvas.draw_idle()
+                self.fig.canvas.flush_events()
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        if not self.enabled or self.fig is None or self.axes is None:
+            return
+        _draw_dashboard(
+            self.axes,
+            records=self._records,
+            numerical_features=self._numerical_features,
+            numerical_trajectory=self._numerical_trajectory,
+            analytical_trajectory=self._latest_trajectory,
+            title="Autofit live dashboard",
+        )
+        try:
+            self._display_handle.update(self.fig)
+        except Exception:
+            pass
+
+
+class AutofitPlotAccessor:
+    """Plot helpers for :class:`VortexAutofitResult`."""
+
+    def __init__(self, result: "VortexAutofitResult"):
+        self._result = result
+
+    def convergence(self, *, ax=None, **kwargs):
+        """Plot loss vs evaluation number."""
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
+
+        history = self._result.diagnostics.loss_history
+        if not history:
+            ax.text(0.5, 0.5, "No loss history", transform=ax.transAxes,
+                    ha="center", va="center")
+            return ax
+
+        ax.plot(range(len(history)), history, **plot_kwargs)
+        ax.set_xlabel("Evaluation")
+        ax.set_ylabel("Loss")
+        ax.set_title("Autofit convergence")
+        ax.set_yscale("log")
+
+        if self._result.baseline_loss > 0:
+            ax.axhline(
+                self._result.baseline_loss,
+                color="#94a3b8",
+                linestyle="--",
+                linewidth=1,
+                label=f"baseline ({self._result.baseline_loss:.3g})",
+            )
+            ax.legend()
+
+        apply_axes_style(ax, style_kwargs)
+        return ax
+
+    def parameter_comparison(self, *, ax=None, **kwargs):
+        """Bar chart comparing initial and fitted parameter values."""
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, default_figsize=(8, 4), figure_kwargs=figure_kwargs)
+
+        names = list(self._result.fitted_params)
+        if not names:
+            ax.text(0.5, 0.5, "No fitted params", transform=ax.transAxes,
+                    ha="center", va="center")
+            return ax
+
+        initial_vals = [self._result.initial_params.get(n, 0) for n in names]
+        final_vals = [self._result.best_params.get(n, 0) for n in names]
+
+        x_pos = np.arange(len(names))
+        width = 0.35
+        ax.bar(x_pos - width / 2, initial_vals, width, label="initial", color="#64748b")
+        ax.bar(x_pos + width / 2, final_vals, width, label="fitted", color="#3b82f6")
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(names, rotation=45, ha="right")
+        ax.set_ylabel("Value")
+        ax.set_title("Parameter comparison: initial vs fitted")
+        ax.legend()
+        apply_axes_style(ax, style_kwargs)
+        return ax
+
+    def loss_breakdown(self, *, ax=None, **kwargs):
+        """Horizontal bar chart of loss components."""
+        plot_kwargs = dict(kwargs)
+        style_kwargs = pop_axes_style_kwargs(plot_kwargs)
+        figure_kwargs = pop_figure_kwargs(plot_kwargs)
+        ax = ensure_axis(ax, default_figsize=(7, 4), figure_kwargs=figure_kwargs)
+
+        breakdown = self._result.loss_breakdown
+        if not breakdown:
+            return ax
+
+        names = list(breakdown.keys())
+        values = [breakdown[n] for n in names]
+
+        ax.barh(names, values, color="#3b82f6", **plot_kwargs)
+        ax.set_xlabel("Loss value")
+        ax.set_title("Loss breakdown")
+        apply_axes_style(ax, style_kwargs)
+        return ax
+
+    def dashboard(self, *, fig=None, axes=None):
+        """Render a multi-panel dashboard from recorded evaluations."""
+        import matplotlib.pyplot as plt
+
+        records = list(self._result.diagnostics.evaluation_records)
+        numerical_features = extract_features(
+            self._result.comparison.numerical,
+            reference_radius=float(self._result.comparison.resolved_params.get("R", np.nan)),
+        )
+        if axes is None:
+            if fig is None:
+                fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+            else:
+                axes = np.asarray(fig.subplots(2, 2))
+
+        _draw_dashboard(
+            axes,
+            records=records,
+            numerical_features=numerical_features,
+            numerical_trajectory=self._result.comparison.numerical,
+            analytical_trajectory=self._result.comparison.analytical,
+            title="Autofit dashboard",
+        )
+        return axes[0, 0].figure, axes
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import plot_accessor_html
+
+        return plot_accessor_html("AutofitPlotAccessor", [
+            (".convergence()", "Loss vs evaluation number (log scale)",
+             "Shows baseline as dashed line."),
+            (".parameter_comparison()", "Bar chart: initial vs fitted values",
+             ""),
+            (".loss_breakdown()", "Horizontal bars of loss components",
+             ""),
+            (".dashboard()", "2x2 dashboard with convergence, metrics and orbit",
+             "Uses recorded evaluation history."),
+        ])
+__all__ = ["AutofitPlotAccessor", "AutofitLiveMonitor"]

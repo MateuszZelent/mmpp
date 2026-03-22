@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 import numpy as np
 
-from mmpp.analytical import DiskGeometry, MaterialParams, current_dc, omega0_novosad
+from mmpp.analytical import (
+    DiskGeometry,
+    MaterialParams,
+    current_dc,
+    omega0_novosad,
+    reduce_mumax_slonczewski_cpp,
+)
 
 
 @dataclass
@@ -20,6 +26,16 @@ class ThieleBuildContext:
     omega0: float
 
 
+@dataclass
+class CPPSpinTorqueContext:
+    """Resolved MuMax-style Slonczewski CPP parameters for the adapter layer."""
+
+    material: MaterialParams
+    torque_thickness: float
+    domega0_dJ_total: float
+    metadata: dict[str, Any]
+
+
 def _attr_float(attrs: Any, keys: tuple[str, ...], default: float) -> float:
     for key in keys:
         value = None
@@ -27,6 +43,29 @@ def _attr_float(attrs: Any, keys: tuple[str, ...], default: float) -> float:
             value = attrs.get(key, None)
         except Exception:
             value = None
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return float(default)
+
+
+def _payload_float(source: Any, keys: tuple[str, ...], default: float) -> float:
+    if source is None:
+        return float(default)
+    if isinstance(source, dict):
+        for key in keys:
+            if key not in source:
+                continue
+            try:
+                return float(source[key])
+            except (TypeError, ValueError):
+                continue
+        return float(default)
+    for key in keys:
+        value = getattr(source, key, None)
         if value is None:
             continue
         try:
@@ -52,7 +91,17 @@ def infer_material_params(
         "A": _attr_float(attrs, ("Aex", "A"), 1.3e-11),
     }
     if material is not None:
-        payload.update({key: float(value) for key, value in material.items()})
+        if isinstance(material, dict):
+            for key, value in material.items():
+                if key not in {"Ms", "alpha", "P", "A", "beta_nonadiabatic", "gamma"}:
+                    continue
+                payload[key] = float(value)
+        else:
+            for key in ("Ms", "alpha", "P", "A", "beta_nonadiabatic", "gamma"):
+                value = getattr(material, key, None)
+                if value is None:
+                    continue
+                payload[key] = float(value)
     return MaterialParams(**payload)
 
 
@@ -157,11 +206,61 @@ def resolve_current_waveform(
     return current_dc(0.0)
 
 
+def resolve_cpp_spin_torque_context(
+    *,
+    material: MaterialParams,
+    geometry: DiskGeometry,
+    domega0_dJ: float = 0.0,
+    torque_thickness: float | None = None,
+    polarizer: tuple[float, float, float] | tuple[float, float] | None = None,
+    fixed_layer_position: str | None = None,
+    Lambda: float | None = None,
+    epsilonprime: float | None = None,
+) -> CPPSpinTorqueContext:
+    """Resolve effective MuMax-style CPP Slonczewski coefficients for the adapter."""
+    if polarizer is None and Lambda is None and epsilonprime is None and fixed_layer_position is None:
+        return CPPSpinTorqueContext(
+            material=material,
+            torque_thickness=float(geometry.L if torque_thickness is None else torque_thickness),
+            domega0_dJ_total=float(domega0_dJ),
+            metadata={},
+        )
+
+    reduction = reduce_mumax_slonczewski_cpp(
+        material=material,
+        torque_thickness=float(geometry.L if torque_thickness is None else torque_thickness),
+        polarizer=(0.0, 0.0, 1.0) if polarizer is None else polarizer,
+        fixed_layer_position="top" if fixed_layer_position is None else fixed_layer_position,
+        Lambda=1.0 if Lambda is None else float(Lambda),
+        epsilonprime=0.0 if epsilonprime is None else float(epsilonprime),
+    )
+
+    return CPPSpinTorqueContext(
+        material=replace(material, P=float(reduction.pump_polarization)),
+        torque_thickness=float(reduction.torque_thickness),
+        domega0_dJ_total=float(domega0_dJ) + float(reduction.phase_omega_per_J),
+        metadata={
+            "P_raw": float(material.P),
+            "P_eff": float(reduction.epsilon),
+            "P_model": float(reduction.pump_polarization),
+            "phase_polarization": float(reduction.phase_polarization),
+            "p_z": float(reduction.p_z),
+            "polarizer": tuple(float(v) for v in reduction.polarizer),
+            "fixed_layer_position": reduction.fixed_layer_position,
+            "Lambda": float(reduction.Lambda),
+            "epsilonprime": float(reduction.epsilonprime),
+            "domega0_dJ_stt": float(reduction.phase_omega_per_J),
+        },
+    )
+
+
 __all__ = [
     "ThieleBuildContext",
+    "CPPSpinTorqueContext",
     "infer_material_params",
     "infer_disk_geometry",
     "infer_polarity",
     "infer_omega0",
     "resolve_current_waveform",
+    "resolve_cpp_spin_torque_context",
 ]

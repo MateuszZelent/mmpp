@@ -59,6 +59,15 @@ class EventsInterface:
         dx = float(attrs.get("dx", 1.0e-9))
         dy = float(attrs.get("dy", dx))
 
+        for key in ("D", "diameter", "disk_diameter", "pillar_diameter"):
+            if key in attrs:
+                try:
+                    diameter = float(attrs[key])
+                except Exception:
+                    continue
+                if diameter > 0.0:
+                    return 0.5 * diameter
+
         if self._dataset_name is not None:
             try:
                 shape = tuple(getattr(self._job[self._dataset_name], "shape", ()))

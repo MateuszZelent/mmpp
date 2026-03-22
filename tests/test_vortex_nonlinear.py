@@ -14,6 +14,7 @@ from mmpp.analytical import (
     MaterialParams,
     ellipse_area,
     fit_omega0_N_to_fJ,
+    reduce_mumax_slonczewski_cpp,
     slonczewski_mtj_efficiency,
 )
 from mmpp.core.job import ZarrJobResult
@@ -269,7 +270,7 @@ def test_thiele_cpp_and_cip_simulation_wrappers(tmp_path):
 def test_cpp_sde_helpers_and_threshold_prediction():
     mat = MaterialParams(Ms=8.0e5, alpha=0.01, P=0.35)
     geo = DiskGeometry(R=45e-9, L=20e-9)
-    model = CPPThieleModel(material=mat, geom=geo, omega0=2.0 * np.pi * 0.75e9, N=0.22)
+    model = CPPThieleModel(material=mat, geom=geo, omega0=2.0 * np.pi * 0.75e9, N=0.22, polarity=-1)
 
     area = ellipse_area(220e-9, 120e-9)
     assert np.isfinite(area)
@@ -306,7 +307,7 @@ def test_cpp_sde_orbit_stays_near_steady_state_not_edge_clamped():
     peff = slonczewski_mtj_efficiency(Pol=0.56, Lambda=1.2, cos_theta=0.5)
     mat = MaterialParams(Ms=8.0e5, alpha=0.01, P=peff)
     geo = DiskGeometry(R=100e-9, L=20e-9)
-    model = CPPThieleModel(material=mat, geom=geo, omega0=2.0 * np.pi * 0.9e9, N=0.25)
+    model = CPPThieleModel(material=mat, geom=geo, omega0=2.0 * np.pi * 0.9e9, N=0.25, polarity=-1)
 
     j_th = model.threshold_current_dc()
     j_drive = 1.2 * j_th
@@ -337,7 +338,7 @@ def test_fit_omega0_n_to_fj_recovers_synthetic_params():
 
     omega0_true = 2.0 * np.pi * 0.82e9
     n_true = 0.28
-    model = CPPThieleModel(material=mat, geom=geo, omega0=omega0_true, N=n_true)
+    model = CPPThieleModel(material=mat, geom=geo, omega0=omega0_true, N=n_true, polarity=-1)
     j_th = model.threshold_current_dc()
 
     j_data = np.linspace(1.2 * j_th, 2.2 * j_th, 9)
@@ -351,6 +352,7 @@ def test_fit_omega0_n_to_fj_recovers_synthetic_params():
         f_data,
         material=mat,
         geom=geo,
+        polarity=-1,
         initial_omega0=0.7 * omega0_true,
         initial_N=0.1,
         allow_edge=True,
@@ -374,7 +376,7 @@ def test_cpp_optimize_current_for_target_frequency(tmp_path):
     geo = DiskGeometry(R=45e-9, L=20e-9)
     omega0_true = 2.0 * np.pi * 0.9e9
     n_true = 0.22
-    model = CPPThieleModel(material=mat, geom=geo, omega0=omega0_true, N=n_true)
+    model = CPPThieleModel(material=mat, geom=geo, omega0=omega0_true, N=n_true, polarity=-1)
 
     j_th = model.threshold_current_dc()
     j_ref = 1.7 * j_th
@@ -396,12 +398,102 @@ def test_cpp_optimize_current_for_target_frequency(tmp_path):
         float(f_ref),
         material={"Ms": 8.0e5, "alpha": 0.01, "P": 0.35},
         geometry={"R": 45e-9, "L": 20e-9},
+        polarity=-1,
         omega0=omega0_true,
         N=n_true,
         J_bounds=(1.05 * j_th, 2.5 * j_th),
         allow_edge=True,
     )
     assert np.isfinite(opt_iface.current_density_a_per_m2)
+
+
+def test_cpp_bottom_stack_positive_current_pumps_for_positive_core_polarity():
+    mat = MaterialParams(Ms=8.0e5, alpha=0.013, P=0.5, A=10e-12)
+    geo = DiskGeometry(R=128e-9, L=9e-9)
+    reduction = reduce_mumax_slonczewski_cpp(
+        material=mat,
+        torque_thickness=geo.L,
+        polarizer=(0.0, 0.0, 1.0),
+        fixed_layer_position="bottom",
+        Lambda=1.0,
+        epsilonprime=0.1,
+    )
+
+    model = CPPThieleModel(
+        material=MaterialParams(Ms=mat.Ms, alpha=mat.alpha, P=reduction.pump_polarization, A=mat.A),
+        geom=geo,
+        omega0=2.1826010587804008e9,
+        N=0.2737065428366091,
+        polarity=1,
+        domega0_dJ=reduction.phase_omega_per_J,
+        torque_thickness=geo.L,
+    )
+
+    j_drive = 10.0 * 2.914214045872107e10
+    assert reduction.pump_polarization < 0.0
+    assert model.chi(j_drive) > 0.0
+    assert model.threshold_current_dc() > 0.0
+    u_ss = model.steady_state_u(j_drive, allow_edge=True)
+    assert u_ss is not None
+    assert float(u_ss) > 0.0
+
+
+def test_cpp_superthreshold_drive_grows_orbit_instead_of_collapsing_to_zero():
+    mat = MaterialParams(Ms=8.0e5, alpha=0.013, P=0.5, A=10e-12)
+    geo = DiskGeometry(R=128e-9, L=9e-9)
+    model = CPPThieleModel(
+        material=mat,
+        geom=geo,
+        omega0=2.1826010587804008e9,
+        N=0.2737065428366091,
+        polarity=-1,
+    )
+
+    j_drive = 4.0 * model.threshold_current_dc()
+    traj = model.simulate(
+        t_span=(0.0, 50e-9),
+        s0=(1e-3, 0.0),
+        J_func=lambda _t: float(j_drive),
+        dt=10e-12,
+        rtol=1e-6,
+        atol=1e-9,
+    )
+    radius = np.sqrt(np.asarray(traj.sx) ** 2 + np.asarray(traj.sy) ** 2)
+    tail = radius[int(0.75 * radius.size) :]
+
+    assert float(radius.max()) > 0.2
+    assert np.all(np.isfinite(tail))
+    assert float(np.mean(tail)) > 0.2
+
+
+def test_cpp_simulate_clamps_orbit_at_disk_edge_for_strong_drive():
+    mat = MaterialParams(Ms=8.0e5, alpha=0.013, P=0.5, A=10e-12)
+    geo = DiskGeometry(R=128e-9, L=9e-9)
+    model = CPPThieleModel(
+        material=mat,
+        geom=geo,
+        omega0=2.1826010587804008e9,
+        N=0.2737065428366091,
+        polarity=-1,
+    )
+
+    j_drive = 100.0 * 2.914214045872107e10
+    traj = model.simulate(
+        t_span=(0.0, 50e-9),
+        s0=(1e-3, 0.0),
+        J_func=lambda _t: float(j_drive),
+        dt=10e-12,
+        clamp_u=0.98,
+        edge_behavior="freeze",
+        rtol=1e-6,
+        atol=1e-9,
+    )
+
+    radius_u = np.sqrt(np.asarray(traj.sx) ** 2 + np.asarray(traj.sy) ** 2)
+
+    assert float(np.max(radius_u)) <= 0.980001
+    assert traj.metadata.get("edge_limited") is True
+    assert traj.metadata.get("edge_hit_time") is not None
 
 
 def test_thiele_proxy_signal_psd_and_dashboard_entrypoint(tmp_path):

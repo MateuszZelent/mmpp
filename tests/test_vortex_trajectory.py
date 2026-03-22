@@ -80,6 +80,29 @@ def _create_job(tmp_path, data: np.ndarray, *, dx: float, dy: float, dt: float):
     return ZarrJobResult(str(zarr_path), {})
 
 
+def _create_table_job(
+    tmp_path,
+    *,
+    x: np.ndarray,
+    y: np.ndarray,
+    t: np.ndarray,
+    polarity_signal: np.ndarray | None = None,
+):
+    zarr_path = tmp_path / "vortex_trajectory_table_only.zarr"
+    z = zarr.open(str(zarr_path), mode="w")
+    table = z.create_group("table")
+    table.create_dataset("ext_coreposx", data=np.asarray(x, dtype=float))
+    table.create_dataset("ext_coreposy", data=np.asarray(y, dtype=float))
+    table.create_dataset("t", data=np.asarray(t, dtype=float))
+    if polarity_signal is not None:
+        table.create_dataset("ext_coreposz", data=np.asarray(polarity_signal, dtype=float))
+    dt = float(np.median(np.diff(t))) if np.asarray(t).size >= 2 else 1e-12
+    z.attrs["dx"] = 1e-9
+    z.attrs["dy"] = 1e-9
+    z.attrs["t_sampl"] = dt
+    return ZarrJobResult(str(zarr_path), {})
+
+
 def test_orbit_fit_phase_and_plot_accessors(tmp_path):
     data, _, _, freq_hz, dx, dy, dt = _make_elliptic_orbit_data()
     data_5d = data[:, np.newaxis, ...]
@@ -128,3 +151,30 @@ def test_filtered_and_steady_state_pipeline(tmp_path):
 
     assert traj_ss.time.size <= traj_raw.time.size
     assert "steady_state_start_index" in traj_ss.metadata
+
+
+def test_table_only_trajectory_supports_orbit_pipeline(tmp_path):
+    t = np.linspace(0.0, 60e-9, 241)
+    x = 9e-9 * np.cos(2.0 * np.pi * 0.85e9 * t)
+    y = 4e-9 * np.sin(2.0 * np.pi * 0.85e9 * t)
+    polarity_signal = np.full_like(t, 0.95)
+
+    job = _create_table_job(
+        tmp_path,
+        x=x,
+        y=y,
+        t=t,
+        polarity_signal=polarity_signal,
+    )
+
+    traj = job.solitons.vortex.trajectory.raw
+    orbit = job.solitons.vortex.trajectory.orbit.fit()
+    phase = job.solitons.vortex.trajectory.phase
+
+    assert traj.method == "table"
+    assert orbit.semi_major > orbit.semi_minor
+    assert orbit.radius > 0.0
+
+    freq_inst = phase.frequency(method="complex", unit="hz")
+    freq_mean = float(np.mean(np.abs(freq_inst[10:])))
+    assert abs(freq_mean - 0.85e9) < 0.2e9

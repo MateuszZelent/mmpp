@@ -29,6 +29,11 @@ def thiele_to_trajectory_result(
     meta.setdefault("source", "analytical")
     meta.setdefault("model_name", getattr(analytical_result, "model_name", "Thiele"))
 
+    result_metadata = getattr(analytical_result, "metadata", None)
+    if isinstance(result_metadata, dict):
+        for key, value in result_metadata.items():
+            meta.setdefault(key, value)
+
     params = getattr(analytical_result, "params", None)
     if isinstance(params, dict):
         meta.setdefault("model_params", params)

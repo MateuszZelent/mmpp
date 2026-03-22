@@ -12,8 +12,24 @@ from .models import (
     infer_material_params,
     infer_omega0,
     infer_polarity,
+    resolve_cpp_spin_torque_context,
     resolve_current_waveform,
 )
+
+
+def _resolve_optional_value(source: Any, *keys: str):
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        for key in keys:
+            if key in source and source[key] is not None:
+                return source[key]
+        return None
+    for key in keys:
+        value = getattr(source, key, None)
+        if value is not None:
+            return value
+    return None
 
 
 class CPPModelAdapter:
@@ -77,6 +93,11 @@ def cpp(
     field=None,
     field_cal=None,
     chi_scale: float = 1.0,
+    torque_thickness: float | None = None,
+    polarizer: tuple[float, float, float] | tuple[float, float] | None = None,
+    fixed_layer_position: str | None = None,
+    Lambda: float | None = None,
+    epsilonprime: float | None = None,
     job_result=None,
     dataset_name: str | None = None,
     slice_info=None,
@@ -84,21 +105,49 @@ def cpp(
     """Build CPP Thiele model adapter (dataset-free or dataset-aware)."""
     _ = slice_info  # reserved for stage-3 model/data coupling
 
-    mat = infer_material_params(material, job_result=job_result)
+    mat_raw = infer_material_params(material, job_result=job_result)
     geo = infer_disk_geometry(geom, job_result=job_result, dataset_name=dataset_name)
     p = infer_polarity(polarity, job_result=job_result)
-    omega0_value = infer_omega0(omega0, material=mat, geometry=geo)
+    omega0_value = infer_omega0(omega0, material=mat_raw, geometry=geo)
+
+    spin_ctx = resolve_cpp_spin_torque_context(
+        material=mat_raw,
+        geometry=geo,
+        domega0_dJ=float(domega0_dJ),
+        torque_thickness=(
+            torque_thickness
+            if torque_thickness is not None
+            else _resolve_optional_value(material, "torque_thickness", "L_stt")
+        ),
+        polarizer=(
+            polarizer
+            if polarizer is not None
+            else _resolve_optional_value(material, "polarizer", "FixedLayer")
+        ),
+        fixed_layer_position=(
+            fixed_layer_position
+            if fixed_layer_position is not None
+            else _resolve_optional_value(material, "fixed_layer_position", "FixedLayerPosition")
+        ),
+        Lambda=Lambda if Lambda is not None else _resolve_optional_value(material, "Lambda"),
+        epsilonprime=(
+            epsilonprime
+            if epsilonprime is not None
+            else _resolve_optional_value(material, "epsilonprime")
+        ),
+    )
 
     model = CPPThieleModel(
-        material=mat,
+        material=spin_ctx.material,
         geom=geo,
         omega0=omega0_value,
         N=float(N),
         polarity=p,
-        domega0_dJ=float(domega0_dJ),
+        domega0_dJ=float(spin_ctx.domega0_dJ_total),
         field=field,
         field_cal=field_cal,
         chi_scale=float(chi_scale),
+        torque_thickness=float(spin_ctx.torque_thickness),
     )
     return CPPModelAdapter(
         model,
@@ -107,6 +156,7 @@ def cpp(
             "dataset_name": dataset_name,
             "omega0": float(omega0_value),
             "N": float(N),
+            **spin_ctx.metadata,
         },
         job_result=job_result,
     )

@@ -120,6 +120,39 @@ class MaterialParams:
         return math.sqrt(2.0 * self.A / (MU0 * self.Ms**2))
 
 
+@dataclass(frozen=True)
+class SlonczewskiCPPReduction:
+    """
+    Reduced CPP Slonczewski coefficients consistent with MuMax3 conventions.
+
+    The MuMax3 Slonczewski implementation combines the damping-like
+    ``m x (p x m)`` and field-like ``p x m`` contributions as:
+
+    ``mxpxmFac = (A + alpha * B) / (1 + alpha^2)``
+    ``pxmFac   = (B - alpha * A) / (1 + alpha^2)``
+
+    where ``A = beta * epsilon`` and ``B = beta * epsilonprime``.
+
+    In the reduced vortex-CPP model we use:
+    - ``pump_polarization`` for the auto-oscillation pumping term ``chi(J)``
+    - ``phase_polarization`` for the STT-induced gyrotropic phase shift
+    """
+
+    polarizer: tuple[float, float, float]
+    p_z: float
+    Lambda: float
+    epsilonprime: float
+    fixed_layer_position: str
+    current_sign: float
+    epsilon: float
+    gilbert_prefactor: float
+    pump_polarization: float
+    phase_polarization: float
+    torque_thickness: float
+    chi_prefactor_per_J: float
+    phase_omega_per_J: float
+
+
 @dataclass
 class DiskGeometry:
     """
@@ -808,6 +841,75 @@ def slonczewski_mtj_efficiency(
     return float(Pol) * lam2 / denom
 
 
+def reduce_mumax_slonczewski_cpp(
+    *,
+    material: MaterialParams,
+    torque_thickness: float,
+    polarizer: tuple[float, float, float] | tuple[float, float] = (0.0, 0.0, 1.0),
+    fixed_layer_position: str = "top",
+    Lambda: float = 1.0,
+    epsilonprime: float = 0.0,
+) -> SlonczewskiCPPReduction:
+    """
+    Reduce MuMax3 Slonczewski CPP inputs to vortex-CPP effective coefficients.
+
+    Notes
+    -----
+    The full MuMax3 cell-wise torque depends on ``m·p``.  For the reduced
+    vortex-CPP model we follow the convention already used by the nonlinear
+    dashboard and collapse the polarizer dependence to its out-of-plane
+    component ``p_z``.
+    """
+    vec = np.asarray(polarizer, dtype=float).reshape(-1)
+    if vec.size == 2:
+        vec = np.array([vec[0], vec[1], 0.0], dtype=float)
+    if vec.size < 3:
+        raise ValueError("polarizer must provide at least 2 or 3 components")
+    norm = float(np.linalg.norm(vec[:3]))
+    if norm <= 0.0:
+        raise ValueError("polarizer cannot be a zero vector")
+    p = tuple(float(v) for v in (vec[:3] / norm))
+
+    pos_token = str(fixed_layer_position).strip().lower()
+    if pos_token in {"fixedlayer_top", "top", "+1", "1"}:
+        pos_name = "top"
+        current_sign = 1.0
+    elif pos_token in {"fixedlayer_bottom", "bottom", "-1", "2"}:
+        pos_name = "bottom"
+        current_sign = -1.0
+    else:
+        raise ValueError("fixed_layer_position must be 'top' or 'bottom'")
+
+    thickness = float(torque_thickness)
+    if thickness <= 0.0:
+        raise ValueError("torque_thickness must be positive")
+
+    epsilon = slonczewski_mtj_efficiency(material.P, float(Lambda), p[2])
+    alpha = float(material.alpha)
+    eps_prime = float(epsilonprime)
+    gilb = 1.0 / (1.0 + alpha * alpha)
+
+    pump_p = current_sign * gilb * (epsilon + alpha * eps_prime)
+    phase_p = current_sign * gilb * (eps_prime - alpha * epsilon)
+    prefactor = float(material.gamma) * _HBAR / (4.0 * _E_CHARGE * thickness * float(material.Ms))
+
+    return SlonczewskiCPPReduction(
+        polarizer=p,
+        p_z=float(p[2]),
+        Lambda=float(Lambda),
+        epsilonprime=eps_prime,
+        fixed_layer_position=pos_name,
+        current_sign=current_sign,
+        epsilon=float(epsilon),
+        gilbert_prefactor=float(gilb),
+        pump_polarization=float(pump_p),
+        phase_polarization=float(phase_p),
+        torque_thickness=thickness,
+        chi_prefactor_per_J=float(prefactor * pump_p),
+        phase_omega_per_J=float(prefactor * phase_p),
+    )
+
+
 def current_dc(J_dc: float) -> Callable[[float], float]:
     """
     Constant (DC) current density.
@@ -1141,6 +1243,9 @@ class CIPThieleModel:
             J_func = current_dc(0.0)
 
         t_eval = np.arange(t_span[0], t_span[1], dt)
+        # Guard against floating-point overshoot in np.arange
+        if t_eval.size and t_eval[-1] > t_span[1]:
+            t_eval = t_eval[:-1]
 
         sol = solve_ivp(
             fun=lambda t, y: self._rhs(t, y, J_func, B_func),
@@ -1210,7 +1315,7 @@ class CPPThieleModel:
 
     - **Nonlinear frequency:**  ω(u) = ω₀(1 + N u²)
     - **Nonlinear damping:**    d(u) = d₀ + d₁ u²
-    - **STT pumping:**          χ(J) = γ σ J / 2,  σ = ℏP/(2eL Mₛ)
+    - **STT pumping:**          χ(J) = -p γ σ J / 2,  σ = ℏP/(2eL Mₛ)
 
     Parameters
     ----------
@@ -1253,6 +1358,7 @@ class CPPThieleModel:
         field: ExternalField | None = None,
         field_cal: FieldCalibration | None = None,
         chi_scale: float = 1.0,
+        torque_thickness: float | None = None,
     ) -> None:
         self.material = material
         self.geom = geom
@@ -1263,6 +1369,7 @@ class CPPThieleModel:
         self.field = field if field is not None else ExternalField()
         self.field_cal = field_cal if field_cal is not None else FieldCalibration()
         self.chi_scale = float(chi_scale)
+        self.torque_thickness = float(geom.L if torque_thickness is None else torque_thickness)
         assert self.polarity in (1, -1), "polarity must be +1 or -1"
 
         self._setup()
@@ -1273,7 +1380,8 @@ class CPPThieleModel:
         Rc = geo.Rc(mat)
 
         # Slonczewski coefficient:  σ = ℏ P / (2 e L Ms)  [m²/(A·s)… sort of]
-        self._sigma = _HBAR * mat.P / (2.0 * _E_CHARGE * geo.L * mat.Ms)
+        thickness = max(float(self.torque_thickness), 1e-30)
+        self._sigma = _HBAR * mat.P / (2.0 * _E_CHARGE * thickness * mat.Ms)
 
         # d₀ = α · [5 + 4 ln(R/Rc)] / 8
         ratio = geo.R / max(Rc, 1e-10)
@@ -1282,14 +1390,23 @@ class CPPThieleModel:
         # d₁ = (11/6) α
         self._d1 = (11.0 / 6.0) * mat.alpha
 
-        # χ(J) = γ σ J / 2
+        # χ(J) = -p γ σ J / 2
         self._chi_prefactor = mat.gamma * self._sigma / 2.0
 
     # ── public helpers ─────────────────────────────────────────
 
     def chi(self, J: float) -> float:
-        """STT pumping rate χ(J) [rad/s], scaled by chi_scale."""
-        return self.chi_scale * self._chi_prefactor * J
+        """
+        STT pumping rate χ(J) [rad/s], scaled by ``chi_scale``.
+
+        Notes
+        -----
+        For vortex CPP auto-oscillations the pumping sign depends on the
+        relative orientation of the spin polarization and the vortex-core
+        polarity. In the reduced Thiele model this enters as a ``-p`` factor
+        multiplying the scalar pumping rate.
+        """
+        return -float(self.polarity) * self.chi_scale * self._chi_prefactor * J
 
     def d(self, u: float) -> float:
         """Nonlinear damping d(u) [dimensionless]."""
@@ -1344,8 +1461,8 @@ class CPPThieleModel:
     @property
     def J_threshold(self) -> float:
         """Threshold current density for self-oscillation [A/m²]."""
-        # χ(J_th) = d₀ · ω₀_eff(0)  →  J_th = 2 d₀ ω₀_eff / (γ σ chi_scale)
-        denom = self.chi_scale * self._chi_prefactor
+        # χ(J_th) = d₀ · ω₀_eff(0)  →  J_th = d₀ ω₀_eff / (-p γ σ chi_scale / 2)
+        denom = -float(self.polarity) * self.chi_scale * self._chi_prefactor
         if abs(denom) < 1e-30:
             return float('inf')  # Brak STT (P=0) oznacza nieskończony próg wzbudzenia
         return self._d0 * self.omega0_eff(0.0) / denom
@@ -1561,6 +1678,8 @@ class CPPThieleModel:
         B_func: FieldFunc | None = None,
         dt: float = 1e-11,
         method: str = "RK45",
+        clamp_u: float | None = 0.999,
+        edge_behavior: str = "freeze",
         **ivp_kwargs: Any,
     ) -> ThieleTrajectoryResult:
         """
@@ -1571,13 +1690,44 @@ class CPPThieleModel:
         if J_func is None:
             J_func = current_dc(0.0)
 
+        clamp_u_value = None if clamp_u is None else float(clamp_u)
+        if clamp_u_value is not None and (not np.isfinite(clamp_u_value) or clamp_u_value <= 0.0):
+            clamp_u_value = None
+        edge_behavior_token = str(edge_behavior).strip().lower()
+        if edge_behavior_token not in {"freeze", "truncate"}:
+            raise ValueError("edge_behavior must be one of {'freeze', 'truncate'}")
+
         t_eval = np.arange(t_span[0], t_span[1] + 0.5 * dt, dt)
+        # Guard against floating-point overshoot in np.arange
+        if t_eval.size and t_eval[-1] > t_span[1]:
+            t_eval = t_eval[:-1]
+
+        user_events = ivp_kwargs.pop("events", None)
+        event_registry: list[Callable] = []
+
+        if clamp_u_value is not None:
+            def _edge_event(t: float, y: np.ndarray) -> float:
+                B = self._field_at(t, B_func)
+                s_eq = self.s_eq(field_state=B)
+                s_rel = np.asarray(y, dtype=float) - s_eq
+                return float(np.hypot(s_rel[0], s_rel[1]) - clamp_u_value)
+
+            _edge_event.terminal = True
+            _edge_event.direction = 1.0
+            event_registry.append(_edge_event)
+
+        if user_events is not None:
+            if isinstance(user_events, (list, tuple)):
+                event_registry.extend(user_events)
+            else:
+                event_registry.append(user_events)
 
         sol = solve_ivp(
             fun=lambda t, y: self._rhs(t, y, J_func, B_func),
             t_span=t_span,
             y0=np.array(s0, dtype=float),
             t_eval=t_eval,
+            events=event_registry if event_registry else None,
             method=method,
             max_step=ivp_kwargs.pop("max_step", dt),
             rtol=ivp_kwargs.pop("rtol", 1e-9),
@@ -1588,10 +1738,41 @@ class CPPThieleModel:
         if not sol.success:
             raise RuntimeError(f"CPP Thiele integration failed: {sol.message}")
 
-        t_out = sol.t
-        SX = sol.y[0]
-        SY = sol.y[1]
+        t_out = np.asarray(sol.t, dtype=float)
+        SX = np.asarray(sol.y[0], dtype=float)
+        SY = np.asarray(sol.y[1], dtype=float)
         R = self.geom.R
+        edge_limited = False
+        edge_hit_time = None
+
+        if clamp_u_value is not None and event_registry:
+            t_events = getattr(sol, "t_events", None) or []
+            y_events = getattr(sol, "y_events", None) or []
+            if t_events and len(t_events[0]) > 0:
+                edge_limited = True
+                edge_hit_time = float(t_events[0][0])
+                hit_state = np.asarray(y_events[0][0], dtype=float)
+                B_hit = self._field_at(edge_hit_time, B_func)
+                s_eq_hit = self.s_eq(field_state=B_hit)
+                s_rel_hit = hit_state - s_eq_hit
+                u_hit = float(np.hypot(s_rel_hit[0], s_rel_hit[1]))
+                if u_hit > 0.0:
+                    clamped_rel = s_rel_hit * (clamp_u_value / max(u_hit, 1e-30))
+                else:
+                    clamped_rel = np.array([clamp_u_value, 0.0], dtype=float)
+                clamped_state = s_eq_hit + clamped_rel
+
+                if SX.size:
+                    SX[-1] = float(clamped_state[0])
+                    SY[-1] = float(clamped_state[1])
+
+                if edge_behavior_token == "freeze" and t_eval.size and t_out.size < t_eval.size:
+                    remaining_mask = np.asarray(t_eval, dtype=float) > edge_hit_time
+                    remaining_t = np.asarray(t_eval, dtype=float)[remaining_mask]
+                    if remaining_t.size:
+                        t_out = np.concatenate([t_out, remaining_t])
+                        SX = np.concatenate([SX, np.full(remaining_t.shape, float(clamped_state[0]), dtype=float)])
+                        SY = np.concatenate([SY, np.full(remaining_t.shape, float(clamped_state[1]), dtype=float)])
 
         return ThieleTrajectoryResult(
             model_name=f"CPP Thiele STNO (p={self.polarity:+d}, Guslienko 2014)",
@@ -1615,10 +1796,14 @@ class CPPThieleModel:
                 "domega0_dJ": self.domega0_dJ,
                 "field": self.field,
                 "field_cal": self.field_cal,
+                "clamp_u": clamp_u_value,
             },
             metadata={
                 "mode": "CPP",
                 "reference": "Guslienko et al., Phys. Rev. B 89 (2014) / PMC 4134337",
+                "edge_limited": bool(edge_limited),
+                "edge_hit_time": edge_hit_time,
+                "edge_behavior": edge_behavior_token if edge_limited else None,
             },
         )
 

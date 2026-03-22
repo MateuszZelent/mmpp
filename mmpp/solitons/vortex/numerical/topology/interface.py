@@ -32,9 +32,15 @@ class TopologyInterface:
         self._cache = InMemoryResultCache(job_result, namespace="topology")
 
     @property
-    def dataset_name(self) -> str:
+    def dataset_name(self) -> str | None:
         if self._dataset_name is None:
-            self._dataset_name = self._job.get_largest_m_dataset()
+            candidate = self._job.get_largest_m_dataset()
+            try:
+                self._job._ensure_zarr_loaded()
+                if candidate in self._job._z:
+                    self._dataset_name = candidate
+            except Exception:
+                self._dataset_name = candidate
         return self._dataset_name
 
     def _resolve_dataset_array(self) -> np.ndarray:

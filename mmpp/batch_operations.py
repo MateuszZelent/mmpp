@@ -679,7 +679,7 @@ class BatchOperations:
     - `op[:].get.m[:]` (direct numpy access, returns stacked array)
     """
 
-    def __init__(self, results: list[Any], mmpp_ref: Any):
+    def __init__(self, results: list[Any], mmpp_ref: Any, _filter_kwargs: dict | None = None):
         """
         Initialize batch operations.
 
@@ -689,11 +689,44 @@ class BatchOperations:
             List of ZarrJobResult objects to operate on
         mmpp_ref : Any
             Reference to parent MMPP instance
+        _filter_kwargs : dict, optional
+            Filter criteria used to produce this batch (from find())
         """
         self.results = results
         self.mmpp_ref = mmpp_ref
+        self._filter_kwargs = _filter_kwargs or {}
 
         log.info(f"Initialized batch operations for {len(results)} results")
+
+    @property
+    def mpl(self):
+        """Return a plotting helper for the filtered batch results."""
+        from .plotting import MMPPlotter
+
+        return MMPPlotter(self.results, self.mmpp_ref)
+
+    @property
+    def matplotlib(self):
+        """Alias for :attr:`mpl`."""
+        return self.mpl
+
+    def __getitem__(self, index):
+        """Return one result or a sliced batch."""
+        if isinstance(index, slice):
+            sliced_results = self.results[index]
+            if self.mmpp_ref is not None:
+                for res in sliced_results:
+                    setter = getattr(res, "_set_mmpp_ref", None)
+                    if callable(setter):
+                        setter(self.mmpp_ref)
+            return BatchOperations(sliced_results, self.mmpp_ref, _filter_kwargs=self._filter_kwargs)
+
+        result = self.results[index]
+        if self.mmpp_ref is not None:
+            setter = getattr(result, "_set_mmpp_ref", None)
+            if callable(setter):
+                setter(self.mmpp_ref)
+        return result
 
     @property
     def fft(self) -> BatchFFT:
@@ -723,6 +756,18 @@ class BatchOperations:
         >>> arr.shape  # e.g. (10, 443, 1, 94, 7520, 3) for 10 jobs
         """
         return BatchNumpyGetter(self.results, self.mmpp_ref)
+
+    @property
+    def solitons(self):
+        """Batch soliton analysis namespace."""
+        from .solitons import BatchSolitonsInterface
+
+        return BatchSolitonsInterface(self.results, self.mmpp_ref)
+
+    @property
+    def vortex(self):
+        """Shortcut alias for ``self.solitons.vortex``."""
+        return self.solitons.vortex
     
     def __getattr__(self, name: str):
         """Intercept dataset names to enable dataset-aware batch operations.
@@ -749,7 +794,16 @@ class BatchOperations:
                     return BatchDatasetWrapper(self.results, self.mmpp_ref, name)
             except (KeyError, Exception):
                 continue
-        
+
+        try:
+            plotter = self.mpl
+        except ImportError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        try:
+            return getattr(plotter, name)
+        except AttributeError as exc:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from exc
+
         # Not a dataset — raise standard error
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
@@ -761,13 +815,51 @@ class BatchOperations:
         """String representation of batch operations."""
         return f"BatchOperations({len(self.results)} results)"
 
+    @staticmethod
+    def _fmt_num(value: float) -> str:
+        """Format a number with SI prefix for human readability.
+
+        Examples: 3.89e10 → '38.9G', 1.13e6 → '1.13M', 0.005 → '5m', 42 → '42'
+        """
+        if value == 0:
+            return "0"
+        abs_val = abs(value)
+        si = [
+            (1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k"),
+            (1, ""), (1e-3, "m"), (1e-6, "µ"), (1e-9, "n"), (1e-12, "p"),
+        ]
+        for threshold, prefix in si:
+            if abs_val >= threshold * 0.999:
+                scaled = value / threshold
+                # pick precision: integer-like → no decimals
+                if abs(scaled - round(scaled)) < 1e-9:
+                    return f"{int(round(scaled))}{prefix}"
+                return f"{scaled:.4g}{prefix}"
+        return f"{value:.4g}"
+
     def _repr_html_(self) -> str:
         """Return rich HTML representation for Jupyter notebooks."""
         import uuid as _uuid
+        import html as _html
 
         n = len(self.results)
+        uid = str(_uuid.uuid4())[:8]
+        _fmt = self._fmt_num  # local shortcut
 
-        # ── header ──────────────────────────────────────────────
+        # ── styles ──────────────────────────────────────────────
+        _card = (
+            'background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
+            'rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;'
+            'margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);'
+        )
+        _code = (
+            "background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;"
+            "color:#60a5fa;border:1px solid rgba(71,85,105,0.3);font-weight:500;"
+            "font-family:'Courier New',monospace;font-size:0.88em;"
+        )
+        _bdr = 'border-bottom:1px solid rgba(71,85,105,0.3);'
+
+        # ── outer container ─────────────────────────────────────
         html = (
             '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
             'border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;'
@@ -775,43 +867,139 @@ class BatchOperations:
             'color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),'
             '0 0 0 1px rgba(148,163,184,0.1) inset;">'
         )
+
+        # ── header ──────────────────────────────────────────────
         html += (
             '<h3 style="margin:0 0 12px 0;color:#f1f5f9;font-weight:600;'
             'letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);">'
-            f"📦 Batch Operations &nbsp;"
+            f'📦 Batch Operations &nbsp;'
             f'<span style="color:#60a5fa;font-weight:700;">{n}</span>'
             f'<span style="color:#cbd5e1;font-weight:400;font-size:0.9em;"> result{"s" if n != 1 else ""}</span>'
-            "</h3>"
+            '</h3>'
         )
 
-        # ── info section ────────────────────────────────────────
-        html += (
-            '<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
-            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;margin-bottom:12px;"
-            'border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);">'
-        )
-        if n > 0:
-            first_name = self.results[0].path.split("/")[-1]
-            last_name = self.results[-1].path.split("/")[-1]
-            html += (
-                '<b style="color:#94a3b8;">First:</b> '
-                f'<code style="background:rgba(15,23,42,0.6);padding:4px 10px;border-radius:5px;'
-                f"font-family:'Courier New',monospace;font-size:0.9em;color:#cbd5e1;"
-                f'border:1px solid rgba(71,85,105,0.3);">{first_name}</code><br>'
-            )
-            if n > 1:
+        if n == 0:
+            html += f'<div style="{_card}"><span style="color:#fbbf24;">⚠️ Empty batch – no results.</span></div></div>'
+            return html
+
+        # ── 1. applied filter criteria (pill badges) ────────────
+        if self._filter_kwargs:
+            html += f'<div style="{_card}">'
+            html += '<b style="color:#94a3b8;">🔍 Applied Filters:</b>'
+            html += '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;">'
+            for k, v in self._filter_kwargs.items():
+                fmt_v = _fmt(v) if isinstance(v, (int, float)) else str(v)
                 html += (
-                    '<b style="color:#94a3b8;">Last:</b> '
-                    f'<code style="background:rgba(15,23,42,0.6);padding:4px 10px;border-radius:5px;'
-                    f"font-family:'Courier New',monospace;font-size:0.9em;color:#cbd5e1;"
-                    f'border:1px solid rgba(71,85,105,0.3);">{last_name}</code>'
+                    f'<span style="background:rgba(96,165,250,0.15);border:1px solid rgba(96,165,250,0.3);'
+                    f'border-radius:20px;padding:3px 12px;font-size:0.85em;">'
+                    f'<b style="color:#93c5fd;">{_html.escape(str(k))}</b>'
+                    f'<span style="color:#cbd5e1;"> = </span>'
+                    f'<span style="color:#10b981;font-family:monospace;">{_html.escape(fmt_v)}</span></span>'
                 )
-        else:
-            html += '<span style="color:#fbbf24;">⚠️ Empty batch – no results.</span>'
-        html += "</div>"
+            html += '</div></div>'
 
-        # ── available operations table ──────────────────────────
-        uid = str(_uuid.uuid4())[:8]
+        # ── detect varying parameters ───────────────────────────
+        try:
+            from .core.metadata_diff import find_differing_parameters, extract_job_metadata
+            diff = find_differing_parameters(self.results)
+            varying = diff.differing_params
+            all_meta = [extract_job_metadata(r) for r in self.results]
+        except Exception:
+            varying = {}
+            all_meta = [{} for _ in self.results]
+
+        # columns for the table — only params that truly vary, cap at 8
+        varying_keys = list(varying.keys())[:8]
+
+        # ── 2. varying parameters summary ───────────────────────
+        if varying:
+            html += f'<div style="{_card}">'
+            html += f'<b style="color:#94a3b8;">📊 Varying Parameters ({len(varying)}):</b>'
+            html += (
+                '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.88em;">'
+                f'<tr style="{_bdr}">'
+                '<th style="padding:5px 8px;text-align:left;color:#94a3b8;">Parameter</th>'
+                '<th style="padding:5px 8px;text-align:center;color:#94a3b8;">Unique</th>'
+                '<th style="padding:5px 8px;text-align:left;color:#94a3b8;">Range</th></tr>'
+            )
+            for pname in varying_keys:
+                vals = varying[pname]
+                nums = [v for v in vals if isinstance(v, (int, float)) and v is not None]
+                if nums:
+                    uv = sorted(set(nums))
+                    n_uniq = len(uv)
+                    rng = f"{_fmt(uv[0])} → {_fmt(uv[-1])}"
+                else:
+                    uv = sorted(set(str(v) for v in vals if v is not None))
+                    n_uniq = len(uv)
+                    rng = ", ".join(uv[:5]) + (" …" if len(uv) > 5 else "")
+
+                html += (
+                    f'<tr style="{_bdr}">'
+                    f'<td style="padding:5px 8px;"><code style="{_code}">{_html.escape(pname)}</code></td>'
+                    f'<td style="padding:5px 8px;text-align:center;color:#a5b4fc;font-weight:600;">{n_uniq}</td>'
+                    f'<td style="padding:5px 8px;font-family:monospace;color:#cbd5e1;">{rng}</td></tr>'
+                )
+            html += '</table></div>'
+
+        # ── 3. full results table (open by default) ─────────────
+        html += f'<div style="{_card}">'
+        html += f'<b style="color:#94a3b8;">📋 Results ({n}):</b>'
+        html += (
+            '<div style="margin-top:8px;max-height:400px;overflow:auto;'
+            'border:1px solid rgba(71,85,105,0.3);border-radius:6px;">'
+            '<table style="width:100%;border-collapse:collapse;font-size:0.84em;white-space:nowrap;">'
+        )
+
+        # header
+        html += (
+            '<thead style="position:sticky;top:0;z-index:1;">'
+            f'<tr style="background:#1e293b;{_bdr}">'
+            '<th style="padding:6px 8px;text-align:center;color:#94a3b8;">#</th>'
+            '<th style="padding:6px 8px;text-align:left;color:#94a3b8;">Name</th>'
+        )
+        for vk in varying_keys:
+            html += f'<th style="padding:6px 8px;text-align:center;color:#a5b4fc;">{_html.escape(vk)}</th>'
+        html += (
+            '<th style="padding:6px 8px;text-align:left;color:#94a3b8;">Path</th>'
+            '</tr></thead><tbody>'
+        )
+
+        # rows
+        for idx, result in enumerate(self.results):
+            name = result.path.split("/")[-1]
+            # show only relative-ish path: last 2-3 dirs + filename
+            parts = result.path.rstrip("/").split("/")
+            if len(parts) > 3:
+                short_path = "/".join(parts[-3:])
+            else:
+                short_path = result.path
+
+            bg = 'background:rgba(15,23,42,0.3);' if idx % 2 == 0 else ''
+            html += f'<tr style="{_bdr}{bg}">'
+            html += f'<td style="padding:4px 8px;text-align:center;color:#64748b;">{idx}</td>'
+            html += f'<td style="padding:4px 8px;"><code style="color:#e2e8f0;">{_html.escape(name)}</code></td>'
+
+            meta = all_meta[idx] if idx < len(all_meta) else {}
+            for vk in varying_keys:
+                val = meta.get(vk)
+                if val is not None and isinstance(val, (int, float)):
+                    cell = _fmt(val)
+                elif val is not None:
+                    cell = str(val)
+                else:
+                    cell = "–"
+                html += f'<td style="padding:4px 8px;text-align:center;color:#cbd5e1;font-family:monospace;">{_html.escape(cell)}</td>'
+
+            html += (
+                f'<td style="padding:4px 8px;color:#64748b;font-size:0.85em;" '
+                f'title="{_html.escape(result.path)}">{_html.escape(short_path)}</td>'
+            )
+            html += '</tr>'
+
+        html += '</tbody></table></div></div>'
+
+        # ── 4. available operations table ────────────────────────
         ops = [
             ("job[:].fft.spectrum", "Batch FFT spectrum computation"),
             ("job[:].fft.modes", "Batch FMR mode analysis"),
@@ -820,46 +1008,41 @@ class BatchOperations:
             ("job[:].process(…)", "Full analysis pipeline"),
         ]
 
-        html += (
-            '<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
-            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;margin-bottom:12px;"
-            'border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);">'
-            '<b style="color:#94a3b8;">🔧 Available Operations:</b>'
-            '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;">'
-        )
+        html += f'<div style="{_card}">'
+        html += '<b style="color:#94a3b8;">🔧 Available Operations:</b>'
+        html += '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;">'
         for code, desc in ops:
             html += (
-                '<tr style="border-bottom:1px solid rgba(71,85,105,0.3);">'
+                f'<tr style="{_bdr}">'
                 f'<td style="padding:6px 8px;">'
-                f'<code style="background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;'
-                f'color:#60a5fa;border:1px solid rgba(71,85,105,0.3);font-weight:500;">{code}</code></td>'
+                f'<code style="{_code}">{code}</code></td>'
                 f'<td style="padding:6px 8px;color:#cbd5e1;">{desc}</td></tr>'
             )
-        html += "</table></div>"
+        html += '</table></div>'
 
-        # ── quick-start examples (collapsible) ──────────────────
+        # ── 5. quick-start examples (collapsible) ───────────────
         example_id = f"batch-examples-{uid}"
         html += (
             f'<div style="margin-top:4px;">'
             f'<span onclick="var e=document.getElementById(\'{example_id}\');'
             f"e.style.display=e.style.display==='none'?'block':'none';\""
             f' style="cursor:pointer;color:#60a5fa;font-size:0.9em;">'
-            f"▶ Quick-start examples</span>"
+            f'▶ Quick-start examples</span>'
             f'<div id="{example_id}" style="display:none;margin-top:8px;">'
             f'<pre style="background:rgba(15,23,42,0.8);padding:10px;border-radius:6px;'
             f"font-family:'Courier New',monospace;font-size:0.85em;color:#10b981;"
             f'border:1px solid rgba(71,85,105,0.4);overflow-x:auto;">'
-            "# Batch spectrum\n"
+            '# Batch spectrum\n'
             'batch = job[:].fft.spectrum.compute_all(fmin=5e9, fmax=25e9)\n'
             'batch.plot.heatmap("B0")\n\n'
-            "# Batch numpy access\n"
-            "arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n"
-            "# Full pipeline\n"
+            '# Batch numpy access\n'
+            'arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n'
+            '# Full pipeline\n'
             'job[:].process(dset="m")'
-            "</pre></div></div>"
+            '</pre></div></div>'
         )
 
-        html += "</div>"
+        html += '</div>'
         return html
 
     def __iter__(self):

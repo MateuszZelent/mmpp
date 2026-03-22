@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from ..batch_operations import BatchOperations
 
 if PLOTTING_AVAILABLE:
-    from ..plotting import MMPPlotter, PlotterProxy
+    from ..plotting import MMPPlotter
 
 if FFT_AVAILABLE:
     from ..fft import FFT
@@ -855,12 +855,12 @@ class MMPP:
         """
         return self._parse_path_parameters(zarr_path)
 
-    def find(self, **kwargs: Any) -> "PlotterProxy":
+    def find(self, **kwargs: Any) -> "BatchOperations":
         """
         Find zarr folders that match the given criteria.
         
-        Returns a PlotterProxy with plotting capabilities containing 
-        all matching ZarrJobResult objects.
+        Returns a batch collection wrapper containing all matching
+        :class:`~mmpp.core.job.ZarrJobResult` objects.
 
         Parameters
         ----------
@@ -913,10 +913,10 @@ class MMPP:
 
         Returns
         -------
-        PlotterProxy
-            Proxy object containing matching ZarrJobResult objects.
+        BatchOperations
+            Batch collection object containing matching ZarrJobResult objects.
             Supports indexing like `result[0]`, iteration, and 
-            plotting methods like `.mpl.plot()`.
+            plotting methods like `.mpl.plot()` and batch helpers.
 
         Examples
         --------
@@ -951,7 +951,7 @@ class MMPP:
 
         See Also
         --------
-        find_paths : Returns list of paths instead of PlotterProxy
+        find_paths : Returns list of paths instead of batch wrapper
         columns : Property showing all available column names
         df : Direct access to pandas DataFrame for complex queries
 
@@ -963,9 +963,9 @@ class MMPP:
         """
         if self.df.empty:
             log.warning("Database is empty. Run scan() first.")
-            if PLOTTING_AVAILABLE:
-                return PlotterProxy([], self)
-            return [] # type: ignore
+            from ..batch_operations import BatchOperations
+
+            return BatchOperations([], self)
 
         # Filter DataFrame - use nearest match for numeric values
         filtered_df = self.df.copy()
@@ -973,9 +973,9 @@ class MMPP:
         for key, target_value in kwargs.items():
             if key not in filtered_df.columns:
                 log.error(f"Column '{key}' not found in database. Available columns: {list(filtered_df.columns)}")
-                if PLOTTING_AVAILABLE:
-                    return PlotterProxy([], self)
-                return [] # type: ignore
+                from ..batch_operations import BatchOperations
+
+                return BatchOperations([], self)
             
             # Check if column is numeric
             if pd.api.types.is_numeric_dtype(filtered_df[key]):
@@ -1005,10 +1005,9 @@ class MMPP:
         matching_paths = set(filtered_df["path"])
         matching_results = [res for res in self.zarr_results if res.path in matching_paths]
 
-        if PLOTTING_AVAILABLE:
-            return PlotterProxy(matching_results, self)
-        
-        return matching_results # type: ignore
+        from ..batch_operations import BatchOperations
+
+        return BatchOperations(matching_results, self, _filter_kwargs=kwargs)
 
     def find_paths(self, **kwargs: Any) -> list[str]:
         """

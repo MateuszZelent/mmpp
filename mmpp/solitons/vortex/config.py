@@ -12,7 +12,7 @@ from ._utils import XYConvention
 class TrackingConfig:
     """Configuration for vortex core tracking."""
 
-    method: str = "gaussian"
+    method: str = "auto"
     z_layer: int = -1
     core_threshold: float = 0.9
     gaussian_roi: int = 7
@@ -58,7 +58,7 @@ class ModesConfig:
 
     max_modes: int = 6
     min_prominence: float = 0.05
-    tracking_method: str = "centroid"
+    tracking_method: str = "auto"
 
 
 @dataclass

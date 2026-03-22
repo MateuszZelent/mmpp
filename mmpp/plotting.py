@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 import numpy as np
 import zarr
 from .pyzfn import Pyzfn
+from .batch_operations import BatchOperations
 
 # Import shared logging configuration
 from .cli.logging_config import get_mmpp_logger, setup_mmpp_logging
@@ -29,10 +30,6 @@ def _find_largest_m_dataset(zarr_path: str) -> str:
         Name of the largest m dataset (e.g., "m_z5-8", "m-12", or fallback "m")
     """
     try:
-        from ..pyzfn import Pyzfn
-
-        job = Pyzfn(zarr_path)
-
         # Get all available datasets that start with "m"
         m_datasets = []
 
@@ -185,8 +182,11 @@ class FontManager:
             return []
 
 
-class PlotterProxy:
-    """Proxy class to provide plotting functionality to search results."""
+class PlotterProxy(BatchOperations):
+    """Compatibility proxy for older search-result workflows.
+
+    New code should prefer :class:`mmpp.batch_operations.BatchOperations`.
+    """
 
     def __init__(self, results: list[Any], mmpp_instance: Optional[Any] = None):
         """
@@ -199,7 +199,7 @@ class PlotterProxy:
         mmpp_instance : Optional[Any]
             Reference to MMPP instance
         """
-        self.results = results
+        super().__init__(results, mmpp_instance)
         self.mmpp_instance = mmpp_instance
 
     def __getattr__(self, name: str) -> Any:
@@ -280,9 +280,9 @@ class PlotterProxy:
     def __repr__(self) -> str:
         """String representation of the proxy."""
         if MATPLOTLIB_AVAILABLE:
-            return f"PlotterProxy({len(self.results)} results)"
+            return f"PlotterProxy(compat, {len(self.results)} results)"
         else:
-            return "PlotterProxy(plotting not available - install matplotlib)"
+            return "PlotterProxy(compat, plotting not available - install matplotlib)"
 
 
 # Global font and style setup cache

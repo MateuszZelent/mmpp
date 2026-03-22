@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -59,3 +60,30 @@ def test_trajectory_contract_has_analysis_compare_and_plot_accessors():
 def test_dataset_free_cpp_adapter_is_constructible():
     adapter = cpp()
     assert hasattr(adapter, "simulate")
+
+
+@dataclass
+class _MaterialLikeWithCppExtras:
+    Ms: float = 8.0e5
+    alpha: float = 0.01
+    P: float = 0.5
+    A: float = 1.3e-11
+    Lambda: float = 1.4
+    epsilonprime: float = 0.2
+    FixedLayer: tuple[float, float, float] = (0.0, 0.0, -1.0)
+    FixedLayerPosition: str = "bottom"
+    L_stt: float = 9e-9
+
+
+def test_cpp_adapter_reads_slonczewski_extras_from_attribute_object():
+    adapter = cpp(
+        material=_MaterialLikeWithCppExtras(),
+        geom={"R": 45e-9, "L": 20e-9},
+        polarity=1,
+    )
+
+    assert adapter._metadata["Lambda"] == 1.4
+    assert adapter._metadata["epsilonprime"] == 0.2
+    assert adapter._metadata["p_z"] == -1.0
+    assert adapter._metadata["fixed_layer_position"] == "bottom"
+    assert adapter.model.material.Ms == 8.0e5

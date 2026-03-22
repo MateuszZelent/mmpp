@@ -77,7 +77,8 @@ def fit_from_trajectory(*args, **kwargs):
     x0 = float(np.mean(x))
     y0 = float(np.mean(y))
     z = (x - x0) + 1j * (y - y0)
-    radius = float(np.mean(np.abs(z)))
+    radius_mean = float(np.mean(np.abs(z)))
+    radius_initial = float(np.abs(z[0])) if z.size else 0.0
     omega0 = _estimate_omega_from_trajectory(time, z)
     if not np.isfinite(omega0):
         omega0 = 0.0
@@ -85,10 +86,12 @@ def fit_from_trajectory(*args, **kwargs):
     t0 = float(time[0])
     phase0 = float(np.angle(z[0])) if z.size else 0.0
     duration = max(float(time[-1] - t0), 1e-30)
-    decay = np.exp(-max(damping, 0.0) * (time - t0) / duration)
+    damping_eff = float(max(damping, 0.0))
+    decay = np.exp(-damping_eff * (time - t0) / duration)
     phase = phase0 + omega0 * (time - t0)
 
-    z_sim = radius * decay * np.exp(1j * phase)
+    radius_base = radius_initial if damping_eff > 0.0 else radius_mean
+    z_sim = radius_base * decay * np.exp(1j * phase)
     x_sim = x0 + np.real(z_sim)
     y_sim = y0 + np.imag(z_sim)
 
@@ -102,22 +105,26 @@ def fit_from_trajectory(*args, **kwargs):
         metadata={
             "source_method": trajectory.method,
             "omega0_rad_s": float(omega0),
-            "radius_m": float(radius),
+            "radius_m": float(radius_base),
+            "radius_mean_m": float(radius_mean),
+            "radius_initial_m": float(radius_initial),
             "center": (x0, y0),
-            "damping": float(damping),
+            "damping": float(damping_eff),
         },
     )
 
     return ThieleTrajectoryFitResult(
         omega0_rad_s=float(omega0),
-        radius_m=float(radius),
+        radius_m=float(radius_base),
         center=(x0, y0),
-        damping=float(max(damping, 0.0)),
+        damping=float(damping_eff),
         nonlinear_coeff_N=0.0,
         simulated_trajectory=sim_traj,
         metadata={
             "fit_kind": "trajectory_proxy",
             "source_method": trajectory.method,
+            "radius_mean_m": float(radius_mean),
+            "radius_initial_m": float(radius_initial),
         },
     )
 

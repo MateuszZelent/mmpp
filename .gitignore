@@ -206,4 +206,6 @@ mmpp/fft/transmission/experiment/
 *.pdf
 docs/HYSTERESIS_IMPLEMENTATION_AUDIT.md
 *.md
+!docs/development/VORTEX_ANALYTICAL_AUTOFIT_IMPLEMENTATION_PLAN.md
 tests/notebooks/vortex/vortex_dynamics.ipynb
+tests/test.ipynb

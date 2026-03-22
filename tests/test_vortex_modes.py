@@ -80,6 +80,38 @@ def _create_job(tmp_path, data: np.ndarray, *, dx: float, dy: float, dt: float):
     return ZarrJobResult(str(zarr_path), {})
 
 
+def _create_table_mode_job(
+    tmp_path,
+    *,
+    nt: int = 640,
+    dt: float = 5e-12,
+    gyration_hz: float = 1.8e9,
+    breathing_hz: float = 3.6e9,
+):
+    zarr_path = tmp_path / "vortex_modes_table_only.zarr"
+    z = zarr.open(str(zarr_path), mode="w")
+
+    t = np.arange(nt, dtype=float) * dt
+    radius = 4.0e-9 + 1.4e-9 * np.sin(2.0 * np.pi * breathing_hz * t)
+    x = radius * np.cos(2.0 * np.pi * gyration_hz * t)
+    y = radius * np.sin(2.0 * np.pi * gyration_hz * t)
+    core_signal = np.ones_like(t)
+
+    table = z.create_group("table")
+    table.create_dataset("t", data=t, chunks=t.shape)
+    table.create_dataset("ext_coreposx", data=x, chunks=x.shape)
+    table.create_dataset("ext_coreposy", data=y, chunks=y.shape)
+    table.create_dataset("ext_coreposz", data=core_signal, chunks=core_signal.shape)
+
+    end = _make_vortex_snapshot(96, 96, center_x=48.0, center_y=48.0)
+    z.create_dataset("end", data=end[np.newaxis, ...], chunks=end[np.newaxis, ...].shape)
+
+    z.attrs["dx"] = 1e-9
+    z.attrs["dy"] = 1e-9
+    z.attrs["t_sampl"] = dt
+    return ZarrJobResult(str(zarr_path), {})
+
+
 def test_modes_classify_all_and_single_frequency(tmp_path):
     data, gyr_f, breathing_f, dx, dy, dt = _make_mode_rich_orbit_data()
     job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
@@ -94,6 +126,17 @@ def test_modes_classify_all_and_single_frequency(tmp_path):
 
     assert abs(near_gyr.frequency_hz - gyr_f) < 0.5e9
     assert abs(near_breath.frequency_hz - breathing_f) < 0.8e9
+
+
+def test_modes_support_table_only_tracking(tmp_path):
+    job = _create_table_mode_job(tmp_path)
+
+    modes = job.solitons.vortex.modes.classify_all(max_modes=8, min_prominence=0.03)
+    gyro = job.solitons.vortex.modes.gyration
+
+    assert len(modes) >= 1
+    assert any(mode.mode_type in {"gyration", "breathing", "azimuthal"} for mode in modes)
+    assert gyro is None or gyro.mode_type == "gyration"
 
 
 def test_modes_plot_accessor_and_mode_table(tmp_path):

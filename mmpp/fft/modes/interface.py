@@ -972,6 +972,7 @@ class FFTModeInterfaceNew:
         self,
         components: list = None,
         z_layer: int = -1,
+        method: int = 1,
         dpi: int = 100,
         figsize: tuple = (16, 10),
         toolbar: bool = True,
@@ -1062,6 +1063,7 @@ class FFTModeInterfaceNew:
             find_peaks_params = kwargs.pop("find_peaks", {"min_prominence": 0.01})
             spectrum_result = self.parent_fft._spectrum_impl(
                 dset=self.dataset_name,
+                method=method,
                 slice_info=self._slice_context,
                 find_peaks=find_peaks_params,
             )
@@ -1111,7 +1113,7 @@ class FFTModeInterfaceNew:
                 viewer_kwargs[key] = value
         
         # Arguments still implemented only by the legacy analyzer view.
-        legacy_only_keys = {"saveanim", "auto_save", "method", "force", "use_fft_spectrum"}
+        legacy_only_keys = {"saveanim", "auto_save", "force", "use_fft_spectrum"}
         use_legacy_view = any(key in viewer_kwargs for key in legacy_only_keys)
         if use_legacy_view:
             log.info("Legacy interactive mode selected due to legacy-only arguments")

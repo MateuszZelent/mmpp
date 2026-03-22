@@ -51,6 +51,7 @@ from .thiele import (
     FieldCalibration,
     FieldFunc,
     MaterialParams,
+    SlonczewskiCPPReduction,
     ThieleFJFitResult,
     ThieleOptimizationResult,
     ThieleTrajectoryResult,
@@ -64,6 +65,7 @@ from .thiele import (
     field_dc,
     fit_omega0_N_to_fJ,
     omega0_novosad,
+    reduce_mumax_slonczewski_cpp,
     slonczewski_mtj_efficiency,
 )
 
@@ -92,6 +94,7 @@ __all__ = [
     "cortes_ortuno",
     # Thiele vortex dynamics
     "MaterialParams",
+    "SlonczewskiCPPReduction",
     "DiskGeometry",
     "ExternalField",
     "ExternalFieldLike",
@@ -104,6 +107,7 @@ __all__ = [
     "CPPThieleModel",
     "ellipse_area",
     "slonczewski_mtj_efficiency",
+    "reduce_mumax_slonczewski_cpp",
     "fit_omega0_N_to_fJ",
     "current_dc",
     "current_ac",
