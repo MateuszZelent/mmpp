@@ -57,6 +57,7 @@ def load_existing_fft_result(
             window_function=metadata.pop("window_function", "hann"),
             filter_type=metadata.pop("filter_type", "remove_mean"),
             fft_engine=metadata.pop("fft_engine", "auto"),
+            scaling=metadata.pop("scaling", "raw"),
             zero_padding=metadata.pop("zero_padding", True),
             nfft=metadata.pop("nfft", None),
         )
@@ -89,6 +90,7 @@ def verify_fft_parameters(
     window: Any,
     filter_type: Any,
     engine: Any,
+    scaling: Any,
     zero_padding: Any,
     nfft: Any,
     metadata_overrides: dict[str, Any],
@@ -103,6 +105,7 @@ def verify_fft_parameters(
         existing_result.config.window_function == window
         and existing_result.config.filter_type == filter_type
         and engine_match
+        and getattr(existing_result.config, "scaling", "raw") == scaling
         and existing_result.config.zero_padding == zero_padding
         and existing_result.config.nfft == nfft
     )

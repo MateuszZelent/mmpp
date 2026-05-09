@@ -61,6 +61,7 @@ class _SpectrumQuickPlot:
             ("fmin / fmax", "None", "Frequency range filter (Hz)"),
             ("window", "'hann'", "Window function"),
             ("filter_type", "'remove_mean'", "Pre-FFT filter"),
+            ("scaling", "'raw'", "raw, continuous_ft, amplitude, power, psd"),
             ("force", "False", "Force recalculation (bypass cache)"),
         ]
         compute_rows = "".join(
@@ -94,8 +95,8 @@ class _SpectrumQuickPlot:
             "# Compare methods on same axes\n"
             "import matplotlib.pyplot as plt\n"
             "fig, ax = plt.subplots()\n"
-            "data.fft.spectrum.plot.spectrum(method=1, force=True, ax=ax, label='per-pixel')\n"
-            "data.fft.spectrum.plot.spectrum(method=2, force=True, ax=ax, label='avg signal')\n"
+            "data.fft.spectrum.plot.spectrum(method=1, force=True, ax=ax, label='avg signal → FFT')\n"
+            "data.fft.spectrum.plot.spectrum(method=2, force=True, ax=ax, label='per-pixel FFT → avg |FFT|²')\n"
             "ax.legend()\n"
             "\n"
             "# Interactive explorer\n"
@@ -195,6 +196,7 @@ class SpectrumHelper:
                 ("fmin / fmax", "Frequency range filter (Hz)"),
                 ("window", "Window function: hann, hamming, blackman, tukey, … (default: 'hann')"),
                 ("filter_type", "Pre-FFT filter: remove_mean, remove_static, detrend_linear, … (default: 'remove_mean')"),
+                ("scaling", "Spectrum scaling: raw, continuous_ft, amplitude, power, psd (default: 'raw')"),
                 ("engine", "FFT backend: numpy, scipy, pyfftw, auto (default: 'auto')"),
                 ("zero_padding", "Pad to next power of 2 (default: True)"),
                 ("nfft", "Explicit FFT length (default: None)"),
@@ -248,8 +250,8 @@ class SpectrumHelper:
             "# Plot both on same axes",
             "import matplotlib.pyplot as plt",
             "fig, ax = plt.subplots()",
-            "r1.plot.spectrum(ax=ax, log_scale=True, label='method 1 (per-pixel)')",
-            "r2.plot.spectrum(ax=ax, log_scale=True, label='method 2 (avg signal)')",
+            "r1.plot.spectrum(ax=ax, log_scale=True, label='method 1 (avg signal → FFT)')",
+            "r2.plot.spectrum(ax=ax, log_scale=True, label='method 2 (per-pixel FFT → avg |FFT|²)')",
             "ax.legend()",
             "",
             "# Quick one-liner plot",
@@ -257,7 +259,7 @@ class SpectrumHelper:
             "",
             "# With FFT options",
             "result = data.fft.spectrum(",
-            "    method=1, window='blackman',",
+            "    method=1, window='blackman', scaling='amplitude',",
             "    filter_type='remove_static',",
             "    fmin=1e9, fmax=20e9,",
             "    find_peaks={'min_prominence': 0.1}",

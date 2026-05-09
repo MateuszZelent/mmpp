@@ -147,12 +147,77 @@ def _select_z_layer(
     data: np.ndarray,
     z_layer: int,
     slice_info: Any | None,
+    original_dataset_shape: tuple[int, ...] | None,
+    dataset_attrs: Any | None = None,
     logger: Any,
 ) -> np.ndarray:
     """Select z-layer while handling ambiguous 4D cases."""
     original_ndim = len(data.shape)
+    source_ndim = len(original_dataset_shape) if original_dataset_shape is not None else original_ndim
 
-    if original_ndim == 5:  # (t, z, y, x, comp)
+    def _extract_component_count(attrs: Any | None) -> int | None:
+        if attrs is None:
+            return None
+
+        def _to_positive_int(value: Any) -> int | None:
+            try:
+                count = int(value)
+            except Exception:
+                return None
+            return count if count > 0 else None
+
+        for key in ("valuedim", "value_dim", "n_comp", "component_count"):
+            if hasattr(attrs, "get"):
+                candidate = _to_positive_int(attrs.get(key))
+                if candidate is not None:
+                    return candidate
+
+        for key in ("components", "component_names", "vector_components"):
+            if hasattr(attrs, "get"):
+                value = attrs.get(key)
+                if isinstance(value, (list, tuple)) and value:
+                    return len(value)
+
+        return None
+
+    def _infer_axis_layout(attrs: Any | None) -> str | None:
+        if attrs is None or not hasattr(attrs, "get"):
+            return None
+
+        for key in ("axis_order", "axes", "dims", "dimensions"):
+            raw = attrs.get(key)
+            if raw is None:
+                continue
+
+            if isinstance(raw, str):
+                normalized = raw.lower().replace("-", "").replace("_", "")
+                if normalized in {"tzyx", "zyxt"}:
+                    return "tzyx"
+                if normalized in {"tyxc", "tyxcomp", "tyxcomponent", "tyxcomponents", "tyxvaluedim"}:
+                    return "tyxc"
+                if "comp" in normalized or normalized.endswith("c"):
+                    return "tyxc"
+                if "z" in normalized and "comp" not in normalized and not normalized.endswith("c"):
+                    return "tzyx"
+
+            if isinstance(raw, (list, tuple)):
+                tokens = [str(token).lower() for token in raw]
+                if any(token in {"c", "comp", "component", "components", "valuedim", "value_dim"} for token in tokens):
+                    return "tyxc"
+                if "z" in tokens:
+                    return "tzyx"
+
+        return None
+
+    def _has_explicit_component_selection(selection: Any | None) -> bool:
+        if selection is None or not isinstance(selection, tuple):
+            return False
+        non_ellipsis_slices = [s for s in selection if s is not Ellipsis]
+        return bool(non_ellipsis_slices) and isinstance(
+            non_ellipsis_slices[-1], (int, np.integer)
+        )
+
+    if source_ndim == 5:  # (t, z, y, x, comp)
         if z_layer == -1:
             data = data[:, -1, :, :, :]
             logger.debug("Selected last z-layer from 5D data")
@@ -161,32 +226,46 @@ def _select_z_layer(
             logger.debug("Selected z-layer %s from 5D data", z_layer)
         return data
 
-    if original_ndim == 4:
-        component_was_selected = False
-        if slice_info is not None and isinstance(slice_info, tuple):
-            non_ellipsis_slices = [s for s in slice_info if s is not Ellipsis]
-            if non_ellipsis_slices and isinstance(
-                non_ellipsis_slices[-1], (int, np.integer)
-            ):
-                component_was_selected = True
-                logger.debug(
-                    "Detected component selection in slice - treating 4D as (t,z,y,x)"
-                )
+    if source_ndim == 4:
+        axis_layout = _infer_axis_layout(dataset_attrs)
+        component_count = _extract_component_count(dataset_attrs)
+        component_was_selected = _has_explicit_component_selection(slice_info)
 
         if component_was_selected:
-            if z_layer == -1:
-                data = data[:, -1, :, :]
-                logger.debug(
-                    "Selected last z-layer from 4D data (component pre-selected)"
-                )
-            else:
-                data = data[:, z_layer, :, :]
-                logger.debug(
-                    "Selected z-layer %s from 4D data (component pre-selected)",
-                    z_layer,
-                )
-        else:
-            logger.debug("No z-dimension in 4D data (assuming t,y,x,comp)")
+            logger.debug(
+                "Detected component selection in original 4D dataset - keeping semantics as (t,y,x,comp)"
+            )
+            return data
+
+        if axis_layout == "tzyx":
+            logger.debug("Detected scalar 4D axis layout from metadata: (t,z,y,x)")
+            return data[:, -1, :, :] if z_layer == -1 else data[:, z_layer, :, :]
+
+        if axis_layout == "tyxc":
+            logger.debug("Detected vector 4D axis layout from metadata: (t,y,x,comp)")
+            return data
+
+        if component_count is not None:
+            logger.debug(
+                "Detected %s component(s) from metadata in 4D dataset - keeping semantics as (t,y,x,comp)",
+                component_count,
+            )
+            return data
+
+        trailing_dim = original_dataset_shape[-1] if original_dataset_shape is not None else data.shape[-1]
+        if trailing_dim in {2, 3}:
+            logger.debug(
+                "Inferring vector 4D layout (t,y,x,comp) from trailing dimension=%s",
+                trailing_dim,
+            )
+            return data
+
+        logger.debug(
+            "Inferring scalar 4D layout (t,z,y,x) because no component metadata was found and trailing dimension=%s",
+            trailing_dim,
+        )
+        return data[:, -1, :, :] if z_layer == -1 else data[:, z_layer, :, :]
+
         return data
 
     if original_ndim == 3:
@@ -204,37 +283,73 @@ def _select_z_layer(
     raise ValueError(f"Unsupported data shape: {data.shape}")
 
 
-def _resolve_dt(*, data_set: Any, job: Any, logger: Any) -> float:
+def _coerce_dt(value: Any) -> float | None:
+    """Convert scalar-like metadata value to a positive float."""
+    if value is None:
+        return None
+    try:
+        if hasattr(value, "item"):
+            value = value.item()
+        dt = float(value)
+    except Exception:
+        return None
+    return dt if dt > 0 else None
+
+
+def resolve_dt_from_metadata(*, data_set: Any, job: Any, logger: Any) -> float:
     """Resolve timestep with dataset-specific attributes first."""
     dt = None
     try:
         if hasattr(data_set, "attrs") and "t" in data_set.attrs:
             t_attr = data_set.attrs["t"]
             if hasattr(t_attr, "__len__") and len(t_attr) >= 2:
-                dt = float(t_attr[1] - t_attr[0])
-                logger.debug("Using dt from data_set.attrs['t']: %s", dt)
+                candidate = _coerce_dt(t_attr[1] - t_attr[0])
+                if candidate is not None:
+                    dt = candidate
+                    logger.debug("Using dt from data_set.attrs['t']: %s", dt)
 
         if dt is None and hasattr(data_set, "dt"):
-            dt = data_set.dt
-            logger.debug("Using dt from data_set.dt property: %s", dt)
+            candidate = _coerce_dt(data_set.dt)
+            if candidate is not None:
+                dt = candidate
+                logger.debug("Using dt from data_set.dt property: %s", dt)
 
         if dt is None and hasattr(data_set, "attrs") and "t_sampl" in data_set.attrs:
-            dt = data_set.attrs["t_sampl"]
-            logger.debug("Using dt from data_set.attrs['t_sampl']: %s", dt)
+            candidate = _coerce_dt(data_set.attrs["t_sampl"])
+            if candidate is not None:
+                dt = candidate
+                logger.debug("Using dt from data_set.attrs['t_sampl']: %s", dt)
+
+        if dt is None and hasattr(data_set, "attrs") and "dt" in data_set.attrs:
+            candidate = _coerce_dt(data_set.attrs["dt"])
+            if candidate is not None:
+                dt = candidate
+                logger.debug("Using dt from data_set.attrs['dt']: %s", dt)
 
         if dt is None and hasattr(job, "attrs") and "t_sampl" in job.attrs:
-            dt = job.attrs["t_sampl"]
-            logger.warning(
-                "Using dt from job.attrs['t_sampl']: %s (dataset-specific dt not found)",
-                dt,
-            )
+            candidate = _coerce_dt(job.attrs["t_sampl"])
+            if candidate is not None:
+                dt = candidate
+                logger.warning(
+                    "Using dt from job.attrs['t_sampl']: %s (dataset-specific dt not found)",
+                    dt,
+                )
+
+        if dt is None and hasattr(job, "attrs") and "dt" in job.attrs:
+            candidate = _coerce_dt(job.attrs["dt"])
+            if candidate is not None:
+                dt = candidate
+                logger.warning(
+                    "Using dt from job.attrs['dt']: %s (dataset-specific dt not found)",
+                    dt,
+                )
 
         if dt is None:
-            dt = 1e-12
-            logger.warning("t_sampl not found in attrs, using default: %s", dt)
+            raise ValueError(
+                "Could not determine dt from dataset metadata. Provide explicit time metadata (e.g. attrs['t'] or attrs['t_sampl'])."
+            )
     except (AttributeError, TypeError, IndexError) as exc:
-        logger.warning("Could not determine dt: %s, using default", exc)
-        dt = 1e-12
+        raise ValueError(f"Could not determine dt from dataset metadata: {exc}") from exc
 
     return dt
 
@@ -274,6 +389,7 @@ def load_fft_input_data(
         raise RuntimeError(f"Failed to open zarr job at {zarr_path}: {exc}") from exc
 
     data_set = _resolve_dataset(job=job, zarr_path=zarr_path, dataset=dataset, logger=logger)
+    original_dataset_shape = tuple(getattr(data_set, "shape", ()) or ())
 
     data_load_start = time.time()
     data, apply_tmax = _apply_slice_with_time_policy(
@@ -297,12 +413,14 @@ def load_fft_input_data(
         data=data,
         z_layer=z_layer,
         slice_info=slice_info,
+        original_dataset_shape=original_dataset_shape,
+        dataset_attrs=getattr(data_set, "attrs", None),
         logger=logger,
     )
     layer_select_time = time.time() - layer_select_start
     logger.debug("Layer selection time: %.3fs", layer_select_time)
 
-    dt = _resolve_dt(data_set=data_set, job=job, logger=logger)
+    dt = resolve_dt_from_metadata(data_set=data_set, job=job, logger=logger)
 
     total_time = time.time() - start_time
     if process is not None and initial_memory is not None:

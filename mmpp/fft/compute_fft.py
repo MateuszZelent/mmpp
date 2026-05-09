@@ -59,6 +59,7 @@ from ._compute_loading import (
     normalize_z_layer_index,
 )
 from ._compute_methods import build_fft_metadata, run_fft_method1, run_fft_method2
+from ._scaling import SPECTRUM_SCALINGS
 from .filters.preprocess import (
     apply_filter as apply_preprocess_filter,
     apply_single_filter as apply_single_preprocess_filter,
@@ -100,6 +101,7 @@ class FFTComputeConfig:
     window_function: WINDOW_TYPES = "hann"
     filter_type: FILTER_TYPES = "remove_mean"
     fft_engine: FFT_ENGINES = "auto"
+    scaling: SPECTRUM_SCALINGS = "raw"
     zero_padding: bool = True
     nfft: Optional[int] = None
 
@@ -121,17 +123,53 @@ class FFTComputeResult:
     config: FFTComputeConfig
 
     @property
+    def spectral_quantity(self) -> np.ndarray:
+        """Return the physically relevant non-negative spectral quantity.
+
+        The exact interpretation depends on ``metadata['power_quantity']`` and can
+        represent raw power, amplitude-squared, power, or PSD. The stored
+        ``spectrum`` may still be complex (for phase-preserving modes) or the
+        square-root of the quantity (for power/PSD modes), so consumers should
+        use this accessor instead of re-deriving semantics ad hoc.
+        """
+        quantity = np.abs(self.spectrum) ** 2
+        power_quantity = str(self.metadata.get("power_quantity", "raw_power")).lower()
+
+        if power_quantity in {
+            "raw_power",
+            "continuous_ft_power",
+            "amplitude_squared",
+            "power",
+            "psd",
+        }:
+            return quantity
+
+        return quantity
+
+    @property
+    def spectral_quantity_label(self) -> str:
+        """Human-readable label for :attr:`spectral_quantity`."""
+        power_quantity = str(self.metadata.get("power_quantity", "raw_power")).lower()
+        return {
+            "raw_power": "Raw power",
+            "continuous_ft_power": "Continuous FT power",
+            "amplitude_squared": "Amplitude²",
+            "power": "Power",
+            "psd": "PSD",
+        }.get(power_quantity, "Spectral quantity")
+
+    @property
     def peak_frequency(self) -> float:
-        """Get frequency with maximum power."""
+        """Get frequency with maximum physically relevant spectral quantity."""
         if self.spectrum.size == 0 or self.frequencies.size == 0:
             raise ValueError("FFT spectrum is empty; cannot determine peak frequency")
 
-        power = np.abs(self.spectrum) ** 2
-        if power.ndim > 1:
-            reduction_axes = tuple(range(1, power.ndim))
-            power = power.sum(axis=reduction_axes)
+        quantity = np.asarray(self.spectral_quantity, dtype=float)
+        if quantity.ndim > 1:
+            reduction_axes = tuple(range(1, quantity.ndim))
+            quantity = quantity.sum(axis=reduction_axes)
 
-        peak_idx = int(np.argmax(power))
+        peak_idx = int(np.argmax(quantity))
         if peak_idx >= self.frequencies.shape[0]:
             peak_idx = self.frequencies.shape[0] - 1
 
@@ -218,6 +256,7 @@ class FFTComputeResult:
         fft_group.attrs["window_function"] = self.config.window_function
         fft_group.attrs["filter_type"] = self.config.filter_type
         fft_group.attrs["fft_engine"] = self.config.fft_engine
+        fft_group.attrs["scaling"] = self.config.scaling
         fft_group.attrs["zero_padding"] = self.config.zero_padding
         if self.config.nfft is not None:
             fft_group.attrs["nfft"] = self.config.nfft
@@ -500,6 +539,7 @@ class FFTCompute:
         window: WINDOW_TYPES = "hann",
         filter_type: FILTER_TYPES = "remove_mean",
         engine: Optional[str] = None,
+        scaling: SPECTRUM_SCALINGS = "raw",
         zero_padding: bool = True,
         nfft: Optional[int] = None,
     ) -> FFTComputeResult:
@@ -510,6 +550,7 @@ class FFTCompute:
             window=window,
             filter_type=filter_type,
             engine=engine,
+            scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
             determine_engine=self.determine_engine,
@@ -521,7 +562,9 @@ class FFTCompute:
             method=1,
             window=window,
             filter_type=filter_type,
+            requested_engine=execution.requested_engine,
             selected_engine=execution.selected_engine,
+            scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
             calculation_time=execution.calculation_time,
@@ -529,11 +572,13 @@ class FFTCompute:
             dt=dt,
             frequencies=execution.frequencies,
             fft_length=execution.fft_length,
+            scaling_metadata=execution.scaling_metadata,
         )
         config = FFTComputeConfig(
             window_function=window,
             filter_type=filter_type,
             fft_engine=execution.selected_engine,
+            scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
         )
@@ -551,6 +596,7 @@ class FFTCompute:
         window: WINDOW_TYPES = "hann",
         filter_type: FILTER_TYPES = "remove_mean",
         engine: Optional[str] = None,
+        scaling: SPECTRUM_SCALINGS = "raw",
         zero_padding: bool = True,
         nfft: Optional[int] = None,
     ) -> FFTComputeResult:
@@ -561,6 +607,7 @@ class FFTCompute:
             window=window,
             filter_type=filter_type,
             engine=engine,
+            scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
             determine_engine=self.determine_engine,
@@ -572,7 +619,9 @@ class FFTCompute:
             method=2,
             window=window,
             filter_type=filter_type,
+            requested_engine=execution.requested_engine,
             selected_engine=execution.selected_engine,
+            scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
             calculation_time=execution.calculation_time,
@@ -580,11 +629,13 @@ class FFTCompute:
             dt=dt,
             frequencies=execution.frequencies,
             fft_length=execution.fft_length,
+            scaling_metadata=execution.scaling_metadata,
         )
         config = FFTComputeConfig(
             window_function=window,
             filter_type=filter_type,
             fft_engine=execution.selected_engine,
+            scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
         )
@@ -634,6 +685,7 @@ class FFTCompute:
                 "spectral_derivative",
             ],
             "engines": list(self.AVAILABLE_ENGINES.keys()),
+            "scalings": ["raw", "continuous_ft", "amplitude", "power", "psd"],
             "dependencies": {"scipy": SCIPY_AVAILABLE, "pyfftw": PYFFTW_AVAILABLE},
         }
 
@@ -661,6 +713,7 @@ class FFTCompute:
         )
         filter_type = kwargs.get("filter_type", self.config.filter_type)
         engine = kwargs.get("engine", self.config.fft_engine)
+        scaling = kwargs.get("scaling", self.config.scaling)
         zero_padding = kwargs.get("zero_padding", self.config.zero_padding)
         nfft = kwargs.get("nfft", self.config.nfft)
 
@@ -669,6 +722,7 @@ class FFTCompute:
             window=window,
             filter_type=filter_type,
             engine=engine,
+            scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
             metadata_overrides=kwargs,
@@ -803,15 +857,17 @@ class FFTCompute:
         )
         filter_type = kwargs.get("filter_type", self.config.filter_type)
         engine = kwargs.get("engine", self.config.fft_engine)
+        scaling = kwargs.get("scaling", self.config.scaling)
         zero_padding = kwargs.get("zero_padding", self.config.zero_padding)
         nfft = kwargs.get("nfft", self.config.nfft)
 
         log.info(
-            "Computing FFT with method %s (window: %s, filter: %s, engine: %s, zero_padding: %s, nfft: %s)...",
+            "Computing FFT with method %s (window: %s, filter: %s, engine: %s, scaling: %s, zero_padding: %s, nfft: %s)...",
             method,
             window,
             filter_type,
             engine,
+            scaling,
             zero_padding,
             nfft,
         )
@@ -824,6 +880,7 @@ class FFTCompute:
                 window,
                 filter_type,
                 engine,
+                scaling,
                 zero_padding=zero_padding,
                 nfft=nfft,
             )
@@ -834,6 +891,7 @@ class FFTCompute:
                 window,
                 filter_type,
                 engine,
+                scaling,
                 zero_padding=zero_padding,
                 nfft=nfft,
             )

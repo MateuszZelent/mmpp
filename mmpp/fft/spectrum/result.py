@@ -25,6 +25,9 @@ class SpectrumResult:
         filter_config: dict[str, Any] | None = None,
         raw_spectrum: np.ndarray | None = None,
         power_override: np.ndarray | None = None,
+        scaling: str = "raw",
+        spectrum_kind: str = "complex",
+        power_quantity: str = "raw_power",
     ):
         self.frequencies = np.asarray(frequencies)
         self.spectrum = np.asarray(spectrum)
@@ -36,8 +39,71 @@ class SpectrumResult:
         self._filter_config = filter_config
         self._raw_spectrum = np.asarray(raw_spectrum) if raw_spectrum is not None else np.asarray(spectrum)
         self._power_override = np.asarray(power_override) if power_override is not None else None
+        self.scaling = str(scaling)
+        self.spectrum_kind = str(spectrum_kind)
+        self.power_quantity = str(power_quantity)
         self._single_component = False
         self._peaks_cache: list[dict[str, float]] | None = None
+
+    @property
+    def spectral_quantity(self) -> np.ndarray:
+        """Return the non-negative spectral quantity consistent with ``scaling``.
+
+        This accessor is the semantics-aware counterpart of the legacy ``power``
+        property and respects ``power_quantity`` plus any filtered override.
+        """
+        if self._power_override is not None:
+            return np.asarray(self._power_override, dtype=float)
+
+        quantity = np.abs(self.spectrum) ** 2
+        power_quantity = self.power_quantity.lower()
+        if power_quantity in {
+            "raw_power",
+            "continuous_ft_power",
+            "amplitude_squared",
+            "power",
+            "psd",
+        }:
+            return quantity
+
+        return quantity
+
+    @property
+    def spectral_quantity_label(self) -> str:
+        """Human-readable label for :attr:`spectral_quantity`."""
+        return {
+            "raw_power": "Raw power",
+            "continuous_ft_power": "Continuous FT power",
+            "amplitude_squared": "Amplitude²",
+            "power": "Power",
+            "psd": "PSD",
+        }.get(self.power_quantity.lower(), "Spectral quantity")
+
+    @property
+    def peak_frequency_hz(self) -> float:
+        """Frequency of the strongest spectral quantity sample."""
+        if self.frequencies.size == 0 or self.spectral_quantity.size == 0:
+            raise ValueError("Spectrum is empty; cannot determine peak frequency")
+
+        quantity = np.asarray(self.spectral_quantity, dtype=float)
+        if quantity.ndim > 1:
+            reduction_axes = tuple(range(1, quantity.ndim))
+            quantity = quantity.sum(axis=reduction_axes)
+
+        peak_idx = int(np.argmax(quantity))
+        if peak_idx >= self.frequencies.shape[0]:
+            peak_idx = self.frequencies.shape[0] - 1
+        return float(self.frequencies[peak_idx])
+
+    @property
+    def peak_frequency_ghz(self) -> float:
+        """Peak frequency converted to GHz."""
+        return self.peak_frequency_hz * 1e-9
+
+    @property
+    def is_complex_spectrum(self) -> bool:
+        """Whether the spectrum preserves complex phase information."""
+        return self.spectrum_kind == "complex"
 
     @property
     def frequencies_ghz(self) -> np.ndarray:
@@ -51,10 +117,8 @@ class SpectrumResult:
 
     @property
     def power(self) -> np.ndarray:
-        """Power spectrum ``|FFT|²``."""
-        if self._power_override is not None:
-            return np.asarray(self._power_override, dtype=float)
-        return np.abs(self.spectrum) ** 2
+        """Backward-compatible alias for :attr:`spectral_quantity`."""
+        return self.spectral_quantity
 
     @property
     def amplitude(self) -> np.ndarray:
@@ -69,11 +133,19 @@ class SpectrumResult:
     @property
     def phase(self) -> np.ndarray:
         """Phase spectrum ``arg(FFT)``."""
+        if not self.is_complex_spectrum:
+            raise ValueError(
+                "Phase is unavailable for magnitude-only spectra (e.g. method=2, power scaling, psd scaling, or filtered views)."
+            )
         return np.angle(self.spectrum)
 
     @property
     def complex(self) -> np.ndarray:
         """Raw complex spectrum data."""
+        if not self.is_complex_spectrum:
+            raise ValueError(
+                "Complex spectrum is unavailable for magnitude-only spectra (e.g. method=2, power scaling, psd scaling, or filtered views)."
+            )
         return self.spectrum
 
     @property
@@ -185,7 +257,7 @@ class SpectrumResult:
 
         pipeline = FilterPipeline()
         filtered_power = pipeline.postprocess(
-            np.asarray(self.power, dtype=float),
+            np.asarray(self.spectral_quantity, dtype=float),
             np.asarray(self.frequencies, dtype=float),
             filters={"post": post} if post else None,
             stage="post",
@@ -202,6 +274,9 @@ class SpectrumResult:
             filter_config={"post": post},
             raw_spectrum=self._raw_spectrum,
             power_override=filtered_power,
+            scaling=self.scaling,
+            spectrum_kind="magnitude",
+            power_quantity=self.power_quantity,
         )
 
     # Backward-compatible tuple behavior.
@@ -235,7 +310,8 @@ class SpectrumResult:
         filtered = ", filtered=True" if self._filter_config else ""
         return (
             f"SpectrumResult(frequencies={len(self.frequencies)}, "
-            f"spectrum_shape={self.spectrum.shape}, peaks={peaks}{label}{filtered})"
+            f"spectrum_shape={self.spectrum.shape}, peaks={peaks}, scaling='{self.scaling}', "
+            f"kind='{self.spectrum_kind}'{label}{filtered})"
         )
 
     def _repr_html_(self) -> str:

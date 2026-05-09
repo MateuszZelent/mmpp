@@ -10,6 +10,7 @@ from html import escape as _html_escape
 import numpy as np
 
 # Import from our own modules
+from ._compute_loading import resolve_dt_from_metadata
 from .compute_fft import FFTCompute, FFTComputeResult
 from .method_helpers import CallableMethodHelper
 from .plot import FFTPlotter
@@ -396,9 +397,8 @@ class FFT:
         >>> # Equivalent using slice notation
         >>> freqs, spec = job[0].m[:1000,...].fft.spectrum()
         """
-        # If tmin or tmax specified, create slice_info for time dimension
         if tmin is not None or tmax is not None:
-            slice_info = (slice(tmin, tmax), ...)
+            slice_info = self._merge_time_slice(slice_info, tmin=tmin, tmax=tmax)
         
         result = self._compute_fft(
             dset,
@@ -483,9 +483,33 @@ class FFT:
                 "dset": dset,
                 "slice_info": slice_info,
             },
+            scaling=result.metadata.get("scaling", "raw"),
+            spectrum_kind=result.metadata.get("spectrum_kind", "complex"),
+            power_quantity=result.metadata.get("power_quantity", "raw_power"),
         )
         result._single_component = component_selected
         return result
+
+    @staticmethod
+    def _merge_time_slice(
+        slice_info: Optional[Any],
+        *,
+        tmin: Optional[int],
+        tmax: Optional[int],
+    ) -> Any:
+        """Override only the time axis while preserving other slice selections."""
+        time_slice = slice(tmin, tmax)
+        if slice_info is None:
+            return (time_slice, Ellipsis)
+        if slice_info is Ellipsis:
+            return (time_slice, Ellipsis)
+        if not isinstance(slice_info, tuple):
+            return (time_slice, slice_info)
+        if len(slice_info) == 0 or slice_info[0] is Ellipsis:
+            return (time_slice, *slice_info)
+        merged = list(slice_info)
+        merged[0] = time_slice
+        return tuple(merged)
 
     def frequencies(
         self,
@@ -567,16 +591,6 @@ class FFT:
         if not isinstance(dataset_name, str):
             dataset_name = str(dataset_name)
 
-        def _extract_dt(value: Any) -> Optional[float]:
-            if value is None:
-                return None
-            try:
-                if hasattr(value, "item"):
-                    value = value.item()
-                return float(value)
-            except Exception:
-                return None
-
         # Get dataset metadata without materializing the data
         try:
             data_set = None
@@ -622,8 +636,6 @@ class FFT:
                 except (TypeError, ValueError):
                     log.debug(f"Ignoring invalid tmax value: {tmax}")
 
-            # Get dt from dataset's smart .dt property (handles t_sampl, time arrays, etc.)
-            # Falls back to manual attrs check if wrapper not available
             dt = None
             if hasattr(data_set, 'dt'):
                 try:
@@ -631,25 +643,9 @@ class FFT:
                     log.debug(f"Using dt from data_set.dt property: {dt}")
                 except AttributeError:
                     pass  # Fall through to manual checks
-            
-            if dt is None and hasattr(data_set, "attrs"):
-                dataset_attrs = getattr(data_set, "attrs", {})
-                for key in ("t_sampl", "dt"):
-                    dt = _extract_dt(dataset_attrs.get(key))
-                    if dt:
-                        break
-
-            if dt is None and zarr_group is not None and hasattr(zarr_group, "attrs"):
-                for key in ("t_sampl", "dt"):
-                    dt = _extract_dt(zarr_group.attrs.get(key))
-                    if dt:
-                        break
-
             if dt is None:
-                dt = 1e-12
-                log.warning(
-                    f"t_sampl not found in metadata for {dataset_name}, using default dt={dt}"
-                )
+                job_meta = type("_JobMeta", (), {"attrs": getattr(zarr_group, "attrs", {})})()
+                dt = resolve_dt_from_metadata(data_set=data_set, job=job_meta, logger=log)
 
             # Determine FFT length (same logic as in compute_fft)
             fft_length = n_timesteps
@@ -658,6 +654,10 @@ class FFT:
             nfft = kwargs.get("nfft", self._compute.config.nfft)
 
             if nfft is not None:
+                if int(nfft) < int(n_timesteps):
+                    raise ValueError(
+                        f"Requested nfft ({nfft}) must be greater than or equal to data length ({n_timesteps})"
+                    )
                 fft_length = nfft
             elif zero_padding:
                 next_power_two = 1 << (n_timesteps - 1).bit_length()
@@ -791,8 +791,7 @@ class FFT:
             slice_info=slice_info,
             **kwargs,
         )
-        spectrum = result[1]  # Extract spectrum from tuple
-        return np.abs(spectrum) ** 2
+        return result.power
 
     def phase(
         self,
@@ -822,8 +821,7 @@ class FFT:
             Phase spectrum
         """
         result = self.spectrum(dset, z_layer, method, slice_info=slice_info, **kwargs)
-        spectrum = result[1]  # Extract spectrum from tuple
-        return np.angle(spectrum)
+        return result.phase
 
     def magnitude(
         self,
@@ -855,8 +853,7 @@ class FFT:
             Magnitude spectrum (\\|FFT\\|)
         """
         result = self.spectrum(dset, z_layer, method, slice_info=slice_info, **kwargs)
-        spectrum = result[1]  # Extract spectrum from tuple
-        return np.abs(spectrum)
+        return result.amplitude
 
     def plot_spectrum(
         self,

@@ -108,6 +108,9 @@ def plot_spectrum(
             ax.legend()
 
     ax.set_xlabel(f"Frequency ({freq_unit})")
+    quantity_label = getattr(result, "spectral_quantity_label", None) or (
+        "PSD" if getattr(result, "power_quantity", "") == "psd" else "Power"
+    )
 
     if not normalize and not log_scale:
         max_val = float(np.nanmax(power)) if power.size else 0.0
@@ -118,17 +121,17 @@ def plot_spectrum(
                 for line in ax.get_lines():
                     ydata = line.get_ydata()
                     line.set_ydata(ydata / scale_factor)
-                ax.set_ylabel(f"Power (×10$^{{{exponent}}}$ arb. u.)")
+                ax.set_ylabel(f"{quantity_label} (×10$^{{{exponent}}}$ arb. u.)")
                 ax.relim()
                 ax.autoscale_view()
             else:
-                ax.set_ylabel("Power (arb. u.)")
+                ax.set_ylabel(f"{quantity_label} (arb. u.)")
         else:
-            ax.set_ylabel("Power (arb. u.)")
+            ax.set_ylabel(f"{quantity_label} (arb. u.)")
     elif normalize:
-        ax.set_ylabel("Power (normalized)")
+        ax.set_ylabel(f"{quantity_label} (normalized)")
     else:
-        ax.set_ylabel("Power (arb. u.)")
+        ax.set_ylabel(f"{quantity_label} (arb. u.)")
 
     if log_scale:
         ax.set_yscale("log")
