@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mmpp.analytical import ExternalField
+from mmpp.analytical import ExternalField, current_dc
 
 from ._plotting import (
     apply_axes_style,
@@ -44,7 +44,9 @@ def _trajectory_center(trajectory: TrajectoryResult) -> tuple[float, float]:
     )
 
 
-def _trajectory_physical_coordinates(trajectory: TrajectoryResult) -> tuple[np.ndarray, np.ndarray]:
+def _trajectory_physical_coordinates(
+    trajectory: TrajectoryResult,
+) -> tuple[np.ndarray, np.ndarray]:
     """Return coordinates in the physical disk frame.
 
     Analytical overlays may be translated to the numerical center for display.
@@ -63,7 +65,9 @@ def _trajectory_physical_coordinates(trajectory: TrajectoryResult) -> tuple[np.n
         return x, y
 
 
-def _infer_disk_radius(vortex_interface: "VortexInterface", params: dict[str, Any] | None = None) -> float | None:
+def _infer_disk_radius(
+    vortex_interface: VortexInterface, params: dict[str, Any] | None = None
+) -> float | None:
     if params is not None:
         if "R" in params:
             try:
@@ -155,7 +159,7 @@ def _draw_disk_outline(
 
 
 def _resolve_plot_trajectory(
-    vortex_interface: "VortexInterface",
+    vortex_interface: VortexInterface,
     trajectory: str | TrajectoryResult = "steady_state",
     *,
     trajectory_kwargs: dict[str, Any] | None = None,
@@ -170,22 +174,32 @@ def _resolve_plot_trajectory(
 
     source_token = str(tracking_source).strip().lower()
     if source_token not in {"auto", "table", "magnetization"}:
-        raise ValueError("tracking_source must be one of {'auto', 'table', 'magnetization'}")
+        raise ValueError(
+            "tracking_source must be one of {'auto', 'table', 'magnetization'}"
+        )
 
-    method_token = None if tracking_method is None else str(tracking_method).strip().lower()
+    method_token = (
+        None if tracking_method is None else str(tracking_method).strip().lower()
+    )
     if source_token == "table":
         resolved_tracking_method = "table"
     elif source_token == "magnetization":
         if method_token in {None, "", "auto", "table"}:
             cfg_method = str(vortex_interface.config.tracking.method).strip().lower()
-            resolved_tracking_method = "gaussian" if cfg_method in {"", "auto", "table"} else cfg_method
+            resolved_tracking_method = (
+                "gaussian" if cfg_method in {"", "auto", "table"} else cfg_method
+            )
         else:
             resolved_tracking_method = method_token
     else:
         resolved_tracking_method = None if method_token in {None, ""} else method_token
 
     raw = vortex_interface.core.track(method=resolved_tracking_method, **track_kwargs)
-    source_label = source_token if source_token != "auto" else str(raw.metadata.get("source", raw.method))
+    source_label = (
+        source_token
+        if source_token != "auto"
+        else str(raw.metadata.get("source", raw.method))
+    )
 
     token = str(trajectory).strip().lower()
     if token == "raw":
@@ -193,24 +207,35 @@ def _resolve_plot_trajectory(
     if token == "steady_state":
         return extract_steady_state(raw, **kwargs), f"steady_state/{source_label}"
     if token == "filtered":
-        method = kwargs.pop("method", None) or vortex_interface.config.trajectory.filter_method
+        method = (
+            kwargs.pop("method", None)
+            or vortex_interface.config.trajectory.filter_method
+        )
         if "window" not in kwargs:
             kwargs["window"] = vortex_interface.config.trajectory.filter_window
-        return filter_trajectory(raw, method=method, **kwargs), f"filtered/{source_label}"
-    raise ValueError("trajectory must be one of {'raw', 'steady_state', 'filtered'} or a TrajectoryResult")
+        return filter_trajectory(
+            raw, method=method, **kwargs
+        ), f"filtered/{source_label}"
+    raise ValueError(
+        "trajectory must be one of {'raw', 'steady_state', 'filtered'} or a TrajectoryResult"
+    )
 
 
 def _resolve_tracking_method_for_source(
-    vortex_interface: "VortexInterface",
+    vortex_interface: VortexInterface,
     *,
     tracking_source: str = "auto",
     tracking_method: str | None = None,
 ) -> str | None:
     source_token = str(tracking_source).strip().lower()
     if source_token not in {"auto", "table", "magnetization"}:
-        raise ValueError("tracking_source must be one of {'auto', 'table', 'magnetization'}")
+        raise ValueError(
+            "tracking_source must be one of {'auto', 'table', 'magnetization'}"
+        )
 
-    method_token = None if tracking_method is None else str(tracking_method).strip().lower()
+    method_token = (
+        None if tracking_method is None else str(tracking_method).strip().lower()
+    )
     if source_token == "table":
         return "table"
     if source_token == "magnetization":
@@ -222,7 +247,7 @@ def _resolve_tracking_method_for_source(
 
 
 def _resolve_analytical_initial_state(
-    vortex_interface: "VortexInterface",
+    vortex_interface: VortexInterface,
     numerical: TrajectoryResult,
     params: dict[str, Any],
     *,
@@ -247,7 +272,9 @@ def _resolve_analytical_initial_state(
             return (x0_val, y0_val, "script")
         return None
 
-    def _from_trajectory(traj: TrajectoryResult, *, label: str) -> tuple[float, float, str]:
+    def _from_trajectory(
+        traj: TrajectoryResult, *, label: str
+    ) -> tuple[float, float, str]:
         center = _trajectory_center(traj)
         rel_x = float(traj.x[0] - center[0]) if np.asarray(traj.x).size else 0.0
         rel_y = float(traj.y[0] - center[1]) if np.asarray(traj.y).size else 0.0
@@ -289,7 +316,10 @@ def _resolve_analytical_initial_state(
     resolved_script = _from_script()
     if resolved_script is not None:
         return resolved_script
-    if bool(numerical.metadata.get("steady_state")) or "steady_state" in str(numerical.method).lower():
+    if (
+        bool(numerical.metadata.get("steady_state"))
+        or "steady_state" in str(numerical.method).lower()
+    ):
         try:
             return _resolve_analytical_initial_state(
                 vortex_interface,
@@ -345,7 +375,9 @@ def _resample_trajectory_to_reference(
         )
 
     dt_ref = float(np.median(np.diff(ref_t))) if ref_t.size >= 2 else 0.0
-    if src_t.size == ref_t.size and np.allclose(src_t, ref_t, rtol=0.0, atol=max(dt_ref * 1e-6, 1e-18)):
+    if src_t.size == ref_t.size and np.allclose(
+        src_t, ref_t, rtol=0.0, atol=max(dt_ref * 1e-6, 1e-18)
+    ):
         meta = dict(trajectory.metadata)
         if metadata:
             meta.update(metadata)
@@ -369,7 +401,9 @@ def _resample_trajectory_to_reference(
         right=float(np.asarray(trajectory.confidence, dtype=float)[-1]),
     )
     polarity_src = np.asarray(trajectory.polarity, dtype=float)
-    polarity_val = 1 if polarity_src.size == 0 or float(np.mean(polarity_src)) >= 0.0 else -1
+    polarity_val = (
+        1 if polarity_src.size == 0 or float(np.mean(polarity_src)) >= 0.0 else -1
+    )
     meta = dict(trajectory.metadata)
     meta.update(
         {
@@ -502,7 +536,7 @@ def _resolve_model_alignment_center(
 
 
 def _build_model_adapter(
-    vortex_interface: "VortexInterface",
+    vortex_interface: VortexInterface,
     resolution: AnalyticalParameterResolution,
 ):
     params = resolution.resolved_params
@@ -542,7 +576,7 @@ def _build_model_adapter(
 
 
 def _simulate_matching_trajectory(
-    vortex_interface: "VortexInterface",
+    vortex_interface: VortexInterface,
     numerical: TrajectoryResult,
     resolution: AnalyticalParameterResolution,
     *,
@@ -590,18 +624,23 @@ def _simulate_matching_trajectory(
         # result when the numerical steady-state window starts too early.
         sim_t0 = float(t0 - burn_in_duration)
     sim_t1 = max(t1, nominal_end) + dt
+    j_func = (
+        current_density
+        if callable(current_density)
+        else current_dc(float(current_density))
+    )
 
     if resolution.model_kind == "cpp":
         analytical_full = adapter.simulate(
             t_span=(sim_t0, sim_t1),
-            J_func=current_density,
+            J_func=j_func,
             dt=dt,
             s0=(rel_x / disk_radius, rel_y / disk_radius),
         )
     else:
         analytical_full = adapter.simulate(
             t_span=(sim_t0, sim_t1),
-            J_func=current_density,
+            J_func=j_func,
             dt=dt,
             r0=(rel_x, rel_y),
         )
@@ -645,13 +684,17 @@ def _simulate_matching_trajectory(
     return aligned, raw_center, alignment_center
 
 
-def _resample_like(reference_time: np.ndarray, candidate: np.ndarray, candidate_time: np.ndarray) -> np.ndarray:
+def _resample_like(
+    reference_time: np.ndarray, candidate: np.ndarray, candidate_time: np.ndarray
+) -> np.ndarray:
     ref = np.asarray(reference_time, dtype=float)
     cand = np.asarray(candidate, dtype=float)
     cand_t = np.asarray(candidate_time, dtype=float)
     if ref.size == 0 or cand.size == 0 or cand_t.size == 0:
         return np.zeros_like(ref, dtype=float)
-    if cand.size == ref.size and np.allclose(cand_t, ref, rtol=0.0, atol=max(_trajectory_dt_dummy(ref), 1e-18)):
+    if cand.size == ref.size and np.allclose(
+        cand_t, ref, rtol=0.0, atol=max(_trajectory_dt_dummy(ref), 1e-18)
+    ):
         return cand
     return np.interp(ref, cand_t, cand, left=cand[0], right=cand[-1])
 
@@ -723,8 +766,14 @@ def _compute_metrics(
         )
     )
 
-    freq_num = float(np.mean(np.abs(np.asarray(numerical.instantaneous_frequency, dtype=float))) / (2.0 * np.pi))
-    freq_ana = float(np.mean(np.abs(np.asarray(analytical.instantaneous_frequency, dtype=float))) / (2.0 * np.pi))
+    freq_num = float(
+        np.mean(np.abs(np.asarray(numerical.instantaneous_frequency, dtype=float)))
+        / (2.0 * np.pi)
+    )
+    freq_ana = float(
+        np.mean(np.abs(np.asarray(analytical.instantaneous_frequency, dtype=float)))
+        / (2.0 * np.pi)
+    )
     num_center = _trajectory_center(numerical)
 
     radius_num = float(np.mean(numerical.r))
@@ -733,10 +782,18 @@ def _compute_metrics(
     ana_x_phys, ana_y_phys = _trajectory_physical_coordinates(analytical)
     core_distance_num = np.hypot(num_x_phys, num_y_phys)
     core_distance_ana = np.hypot(ana_x_phys, ana_y_phys)
-    core_distance_num_mean = float(np.mean(core_distance_num)) if core_distance_num.size else 0.0
-    core_distance_ana_mean = float(np.mean(core_distance_ana)) if core_distance_ana.size else 0.0
-    core_distance_num_max = float(np.max(core_distance_num)) if core_distance_num.size else 0.0
-    core_distance_ana_max = float(np.max(core_distance_ana)) if core_distance_ana.size else 0.0
+    core_distance_num_mean = (
+        float(np.mean(core_distance_num)) if core_distance_num.size else 0.0
+    )
+    core_distance_ana_mean = (
+        float(np.mean(core_distance_ana)) if core_distance_ana.size else 0.0
+    )
+    core_distance_num_max = (
+        float(np.max(core_distance_num)) if core_distance_num.size else 0.0
+    )
+    core_distance_ana_max = (
+        float(np.max(core_distance_ana)) if core_distance_ana.size else 0.0
+    )
 
     return VortexAnalyticalMetrics(
         delta_radius_mean=abs(radius_num - radius_ana),
@@ -750,7 +807,9 @@ def _compute_metrics(
                 num_center[1] - analytical_center_reference[1],
             )
         ),
-        delta_eccentricity=abs(float(numerical_fit.eccentricity) - float(analytical_fit.eccentricity)),
+        delta_eccentricity=abs(
+            float(numerical_fit.eccentricity) - float(analytical_fit.eccentricity)
+        ),
         rms_xy_residual=float(residual),
         numerical_radius_nm=radius_num * 1e9,
         analytical_radius_nm=radius_ana * 1e9,
@@ -763,7 +822,9 @@ def _compute_metrics(
     )
 
 
-def _compute_st_comparison(numerical: TrajectoryResult, analytical: TrajectoryResult) -> VortexSTComparison:
+def _compute_st_comparison(
+    numerical: TrajectoryResult, analytical: TrajectoryResult
+) -> VortexSTComparison:
     numerical_st = extract_st_parameters(numerical)
     analytical_st = extract_st_parameters(analytical)
     delta = {
@@ -774,7 +835,9 @@ def _compute_st_comparison(numerical: TrajectoryResult, analytical: TrajectoryRe
         "generation_power": abs(
             float(numerical_st.generation_power) - float(analytical_st.generation_power)
         ),
-        "linewidth_hz": abs(float(numerical_st.linewidth_hz) - float(analytical_st.linewidth_hz)),
+        "linewidth_hz": abs(
+            float(numerical_st.linewidth_hz) - float(analytical_st.linewidth_hz)
+        ),
     }
     return VortexSTComparison(
         numerical=numerical_st,
@@ -786,7 +849,7 @@ def _compute_st_comparison(numerical: TrajectoryResult, analytical: TrajectoryRe
 class VortexAnalyticalComparisonPlotAccessor:
     """Plot helpers for :class:`VortexAnalyticalComparison`."""
 
-    def __init__(self, comparison: "VortexAnalyticalComparison"):
+    def __init__(self, comparison: VortexAnalyticalComparison):
         self._comparison = comparison
 
     def orbit_overlay(self, *, ax=None, show_centers: bool = True, **kwargs):
@@ -835,8 +898,12 @@ class VortexAnalyticalComparisonPlotAccessor:
         axes[1, 0].set_ylabel("r [nm]")
         axes[1, 0].legend()
 
-        freq_num = np.asarray(numerical.instantaneous_frequency, dtype=float) / (2.0 * np.pi * 1e9)
-        freq_ana = np.asarray(analytical.instantaneous_frequency, dtype=float) / (2.0 * np.pi * 1e9)
+        freq_num = np.asarray(numerical.instantaneous_frequency, dtype=float) / (
+            2.0 * np.pi * 1e9
+        )
+        freq_ana = np.asarray(analytical.instantaneous_frequency, dtype=float) / (
+            2.0 * np.pi * 1e9
+        )
         axes[1, 1].plot(numerical.time, freq_num, label="numerical")
         axes[1, 1].plot(analytical.time, freq_ana, "--", label="analytical")
         axes[1, 1].set_title("f(t)")
@@ -858,13 +925,25 @@ class VortexAnalyticalComparisonPlotAccessor:
         st = self._comparison.st
         entries = [
             ("f0 [GHz]", float(st.numerical.f_0_ghz), float(st.analytical.f_0_ghz)),
-            ("Linewidth [MHz]", float(st.numerical.linewidth_hz) * 1e-6, float(st.analytical.linewidth_hz) * 1e-6),
-            ("Power [a.u.]", float(st.numerical.generation_power), float(st.analytical.generation_power)),
+            (
+                "Linewidth [MHz]",
+                float(st.numerical.linewidth_hz) * 1e-6,
+                float(st.analytical.linewidth_hz) * 1e-6,
+            ),
+            (
+                "Power [a.u.]",
+                float(st.numerical.generation_power),
+                float(st.analytical.generation_power),
+            ),
             ("N [rad/s]", float(st.numerical.N), float(st.analytical.N)),
         ]
         flat_axes = axes.reshape(-1)
         for axis, (title, numerical_value, analytical_value) in zip(flat_axes, entries):
-            axis.bar(["numerical", "analytical"], [numerical_value, analytical_value], color=["#1d4ed8", "#dc2626"])
+            axis.bar(
+                ["numerical", "analytical"],
+                [numerical_value, analytical_value],
+                color=["#1d4ed8", "#dc2626"],
+            )
             axis.set_title(title)
         fig.tight_layout()
         return fig, axes
@@ -891,7 +970,7 @@ class VortexAnalyticalComparison:
     def __init__(
         self,
         *,
-        vortex_interface: "VortexInterface",
+        vortex_interface: VortexInterface,
         numerical: TrajectoryResult,
         analytical: TrajectoryResult,
         resolution: AnalyticalParameterResolution,
@@ -915,7 +994,9 @@ class VortexAnalyticalComparison:
         self._analytical_raw_center = analytical_raw_center
         self._analytical_center_reference = analytical_center_reference
         self._force_balance_cache: VortexForceBalanceComparison | None = None
-        self._autofit_result: Any = None  # VortexAutofitResult, set externally when fit=True
+        self._autofit_result: Any = (
+            None  # VortexAutofitResult, set externally when fit=True
+        )
 
     @property
     def plt(self):
@@ -934,7 +1015,9 @@ class VortexAnalyticalComparison:
     def force_balance(self) -> VortexForceBalanceComparison:
         if self._force_balance_cache is None:
             shared_kwargs = {
-                "polarity": int(np.sign(float(self.resolved_params.get("polarity", 1))) or 1),
+                "polarity": int(
+                    np.sign(float(self.resolved_params.get("polarity", 1))) or 1
+                ),
                 "Ms": float(self.resolved_params["Ms"]),
                 "thickness": float(self.resolved_params["L"]),
                 "alpha": float(self.resolved_params["alpha"]),
@@ -949,13 +1032,16 @@ class VortexAnalyticalComparison:
             )
             delta = {
                 "residual_ratio_mean": abs(
-                    float(np.mean(numerical.residual_ratio)) - float(np.mean(analytical.residual_ratio))
+                    float(np.mean(numerical.residual_ratio))
+                    - float(np.mean(analytical.residual_ratio))
                 ),
                 "residual_norm_mean": abs(
-                    float(np.mean(numerical.residual_norm)) - float(np.mean(analytical.residual_norm))
+                    float(np.mean(numerical.residual_norm))
+                    - float(np.mean(analytical.residual_norm))
                 ),
                 "gyro_norm_mean": abs(
-                    float(np.mean(numerical.gyro_norm)) - float(np.mean(analytical.gyro_norm))
+                    float(np.mean(numerical.gyro_norm))
+                    - float(np.mean(analytical.gyro_norm))
                 ),
             }
             self._force_balance_cache = VortexForceBalanceComparison(
@@ -1002,7 +1088,9 @@ class VortexAnalyticalComparison:
         show_disk_radius = bool(plot_kwargs.pop("show_disk_radius", True))
         disk_radius = plot_kwargs.pop("disk_radius", None)
         if disk_radius is None:
-            disk_radius = _infer_disk_radius(self._vortex_interface, self.resolved_params)
+            disk_radius = _infer_disk_radius(
+                self._vortex_interface, self.resolved_params
+            )
         disk_center = plot_kwargs.pop("disk_center", (0.0, 0.0))
         disk_color = plot_kwargs.pop("disk_color", "0.35")
         disk_linestyle = plot_kwargs.pop("disk_linestyle", ":")
@@ -1039,8 +1127,19 @@ class VortexAnalyticalComparison:
         if show_centers:
             num_center = _trajectory_center(self.numerical)
             ana_center = _trajectory_center(self.analytical)
-            ax.scatter([num_center[0]], [num_center[1]], color=numerical_kwargs.get("color", "#1d4ed8"), s=18)
-            ax.scatter([ana_center[0]], [ana_center[1]], color=analytical_style["color"], s=18, marker="x")
+            ax.scatter(
+                [num_center[0]],
+                [num_center[1]],
+                color=numerical_kwargs.get("color", "#1d4ed8"),
+                s=18,
+            )
+            ax.scatter(
+                [ana_center[0]],
+                [ana_center[1]],
+                color=analytical_style["color"],
+                s=18,
+                marker="x",
+            )
 
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
@@ -1057,7 +1156,12 @@ class VortexAnalyticalComparison:
             ha="left",
             fontsize=8,
             fontfamily="monospace",
-            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85, "edgecolor": "0.7"},
+            bbox={
+                "boxstyle": "round",
+                "facecolor": "white",
+                "alpha": 0.85,
+                "edgecolor": "0.7",
+            },
         )
 
 
@@ -1073,7 +1177,7 @@ class VortexOrbitPlotHandle:
         trajectory_source: str,
         tracking_source: str,
         tracking_method: str | None,
-        vortex_interface: "VortexInterface",
+        vortex_interface: VortexInterface,
     ):
         self.fig = fig
         self.ax = ax
@@ -1172,7 +1276,7 @@ class VortexOrbitPlotHandle:
 class VortexPlotInterface:
     """High-level plotting namespace for a single vortex job."""
 
-    def __init__(self, vortex_interface: "VortexInterface"):
+    def __init__(self, vortex_interface: VortexInterface):
         self._interface = vortex_interface
 
     def orbit(
@@ -1227,7 +1331,14 @@ class VortexPlotInterface:
 
         if show_center:
             center_x, center_y = _trajectory_center(resolved_trajectory)
-            ax.scatter([center_x], [center_y], color=line_kwargs["color"], s=18, marker="o", label="center")
+            ax.scatter(
+                [center_x],
+                [center_y],
+                color=line_kwargs["color"],
+                s=18,
+                marker="o",
+                label="center",
+            )
             ax.legend()
 
         ax.set_xlabel("X [m]")

@@ -49,6 +49,7 @@ Always validate against full micromagnetic (LLGS) simulations.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, TypeAlias
 
@@ -112,7 +113,9 @@ class MaterialParams:
     @property
     def beta(self) -> float:
         """Non-adiabatic parameter β.  Falls back to α if not set."""
-        return self.beta_nonadiabatic if self.beta_nonadiabatic is not None else self.alpha
+        return (
+            self.beta_nonadiabatic if self.beta_nonadiabatic is not None else self.alpha
+        )
 
     @property
     def exchange_length(self) -> float:
@@ -250,16 +253,12 @@ class FieldCalibration:
     seq_per_T: float = 0.0
     chirality: int = 1
 
-    def omega0_shift(
-        self, *, field_state: ExternalField, polarity: int
-    ) -> float:
+    def omega0_shift(self, *, field_state: ExternalField, polarity: int) -> float:
         """Polarity-dependent Bz → ω₀ shift:  Δω₀ = p · (dω₀/dBz) · Bz."""
         p = 1 if int(polarity) >= 0 else -1
         return p * self.domega0_dBz * field_state.Bz_T
 
-    def s_eq(
-        self, *, field_state: ExternalField
-    ) -> tuple[float, float]:
+    def s_eq(self, *, field_state: ExternalField) -> tuple[float, float]:
         """In-plane equilibrium core shift (normalised coords).
 
         Returns ``(sx_eq, sy_eq) = c · χ_ip · (ẑ × B_∥)``.
@@ -277,7 +276,9 @@ class FieldCalibration:
 # ---------------------------------------------------------------------------
 
 #: Callable ``(t) → ExternalField`` or coercible value.
-ExternalFieldLike: TypeAlias = float | tuple[float, float, float] | ExternalField | np.ndarray
+ExternalFieldLike: TypeAlias = (
+    float | tuple[float, float, float] | ExternalField | np.ndarray
+)
 
 #: A function returning an :class:`ExternalField` (or coercible) at time *t*.
 FieldFunc: TypeAlias = Callable[[float], ExternalFieldLike]
@@ -425,7 +426,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
         """Cached (frequencies_hz, power) from windowed FFT of x(t)."""
         # Zwykłe pojedyncze podkreślenie - lintery je ignorują, brak name manglingu.
         cache_attr = "_spectrum_cache_data"
-        
+
         cached_result = getattr(self, cache_attr, None)
         if cached_result is None:
             n = len(self.t)
@@ -439,16 +440,16 @@ class ThieleTrajectoryResult(AnalyticalResult):
                 sig_windowed = sig * window
                 fft_vals = np.fft.rfft(sig_windowed)
                 freqs = np.fft.rfftfreq(n, d=dt)
-                
+
                 # Normalised one-sided power spectrum
                 power = (np.abs(fft_vals) ** 2) / max(float(n), 1.0)
                 power *= 2.0 / max(float(np.mean(window**2)), 1e-30)
-                
+
                 result = (freqs, power)
-            
+
             object.__setattr__(self, cache_attr, result)
             return result
-            
+
         return cached_result
 
     @property
@@ -477,7 +478,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
     @property
     def linewidth_ghz(self) -> float:
         """Estimated linewidth (FWHM) from the power spectrum [GHz].
-        Uses a robust Lorentzian fit for noisy (SDE/micromagnetic) data, 
+        Uses a robust Lorentzian fit for noisy (SDE/micromagnetic) data,
         with a fallback to half-maximum counting for pure ODE trajectories.
         """
         freqs, power = self._spectrum_cache
@@ -512,6 +513,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
         # --- 2. Odporne na szum dopasowanie krzywej Lorentza ---
         try:
             import warnings
+
             from scipy.optimize import curve_fit
 
             # Wycinek okna częstotliwości (np. +/- 10 szerokości naiwnych, min. 200 MHz)
@@ -534,7 +536,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
 
             def lorentzian(f, f0, fwhm, amp, bg):
                 gamma = fwhm / 2.0
-                return amp * (gamma**2) / ((f - f0)**2 + gamma**2) + bg
+                return amp * (gamma**2) / ((f - f0) ** 2 + gamma**2) + bg
 
             bg_guess = float(np.median(p_win))
             amp_guess = p_max - bg_guess
@@ -547,12 +549,14 @@ class ThieleTrajectoryResult(AnalyticalResult):
             # Ograniczenia zapobiegające "rozjechaniu się" fita na niefizyczne wartości
             bounds = (
                 [f_win_ghz[0], 0.0, 0.0, 0.0],
-                [f_win_ghz[-1], np.inf, np.inf, np.inf]
+                [f_win_ghz[-1], np.inf, np.inf, np.inf],
             )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                popt, _ = curve_fit(lorentzian, f_win_ghz, p_win, p0=p0, bounds=bounds, maxfev=2000)
+                popt, _ = curve_fit(
+                    lorentzian, f_win_ghz, p_win, p0=p0, bounds=bounds, maxfev=2000
+                )
 
             fitted_fwhm_ghz = float(popt[1])
             return fitted_fwhm_ghz
@@ -647,7 +651,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             f"<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             f"🌀 Thiele Trajectory — {model}</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
@@ -783,8 +787,7 @@ class ThieleFJFitPlotAccessor:
         ax.set_ylabel(ylabel)
 
         title = (
-            f"Thiele fit: ω0={self._result.omega0:.3e} rad/s, "
-            f"N={self._result.N:.3f}"
+            f"Thiele fit: ω0={self._result.omega0:.3e} rad/s, N={self._result.N:.3f}"
         )
         if abs(self._result.chi_scale - 1.0) > 0.01:
             title += f", χ_scale={self._result.chi_scale:.2f}"
@@ -888,14 +891,29 @@ def reduce_mumax_slonczewski_cpp(
     alpha = float(material.alpha)
     eps_prime = float(epsilonprime)
     gilb = 1.0 / (1.0 + alpha * alpha)
+    p_z = float(p[2])
 
-    pump_p = current_sign * gilb * (epsilon + alpha * eps_prime)
-    phase_p = current_sign * gilb * (eps_prime - alpha * epsilon)
-    prefactor = float(material.gamma) * _HBAR / (4.0 * _E_CHARGE * thickness * float(material.Ms))
+    pump_p = current_sign * p_z * gilb * (epsilon + alpha * eps_prime)
+    phase_p = current_sign * p_z * gilb * (eps_prime - alpha * epsilon)
+    prefactor = (
+        float(material.gamma)
+        * _HBAR
+        / (4.0 * _E_CHARGE * thickness * float(material.Ms))
+    )
+
+    p_parallel = float(np.hypot(p[0], p[1]))
+    if p_parallel > 0.05:
+        warnings.warn(
+            "Polarizer has a significant in-plane component; the reduced "
+            "circular CPP model only maps the out-of-plane p_z component into "
+            "vortex auto-oscillation pumping.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     return SlonczewskiCPPReduction(
         polarizer=p,
-        p_z=float(p[2]),
+        p_z=p_z,
         Lambda=float(Lambda),
         epsilonprime=eps_prime,
         fixed_layer_position=pos_name,
@@ -1134,7 +1152,7 @@ class CIPThieleModel:
         p = self.polarity
 
         # Spin-drift velocity prefactor: u₀ = - μ_B P / (e Ms)  [m³/(A·s)]
-        self._u0_prefactor = - _MU_B * mat.P / (_E_CHARGE * mat.Ms)
+        self._u0_prefactor = -_MU_B * mat.P / (_E_CHARGE * mat.Ms)
 
         # Core diameter δ (≈ core_diameter or 2·exchange_length)
         delta = geo.core_diameter if geo.core_diameter else 2.0 * mat.exchange_length
@@ -1190,7 +1208,7 @@ class CIPThieleModel:
 
         # Moon ODE using relative coordinates
         det = (alpha * dG) ** 2 + p**2  # always > 0
-        
+
         # FIZYKA: Prawidłowe znaki sił STT (rotacja CCW dla p=1)
         rhs_I = -w0 * Xr - p * uy + beta * dG * ux
         rhs_II = -w0 * Yr + p * ux + beta * dG * uy
@@ -1369,7 +1387,9 @@ class CPPThieleModel:
         self.field = field if field is not None else ExternalField()
         self.field_cal = field_cal if field_cal is not None else FieldCalibration()
         self.chi_scale = float(chi_scale)
-        self.torque_thickness = float(geom.L if torque_thickness is None else torque_thickness)
+        self.torque_thickness = float(
+            geom.L if torque_thickness is None else torque_thickness
+        )
         assert self.polarity in (1, -1), "polarity must be +1 or -1"
 
         self._setup()
@@ -1413,7 +1433,11 @@ class CPPThieleModel:
         return self._d0 + self._d1 * u**2
 
     def omega0_eff(
-        self, J: float, field_state: ExternalField | None = None, *, domega0_dJ: float | None = None
+        self,
+        J: float,
+        field_state: ExternalField | None = None,
+        *,
+        domega0_dJ: float | None = None,
     ) -> float:
         """
         Effective linear frequency [rad/s].
@@ -1453,7 +1477,9 @@ class CPPThieleModel:
         sx, sy = self.field_cal.s_eq(field_state=B)
         return np.array([sx, sy], dtype=float)
 
-    def omega(self, u: float, J: float = 0.0, *, domega0_dJ: float | None = None) -> float:
+    def omega(
+        self, u: float, J: float = 0.0, *, domega0_dJ: float | None = None
+    ) -> float:
         """Nonlinear gyrotropic frequency ω(u, J) [rad/s]."""
         # Przekazujemy parametr do wywołania pod spodem
         return self.omega0_eff(J, domega0_dJ=domega0_dJ) * (1.0 + self.N * u**2)
@@ -1464,7 +1490,7 @@ class CPPThieleModel:
         # χ(J_th) = d₀ · ω₀_eff(0)  →  J_th = d₀ ω₀_eff / (-p γ σ chi_scale / 2)
         denom = -float(self.polarity) * self.chi_scale * self._chi_prefactor
         if abs(denom) < 1e-30:
-            return float('inf')  # Brak STT (P=0) oznacza nieskończony próg wzbudzenia
+            return float("inf")  # Brak STT (P=0) oznacza nieskończony próg wzbudzenia
         return self._d0 * self.omega0_eff(0.0) / denom
 
     def threshold_current_dc(self) -> float:
@@ -1495,7 +1521,9 @@ class CPPThieleModel:
         float | None
             Frequency [Hz], or ``None`` below threshold / edge-clamped (if disallowed).
         """
-        u0 = self.steady_state_u(float(J_dc), allow_edge=allow_edge, domega0_dJ=domega0_dJ)
+        u0 = self.steady_state_u(
+            float(J_dc), allow_edge=allow_edge, domega0_dJ=domega0_dJ
+        )
         if u0 is None:
             return None
         omega_eff = self.omega(u0, float(J_dc), domega0_dJ=domega0_dJ)
@@ -1580,7 +1608,12 @@ class CPPThieleModel:
         )
 
     def steady_state_u(
-        self, J: float, *, allow_edge: bool = False, u_stop: float = 0.98, domega0_dJ: float | None = None
+        self,
+        J: float,
+        *,
+        allow_edge: bool = False,
+        u_stop: float = 0.98,
+        domega0_dJ: float | None = None,
     ) -> float | None:
         """
         Analytical steady-state normalised radius u₀ for DC current J.
@@ -1631,7 +1664,9 @@ class CPPThieleModel:
             u_candidates.append(u)
 
         if not u_candidates:
-            if allow_edge and chi_val > self.d(u_stop) * self.omega(u_stop, J, domega0_dJ=domega0_dJ):
+            if allow_edge and chi_val > self.d(u_stop) * self.omega(
+                u_stop, J, domega0_dJ=domega0_dJ
+            ):
                 return float(u_stop)
             return None
 
@@ -1661,7 +1696,16 @@ class CPPThieleModel:
 
         J = float(J_func(t))
         chi_val = self.chi(J)
-        omega_val = self.omega0_eff(J, field_state=B) * (1.0 + self.N * u**2)
+        omega0_eff = self.omega0_eff(J, field_state=B)
+        if omega0_eff <= 0.0 and not getattr(self, "_omega0_eff_warned", False):
+            warnings.warn(
+                "omega0_eff <= 0; CPP Thiele model is outside its calibrated "
+                "valid range for this current or field.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._omega0_eff_warned = True
+        omega_val = omega0_eff * (1.0 + self.N * u**2)
         radial = chi_val - self.d(u) * omega_val
         p = self.polarity
 
@@ -1691,7 +1735,9 @@ class CPPThieleModel:
             J_func = current_dc(0.0)
 
         clamp_u_value = None if clamp_u is None else float(clamp_u)
-        if clamp_u_value is not None and (not np.isfinite(clamp_u_value) or clamp_u_value <= 0.0):
+        if clamp_u_value is not None and (
+            not np.isfinite(clamp_u_value) or clamp_u_value <= 0.0
+        ):
             clamp_u_value = None
         edge_behavior_token = str(edge_behavior).strip().lower()
         if edge_behavior_token not in {"freeze", "truncate"}:
@@ -1704,8 +1750,10 @@ class CPPThieleModel:
 
         user_events = ivp_kwargs.pop("events", None)
         event_registry: list[Callable] = []
+        event_kinds: list[str] = []
 
         if clamp_u_value is not None:
+
             def _edge_event(t: float, y: np.ndarray) -> float:
                 B = self._field_at(t, B_func)
                 s_eq = self.s_eq(field_state=B)
@@ -1715,12 +1763,24 @@ class CPPThieleModel:
             _edge_event.terminal = True
             _edge_event.direction = 1.0
             event_registry.append(_edge_event)
+            event_kinds.append("relative")
+
+        def _disk_edge_event(t: float, y: np.ndarray) -> float:
+            del t
+            return float(1.0 - np.hypot(float(y[0]), float(y[1])))
+
+        _disk_edge_event.terminal = True
+        _disk_edge_event.direction = -1.0
+        event_registry.append(_disk_edge_event)
+        event_kinds.append("disk")
 
         if user_events is not None:
             if isinstance(user_events, (list, tuple)):
                 event_registry.extend(user_events)
+                event_kinds.extend("user" for _ in user_events)
             else:
                 event_registry.append(user_events)
+                event_kinds.append("user")
 
         sol = solve_ivp(
             fun=lambda t, y: self._rhs(t, y, J_func, B_func),
@@ -1744,35 +1804,76 @@ class CPPThieleModel:
         R = self.geom.R
         edge_limited = False
         edge_hit_time = None
+        edge_hit_kind = None
 
-        if clamp_u_value is not None and event_registry:
+        if event_registry:
             t_events = getattr(sol, "t_events", None) or []
             y_events = getattr(sol, "y_events", None) or []
-            if t_events and len(t_events[0]) > 0:
+            hit_candidates: list[tuple[float, int]] = []
+            for event_index, event_times in enumerate(t_events):
+                if event_index >= len(event_kinds):
+                    continue
+                if event_kinds[event_index] == "user":
+                    continue
+                if len(event_times) > 0:
+                    hit_candidates.append((float(event_times[0]), event_index))
+
+            if hit_candidates:
+                _, hit_index = min(hit_candidates, key=lambda item: item[0])
                 edge_limited = True
-                edge_hit_time = float(t_events[0][0])
-                hit_state = np.asarray(y_events[0][0], dtype=float)
+                edge_hit_time = float(t_events[hit_index][0])
+                edge_hit_kind = event_kinds[hit_index]
+                hit_state = np.asarray(y_events[hit_index][0], dtype=float)
                 B_hit = self._field_at(edge_hit_time, B_func)
                 s_eq_hit = self.s_eq(field_state=B_hit)
                 s_rel_hit = hit_state - s_eq_hit
-                u_hit = float(np.hypot(s_rel_hit[0], s_rel_hit[1]))
-                if u_hit > 0.0:
-                    clamped_rel = s_rel_hit * (clamp_u_value / max(u_hit, 1e-30))
+                if edge_hit_kind == "relative" and clamp_u_value is not None:
+                    u_hit = float(np.hypot(s_rel_hit[0], s_rel_hit[1]))
+                    if u_hit > 0.0:
+                        clamped_rel = s_rel_hit * (clamp_u_value / max(u_hit, 1e-30))
+                    else:
+                        clamped_rel = np.array([clamp_u_value, 0.0], dtype=float)
+                    clamped_state = s_eq_hit + clamped_rel
                 else:
-                    clamped_rel = np.array([clamp_u_value, 0.0], dtype=float)
-                clamped_state = s_eq_hit + clamped_rel
+                    u_abs = float(np.hypot(hit_state[0], hit_state[1]))
+                    if u_abs > 0.0:
+                        clamped_state = hit_state / max(u_abs, 1e-30)
+                    else:
+                        clamped_state = np.array([1.0, 0.0], dtype=float)
 
                 if SX.size:
                     SX[-1] = float(clamped_state[0])
                     SY[-1] = float(clamped_state[1])
 
-                if edge_behavior_token == "freeze" and t_eval.size and t_out.size < t_eval.size:
+                if (
+                    edge_behavior_token == "freeze"
+                    and t_eval.size
+                    and t_out.size < t_eval.size
+                ):
                     remaining_mask = np.asarray(t_eval, dtype=float) > edge_hit_time
                     remaining_t = np.asarray(t_eval, dtype=float)[remaining_mask]
                     if remaining_t.size:
                         t_out = np.concatenate([t_out, remaining_t])
-                        SX = np.concatenate([SX, np.full(remaining_t.shape, float(clamped_state[0]), dtype=float)])
-                        SY = np.concatenate([SY, np.full(remaining_t.shape, float(clamped_state[1]), dtype=float)])
+                        SX = np.concatenate(
+                            [
+                                SX,
+                                np.full(
+                                    remaining_t.shape,
+                                    float(clamped_state[0]),
+                                    dtype=float,
+                                ),
+                            ]
+                        )
+                        SY = np.concatenate(
+                            [
+                                SY,
+                                np.full(
+                                    remaining_t.shape,
+                                    float(clamped_state[1]),
+                                    dtype=float,
+                                ),
+                            ]
+                        )
 
         return ThieleTrajectoryResult(
             model_name=f"CPP Thiele STNO (p={self.polarity:+d}, Guslienko 2014)",
@@ -1803,6 +1904,7 @@ class CPPThieleModel:
                 "reference": "Guslienko et al., Phys. Rev. B 89 (2014) / PMC 4134337",
                 "edge_limited": bool(edge_limited),
                 "edge_hit_time": edge_hit_time,
+                "edge_hit_kind": edge_hit_kind,
                 "edge_behavior": edge_behavior_token if edge_limited else None,
             },
         )
@@ -1886,7 +1988,7 @@ class CPPThieleModel:
             u_abs = float(np.linalg.norm(proposal))
             if u_abs >= float(clamp_u):
                 proposal = proposal * (float(clamp_u) / max(u_abs, 1e-30))
-                
+
             state[idx, :] = proposal
 
         SX = state[:, 0]
@@ -1996,7 +2098,9 @@ def fit_omega0_N_to_fJ(
     if j.size < 3:
         raise ValueError("At least 3 finite points are required for fitting")
 
-    omega0_init = float(omega0_novosad(material, geom) if initial_omega0 is None else initial_omega0)
+    omega0_init = float(
+        omega0_novosad(material, geom) if initial_omega0 is None else initial_omega0
+    )
     n_init = float(initial_N)
     dj_init = float(initial_domega0_dJ)
     chi_init = float(initial_chi_scale)
@@ -2228,7 +2332,9 @@ class ThielePlotAccessor:
             if disk_outline:
                 theta = np.linspace(0, 2 * np.pi, 200)
                 R_nm = r.disk_radius * 1e9
-                ax.plot(R_nm * np.cos(theta), R_nm * np.sin(theta), "k--", alpha=0.3, lw=0.8)
+                ax.plot(
+                    R_nm * np.cos(theta), R_nm * np.sin(theta), "k--", alpha=0.3, lw=0.8
+                )
         elif units == "normalized":
             ax.plot(r.sx, r.sy, **kwargs)
             ax.set_xlabel("$s_x$")
@@ -2382,20 +2488,23 @@ class ThielePlotAccessor:
         info_ax = axes[1, 2]
         info_ax.axis("off")
         lines = [
-            f"R_disk = {r.disk_radius*1e9:.1f} nm",
-            f"Duration = {r.t[-1]*1e9:.1f} ns" if len(r.t) > 0 else "",
+            f"R_disk = {r.disk_radius * 1e9:.1f} nm",
+            f"Duration = {r.t[-1] * 1e9:.1f} ns" if len(r.t) > 0 else "",
             f"Points = {len(r.t)}",
             "",
             f"f_ss = {r.steady_state_frequency_ghz:.3f} GHz",
-            f"r_ss = {r.steady_state_radius_m*1e9:.1f} nm",
+            f"r_ss = {r.steady_state_radius_m * 1e9:.1f} nm",
             f"f_dom = {r.dominant_frequency_ghz:.3f} GHz",
-            f"Δf = {r.linewidth_ghz*1e3:.1f} MHz",
+            f"Δf = {r.linewidth_ghz * 1e3:.1f} MHz",
             f"Rotation: {r.rotation_sense}",
         ]
         info_ax.text(
-            0.05, 0.95, "\n".join(lines),
+            0.05,
+            0.95,
+            "\n".join(lines),
             transform=info_ax.transAxes,
-            va="top", ha="left",
+            va="top",
+            ha="left",
             fontfamily="monospace",
             fontsize=10,
         )

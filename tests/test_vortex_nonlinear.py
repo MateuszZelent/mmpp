@@ -35,7 +35,7 @@ def _make_vortex_snapshot(
     radius = np.hypot(x_grid, y_grid)
     phi = np.arctan2(y_grid, x_grid)
 
-    mz = np.exp(-(radius / core_radius_px) ** 2)
+    mz = np.exp(-((radius / core_radius_px) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
 
     mx = -m_perp * np.sin(phi)
@@ -85,7 +85,9 @@ def _make_nonlinear_orbit_data(
     return data, dx, dy, dt
 
 
-def _create_job(tmp_path, name: str, data: np.ndarray, *, dx: float, dy: float, dt: float):
+def _create_job(
+    tmp_path, name: str, data: np.ndarray, *, dx: float, dy: float, dt: float
+):
     zarr_path = tmp_path / f"{name}.zarr"
     z = zarr.open(str(zarr_path), mode="w")
     z.create_dataset("m", data=data, chunks=data.shape)
@@ -97,7 +99,9 @@ def _create_job(tmp_path, name: str, data: np.ndarray, *, dx: float, dy: float, 
 
 def test_amplitude_equation_outputs_and_plotting(tmp_path):
     data, dx, dy, dt = _make_nonlinear_orbit_data()
-    job = _create_job(tmp_path, "vortex_nonlinear_amp", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    job = _create_job(
+        tmp_path, "vortex_nonlinear_amp", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt
+    )
 
     traj = job.m.solitons.vortex.core.track(method="centroid")
     amp = job.m.solitons.vortex.nonlinear.amplitude_equation(trajectory=traj)
@@ -107,7 +111,9 @@ def test_amplitude_equation_outputs_and_plotting(tmp_path):
     assert np.all(np.isfinite(amp.power))
     assert np.all(amp.power >= 0.0)
 
-    ax_power = amp.plt.power_vs_time(figsize=(6, 3), dpi=100, title="Power(t)", color="tab:purple")
+    ax_power = amp.plt.power_vs_time(
+        figsize=(6, 3), dpi=100, title="Power(t)", color="tab:purple"
+    )
     ax_complex = amp.plt.complex_plane(
         figsize=(4, 4),
         dpi=100,
@@ -122,7 +128,9 @@ def test_amplitude_equation_outputs_and_plotting(tmp_path):
 
 def test_slavin_tiberkevich_parameters_and_single_point_plot(tmp_path):
     data, dx, dy, dt = _make_nonlinear_orbit_data()
-    job = _create_job(tmp_path, "vortex_nonlinear_st", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    job = _create_job(
+        tmp_path, "vortex_nonlinear_st", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt
+    )
 
     traj = job.m.solitons.vortex.core.track(method="centroid")
     st = job.m.solitons.vortex.nonlinear.slavin_tiberkevich(
@@ -141,7 +149,9 @@ def test_slavin_tiberkevich_parameters_and_single_point_plot(tmp_path):
     assert st.quality_factor > 0.0
     assert isinstance(st.linewidth_resolution_limited, bool)
 
-    ax = st.plt.power_vs_current(figsize=(5, 3), dpi=90, title="Single-point ST", color="tab:red")
+    ax = st.plt.power_vs_current(
+        figsize=(5, 3), dpi=90, title="Single-point ST", color="tab:red"
+    )
     assert hasattr(ax, "plot")
     assert ax.get_title() == "Single-point ST"
 
@@ -190,7 +200,14 @@ def test_slavin_tiberkevich_batch_pipeline(tmp_path):
 
 def test_thiele_force_balance_and_plot_accessor(tmp_path):
     data, dx, dy, dt = _make_nonlinear_orbit_data()
-    job = _create_job(tmp_path, "vortex_nonlinear_thiele_force", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    job = _create_job(
+        tmp_path,
+        "vortex_nonlinear_thiele_force",
+        data[:, np.newaxis, ...],
+        dx=dx,
+        dy=dy,
+        dt=dt,
+    )
 
     traj = job.m.solitons.vortex.core.track(method="centroid")
     force = job.m.solitons.vortex.nonlinear.thiele.force_balance(
@@ -211,7 +228,9 @@ def test_thiele_force_balance_and_plot_accessor(tmp_path):
     assert np.all(np.isfinite(force.residual_ratio))
     assert force.polarity in {-1, 1}
 
-    ax_force = force.plt.force_balance(figsize=(7, 3), dpi=100, title="Force balance", linewidth=1.0)
+    ax_force = force.plt.force_balance(
+        figsize=(7, 3), dpi=100, title="Force balance", linewidth=1.0
+    )
     ax_iface = job.m.solitons.vortex.nonlinear.plt.force_balance(
         trajectory=traj,
         Ms=8.0e5,
@@ -233,7 +252,14 @@ def test_thiele_cpp_and_cip_simulation_wrappers(tmp_path):
     pytest.importorskip("scipy")
 
     data, dx, dy, dt = _make_nonlinear_orbit_data(nt=120)
-    job = _create_job(tmp_path, "vortex_nonlinear_thiele_sim", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    job = _create_job(
+        tmp_path,
+        "vortex_nonlinear_thiele_sim",
+        data[:, np.newaxis, ...],
+        dx=dx,
+        dy=dy,
+        dt=dt,
+    )
     thiele = job.m.solitons.vortex.nonlinear.thiele
 
     cpp = thiele.simulate_cpp(
@@ -270,7 +296,9 @@ def test_thiele_cpp_and_cip_simulation_wrappers(tmp_path):
 def test_cpp_sde_helpers_and_threshold_prediction():
     mat = MaterialParams(Ms=8.0e5, alpha=0.01, P=0.35)
     geo = DiskGeometry(R=45e-9, L=20e-9)
-    model = CPPThieleModel(material=mat, geom=geo, omega0=2.0 * np.pi * 0.75e9, N=0.22, polarity=-1)
+    model = CPPThieleModel(
+        material=mat, geom=geo, omega0=2.0 * np.pi * 0.75e9, N=0.22, polarity=-1
+    )
 
     area = ellipse_area(220e-9, 120e-9)
     assert np.isfinite(area)
@@ -307,7 +335,9 @@ def test_cpp_sde_orbit_stays_near_steady_state_not_edge_clamped():
     peff = slonczewski_mtj_efficiency(Pol=0.56, Lambda=1.2, cos_theta=0.5)
     mat = MaterialParams(Ms=8.0e5, alpha=0.01, P=peff)
     geo = DiskGeometry(R=100e-9, L=20e-9)
-    model = CPPThieleModel(material=mat, geom=geo, omega0=2.0 * np.pi * 0.9e9, N=0.25, polarity=-1)
+    model = CPPThieleModel(
+        material=mat, geom=geo, omega0=2.0 * np.pi * 0.9e9, N=0.25, polarity=-1
+    )
 
     j_th = model.threshold_current_dc()
     j_drive = 1.2 * j_th
@@ -338,7 +368,9 @@ def test_fit_omega0_n_to_fj_recovers_synthetic_params():
 
     omega0_true = 2.0 * np.pi * 0.82e9
     n_true = 0.28
-    model = CPPThieleModel(material=mat, geom=geo, omega0=omega0_true, N=n_true, polarity=-1)
+    model = CPPThieleModel(
+        material=mat, geom=geo, omega0=omega0_true, N=n_true, polarity=-1
+    )
     j_th = model.threshold_current_dc()
 
     j_data = np.linspace(1.2 * j_th, 2.2 * j_th, 9)
@@ -376,7 +408,9 @@ def test_cpp_optimize_current_for_target_frequency(tmp_path):
     geo = DiskGeometry(R=45e-9, L=20e-9)
     omega0_true = 2.0 * np.pi * 0.9e9
     n_true = 0.22
-    model = CPPThieleModel(material=mat, geom=geo, omega0=omega0_true, N=n_true, polarity=-1)
+    model = CPPThieleModel(
+        material=mat, geom=geo, omega0=omega0_true, N=n_true, polarity=-1
+    )
 
     j_th = model.threshold_current_dc()
     j_ref = 1.7 * j_th
@@ -393,16 +427,20 @@ def test_cpp_optimize_current_for_target_frequency(tmp_path):
     assert abs(opt.predicted_frequency_hz - float(f_ref)) < 0.2e9
 
     data, dx, dy, dt = _make_nonlinear_orbit_data(nt=80)
-    job = _create_job(tmp_path, "vortex_nonlinear_opt", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
-    opt_iface = job.m.solitons.vortex.nonlinear.thiele.optimize_current_for_target_frequency(
-        float(f_ref),
-        material={"Ms": 8.0e5, "alpha": 0.01, "P": 0.35},
-        geometry={"R": 45e-9, "L": 20e-9},
-        polarity=-1,
-        omega0=omega0_true,
-        N=n_true,
-        J_bounds=(1.05 * j_th, 2.5 * j_th),
-        allow_edge=True,
+    job = _create_job(
+        tmp_path, "vortex_nonlinear_opt", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt
+    )
+    opt_iface = (
+        job.m.solitons.vortex.nonlinear.thiele.optimize_current_for_target_frequency(
+            float(f_ref),
+            material={"Ms": 8.0e5, "alpha": 0.01, "P": 0.35},
+            geometry={"R": 45e-9, "L": 20e-9},
+            polarity=-1,
+            omega0=omega0_true,
+            N=n_true,
+            J_bounds=(1.05 * j_th, 2.5 * j_th),
+            allow_edge=True,
+        )
     )
     assert np.isfinite(opt_iface.current_density_a_per_m2)
 
@@ -420,7 +458,9 @@ def test_cpp_bottom_stack_positive_current_pumps_for_positive_core_polarity():
     )
 
     model = CPPThieleModel(
-        material=MaterialParams(Ms=mat.Ms, alpha=mat.alpha, P=reduction.pump_polarization, A=mat.A),
+        material=MaterialParams(
+            Ms=mat.Ms, alpha=mat.alpha, P=reduction.pump_polarization, A=mat.A
+        ),
         geom=geo,
         omega0=2.1826010587804008e9,
         N=0.2737065428366091,
@@ -436,6 +476,38 @@ def test_cpp_bottom_stack_positive_current_pumps_for_positive_core_polarity():
     u_ss = model.steady_state_u(j_drive, allow_edge=True)
     assert u_ss is not None
     assert float(u_ss) > 0.0
+
+
+def test_cpp_reduction_scales_pump_with_out_of_plane_polarizer():
+    mat = MaterialParams(Ms=8.0e5, alpha=0.013, P=0.5, A=10e-12)
+    thickness = 9e-9
+
+    red_plus = reduce_mumax_slonczewski_cpp(
+        material=mat,
+        torque_thickness=thickness,
+        polarizer=(0.0, 0.0, 1.0),
+        Lambda=1.0,
+        epsilonprime=0.1,
+    )
+    red_minus = reduce_mumax_slonczewski_cpp(
+        material=mat,
+        torque_thickness=thickness,
+        polarizer=(0.0, 0.0, -1.0),
+        Lambda=1.0,
+        epsilonprime=0.1,
+    )
+    with pytest.warns(UserWarning, match="in-plane component"):
+        red_in_plane = reduce_mumax_slonczewski_cpp(
+            material=mat,
+            torque_thickness=thickness,
+            polarizer=(1.0, 0.0, 0.0),
+            Lambda=1.0,
+            epsilonprime=0.1,
+        )
+
+    assert red_in_plane.pump_polarization == pytest.approx(0.0, abs=1e-15)
+    assert red_plus.pump_polarization == pytest.approx(-red_minus.pump_polarization)
+    assert red_plus.phase_polarization == pytest.approx(-red_minus.phase_polarization)
 
 
 def test_cpp_superthreshold_drive_grows_orbit_instead_of_collapsing_to_zero():
@@ -496,9 +568,69 @@ def test_cpp_simulate_clamps_orbit_at_disk_edge_for_strong_drive():
     assert traj.metadata.get("edge_hit_time") is not None
 
 
+def test_cpp_simulate_stops_at_physical_disk_edge_when_relative_clamp_is_disabled():
+    mat = MaterialParams(Ms=8.0e5, alpha=0.013, P=0.5, A=10e-12)
+    geo = DiskGeometry(R=128e-9, L=9e-9)
+    model = CPPThieleModel(
+        material=mat,
+        geom=geo,
+        omega0=2.1826010587804008e9,
+        N=0.2737065428366091,
+        polarity=-1,
+    )
+
+    traj = model.simulate(
+        t_span=(0.0, 50e-9),
+        s0=(1e-3, 0.0),
+        J_func=lambda _t: 100.0 * 2.914214045872107e10,
+        dt=10e-12,
+        clamp_u=None,
+        rtol=1e-6,
+        atol=1e-9,
+    )
+
+    radius_u = np.sqrt(np.asarray(traj.sx) ** 2 + np.asarray(traj.sy) ** 2)
+
+    assert float(np.max(radius_u)) <= 1.000001
+    assert traj.metadata.get("edge_limited") is True
+    assert traj.metadata.get("edge_hit_kind") == "disk"
+    assert traj.metadata.get("edge_hit_time") is not None
+
+
+def test_cpp_rhs_warns_when_effective_omega_turns_negative():
+    mat = MaterialParams(Ms=8.0e5, alpha=0.013, P=0.5, A=10e-12)
+    geo = DiskGeometry(R=128e-9, L=9e-9)
+    model = CPPThieleModel(
+        material=mat,
+        geom=geo,
+        omega0=1.0e9,
+        N=0.25,
+        polarity=-1,
+        domega0_dJ=-1.0,
+    )
+
+    with pytest.warns(UserWarning, match="omega0_eff"):
+        model.simulate(
+            t_span=(0.0, 0.2e-9),
+            s0=(1e-3, 0.0),
+            J_func=lambda _t: 2.0e9,
+            dt=10e-12,
+            clamp_u=None,
+            rtol=1e-6,
+            atol=1e-9,
+        )
+
+
 def test_thiele_proxy_signal_psd_and_dashboard_entrypoint(tmp_path):
     data, dx, dy, dt = _make_nonlinear_orbit_data(nt=120)
-    job = _create_job(tmp_path, "vortex_nonlinear_interactive", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    job = _create_job(
+        tmp_path,
+        "vortex_nonlinear_interactive",
+        data[:, np.newaxis, ...],
+        dx=dx,
+        dy=dy,
+        dt=dt,
+    )
     thiele = job.m.solitons.vortex.nonlinear.thiele
 
     traj = thiele.simulate_cpp(
