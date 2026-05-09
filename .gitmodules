@@ -1,0 +1,3 @@
+[submodule "external_libaries/discretisedfield"]
+	path = external_libaries/discretisedfield
+	url = https://github.com/ubermag/discretisedfield
