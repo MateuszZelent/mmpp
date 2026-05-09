@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import sys
 import time as _time
 from typing import TYPE_CHECKING, Any
 
@@ -20,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def run_single_job_fit(
-    vortex_interface: "VortexInterface",
+    vortex_interface: VortexInterface,
     config: AutofitConfig,
 ) -> VortexAutofitResult:
     """Run a single-job autofit pipeline.
@@ -33,8 +32,6 @@ def run_single_job_fit(
         VortexAnalyticalComparison,
         _resolve_plot_trajectory,
         _simulate_matching_trajectory,
-        _trajectory_center,
-        _trajectory_dt,
     )
 
     warnings_list: list[str] = []
@@ -721,14 +718,12 @@ class _SimulationContext:
 
     def simulate(self, params: dict[str, Any]):
         """Simulate analytical trajectory — Numba fast path."""
-        from .._shared.models import TrajectoryResult
         from ..model.adapters import thiele_to_trajectory_result
         from ..plotting import (
             _resample_trajectory_to_reference,
             _trajectory_center,
             _translate_trajectory,
         )
-
         from ._numba_kernels import HAS_NUMBA
 
         use_fast = HAS_NUMBA and self._fast_path_enabled
@@ -870,7 +865,12 @@ class _SimulationContext:
 
     def _simulate_cpp_scipy(self, params: dict[str, Any]):
         """Fallback: CPP simulation via scipy solve_ivp (when Numba unavailable)."""
-        from mmpp.analytical import CPPThieleModel, DiskGeometry, MaterialParams, current_dc
+        from mmpp.analytical import (
+            CPPThieleModel,
+            DiskGeometry,
+            MaterialParams,
+            current_dc,
+        )
 
         mat = MaterialParams(
             Ms=float(params["Ms"]),
@@ -907,7 +907,12 @@ class _SimulationContext:
 
     def _simulate_cip_scipy(self, params: dict[str, Any]):
         """Fallback: CIP simulation via scipy solve_ivp (when Numba unavailable)."""
-        from mmpp.analytical import CIPThieleModel, DiskGeometry, MaterialParams, current_dc
+        from mmpp.analytical import (
+            CIPThieleModel,
+            DiskGeometry,
+            MaterialParams,
+            current_dc,
+        )
 
         mat = MaterialParams(
             Ms=float(params["Ms"]),

@@ -317,6 +317,56 @@ def field_ac(
     return _b
 
 
+def field_ac_vector(
+    B_amp: ExternalFieldLike,
+    f_hz: float,
+    *,
+    phase: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    offset: ExternalFieldLike = 0.0,
+) -> FieldFunc:
+    """Sinusoidal vector field with independent phase per component."""
+    amp = ExternalField.from_any(B_amp)
+    off = ExternalField.from_any(offset)
+    ph = np.asarray(phase, dtype=float).reshape(-1)
+    if ph.size < 3:
+        raise ValueError("phase must provide three components")
+    omega = 2.0 * math.pi * float(f_hz)
+
+    def _b(t: float) -> ExternalField:
+        arg = omega * float(t)
+        return ExternalField(
+            off.Bx_T + amp.Bx_T * math.sin(arg + float(ph[0])),
+            off.By_T + amp.By_T * math.sin(arg + float(ph[1])),
+            off.Bz_T + amp.Bz_T * math.sin(arg + float(ph[2])),
+        )
+
+    return _b
+
+
+def field_rotating_inplane(
+    B_amp: float,
+    f_hz: float,
+    *,
+    phase: float = 0.0,
+    clockwise: bool = False,
+    Bz_offset: float = 0.0,
+) -> FieldFunc:
+    """Circularly rotating in-plane field ``(Bx, By)`` with optional Bz offset."""
+    amp = float(B_amp)
+    omega = 2.0 * math.pi * float(f_hz)
+    handedness = -1.0 if clockwise else 1.0
+
+    def _b(t: float) -> ExternalField:
+        arg = omega * float(t) + float(phase)
+        return ExternalField(
+            amp * math.cos(arg),
+            handedness * amp * math.sin(arg),
+            float(Bz_offset),
+        )
+
+    return _b
+
+
 # ---------------------------------------------------------------------------
 # Result data classes
 # ---------------------------------------------------------------------------
@@ -1448,7 +1498,11 @@ class CPPThieleModel:
         from micromagnetic simulations (``field_cal.domega0_dBz``).
         The polarity factor ``p`` is applied automatically.
         """
-        B = field_state if field_state is not None else self.field
+        B = (
+            ExternalField.from_any(field_state)
+            if field_state is not None
+            else self.field
+        )
         # Wybierz podany override lub użyj atrybutu zdefiniowanego w modelu
         slope = self.domega0_dJ if domega0_dJ is None else float(domega0_dJ)
         return (
@@ -1475,7 +1529,21 @@ class CPPThieleModel:
         """
         B = field_state if field_state is not None else self.field
         sx, sy = self.field_cal.s_eq(field_state=B)
-        return np.array([sx, sy], dtype=float)
+        out = np.array([sx, sy], dtype=float)
+        norm = float(np.linalg.norm(out))
+        if norm >= 1.0:
+            raise ValueError(
+                f"FieldCalibration places s_eq outside the disk (|s_eq|={norm:.3g})"
+            )
+        if norm > 0.8 and not getattr(self, "_seq_warned", False):
+            warnings.warn(
+                f"Large equilibrium shift |s_eq|={norm:.3g}; rigid-vortex "
+                "field calibration is outside its safe range.",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._seq_warned = True
+        return out
 
     def omega(
         self, u: float, J: float = 0.0, *, domega0_dJ: float | None = None

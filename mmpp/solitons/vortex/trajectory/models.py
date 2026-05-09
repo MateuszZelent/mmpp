@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from mmpp._shared.repr_html import make_simple_card
+
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -36,6 +38,17 @@ class OrbitFitResult:
     def is_circular(self) -> bool:
         """Heuristic circularity flag based on eccentricity."""
         return self.eccentricity < 0.1
+
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="fitted vortex orbit",
+            rows=[
+                ("radius", f"{self.radius:.6g}"),
+                ("eccentricity", f"{float(self.eccentricity):.6g}"),
+                ("residual", f"{float(self.residual):.6g}"),
+            ],
+        )
 
 
 @dataclass
@@ -111,11 +124,19 @@ class PhasePlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("PhasePlotAccessor", [
-            (".phase_portrait()",
-             "Phase portrait cos(φ) vs d(cos(φ))/dt",
-             "Reconstructs phase-space trajectory."),
-            (".frequency_vs_time(unit='hz')",
-             "Instantaneous frequency vs time",
-             "unit: 'hz', 'ghz', or 'rad/s'."),
-        ])
+
+        return plot_accessor_html(
+            "PhasePlotAccessor",
+            [
+                (
+                    ".phase_portrait()",
+                    "Phase portrait cos(φ) vs d(cos(φ))/dt",
+                    "Reconstructs phase-space trajectory.",
+                ),
+                (
+                    ".frequency_vs_time(unit='hz')",
+                    "Instantaneous frequency vs time",
+                    "unit: 'hz', 'ghz', or 'rad/s'.",
+                ),
+            ],
+        )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time as _time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Callable
 
 import numpy as np
 from scipy import optimize

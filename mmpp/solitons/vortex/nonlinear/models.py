@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from mmpp._shared.repr_html import make_simple_card
+
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -38,6 +40,17 @@ class AmplitudeEquationResult:
         """Plotting accessor."""
         return AmplitudePlotAccessor(self)
 
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="complex amplitude dynamics",
+            rows=[
+                ("method", str(self.method)),
+                ("n_samples", str(int(np.asarray(self.time).size))),
+                ("reference_radius", f"{float(self.reference_radius):.6g}"),
+            ],
+        )
+
 
 @dataclass
 class STParametersResult:
@@ -57,9 +70,25 @@ class STParametersResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def power_coefficient_of_variation(self) -> float:
+        """Coefficient of variation of generated power, retained as legacy ``Q``."""
+        return float(self.Q)
+
+    @property
     def plt(self) -> STPlotAccessor:
         """Plotting accessor for single-point ST parameters."""
         return STPlotAccessor(self)
+
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="Slavin-Tiberkevich parameters",
+            rows=[
+                ("f_0_ghz", f"{float(self.f_0_ghz):.6g}"),
+                ("N", f"{float(self.N):.6g}"),
+                ("Q_meaning", "power coefficient of variation"),
+            ],
+        )
 
 
 @dataclass
@@ -82,6 +111,16 @@ class STBatchResult:
     def plt(self) -> STBatchPlotAccessor:
         """Plotting accessor for batch ST results."""
         return STBatchPlotAccessor(self)
+
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="batch ST summary",
+            rows=[
+                ("n_currents", str(int(np.asarray(self.currents).size))),
+                ("N", f"{float(self.N):.6g}"),
+            ],
+        )
 
 
 class AmplitudePlotAccessor:
@@ -143,14 +182,27 @@ class AmplitudePlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("AmplitudePlotAccessor", [
-            (".power_vs_time()", "p(t)=|c(t)|² generation power vs time",
-             "Accepts matplotlib kwargs."),
-            (".phase_vs_time(as_unwrapped=True)", "Phase vs time",
-             "as_unwrapped: True for cumulative, False for wrapped [-π,π]."),
-            (".complex_plane()", "Complex amplitude c(t) in Re-Im plane",
-             "Equal aspect ratio. Accepts matplotlib kwargs."),
-        ])
+
+        return plot_accessor_html(
+            "AmplitudePlotAccessor",
+            [
+                (
+                    ".power_vs_time()",
+                    "p(t)=|c(t)|² generation power vs time",
+                    "Accepts matplotlib kwargs.",
+                ),
+                (
+                    ".phase_vs_time(as_unwrapped=True)",
+                    "Phase vs time",
+                    "as_unwrapped: True for cumulative, False for wrapped [-π,π].",
+                ),
+                (
+                    ".complex_plane()",
+                    "Complex amplitude c(t) in Re-Im plane",
+                    "Equal aspect ratio. Accepts matplotlib kwargs.",
+                ),
+            ],
+        )
 
 
 class STPlotAccessor:
@@ -179,11 +231,17 @@ class STPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("STPlotAccessor", [
-            (".power_vs_current(current_a=...)",
-             "Single-point generation power at given current",
-             "current_a: current value in Amperes. Falls back to metadata if None."),
-        ])
+
+        return plot_accessor_html(
+            "STPlotAccessor",
+            [
+                (
+                    ".power_vs_current(current_a=...)",
+                    "Single-point generation power at given current",
+                    "current_a: current value in Amperes. Falls back to metadata if None.",
+                ),
+            ],
+        )
 
 
 class STBatchPlotAccessor:
@@ -248,14 +306,28 @@ class STBatchPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("STBatchPlotAccessor", [
-            (".power_vs_current()", "Generation power p_gen vs current I",
-             "Plots full sweep. Accepts matplotlib kwargs."),
-            (".linewidth_vs_current(as_mhz=True)", "Linewidth Δf vs current I",
-             "as_mhz: convert to MHz."),
-            (".frequency_vs_current(as_ghz=True)", "Dominant frequency f₀ vs current I",
-             "as_ghz: convert to GHz."),
-        ])
+
+        return plot_accessor_html(
+            "STBatchPlotAccessor",
+            [
+                (
+                    ".power_vs_current()",
+                    "Generation power p_gen vs current I",
+                    "Plots full sweep. Accepts matplotlib kwargs.",
+                ),
+                (
+                    ".linewidth_vs_current(as_mhz=True)",
+                    "Linewidth Δf vs current I",
+                    "as_mhz: convert to MHz.",
+                ),
+                (
+                    ".frequency_vs_current(as_ghz=True)",
+                    "Dominant frequency f₀ vs current I",
+                    "as_ghz: convert to GHz.",
+                ),
+            ],
+        )
+
 
 @dataclass
 class ThieleForceBalanceResult:
@@ -299,6 +371,17 @@ class ThieleForceBalanceResult:
     def plt(self) -> ThieleForcePlotAccessor:
         """Plotting accessor."""
         return ThieleForcePlotAccessor(self)
+
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="Thiele force balance",
+            rows=[
+                ("n_samples", str(int(np.asarray(self.time).size))),
+                ("G", f"{float(self.G):.6g}"),
+                ("residual_mean", f"{float(np.mean(self.residual_norm)):.6g}"),
+            ],
+        )
 
 
 class ThieleForcePlotAccessor:
@@ -378,8 +461,14 @@ class ThieleForcePlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("ThieleForcePlotAccessor", [
-            (".force_balance(as_norm=True)",
-             "Force decomposition (gyro, conservative, dissipative, residual) vs time",
-             "as_norm: True for |F| norms, False for x/y components."),
-        ])
+
+        return plot_accessor_html(
+            "ThieleForcePlotAccessor",
+            [
+                (
+                    ".force_balance(as_norm=True)",
+                    "Force decomposition (gyro, conservative, dissipative, residual) vs time",
+                    "as_norm: True for |F| norms, False for x/y components.",
+                ),
+            ],
+        )

@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from mmpp._shared.spectral import compute_psd
+
 from .._shared.models import TrajectoryResult
 
 
@@ -44,7 +46,9 @@ class TrajectoryFeatures:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-def _physical_core_coordinates(trajectory: TrajectoryResult) -> tuple[np.ndarray, np.ndarray]:
+def _physical_core_coordinates(
+    trajectory: TrajectoryResult,
+) -> tuple[np.ndarray, np.ndarray]:
     """Return coordinates in the physical disk frame.
 
     Analytical trajectories may be shifted for overlay/alignment against the
@@ -113,7 +117,7 @@ def extract_features(
     else:
         f_inst = np.zeros_like(time)
 
-    # PSD via Welch-like simple periodogram
+    # PSD via the shared spectral backend used by vortex spectrum helpers.
     psd_freqs, psd_power = _compute_psd(time, dx, dy)
 
     # Dominant frequency from PSD
@@ -160,28 +164,12 @@ def _compute_psd(
     """Compute combined PSD of x and y fluctuations."""
     if time.size < 4:
         return np.array([]), np.array([])
-
-    dt = float(np.median(np.diff(time)))
-    if dt <= 0:
+    freqs_x, power_x, _, _ = compute_psd(dx, time=time, method="periodogram")
+    freqs_y, power_y, _, _ = compute_psd(dy, time=time, method="periodogram")
+    size = min(freqs_x.size, freqs_y.size)
+    if size <= 1:
         return np.array([]), np.array([])
-
-    n = dx.size
-    # Zero-pad to next power of 2 for efficiency
-    nfft = 1 << (n - 1).bit_length()
-
-    window = np.hanning(n)
-    windowed_x = (dx - np.mean(dx)) * window
-    windowed_y = (dy - np.mean(dy)) * window
-
-    fft_x = np.fft.rfft(windowed_x, n=nfft)
-    fft_y = np.fft.rfft(windowed_y, n=nfft)
-    freqs = np.fft.rfftfreq(nfft, d=dt)
-
-    # Combined PSD (sum of x and y power)
-    power = (np.abs(fft_x) ** 2 + np.abs(fft_y) ** 2) / (n * np.sum(window ** 2))
-
-    # Skip DC component
-    return freqs[1:], power[1:]
+    return freqs_x[1:size], power_x[1:size] + power_y[1:size]
 
 
 def _estimate_eccentricity(dx: np.ndarray, dy: np.ndarray) -> float:

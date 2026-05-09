@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class _ThieleMethod:
     """Callable wrapper for ``AutofitInterface.thiele`` with rich Jupyter display."""
 
-    def __init__(self, interface: "AutofitInterface"):
+    def __init__(self, interface: AutofitInterface):
         self._interface = interface
 
     def __call__(
@@ -88,7 +88,7 @@ class _ThieleMethod:
 class AutofitInterface:
     """Physics-informed autofit of analytical vortex models to numerical trajectories."""
 
-    def __init__(self, vortex_interface: "VortexInterface"):
+    def __init__(self, vortex_interface: VortexInterface):
         self._interface = vortex_interface
         self._thiele_method: _ThieleMethod | None = None
 
@@ -210,6 +210,7 @@ class AutofitInterface:
 
     def _thiele_repr_html(self) -> str:
         from html import escape as _esc
+
         from .config import DEFAULT_PARAM_SPECS, LOSS_PRESETS
 
         # ── Styles ──
@@ -383,7 +384,7 @@ class AutofitInterface:
         html += "</tr></thead><tbody>"
         for key in loss_keys:
             label = loss_labels.get(key, key)
-            html += f"<tr style='border-bottom:1px solid rgba(71,85,105,0.3);'>"
+            html += "<tr style='border-bottom:1px solid rgba(71,85,105,0.3);'>"
             html += f"<td style='{td_desc}'>{_esc(label)}</td>"
             for preset_name, weights in LOSS_PRESETS.items():
                 w = weights.get(key, 0.0)

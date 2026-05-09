@@ -414,7 +414,7 @@ class AutofitLiveMonitor:
 class AutofitPlotAccessor:
     """Plot helpers for :class:`VortexAutofitResult`."""
 
-    def __init__(self, result: "VortexAutofitResult"):
+    def __init__(self, result: VortexAutofitResult):
         self._result = result
 
     def convergence(self, *, ax=None, **kwargs):

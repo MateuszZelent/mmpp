@@ -8,6 +8,7 @@ slice notation like `op[:].fft.modes.compute_modes()` (auto-selects optimal data
 
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import numpy as np
@@ -53,18 +54,18 @@ class BatchFFT:
     def transmission(self) -> "BatchTransmission":
         """Get batch transmission analyzer."""
         from .fft.transmission.batch import BatchTransmission
-        
+
         # Check if dataset context was set (from BatchDatasetWrapper)
         dataset_name = getattr(self, '_dataset_name', None)
         slice_info = getattr(self, '_slice_info', None)
-        
+
         return BatchTransmission(
-            self.results, 
+            self.results,
             self.mmpp_ref,
             dataset_name=dataset_name,
             slice_info=slice_info
         )
-    
+
     @property
     def spectrum(self) -> "BatchSpectrum":
         """Get batch spectrum analyzer.
@@ -88,16 +89,36 @@ class BatchFFT:
         >>> batch.plot_heatmap("B0")
         """
         from .fft.spectrum_batch import BatchSpectrum
-        
+
         dataset_name = getattr(self, '_dataset_name', None)
         slice_info = getattr(self, '_slice_info', None)
-        
+
         return BatchSpectrum(
             self.results,
             self.mmpp_ref,
             dataset_name=dataset_name,
             slice_info=slice_info,
         )
+
+    @property
+    def jobs(self) -> list[SimpleNamespace]:
+        """Compatibility view exposing selected batch results as job records."""
+        all_results = list(getattr(self.mmpp_ref, "zarr_results", []) or [])
+        records: list[SimpleNamespace] = []
+        for fallback_index, result in enumerate(self.results):
+            try:
+                index = all_results.index(result)
+            except ValueError:
+                index = fallback_index
+            records.append(
+                SimpleNamespace(
+                    index=index,
+                    path=getattr(result, "path", None),
+                    attrs=getattr(result, "attrs", {}),
+                    result=result,
+                )
+            )
+        return records
 
     def compute_all(self, **kwargs) -> dict[str, Any]:
         """
@@ -529,7 +550,7 @@ class BatchDatasetWrapper:
     
     Allows syntax like: job[:].m_layer13[:,...,0].fft.transmission(...)
     """
-    
+
     def __init__(self, results: list[Any], mmpp_ref: Any, dataset_name: str):
         """Initialize dataset wrapper.
         
@@ -546,7 +567,7 @@ class BatchDatasetWrapper:
         self.mmpp_ref = mmpp_ref
         self.dataset_name = dataset_name
         self.slice_info = None
-    
+
     def __getitem__(self, key):
         """Capture slice information, returning a new wrapper (immutable pattern)."""
         new = BatchDatasetWrapper(self.results, self.mmpp_ref, self.dataset_name)
@@ -559,7 +580,7 @@ class BatchDatasetWrapper:
         else:
             new.slice_info = key
         return new
-    
+
     @property
     def fft(self) -> BatchFFT:
         """Get batch FFT operations with dataset context."""
@@ -583,12 +604,12 @@ class BatchNumpyDatasetWrapper:
     >>> arr = job[:].get.m[:]  # Returns 6D array [n_jobs, t, z, y, x, c]
     >>> arr = job[:].get.m[0:100, ...]  # Sliced stacked array
     """
-    
+
     def __init__(self, results: list, mmpp_ref, dataset_name: str):
         self._results = results
         self._mmpp_ref = mmpp_ref
         self._dataset_name = dataset_name
-    
+
     def __getitem__(self, key) -> np.ndarray:
         """Return stacked sliced data as numpy array from all jobs.
         
@@ -603,13 +624,13 @@ class BatchNumpyDatasetWrapper:
             except (NameError, KeyError) as e:
                 log.warning(f"Dataset '{self._dataset_name}' not found in {result.path}: {e}")
                 continue
-        
+
         if not arrays:
             raise ValueError(f"Dataset '{self._dataset_name}' not found in any job")
-        
+
         # Stack all arrays along new first axis [n_jobs, ...]
         return np.stack(arrays, axis=0)
-    
+
     @property
     def shape(self):
         """Shape of dataset from first result (all should match)."""
@@ -621,7 +642,7 @@ class BatchNumpyDatasetWrapper:
             except (NameError, KeyError):
                 pass
         return None
-    
+
     def __repr__(self):
         return f"BatchNumpyDatasetWrapper({self._dataset_name}, n_jobs={len(self._results)}, shape={self.shape})"
 
@@ -641,11 +662,11 @@ class BatchNumpyGetter:
     >>> arr = job[:].get.m_layer13[:]
     >>> arr = job[:].get["m_layer13"][:]
     """
-    
+
     def __init__(self, results: list, mmpp_ref):
         self._results = results
         self._mmpp_ref = mmpp_ref
-    
+
     def __getattr__(self, name: str) -> BatchNumpyDatasetWrapper:
         """Get BatchNumpyDatasetWrapper for dataset by attribute access."""
         # Check that at least one result has this dataset
@@ -654,11 +675,11 @@ class BatchNumpyGetter:
             if name in result._z:
                 return BatchNumpyDatasetWrapper(self._results, self._mmpp_ref, name)
         raise AttributeError(f"Dataset '{name}' not found in any job")
-    
+
     def __getitem__(self, key: str) -> BatchNumpyDatasetWrapper:
         """Get BatchNumpyDatasetWrapper for dataset by item access."""
         return self.__getattr__(key)
-    
+
     def __repr__(self):
         if self._results:
             self._results[0]._ensure_zarr_loaded()
@@ -709,6 +730,26 @@ class BatchOperations:
     def matplotlib(self):
         """Alias for :attr:`mpl`."""
         return self.mpl
+
+    @property
+    def jobs(self) -> list[SimpleNamespace]:
+        """Compatibility view exposing selected batch results as job records."""
+        all_results = list(getattr(self.mmpp_ref, "zarr_results", []) or [])
+        records: list[SimpleNamespace] = []
+        for fallback_index, result in enumerate(self.results):
+            try:
+                index = all_results.index(result)
+            except ValueError:
+                index = fallback_index
+            records.append(
+                SimpleNamespace(
+                    index=index,
+                    path=getattr(result, "path", None),
+                    attrs=getattr(result, "attrs", {}),
+                    result=result,
+                )
+            )
+        return records
 
     def __getitem__(self, index):
         """Return one result or a sliced batch."""
@@ -768,7 +809,7 @@ class BatchOperations:
     def vortex(self):
         """Shortcut alias for ``self.solitons.vortex``."""
         return self.solitons.vortex
-    
+
     def __getattr__(self, name: str):
         """Intercept dataset names to enable dataset-aware batch operations.
         
@@ -839,8 +880,8 @@ class BatchOperations:
 
     def _repr_html_(self) -> str:
         """Return rich HTML representation for Jupyter notebooks."""
-        import uuid as _uuid
         import html as _html
+        import uuid as _uuid
 
         n = len(self.results)
         uid = str(_uuid.uuid4())[:8]
@@ -900,7 +941,10 @@ class BatchOperations:
 
         # ── detect varying parameters ───────────────────────────
         try:
-            from .core.metadata_diff import find_differing_parameters, extract_job_metadata
+            from .core.metadata_diff import (
+                extract_job_metadata,
+                find_differing_parameters,
+            )
             diff = find_differing_parameters(self.results)
             varying = diff.differing_params
             all_meta = [extract_job_metadata(r) for r in self.results]

@@ -11,8 +11,11 @@ import zarr
 from mmpp.analytical import (
     CPPThieleModel,
     DiskGeometry,
+    FieldCalibration,
     MaterialParams,
     ellipse_area,
+    field_ac_vector,
+    field_rotating_inplane,
     fit_omega0_N_to_fJ,
     reduce_mumax_slonczewski_cpp,
     slonczewski_mtj_efficiency,
@@ -619,6 +622,46 @@ def test_cpp_rhs_warns_when_effective_omega_turns_negative():
             rtol=1e-6,
             atol=1e-9,
         )
+
+
+def test_field_calibration_warns_and_errors_for_large_equilibrium_shift():
+    mat = MaterialParams(Ms=8.0e5, alpha=0.013, P=0.5, A=10e-12)
+    geo = DiskGeometry(R=128e-9, L=9e-9)
+    warning_model = CPPThieleModel(
+        material=mat,
+        geom=geo,
+        omega0=2.0e9,
+        field_cal=FieldCalibration(seq_per_T=1.0),
+    )
+    with pytest.warns(UserWarning, match="s_eq"):
+        np.testing.assert_allclose(warning_model.s_eq((0.85, 0.0, 0.0)), [0.0, 0.85])
+
+    error_model = CPPThieleModel(
+        material=mat,
+        geom=geo,
+        omega0=2.0e9,
+        field_cal=FieldCalibration(seq_per_T=1.0),
+    )
+    with pytest.raises(ValueError, match="s_eq"):
+        error_model.s_eq((1.0, 0.0, 0.0))
+
+
+def test_field_ac_vector_and_rotating_inplane_support_component_phases():
+    vector = field_ac_vector(
+        (1.0, 2.0, 3.0),
+        f_hz=1.0,
+        phase=(0.0, np.pi / 2.0, np.pi),
+    )
+    sample = vector(0.0)
+    assert sample.Bx_T == pytest.approx(0.0)
+    assert sample.By_T == pytest.approx(2.0)
+    assert sample.Bz_T == pytest.approx(0.0)
+
+    rotating = field_rotating_inplane(2.0, f_hz=1.0, Bz_offset=0.1)
+    sample = rotating(0.0)
+    assert sample.Bx_T == pytest.approx(2.0)
+    assert sample.By_T == pytest.approx(0.0)
+    assert sample.Bz_T == pytest.approx(0.1)
 
 
 def test_thiele_proxy_signal_psd_and_dashboard_entrypoint(tmp_path):

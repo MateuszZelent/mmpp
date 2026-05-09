@@ -593,3 +593,28 @@ class VortexInterface:
             f"<code>{example}</code></pre></div>"
             "</div>"
         )
+
+    def interactive(self, figsize=(10, 7), dpi=100):
+        """Open the interactive vortex dynamics dashboard.
+
+        The dashboard integrates all analysis modules (core tracking, topology,
+        trajectory, spectrum, spectrogram, modes, events, signals, Thiele model)
+        in a single ipywidgets-based UI.
+
+        Parameters
+        ----------
+        figsize : tuple
+            Figure size for plot panels (width, height in inches).
+        dpi : int
+            Plot resolution.
+
+        Returns
+        -------
+        VortexInteractiveDashboard
+            Dashboard instance (already displayed).
+        """
+        from .ui import VortexInteractiveDashboard
+
+        dashboard = VortexInteractiveDashboard(self, figsize=figsize, dpi=dpi)
+        dashboard.show()
+        return dashboard

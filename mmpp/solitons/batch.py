@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import resource
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from mmpp._shared.repr_html import make_simple_card
 
 from .vortex._plotting import (
     apply_axes_style,
@@ -57,7 +61,9 @@ def _resolved_spectrum_kwargs(
     kwargs: dict[str, Any] = {"method": method}
     sample_count = int(len(getattr(trajectory, "time", [])))
 
-    effective_nperseg = None if nperseg is None else min(int(nperseg), max(sample_count, 1))
+    effective_nperseg = (
+        None if nperseg is None else min(int(nperseg), max(sample_count, 1))
+    )
     if effective_nperseg is not None:
         kwargs["nperseg"] = effective_nperseg
 
@@ -65,7 +71,9 @@ def _resolved_spectrum_kwargs(
         if effective_nperseg is None:
             kwargs["noverlap"] = int(max(noverlap, 0))
         else:
-            kwargs["noverlap"] = int(min(max(noverlap, 0), max(effective_nperseg - 1, 0)))
+            kwargs["noverlap"] = int(
+                min(max(noverlap, 0), max(effective_nperseg - 1, 0))
+            )
 
     return kwargs
 
@@ -80,6 +88,13 @@ def _progress_iter(iterable, *, total: int, desc: str, enabled: bool):
         return tqdm(iterable, total=total, desc=desc, unit="result")
     except ImportError:
         return iterable
+
+
+def _memory_mb() -> float:
+    try:
+        return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
+    except Exception:
+        return float("nan")
 
 
 _REGIME_ORDER = [
@@ -120,12 +135,25 @@ class BatchVortexSpectrumMapResult:
     @property
     def power_db(self) -> np.ndarray:
         """Power expressed as 10*log10(power)."""
-        return 10.0 * np.log10(np.clip(np.asarray(self.power, dtype=float), 1e-30, None))
+        return 10.0 * np.log10(
+            np.clip(np.asarray(self.power, dtype=float), 1e-30, None)
+        )
 
     @property
     def plt(self):
         """Plotting accessor."""
         return BatchVortexSpectrumMapPlotAccessor(self)
+
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle=f"{self.component} spectrum map",
+            rows=[
+                ("n_runs", str(int(np.asarray(self.coordinate).size))),
+                ("n_freq", str(int(np.asarray(self.frequencies).size))),
+                ("coordinate", str(self.coordinate_name)),
+            ],
+        )
 
 
 class BatchVortexSpectrumMapPlotAccessor:
@@ -145,8 +173,16 @@ class BatchVortexSpectrumMapPlotAccessor:
 
         ax = ensure_axis(ax, default_figsize=(6.5, 4.0), figure_kwargs=figure_kwargs)
 
-        freqs = self._result.frequencies_ghz if as_ghz else np.asarray(self._result.frequencies, dtype=float)
-        power = self._result.power_db if db_scale else np.asarray(self._result.power, dtype=float)
+        freqs = (
+            self._result.frequencies_ghz
+            if as_ghz
+            else np.asarray(self._result.frequencies, dtype=float)
+        )
+        power = (
+            self._result.power_db
+            if db_scale
+            else np.asarray(self._result.power, dtype=float)
+        )
 
         mesh = ax.pcolormesh(
             np.asarray(self._result.coordinate, dtype=float),
@@ -167,6 +203,13 @@ class BatchVortexSpectrumMapPlotAccessor:
         apply_axes_style(ax, style_kwargs)
         return ax
 
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="plot accessor",
+            rows=[("methods", ".heatmap()")],
+        )
+
 
 class BatchSolitonsInterface:
     """Batch entry point for soliton analysis namespaces."""
@@ -186,6 +229,30 @@ class BatchSolitonsInterface:
     def __repr__(self) -> str:
         return f"BatchSolitonsInterface({len(self._results)} results)"
 
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="batch soliton namespace",
+            rows=[("n_results", str(len(self._results))), ("namespaces", "vortex")],
+        )
+
+
+class BatchVortexSpectrumAccessor:
+    """Batch spectrum namespace for vortex runs."""
+
+    def __init__(self, interface: BatchVortexInterface):
+        self._interface = interface
+
+    def map(self, **kwargs) -> BatchVortexSpectrumMapResult:
+        return self._interface.spectrum_map(**kwargs)
+
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="batch vortex spectrum namespace",
+            rows=[("methods", ".map(), .heatmap()")],
+        )
+
 
 class BatchVortexInterface:
     """Batch helpers for vortex trajectory, spectrum and regime analysis."""
@@ -193,11 +260,19 @@ class BatchVortexInterface:
     def __init__(self, results: list[Any], mmpp_instance: Any | None = None):
         self._results = list(results)
         self._mmpp = mmpp_instance
+        self._spectrum = None
 
     @property
     def plt(self):
         """Plotting accessor for batch vortex summaries."""
         return BatchVortexPlotAccessor(self)
+
+    @property
+    def spectrum(self):
+        """Batch spectrum namespace."""
+        if self._spectrum is None:
+            self._spectrum = BatchVortexSpectrumAccessor(self)
+        return self._spectrum
 
     def _ordered_results(self, sort_by: str | None = "i_pillar_ma") -> list[Any]:
         if sort_by is None:
@@ -233,9 +308,8 @@ class BatchVortexInterface:
         peak_power_rel = _coerce_numeric(row.get("peak_power_rel", np.nan))
         radius_mean_nm = _coerce_numeric(row.get("r_mean_nm", np.nan))
         if (
-            (np.isfinite(peak_power_rel) and peak_power_rel < float(power_floor_rel))
-            or (np.isfinite(radius_mean_nm) and radius_mean_nm < float(radius_floor_nm))
-        ):
+            np.isfinite(peak_power_rel) and peak_power_rel < float(power_floor_rel)
+        ) or (np.isfinite(radius_mean_nm) and radius_mean_nm < float(radius_floor_nm)):
             return "damped"
         return "stable_gyro"
 
@@ -252,18 +326,15 @@ class BatchVortexInterface:
         power_floor_rel: float = 0.02,
         radius_floor_nm: float = 0.2,
         show_progress: bool = True,
+        parallel: bool | int = False,
+        max_workers: int | None = None,
+        profile_memory: bool = False,
     ) -> pd.DataFrame:
         """Summarize vortex dynamics across the batch."""
-        rows: list[dict[str, Any]] = []
         ordered_results = self._ordered_results(sort_by)
-        iterator = _progress_iter(
-            enumerate(ordered_results),
-            total=len(ordered_results),
-            desc="Summarizing vortex batch",
-            enabled=show_progress,
-        )
+        mem_start = _memory_mb() if profile_memory else float("nan")
 
-        for index, result in iterator:
+        def _summarize_one(index: int, result: Any) -> dict[str, Any]:
             attrs = getattr(result, "attrs", {}) or {}
             row: dict[str, Any] = {
                 "index": index,
@@ -271,7 +342,19 @@ class BatchVortexInterface:
                 "status": "ok",
                 "error": None,
             }
-            row.update({key: attrs.get(key) for key in ("i_pillar_ma", "ma", "Jdc", "ni", "addoe", "EnableOersted")})
+            row.update(
+                {
+                    key: attrs.get(key)
+                    for key in (
+                        "i_pillar_ma",
+                        "ma",
+                        "Jdc",
+                        "ni",
+                        "addoe",
+                        "EnableOersted",
+                    )
+                }
+            )
 
             try:
                 vortex = result.solitons.vortex
@@ -304,7 +387,11 @@ class BatchVortexInterface:
                     expulsion_ratio=expulsion_ratio,
                 )
 
-                peak_power = float(np.max(gyration.power)) if getattr(gyration.power, "size", 0) else 0.0
+                peak_power = (
+                    float(np.max(gyration.power))
+                    if getattr(gyration.power, "size", 0)
+                    else 0.0
+                )
                 disk_radius = _disk_radius_from_attrs(attrs)
 
                 row.update(
@@ -341,7 +428,27 @@ class BatchVortexInterface:
                     }
                 )
 
-            rows.append(row)
+            return row
+
+        if parallel:
+            workers = int(
+                max_workers or (parallel if isinstance(parallel, int) else 0) or 4
+            )
+            workers = max(1, workers)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                rows = list(
+                    executor.map(
+                        lambda item: _summarize_one(*item), enumerate(ordered_results)
+                    )
+                )
+        else:
+            iterator = _progress_iter(
+                enumerate(ordered_results),
+                total=len(ordered_results),
+                desc="Summarizing vortex batch",
+                enabled=show_progress,
+            )
+            rows = [_summarize_one(index, result) for index, result in iterator]
 
         if not rows:
             return pd.DataFrame(
@@ -374,10 +481,14 @@ class BatchVortexInterface:
         frame = pd.DataFrame(rows)
         peak_power_values = frame["peak_power"].to_numpy(dtype=float)
         finite_peak_power = peak_power_values[np.isfinite(peak_power_values)]
-        peak_power_max = float(np.max(finite_peak_power)) if finite_peak_power.size else 1.0
+        peak_power_max = (
+            float(np.max(finite_peak_power)) if finite_peak_power.size else 1.0
+        )
         if peak_power_max <= 0.0:
             peak_power_max = 1.0
-        frame["peak_power_rel"] = frame["peak_power"].astype(float) / float(peak_power_max)
+        frame["peak_power_rel"] = frame["peak_power"].astype(float) / float(
+            peak_power_max
+        )
         frame["regime"] = frame.apply(
             self._classify_regime,
             axis=1,
@@ -385,6 +496,15 @@ class BatchVortexInterface:
             radius_floor_nm=radius_floor_nm,
             expulsion_ratio=expulsion_ratio,
         )
+        if profile_memory:
+            mem_end = _memory_mb()
+            frame.attrs["memory_profile"] = {
+                "memory_start_mb": mem_start,
+                "memory_end_mb": mem_end,
+                "memory_delta_mb": mem_end - mem_start
+                if np.isfinite(mem_start) and np.isfinite(mem_end)
+                else float("nan"),
+            }
         return frame
 
     def regimes(self, **kwargs) -> pd.DataFrame:
@@ -401,6 +521,9 @@ class BatchVortexInterface:
         nperseg: int | None = 512,
         noverlap: int | None = 256,
         show_progress: bool = True,
+        parallel: bool | int = False,
+        max_workers: int | None = None,
+        profile_memory: bool = False,
     ) -> BatchVortexSpectrumMapResult:
         """Return batch spectrum matrix across the filtered simulations."""
         coordinate: list[float] = []
@@ -412,16 +535,15 @@ class BatchVortexInterface:
             raise ValueError("component must be 'gyration' or 'breathing'")
 
         ordered_results = self._ordered_results(sort_by)
-        iterator = _progress_iter(
-            enumerate(ordered_results),
-            total=len(ordered_results),
-            desc=f"Computing {component} spectrum map",
-            enabled=show_progress,
-        )
+        mem_start = _memory_mb() if profile_memory else float("nan")
 
-        for index, result in iterator:
+        def _map_one(
+            index: int, result: Any
+        ) -> tuple[float, np.ndarray | None, np.ndarray | None, dict[str, Any] | None]:
             attrs = getattr(result, "attrs", {}) or {}
-            coord_value = _coerce_numeric(attrs.get(sort_by, index), default=float(index))
+            coord_value = _coerce_numeric(
+                attrs.get(sort_by, index), default=float(index)
+            )
 
             try:
                 vortex = result.solitons.vortex
@@ -449,44 +571,107 @@ class BatchVortexInterface:
 
                 frequencies = np.asarray(spectrum.frequencies, dtype=float)
                 power = np.asarray(spectrum.power, dtype=float)
-                if frequency_ref is None:
-                    frequency_ref = frequencies
-                elif frequencies.shape != frequency_ref.shape or not np.allclose(frequencies, frequency_ref):
-                    power = np.interp(frequency_ref, frequencies, power, left=0.0, right=0.0)
-
-                coordinate.append(coord_value)
-                power_rows.append(power)
+                return coord_value, frequencies, power, None
             except Exception as exc:
-                errors.append(
+                return (
+                    coord_value,
+                    None,
+                    None,
                     {
                         "index": index,
                         "path": getattr(result, "path", None),
                         "coordinate": coord_value,
                         "error": str(exc),
-                    }
+                    },
                 )
 
+        if parallel:
+            workers = int(
+                max_workers or (parallel if isinstance(parallel, int) else 0) or 4
+            )
+            workers = max(1, workers)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                mapped = list(
+                    executor.map(
+                        lambda item: _map_one(*item), enumerate(ordered_results)
+                    )
+                )
+        else:
+            iterator = _progress_iter(
+                enumerate(ordered_results),
+                total=len(ordered_results),
+                desc=f"Computing {component} spectrum map",
+                enabled=show_progress,
+            )
+            mapped = [_map_one(index, result) for index, result in iterator]
+
+        for coord_value, frequencies, power, error in mapped:
+            if error is not None:
+                errors.append(error)
+                continue
+            assert frequencies is not None and power is not None
+            if frequency_ref is None:
+                frequency_ref = frequencies
+            elif frequencies.shape != frequency_ref.shape or not np.allclose(
+                frequencies, frequency_ref
+            ):
+                power = np.interp(
+                    frequency_ref, frequencies, power, left=0.0, right=0.0
+                )
+            coordinate.append(coord_value)
+            power_rows.append(power)
+
         if frequency_ref is None or not power_rows:
+            metadata = {"errors": errors, "steady_state": steady_state}
+            if profile_memory:
+                mem_end = _memory_mb()
+                metadata["memory_profile"] = {
+                    "memory_start_mb": mem_start,
+                    "memory_end_mb": mem_end,
+                    "memory_delta_mb": mem_end - mem_start
+                    if np.isfinite(mem_start) and np.isfinite(mem_end)
+                    else float("nan"),
+                }
             return BatchVortexSpectrumMapResult(
                 coordinate=np.asarray([], dtype=float),
                 frequencies=np.asarray([], dtype=float),
                 power=np.zeros((0, 0), dtype=float),
                 component=component,
                 coordinate_name=sort_by,
-                metadata={"errors": errors, "steady_state": steady_state},
+                metadata=metadata,
             )
 
+        metadata = {"errors": errors, "steady_state": steady_state}
+        if profile_memory:
+            mem_end = _memory_mb()
+            metadata["memory_profile"] = {
+                "memory_start_mb": mem_start,
+                "memory_end_mb": mem_end,
+                "memory_delta_mb": mem_end - mem_start
+                if np.isfinite(mem_start) and np.isfinite(mem_end)
+                else float("nan"),
+            }
         return BatchVortexSpectrumMapResult(
             coordinate=np.asarray(coordinate, dtype=float),
             frequencies=np.asarray(frequency_ref, dtype=float),
             power=np.vstack(power_rows),
             component=component,
             coordinate_name=sort_by,
-            metadata={"errors": errors, "steady_state": steady_state},
+            metadata=metadata,
         )
 
     def __repr__(self) -> str:
         return f"BatchVortexInterface({len(self._results)} results)"
+
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="batch vortex namespace",
+            rows=[
+                ("n_results", str(len(self._results))),
+                ("methods", "summary, spectrum_map"),
+            ],
+        )
 
 
 class BatchVortexPlotAccessor:
@@ -499,6 +684,36 @@ class BatchVortexPlotAccessor:
         """Compute and plot batch spectrum map."""
         map_result = self._interface.spectrum_map(**kwargs)
         return map_result.plt.heatmap()
+
+    def orbit_radius(
+        self,
+        *,
+        sort_by: str = "i_pillar_ma",
+        ax=None,
+        show_progress: bool = True,
+        save=None,
+        **summary_kwargs,
+    ):
+        style_kwargs = pop_axes_style_kwargs(summary_kwargs)
+        figure_kwargs = pop_figure_kwargs(summary_kwargs)
+        axis = ensure_axis(ax, default_figsize=(7.0, 3.2), figure_kwargs=figure_kwargs)
+        frame = self._interface.summary(
+            sort_by=sort_by,
+            show_progress=show_progress,
+            **summary_kwargs,
+        )
+        if not frame.empty:
+            x = frame[sort_by].astype(float).to_numpy()
+            axis.plot(x, frame["r_mean_nm"], marker="o", label="mean")
+            axis.plot(x, frame["r_max_nm"], marker="s", label="max")
+            axis.legend(frameon=False)
+        axis.set_xlabel(_coordinate_label(sort_by))
+        axis.set_ylabel("Orbit radius [nm]")
+        axis.set_title("Vortex orbit radius")
+        apply_axes_style(axis, style_kwargs)
+        if save is not None:
+            axis.figure.savefig(save)
+        return axis
 
     def regimes(
         self,
@@ -527,7 +742,10 @@ class BatchVortexPlotAccessor:
 
         mapping = {name: idx for idx, name in enumerate(_REGIME_ORDER)}
         x = frame[sort_by].astype(float).to_numpy()
-        y = np.array([mapping.get(item, mapping["error"]) for item in frame["regime"]], dtype=float)
+        y = np.array(
+            [mapping.get(item, mapping["error"]) for item in frame["regime"]],
+            dtype=float,
+        )
         colors = [_REGIME_COLORS.get(item, "black") for item in frame["regime"]]
 
         axis.scatter(x, y, c=colors, s=70, zorder=3)
@@ -548,6 +766,7 @@ class BatchVortexPlotAccessor:
         show_progress: bool = True,
         figsize: tuple[float, float] = (11.5, 8.0),
         dpi: int | None = None,
+        save=None,
         **summary_kwargs,
     ):
         """Plot a compact set of vortex batch diagnostics."""
@@ -601,4 +820,112 @@ class BatchVortexPlotAccessor:
         flat_axes[3].grid(True, alpha=0.25)
 
         fig.tight_layout()
+        if save is not None:
+            fig.savefig(save)
         return fig, axes, frame
+
+    def orbits(
+        self,
+        *,
+        sort_by: str = "i_pillar_ma",
+        ax=None,
+        show_progress: bool = True,
+        colorbar: bool = True,
+        grid_alpha: float = 0.2,
+        show_disk_boundary: bool = True,
+        disk_radius: float | None = None,
+        save=None,
+        **kwargs,
+    ):
+        from matplotlib.patches import Circle
+
+        del colorbar
+        style_kwargs = pop_axes_style_kwargs(kwargs)
+        figure_kwargs = pop_figure_kwargs(kwargs)
+        axis = ensure_axis(ax, default_figsize=(5.0, 5.0), figure_kwargs=figure_kwargs)
+        ordered = self._interface._ordered_results(sort_by)
+        for result in ordered:
+            trajectory = result.solitons.vortex.trajectory.steady_state()
+            axis.plot(
+                np.asarray(trajectory.x) * 1e9,
+                np.asarray(trajectory.y) * 1e9,
+                alpha=0.8,
+            )
+        radius = disk_radius
+        if radius is None and ordered:
+            radius = _disk_radius_from_attrs(getattr(ordered[0], "attrs", {}) or {})
+        if show_disk_boundary and radius is not None and np.isfinite(radius):
+            axis.add_patch(
+                Circle(
+                    (0.0, 0.0),
+                    float(radius) * 1e9,
+                    fill=False,
+                    linestyle="--",
+                    color="0.4",
+                )
+            )
+        axis.set_aspect("equal", adjustable="box")
+        axis.set_xlabel("x [nm]")
+        axis.set_ylabel("y [nm]")
+        axis.grid(True, alpha=float(grid_alpha))
+        apply_axes_style(axis, style_kwargs)
+        if save is not None:
+            axis.figure.savefig(save)
+        return axis
+
+    def orbits_grid(
+        self,
+        *,
+        sort_by: str = "i_pillar_ma",
+        show_progress: bool = True,
+        colorbar: bool = True,
+        grid_alpha: float = 0.2,
+        show_disk_boundary: bool = True,
+        disk_radius: float | None = None,
+        ncols: int = 3,
+        save=None,
+        **kwargs,
+    ):
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Circle
+
+        del show_progress, colorbar
+        ordered = self._interface._ordered_results(sort_by)
+        n = max(len(ordered), 1)
+        cols = max(int(ncols), 1)
+        rows = int(np.ceil(n / cols))
+        fig, axes = plt.subplots(
+            rows, cols, squeeze=False, figsize=(3.2 * cols, 3.2 * rows)
+        )
+        flat = axes.ravel()
+        for axis, result in zip(flat, ordered):
+            trajectory = result.solitons.vortex.trajectory.steady_state()
+            axis.plot(np.asarray(trajectory.x) * 1e9, np.asarray(trajectory.y) * 1e9)
+            radius = disk_radius
+            if radius is None:
+                radius = _disk_radius_from_attrs(getattr(result, "attrs", {}) or {})
+            if show_disk_boundary and radius is not None and np.isfinite(radius):
+                axis.add_patch(
+                    Circle(
+                        (0.0, 0.0),
+                        float(radius) * 1e9,
+                        fill=False,
+                        linestyle="--",
+                        color="0.4",
+                    )
+                )
+            axis.set_aspect("equal", adjustable="box")
+            axis.grid(True, alpha=float(grid_alpha))
+        for axis in flat[len(ordered) :]:
+            axis.set_axis_off()
+        fig.tight_layout()
+        if save is not None:
+            fig.savefig(save)
+        return fig, axes
+
+    def _repr_html_(self) -> str:
+        return make_simple_card(
+            title=self.__class__.__name__,
+            subtitle="batch vortex plot accessor",
+            rows=[("methods", "regimes, dashboard, orbits")],
+        )

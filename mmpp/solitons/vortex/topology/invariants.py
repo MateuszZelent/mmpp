@@ -14,6 +14,19 @@ from ..numerical.topology.invariants import (
     winding_number_from_ring,
 )
 
+for _fn in (
+    polarity,
+    topological_charge,
+    winding_number,
+    chirality_ring,
+    chirality_ring_with_confidence,
+    polarity_from_core,
+    chirality_from_ring,
+    winding_number_from_ring,
+    classify_state,
+):
+    _fn.__module__ = __name__
+
 __all__ = [
     "polarity",
     "topological_charge",

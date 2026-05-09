@@ -477,7 +477,7 @@ class VortexInteractiveDashboard:
                               [("Gyration", "gyration"), ("Breathing", "breathing"),
                                ("Both", "both")])
         c["method"] = _dropdown("PSD method",
-                                [("Welch", "welch"), ("FFT", "fft"),
+                                [("Welch", "welch"),
                                  ("Periodogram", "periodogram")])
         c["nperseg"] = _int_slider("nperseg", 256, 32, 4096, 32)
         c["f_max_ghz"] = _slider("f max [GHz]", 10.0, 0.1, 50.0, 0.1)
@@ -676,7 +676,7 @@ class VortexInteractiveDashboard:
     def _show_figure(self, fig):
         with self._output:
             clear_output(wait=True)
-            plt.show()
+            display(fig.canvas if hasattr(fig, 'canvas') else fig)
 
     # ---- CORE -------------------------------------------------------
 

@@ -51,6 +51,18 @@ class SpectrumConfig:
     nperseg: int | None = None
     noverlap: int | None = None
 
+    def __post_init__(self) -> None:
+        if self.nperseg is not None and int(self.nperseg) <= 0:
+            raise ValueError("nperseg must be positive when provided")
+        if self.noverlap is not None and int(self.noverlap) < 0:
+            raise ValueError("noverlap must be non-negative when provided")
+        if (
+            self.nperseg is not None
+            and self.noverlap is not None
+            and int(self.noverlap) >= int(self.nperseg)
+        ):
+            raise ValueError("noverlap must be smaller than nperseg")
+
 
 @dataclass
 class ModesConfig:
