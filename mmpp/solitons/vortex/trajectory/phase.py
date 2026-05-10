@@ -94,6 +94,56 @@ class PhaseAnalyzer:
             return np.asarray(result.frequency_hz * 1e-9, dtype=float)
         raise ValueError("unit must be 'rad/s', 'hz', or 'ghz'")
 
+    def mean_frequency(
+        self,
+        *,
+        center: str | tuple[float, float] | np.ndarray = "mean",
+        t_min: float | None = None,
+        transient_fraction: float | None = None,
+        signed: bool = False,
+        unit: str = "hz",
+    ) -> float:
+        """Return mean orbital frequency around an explicit or inferred center."""
+        t = np.asarray(self._trajectory.time, dtype=float)
+        if t.size < 3:
+            return float("nan")
+        if t_min is None and transient_fraction is not None:
+            frac = min(max(float(transient_fraction), 0.0), 0.95)
+            t_min = float(t[0] + frac * (t[-1] - t[0]))
+        mask = np.ones_like(t, dtype=bool) if t_min is None else t >= float(t_min)
+        if np.count_nonzero(mask) < 3:
+            return float("nan")
+
+        x = np.asarray(self._trajectory.x, dtype=float)
+        y = np.asarray(self._trajectory.y, dtype=float)
+        if isinstance(center, str):
+            center_norm = center.lower()
+            if center_norm == "mean":
+                cx = float(np.mean(x[mask]))
+                cy = float(np.mean(y[mask]))
+            elif center_norm in {"disk", "origin"}:
+                cx = 0.0
+                cy = 0.0
+            else:
+                raise ValueError("center must be 'mean', 'disk', or a 2-tuple")
+        else:
+            c = np.asarray(center, dtype=float).reshape(2)
+            cx, cy = float(c[0]), float(c[1])
+
+        z = (x[mask] - cx) + 1j * (y[mask] - cy)
+        phase = np.unwrap(np.angle(z))
+        omega = np.gradient(phase, t[mask])
+        hz = float(np.mean(omega) / (2.0 * np.pi))
+        value = hz if signed else abs(hz)
+        unit_norm = unit.lower()
+        if unit_norm in {"hz", "f"}:
+            return value
+        if unit_norm == "ghz":
+            return value * 1e-9
+        if unit_norm in {"rad/s", "omega", "w"}:
+            return value * 2.0 * np.pi
+        raise ValueError("unit must be 'hz', 'ghz', or 'rad/s'")
+
     @property
     def plt(self):
         """Plot accessor for phase using complex method by default."""

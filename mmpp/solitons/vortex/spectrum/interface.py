@@ -31,13 +31,44 @@ class VortexSpectrumInterface:
         self._last_spectrogram: VortexSpectrogramResult | None = None
 
     def gyration(self, method: str | None = None, **kwargs) -> VortexSpectrumResult:
-        """Compute gyration power spectrum from core trajectory."""
+        """Compute gyration power spectrum from core trajectory.
+
+        Parameters
+        ----------
+        exclude_annihilated : bool
+            When ``True`` and the simulation health check detects core
+            annihilation or polarity reversal, raise a ``ValueError`` instead
+            of returning a (likely spurious) spectrum.  Default ``False``
+            (show a warning instead).
+        """
         force = bool(kwargs.pop("force", False))
         trajectory = kwargs.pop("trajectory", None)
+        exclude_annihilated = bool(kwargs.pop("exclude_annihilated", False))
         if not force and trajectory is None and self._last_gyration is not None:
             return self._last_gyration
         if trajectory is None:
             trajectory = self._core.track()
+
+        # Health check
+        try:
+            from ..health import check_core_health
+            status = check_core_health(
+                self._job,
+                dataset_name=self._dataset_name,
+                trajectory=trajectory,
+                slice_info=self._slice_info,
+            )
+            if not status.is_healthy:
+                if exclude_annihilated:
+                    raise ValueError(
+                        "Gyration spectrum excluded: "
+                        + "; ".join(status.warnings)
+                    )
+                status.issue_python_warnings()
+        except ValueError:
+            raise
+        except Exception:
+            pass
 
         selected_method = method or self._config.spectrum.method
         if "nperseg" not in kwargs and self._config.spectrum.nperseg is not None:
@@ -50,13 +81,43 @@ class VortexSpectrumInterface:
         return result
 
     def breathing(self, method: str | None = None, **kwargs) -> VortexSpectrumResult:
-        """Compute breathing-mode spectrum from orbit radius signal."""
+        """Compute breathing-mode spectrum from orbit radius signal.
+
+        Parameters
+        ----------
+        exclude_annihilated : bool
+            When ``True`` and the simulation health check detects core
+            annihilation or polarity reversal, raise a ``ValueError`` instead
+            of returning a spurious spectrum.  Default ``False``.
+        """
         force = bool(kwargs.pop("force", False))
         trajectory = kwargs.pop("trajectory", None)
+        exclude_annihilated = bool(kwargs.pop("exclude_annihilated", False))
         if not force and trajectory is None and self._last_breathing is not None:
             return self._last_breathing
         if trajectory is None:
             trajectory = self._core.track()
+
+        # Health check
+        try:
+            from ..health import check_core_health
+            status = check_core_health(
+                self._job,
+                dataset_name=self._dataset_name,
+                trajectory=trajectory,
+                slice_info=self._slice_info,
+            )
+            if not status.is_healthy:
+                if exclude_annihilated:
+                    raise ValueError(
+                        "Breathing spectrum excluded: "
+                        + "; ".join(status.warnings)
+                    )
+                status.issue_python_warnings()
+        except ValueError:
+            raise
+        except Exception:
+            pass
 
         selected_method = method or self._config.spectrum.method
         if "nperseg" not in kwargs and self._config.spectrum.nperseg is not None:

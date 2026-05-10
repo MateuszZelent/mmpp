@@ -32,9 +32,14 @@ from .dispersion import (
     kim,
 )
 from .field_resolved_thiele import (
+    CurrentDrive,
     FieldResolvedCalibration,
     FieldResolvedCPPThieleModel,
     FieldResolvedTrajectoryResult,
+    FrequencyExtractionConfig,
+    OerstedCalibration,
+    SaturationCalibration,
+    ThermalCalibration,
 )
 from .fmr import (
     kittel,
@@ -127,6 +132,11 @@ __all__ = [
     "FieldResolvedCPPThieleModel",
     "FieldResolvedCalibration",
     "FieldResolvedTrajectoryResult",
+    "CurrentDrive",
+    "SaturationCalibration",
+    "OerstedCalibration",
+    "ThermalCalibration",
+    "FrequencyExtractionConfig",
     # Nonlinear STNO dynamics (DBAT 2.0)
     "nonlinear_stno",
     "STNOParameters",

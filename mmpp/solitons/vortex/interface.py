@@ -18,6 +18,7 @@ class VortexInterface:
         slice_info: Any | None = None,
         config: VortexConfig | None = None,
     ):
+
         self._job = job_result
         self._dataset = dataset_name
         self._mmpp = mmpp_instance
@@ -37,6 +38,7 @@ class VortexInterface:
         self._bridge = None
         self._plot = None
         self._autofit = None
+        self._health_cache: Any | None = None  # CoreHealthStatus, cached
 
     @property
     def dataset_name(self) -> str | None:
@@ -242,6 +244,79 @@ class VortexInterface:
     def plt(self):
         """Alias for :attr:`plot`."""
         return self.plot
+
+    def check_health(
+        self,
+        *,
+        trajectory=None,
+        disk_radius: float | None = None,
+        mz_annihilation_threshold: float = 0.05,
+        boundary_fraction: float = 0.85,
+        core_fraction: float = 0.25,
+        force: bool = False,
+    ):
+        """Check for vortex core annihilation or boundary collision.
+
+        Detects two common failure modes when the applied current is too large:
+
+        * **Annihilation / re-magnetisation** — the vortex core is expelled to
+          the disk edge and the sample transitions to a uniform magnetisation
+          state.  Detected by comparing the sign and magnitude of the average
+          ``m_z`` component between the first and last frame.
+        * **Polarity reversal** — the core polarity flips under strong
+          out-of-plane STT, changing the gyration handedness.
+        * **Boundary collision** — the tracked core trajectory comes too close
+          to the disk edge (> ``boundary_fraction`` of R).
+
+        Parameters
+        ----------
+        trajectory : TrajectoryResult or None
+            Pre-computed core trajectory (used for boundary-distance estimate).
+            When ``None`` the core is tracked automatically.
+        disk_radius : float or None
+            Physical disk radius in metres.  Auto-inferred from job attributes.
+        mz_annihilation_threshold : float
+            ``|mz_final|`` below this value signals annihilation (default 0.05).
+        boundary_fraction : float
+            Core is flagged as near-boundary when it reaches more than this
+            fraction of the disk radius from the centre (default 0.85).
+        core_fraction : float
+            Fraction of the grid radius used to average ``m_z`` (default 0.25).
+        force : bool
+            Re-run even if a cached result exists.
+
+        Returns
+        -------
+        CoreHealthStatus
+        """
+        from .health import check_core_health
+
+        if not force and self._health_cache is not None:
+            return self._health_cache
+
+        traj = trajectory
+        if traj is None:
+            try:
+                traj = self.core.track()
+            except Exception:
+                pass
+
+        status = check_core_health(
+            self._job,
+            dataset_name=self.dataset_name,
+            trajectory=traj,
+            disk_radius=disk_radius,
+            mz_annihilation_threshold=mz_annihilation_threshold,
+            boundary_fraction=boundary_fraction,
+            core_fraction=core_fraction,
+            slice_info=self._slice_info,
+        )
+        self._health_cache = status
+
+        if not status.is_healthy:
+            status.issue_python_warnings()
+
+        return status
 
     def track(self, method: str = "auto", **kwargs):
         """Shortcut alias for ``self.core.track``."""

@@ -99,9 +99,17 @@ class VortexSpectrumPlotAccessor:
     def power_spectrum(
         self, *, ax=None, as_ghz: bool = True, log_scale: bool = False, **kwargs
     ):
-        """Plot power spectrum."""
+        """Plot power spectrum.
+
+        Parameters
+        ----------
+        health : CoreHealthStatus or None
+            When provided, an annotation warning is drawn on the axes if the
+            simulation showed core annihilation or boundary collision.
+        """
         plot_kwargs = dict(kwargs)
         save = plot_kwargs.pop("save", None)
+        health = plot_kwargs.pop("health", None)
         style_kwargs = pop_axes_style_kwargs(plot_kwargs)
         figure_kwargs = pop_figure_kwargs(plot_kwargs)
         ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
@@ -120,6 +128,14 @@ class VortexSpectrumPlotAccessor:
         ax.set_ylabel(ylabel)
         ax.set_title(f"Vortex {self._result.component} spectrum")
         apply_axes_style(ax, style_kwargs)
+
+        # Attach health annotation when annihilation/collision was detected
+        if health is not None:
+            try:
+                health.warn_on_plot(ax)
+            except Exception:
+                pass
+
         if save is not None:
             ax.figure.savefig(save)
         return ax
@@ -155,6 +171,7 @@ class VortexSpectrogramPlotAccessor:
         colorbar = bool(mesh_kwargs.pop("colorbar", True))
         colorbar_options = mesh_kwargs.pop("colorbar_kwargs", {})
         colorbar_kwargs = {} if colorbar_options is None else dict(colorbar_options)
+        health = mesh_kwargs.pop("health", None)
         ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
         freqs = self._result.frequencies * (1e-9 if as_ghz else 1.0)
@@ -171,6 +188,13 @@ class VortexSpectrogramPlotAccessor:
         if colorbar:
             ax.figure.colorbar(mesh, ax=ax, **colorbar_kwargs)
         apply_axes_style(ax, style_kwargs)
+
+        if health is not None:
+            try:
+                health.warn_on_plot(ax)
+            except Exception:
+                pass
+
         return ax
 
     def _repr_html_(self) -> str:

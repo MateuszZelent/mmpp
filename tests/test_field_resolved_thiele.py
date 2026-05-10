@@ -4,8 +4,12 @@ import numpy as np
 
 from mmpp.analytical.field_resolved_thiele import (
     J2,
+    CurrentDrive,
     FieldResolvedCalibration,
     FieldResolvedCPPThieleModel,
+    FieldResolvedTrajectoryResult,
+    OerstedCalibration,
+    SaturationCalibration,
     current_dc,
     field_dc,
 )
@@ -75,3 +79,95 @@ def test_rhs_returns_finite_velocity():
     )
     assert v.shape == (2,)
     assert np.all(np.isfinite(v))
+
+
+def test_current_drive_converts_current_to_density_for_disk_area():
+    drive = CurrentDrive()
+    geom = DiskGeometry(R=100e-9, L=10e-9)
+
+    assert np.isclose(drive.J_from_I(1e-3, geom), 3.1830988618379066e10)
+
+
+def test_saturation_damping_increases_near_configured_orbit_limit():
+    cal = FieldResolvedCalibration(
+        saturation=SaturationCalibration(d_edge=0.2, u_damp_max=0.85)
+    )
+    model = make_model(calibration=cal)
+
+    low = model.D_coeff(np.array([0.20 * model.geom.R, 0.0]), 0.0)
+    near_edge = model.D_coeff(np.array([0.84 * model.geom.R, 0.0]), 0.0)
+
+    assert near_edge > 20.0 * low
+
+
+def test_oersted_stiffness_changes_sign_with_chirality_and_current():
+    cal = FieldResolvedCalibration(
+        oersted=OerstedCalibration(K2_per_J=1e-22)
+    )
+    model_cw = make_model(chirality=1, calibration=cal)
+    model_ccw = make_model(chirality=-1, calibration=cal)
+    x = np.zeros(2, dtype=float)
+
+    base = model_cw.K2_tensor(x, 0.0)[0, 0]
+    shift_cw = model_cw.K2_tensor(x, 1e11)[0, 0] - base
+    shift_ccw = model_ccw.K2_tensor(x, 1e11)[0, 0] - base
+    shift_reverse_current = model_cw.K2_tensor(x, -1e11)[0, 0] - base
+
+    assert shift_cw > 0.0
+    assert np.isclose(shift_ccw, -shift_cw, rtol=1e-12)
+    assert np.isclose(shift_reverse_current, -shift_cw, rtol=1e-12)
+
+
+def test_frequency_geometric_uses_shifted_orbit_center():
+    freq_hz = 0.75e9
+    t = np.linspace(0.0, 80e-9, 1001)
+    cx = 40e-9
+    cy = -20e-9
+    radius = 4e-9
+    x = cx + radius * np.cos(2.0 * math.pi * freq_hz * t)
+    y = cy + radius * np.sin(2.0 * math.pi * freq_hz * t)
+    result = FieldResolvedTrajectoryResult(
+        t=t,
+        x=x,
+        y=y,
+        sx=x / 100e-9,
+        sy=y / 100e-9,
+        disk_radius=100e-9,
+    )
+    model = make_model()
+
+    centered = model.frequency_geometric(result, center="mean", t_min=10e-9)
+    disk_center = model.frequency_geometric(result, center=(0.0, 0.0), t_min=10e-9)
+
+    assert np.isclose(centered, freq_hz, rtol=1e-3)
+    assert abs(disk_center - freq_hz) > 0.05 * freq_hz
+
+
+def test_simulate_dc_sweep_returns_frequency_and_regime_columns():
+    cal = FieldResolvedCalibration(
+        saturation=SaturationCalibration(d_edge=0.1, u_damp_max=0.85),
+    )
+    model = make_model(calibration=cal)
+    frame = model.simulate_dc_sweep(
+        [0.0, 0.2e-3],
+        B=(0.0, 0.0, 0.0),
+        t_total=4e-9,
+        dt=1e-11,
+        transient_fraction=0.25,
+    )
+
+    expected = {
+        "I_A",
+        "I_mA",
+        "J_Apm2",
+        "frequency_geom_hz",
+        "frequency_fft_hz",
+        "u_mean",
+        "u_max",
+        "center_x_m",
+        "center_y_m",
+        "regime",
+        "edge_limited",
+    }
+    assert expected.issubset(frame.columns)
+    assert frame.loc[0, "regime"] == "damped"

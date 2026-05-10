@@ -524,8 +524,19 @@ class BatchVortexInterface:
         parallel: bool | int = False,
         max_workers: int | None = None,
         profile_memory: bool = False,
+        exclude_annihilated: bool = False,
     ) -> BatchVortexSpectrumMapResult:
-        """Return batch spectrum matrix across the filtered simulations."""
+        """Return batch spectrum matrix across the filtered simulations.
+
+        Parameters
+        ----------
+        exclude_annihilated : bool
+            When ``True``, simulations where core annihilation or polarity
+            reversal is detected are silently skipped (their row is omitted
+            from the result matrix).  A Python warning is still emitted for
+            each excluded simulation.  Default ``False`` (include all, show
+            warning annotation).
+        """
         coordinate: list[float] = []
         power_rows: list[np.ndarray] = []
         frequency_ref: np.ndarray | None = None
@@ -552,6 +563,36 @@ class BatchVortexInterface:
                     if steady_state
                     else vortex.trajectory.raw
                 )
+
+                # Health check: warn or exclude annihilated simulations
+                try:
+                    from mmpp.solitons.vortex.health import check_core_health
+                    health = check_core_health(
+                        result,
+                        trajectory=trajectory,
+                    )
+                    if not health.is_healthy:
+                        if exclude_annihilated:
+                            import warnings
+                            path_label = str(getattr(result, "path", index))
+                            warnings.warn(
+                                f"spectrum_map: excluding {path_label} — "
+                                + "; ".join(health.warnings),
+                                UserWarning,
+                                stacklevel=4,
+                            )
+                            return coord_value, None, None, {
+                                "index": index,
+                                "path": getattr(result, "path", None),
+                                "coordinate": coord_value,
+                                "error": "excluded (annihilated): "
+                                + "; ".join(health.warnings),
+                            }
+                        else:
+                            health.issue_python_warnings()
+                except Exception:
+                    pass
+
                 spectrum_kwargs = _resolved_spectrum_kwargs(
                     trajectory,
                     method=spectrum_method,
@@ -660,6 +701,128 @@ class BatchVortexInterface:
             metadata=metadata,
         )
 
+    def frequency_sweep(
+        self,
+        *,
+        current: str = "auto",
+        method: str = "geometric",
+        sort_by: str = "i_pillar_ma",
+        steady_state: bool = False,
+        t_min: float | None = None,
+        transient_fraction: float | None = None,
+        show_progress: bool = True,
+    ) -> pd.DataFrame:
+        """Extract vortex gyrotropic frequency versus current across the batch."""
+        ordered_results = self._ordered_results(sort_by)
+        rows: list[dict[str, Any]] = []
+        iterator = _progress_iter(
+            enumerate(ordered_results),
+            total=len(ordered_results),
+            desc="Extracting vortex frequency sweep",
+            enabled=show_progress,
+        )
+        for index, result in iterator:
+            attrs = getattr(result, "attrs", {}) or {}
+            row: dict[str, Any] = {
+                "index": index,
+                "path": getattr(result, "path", None),
+                "status": "ok",
+                "error": None,
+            }
+            try:
+                if current == "auto":
+                    current_ma = _coerce_numeric(
+                        attrs.get("i_pillar_ma", attrs.get("ma", np.nan))
+                    )
+                    current_a = current_ma * 1e-3 if np.isfinite(current_ma) else float("nan")
+                else:
+                    raw = attrs.get(current, np.nan)
+                    current_a = _coerce_numeric(raw)
+                    current_ma = current_a * 1e3
+
+                vortex = result.solitons.vortex
+                trajectory = (
+                    vortex.trajectory.steady_state()
+                    if steady_state
+                    else vortex.trajectory.raw
+                )
+                method_norm = method.lower()
+                if method_norm == "geometric":
+                    frequency_hz = vortex.trajectory.phase.mean_frequency(
+                        center="mean",
+                        t_min=t_min,
+                        transient_fraction=transient_fraction,
+                        unit="hz",
+                    )
+                    frequency_fft_hz = vortex.spectrum.gyration(
+                        trajectory=trajectory,
+                        method="periodogram",
+                    ).peak_frequency_hz
+                elif method_norm in {"fft", "spectrum"}:
+                    frequency_fft_hz = vortex.spectrum.gyration(
+                        trajectory=trajectory,
+                        method="periodogram",
+                    ).peak_frequency_hz
+                    frequency_hz = frequency_fft_hz
+                else:
+                    raise ValueError("method must be 'geometric' or 'fft'")
+
+                disk_radius = _disk_radius_from_attrs(attrs)
+                row.update(
+                    {
+                        "I_A": float(current_a),
+                        "I_mA": float(current_ma),
+                        "frequency_geom_hz": float(frequency_hz),
+                        "frequency_fft_hz": float(frequency_fft_hz),
+                        "r_mean_nm": float(np.mean(trajectory.r) * 1e9),
+                        "r_max_nm": float(np.max(trajectory.r) * 1e9),
+                        "r_max_rel": float(np.max(trajectory.r) / disk_radius)
+                        if np.isfinite(disk_radius) and disk_radius > 0.0
+                        else float("nan"),
+                    }
+                )
+            except Exception as exc:
+                row.update(
+                    {
+                        "status": "error",
+                        "error": str(exc),
+                        "I_A": float("nan"),
+                        "I_mA": float("nan"),
+                        "frequency_geom_hz": float("nan"),
+                        "frequency_fft_hz": float("nan"),
+                        "r_mean_nm": float("nan"),
+                        "r_max_nm": float("nan"),
+                        "r_max_rel": float("nan"),
+                    }
+                )
+            rows.append(row)
+        frame = pd.DataFrame(rows)
+        if not frame.empty and "I_mA" in frame:
+            frame = frame.sort_values("I_mA", kind="mergesort").reset_index(drop=True)
+        return frame
+
+    def interactive(
+        self,
+        index: int = 0,
+        *,
+        sort_by: str | None = "i_pillar_ma",
+        figsize: tuple[float, float] = (10, 7),
+        dpi: int = 100,
+    ):
+        """Open one vortex interactive dashboard from this batch.
+
+        Batch-level interactive mode intentionally displays a single selected
+        result. Rendering every run at once creates stacked notebook outputs and
+        makes Matplotlib/ipympl backends duplicate canvases.
+        """
+        ordered = self._ordered_results(sort_by)
+        if not ordered:
+            raise ValueError("Cannot open batch vortex interactive dashboard for an empty batch")
+
+        selected = ordered[index]
+        vortex = selected.solitons.vortex
+        return vortex.interactive(figsize=figsize, dpi=dpi)
+
     def __repr__(self) -> str:
         return f"BatchVortexInterface({len(self._results)} results)"
 
@@ -756,6 +919,50 @@ class BatchVortexPlotAccessor:
         axis.set_ylabel("Regime")
         axis.set_title("Vortex regime map")
         axis.grid(True, axis="x", alpha=0.25)
+        apply_axes_style(axis, style_kwargs)
+        return axis
+
+    def frequency_vs_current(
+        self,
+        *,
+        model_df: pd.DataFrame | None = None,
+        ax=None,
+        show_progress: bool = True,
+        **sweep_kwargs,
+    ):
+        """Plot extracted gyrotropic frequency versus current with optional model overlay."""
+        style_kwargs = pop_axes_style_kwargs(sweep_kwargs)
+        figure_kwargs = pop_figure_kwargs(sweep_kwargs)
+        axis = ensure_axis(ax, default_figsize=(7.0, 3.2), figure_kwargs=figure_kwargs)
+        frame = self._interface.frequency_sweep(
+            show_progress=show_progress,
+            **sweep_kwargs,
+        )
+        if not frame.empty:
+            axis.plot(
+                frame["I_mA"].astype(float),
+                frame["frequency_geom_hz"].astype(float) * 1e-9,
+                marker="o",
+                linestyle="",
+                label="MuMax/core",
+            )
+        if model_df is not None and not model_df.empty:
+            model_freq_col = (
+                "frequency_geom_hz"
+                if "frequency_geom_hz" in model_df
+                else "frequency_hz"
+            )
+            axis.plot(
+                model_df["I_mA"].astype(float),
+                model_df[model_freq_col].astype(float) * 1e-9,
+                linewidth=1.8,
+                label="Thiele model",
+            )
+        axis.set_xlabel("Current [mA]")
+        axis.set_ylabel("Frequency [GHz]")
+        axis.set_title("Vortex gyrotropic frequency vs current")
+        if len(axis.lines) > 1:
+            axis.legend(frameon=False)
         apply_axes_style(axis, style_kwargs)
         return axis
 

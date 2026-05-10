@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable, Literal, TypeAlias
 
 import numpy as np
 
@@ -208,6 +208,77 @@ class FieldResolvedCalibration:
     lambda_z_fieldlike_per_J_per_m: float = 0.0
 
     min_omega_factor: float = 0.02
+    saturation: SaturationCalibration = field(default_factory=lambda: SaturationCalibration())
+    oersted: OerstedCalibration = field(default_factory=lambda: OerstedCalibration())
+    thermal: ThermalCalibration = field(default_factory=lambda: ThermalCalibration())
+    current_drive: CurrentDrive = field(default_factory=lambda: CurrentDrive())
+    Bz_saturation_T: float | None = None
+    Bz_mode: Literal["polynomial", "saturation_field"] = "polynomial"
+
+
+@dataclass(frozen=True)
+class CurrentDrive:
+    """Electrical-current to current-density conversion for a CPP pillar."""
+
+    area_m2: float | None = None
+    current_sign: float = 1.0
+    name: str = "CPP uniform"
+
+    def area(self, geom: DiskGeometry) -> float:
+        """Return effective current area [m^2]."""
+        return float(math.pi * geom.R * geom.R if self.area_m2 is None else self.area_m2)
+
+    def J_from_I(self, I_A: float, geom: DiskGeometry) -> float:
+        """Convert electrical current [A] into signed current density [A/m^2]."""
+        area = self.area(geom)
+        if not np.isfinite(area) or area <= 0.0:
+            raise ValueError("current area must be finite and positive")
+        return float(self.current_sign) * float(I_A) / area
+
+
+@dataclass(frozen=True)
+class SaturationCalibration:
+    """Amplitude-saturation terms for nonlinear damping and frequency."""
+
+    d2: float | None = None
+    d4: float = 0.0
+    d_edge: float = 0.0
+    u_damp_max: float = 0.85
+    edge_epsilon: float = 1e-6
+    K_edge: float = 0.0
+    u_edge_max: float = 0.90
+    N4: float = 0.0
+
+
+@dataclass(frozen=True)
+class OerstedCalibration:
+    """Current-induced Oersted corrections to the vortex potential."""
+
+    K2_per_J: float = 0.0
+    K4_per_J: float = 0.0
+    K6_per_J: float = 0.0
+    direct_omega_per_J: float = 0.0
+    direct_omega_sat_J: float | None = None
+
+
+@dataclass(frozen=True)
+class ThermalCalibration:
+    """Optional Joule-heating frequency shift."""
+
+    dT_dI2: float = 0.0
+    domega_dT: float = 0.0
+    dMs_dT_over_Ms: float = 0.0
+    thermal_sat_I: float | None = None
+
+
+@dataclass(frozen=True)
+class FrequencyExtractionConfig:
+    """Defaults for trajectory frequency extraction."""
+
+    transient_fraction: float = 0.5
+    center: Literal["mean", "conservative_equilibrium", "given"] = "mean"
+    method: Literal["geometric", "fft_resistance", "fft_x", "fft_y"] = "geometric"
+    window: Literal["hann", "none"] = "hann"
 
 
 @dataclass
@@ -344,6 +415,7 @@ class FieldResolvedCPPThieleModel:
         d1_default = (11.0 / 6.0) * float(mat.alpha)
         self.d0 = d0_default if self.cal.d0 is None else float(self.cal.d0)
         self.d1 = d1_default if self.cal.d1 is None else float(self.cal.d1)
+        self.current_drive = self.cal.current_drive
 
         self.kappa0 = self.G0 * self.omega0
         """Zero-field linear stiffness [N/m]."""
@@ -373,16 +445,55 @@ class FieldResolvedCPPThieleModel:
     def _field(self, value: ExternalFieldLike | ExternalField) -> ExternalField:
         return ExternalField.from_any(value)
 
-    def omega0_eff(self, J: float, B: ExternalFieldLike | ExternalField = 0.0) -> float:
-        """Linear angular frequency response ``omega0(J,Bz)`` [rad/s]."""
+    def omega0_Bz(self, B: ExternalFieldLike | ExternalField = 0.0) -> float:
+        """Out-of-plane-field contribution to the small-signal frequency [rad/s]."""
         bf = self._field(B)
-        p = float(self.polarity)
-        omega = (
+        if (
+            self.cal.Bz_mode == "saturation_field"
+            and self.cal.Bz_saturation_T is not None
+            and self.cal.Bz_saturation_T > 0.0
+        ):
+            hz = bf.Bz_T / float(self.cal.Bz_saturation_T)
+            return float(self.omega0 * (1.0 + self.polarity * hz))
+        return float(
             self.omega0
-            + float(self.cal.domega_dJ) * float(J)
-            + p * float(self.cal.domega_dBz) * bf.Bz_T
+            + self.polarity * float(self.cal.domega_dBz) * bf.Bz_T
             + float(self.cal.domega_dBz2) * bf.Bz_T * bf.Bz_T
         )
+
+    def direct_current_omega_shift(
+        self,
+        J: float,
+        I_A: float | None = None,
+        B: ExternalFieldLike | ExternalField = 0.0,  # noqa: ARG002
+    ) -> float:
+        """Current-dependent frequency shift not represented by stiffness [rad/s]."""
+        shift = float(self.cal.domega_dJ) * float(J)
+        oe = self.cal.oersted
+        if oe.direct_omega_sat_J is not None and oe.direct_omega_sat_J > 0.0:
+            js = float(oe.direct_omega_sat_J)
+            shift += float(oe.direct_omega_per_J) * js * math.tanh(float(J) / js)
+        else:
+            shift += float(oe.direct_omega_per_J) * float(J)
+
+        if I_A is not None:
+            th = self.cal.thermal
+            if th.thermal_sat_I is not None and th.thermal_sat_I > 0.0:
+                scale = 1.0 - math.exp(-(float(I_A) / float(th.thermal_sat_I)) ** 2)
+                dT = float(th.dT_dI2) * float(th.thermal_sat_I) ** 2 * scale
+            else:
+                dT = float(th.dT_dI2) * float(I_A) * float(I_A)
+            shift += float(th.domega_dT) * dT
+        return float(shift)
+
+    def omega0_eff(
+        self,
+        J: float,
+        B: ExternalFieldLike | ExternalField = 0.0,
+        I_A: float | None = None,
+    ) -> float:
+        """Linear angular frequency response ``omega0(J,Bz)`` [rad/s]."""
+        omega = self.omega0_Bz(B) + self.direct_current_omega_shift(J, I_A, B)
         floor = max(float(self.cal.min_omega_factor), 0.0) * self.omega0
         return float(max(omega, floor))
 
@@ -411,32 +522,59 @@ class FieldResolvedCPPThieleModel:
         )
         return float(max(self.G0 * scale, 1e-30))
 
-    def D_coeff(
+    def damping_ratio(
         self, X: np.ndarray, J: float, B: ExternalFieldLike | ExternalField = 0.0
-    ) -> float:  # noqa: ARG002
-        """Damping coefficient ``D`` [kg/s]."""
+    ) -> float:
+        """Return dimensionless damping ratio ``d = D/G``."""
         bf = self._field(B)
-        G = self.G_mag(X, J, bf)
-        u2 = float(np.dot(X, X)) / max(self.geom.R * self.geom.R, 1e-30)
+        x = np.asarray(X, dtype=float).reshape(2)
+        u2 = float(np.dot(x, x)) / max(self.geom.R * self.geom.R, 1e-30)
         b2 = bf.Bx_T * bf.Bx_T + bf.By_T * bf.By_T
-        d = (self.d0 + self.d1 * u2) * (
+        sat = self.cal.saturation
+        d2 = self.d1 if sat.d2 is None else float(sat.d2)
+        d = self.d0 + d2 * u2 + float(sat.d4) * u2 * u2
+        if float(sat.d_edge) != 0.0:
+            umax2 = max(float(sat.u_damp_max) * float(sat.u_damp_max), 1e-12)
+            denom = max(umax2 - u2, float(sat.edge_epsilon))
+            d += float(sat.d_edge) * u2 / denom
+        field_scale = (
             1.0
             + self.polarity * float(self.cal.D_Bz) * bf.Bz_T
             + float(self.cal.D_ip2) * b2
         )
-        return float(max(G * d, 0.0))
+        return float(max(d * field_scale, 0.0))
+
+    def D_coeff(
+        self, X: np.ndarray, J: float, B: ExternalFieldLike | ExternalField = 0.0
+    ) -> float:  # noqa: ARG002
+        """Damping coefficient ``D`` [kg/s]."""
+        return float(max(self.G_mag(X, J, B) * self.damping_ratio(X, J, B), 0.0))
 
     # ------------------------------------------------------------------
     # Conservative potential and force terms
     # ------------------------------------------------------------------
 
+    def oersted_stiffness_terms(self, J: float) -> tuple[float, float, float]:
+        """Return ``C*J*(K2,K4,K6)`` Oersted stiffness additions [N/m]."""
+        scale = float(self.chirality) * float(J)
+        oe = self.cal.oersted
+        return (
+            scale * float(oe.K2_per_J),
+            scale * float(oe.K4_per_J),
+            scale * float(oe.K6_per_J),
+        )
+
     def K2_tensor(
-        self, X: np.ndarray, J: float, B: ExternalFieldLike | ExternalField = 0.0
+        self,
+        X: np.ndarray,
+        J: float,
+        B: ExternalFieldLike | ExternalField = 0.0,
+        I_A: float | None = None,
     ) -> np.ndarray:  # noqa: ARG002
         """Linear stiffness tensor ``K2`` [N/m]."""
         bf = self._field(B)
         G = self.G_mag(X, J, bf)
-        kappa = G * self.omega0_eff(J, bf)
+        kappa = G * self.omega0_eff(J, bf, I_A)
 
         bvec = np.array([bf.Bx_T, bf.By_T], dtype=float)
         b2 = float(np.dot(bvec, bvec))
@@ -448,14 +586,34 @@ class FieldResolvedCPPThieleModel:
             anis = np.outer(bhat, bhat) - np.outer(phat, phat)
             K = K + kappa * float(self.cal.k_ip_aniso_per_T2) * b2 * anis
 
+        K2_oe, _, _ = self.oersted_stiffness_terms(J)
+        if K2_oe != 0.0:
+            K = K + K2_oe * I2
         return np.asarray(K, dtype=float)
 
     def K4_scalar(
-        self, X: np.ndarray, J: float, B: ExternalFieldLike | ExternalField = 0.0
+        self,
+        X: np.ndarray,
+        J: float,
+        B: ExternalFieldLike | ExternalField = 0.0,
+        I_A: float | None = None,
     ) -> float:  # noqa: ARG002
         """Quartic stiffness coefficient ``K4`` [N/m]."""
         G = self.G_mag(X, J, B)
-        return float(G * self.omega0_eff(J, B) * self.N_eff(B))
+        _, K4_oe, _ = self.oersted_stiffness_terms(J)
+        return float(G * self.omega0_eff(J, B, I_A) * self.N_eff(B) + K4_oe)
+
+    def K6_scalar(
+        self,
+        X: np.ndarray,
+        J: float,
+        B: ExternalFieldLike | ExternalField = 0.0,
+        I_A: float | None = None,
+    ) -> float:  # noqa: ARG002
+        """Sixth-order stiffness coefficient ``K6`` [N/m]."""
+        G = self.G_mag(X, J, B)
+        _, _, K6_oe = self.oersted_stiffness_terms(J)
+        return float(G * self.omega0_eff(J, B, I_A) * float(self.cal.saturation.N4) + K6_oe)
 
     def lambda_H(self, J: float, B: ExternalFieldLike | ExternalField = 0.0) -> float:  # noqa: ARG002
         """In-plane field force coefficient [N/T]."""
@@ -488,31 +646,69 @@ class FieldResolvedCPPThieleModel:
         bvec = np.array([bf.Bx_T, bf.By_T], dtype=float)
         return self.lambda_H(J, bf) * (J2 @ bvec)
 
+    def edge_potential(self, X: np.ndarray) -> float:
+        """Conservative edge barrier [J]."""
+        sat = self.cal.saturation
+        if float(sat.K_edge) == 0.0:
+            return 0.0
+        x = np.asarray(X, dtype=float).reshape(2)
+        r2 = float(np.dot(x, x))
+        umax2 = max(float(sat.u_edge_max) * float(sat.u_edge_max), 1e-12)
+        u2 = r2 / max(self.geom.R * self.geom.R, 1e-30)
+        denom = max(1.0 - u2 / umax2, float(sat.edge_epsilon))
+        return float(0.5 * float(sat.K_edge) * r2 / denom)
+
+    def grad_edge_potential(self, X: np.ndarray) -> np.ndarray:
+        """Gradient of conservative edge barrier [N]."""
+        sat = self.cal.saturation
+        x = np.asarray(X, dtype=float).reshape(2)
+        if float(sat.K_edge) == 0.0:
+            return np.zeros(2, dtype=float)
+        r2 = float(np.dot(x, x))
+        umax2 = max(float(sat.u_edge_max) * float(sat.u_edge_max), 1e-12)
+        u2 = r2 / max(self.geom.R * self.geom.R, 1e-30)
+        denom = max(1.0 - u2 / umax2, float(sat.edge_epsilon))
+        return float(sat.K_edge) * x / (denom * denom)
+
     def grad_potential(
-        self, X: np.ndarray, J: float, B: ExternalFieldLike | ExternalField = 0.0
+        self,
+        X: np.ndarray,
+        J: float,
+        B: ExternalFieldLike | ExternalField = 0.0,
+        I_A: float | None = None,
     ) -> np.ndarray:
         """Gradient of the conservative potential, ``grad_X U`` [N]."""
         x = np.asarray(X, dtype=float).reshape(2)
-        K2 = self.K2_tensor(x, J, B)
-        K4 = self.K4_scalar(x, J, B)
+        K2 = self.K2_tensor(x, J, B, I_A)
+        K4 = self.K4_scalar(x, J, B, I_A)
+        K6 = self.K6_scalar(x, J, B, I_A)
         r2 = float(np.dot(x, x))
         return (
             K2 @ x
             + (K4 / max(self.geom.R * self.geom.R, 1e-30)) * r2 * x
+            + (K6 / max(self.geom.R**4, 1e-60)) * r2 * r2 * x
+            + self.grad_edge_potential(x)
             - self.field_force(J, B)
         )
 
     def potential(
-        self, X: np.ndarray, J: float, B: ExternalFieldLike | ExternalField = 0.0
+        self,
+        X: np.ndarray,
+        J: float,
+        B: ExternalFieldLike | ExternalField = 0.0,
+        I_A: float | None = None,
     ) -> float:
         """Conservative potential ``U(X,J,B)`` [J]."""
         x = np.asarray(X, dtype=float).reshape(2)
-        K2 = self.K2_tensor(x, J, B)
-        K4 = self.K4_scalar(x, J, B)
+        K2 = self.K2_tensor(x, J, B, I_A)
+        K4 = self.K4_scalar(x, J, B, I_A)
+        K6 = self.K6_scalar(x, J, B, I_A)
         r2 = float(np.dot(x, x))
         return float(
             0.5 * x @ K2 @ x
             + 0.25 * (K4 / max(self.geom.R * self.geom.R, 1e-30)) * r2 * r2
+            + (K6 / (6.0 * max(self.geom.R**4, 1e-60))) * r2 * r2 * r2
+            + self.edge_potential(x)
             - self.field_force(J, B) @ x
         )
 
@@ -557,10 +753,18 @@ class FieldResolvedCPPThieleModel:
         J_func: CurrentFunc | None = None,
         B_func: FieldFunc | None = None,
         polarizer_func: PolarizerFunc | None = None,
+        I_func: CurrentFunc | None = None,
     ) -> np.ndarray:
         """Right-hand side ``dX/dt`` [m/s] for ``solve_ivp``."""
         x = np.asarray(X, dtype=float).reshape(2)
-        J = 0.0 if J_func is None else float(J_func(float(t)))
+        I_A = None if I_func is None else float(I_func(float(t)))
+        if J_func is not None:
+            J = float(J_func(float(t)))
+        elif I_A is not None:
+            J = self.current_drive.J_from_I(I_A, self.geom)
+        else:
+            J = 0.0
+            I_A = 0.0
         B = (
             ExternalField()
             if B_func is None
@@ -574,7 +778,7 @@ class FieldResolvedCPPThieleModel:
 
         G = self.G_mag(x, J, B)
         D = self.D_coeff(x, J, B)
-        force = self.stt_force(x, J, pvec) - self.grad_potential(x, J, B)
+        force = self.stt_force(x, J, pvec) - self.grad_potential(x, J, B, I_A)
         A = D * I2 + float(self.polarity) * G * J2
         return np.linalg.solve(A, force)
 
@@ -678,13 +882,17 @@ class FieldResolvedCPPThieleModel:
         J_func: CurrentFunc | None = None,
         B_func: FieldFunc | None = None,
         polarizer_func: PolarizerFunc | None = None,
+        I_func: CurrentFunc | float | None = None,
         dt: float = 1e-11,
         method: str = "RK45",
         clamp_u: float | None = 0.995,
         **ivp_kwargs: Any,
     ) -> FieldResolvedTrajectoryResult:
         """Integrate the field-resolved Thiele equation."""
-        from scipy.integrate import solve_ivp
+        try:
+            from scipy.integrate import solve_ivp
+        except Exception:  # pragma: no cover - exercised when SciPy is unavailable
+            solve_ivp = None
 
         t0, t1 = float(t_span[0]), float(t_span[1])
         if not t1 > t0:
@@ -703,9 +911,21 @@ class FieldResolvedCPPThieleModel:
         else:
             x_init = np.asarray(X0, dtype=float).reshape(2)
 
+        if callable(I_func):
+            resolved_I_func = I_func
+        elif I_func is None:
+            resolved_I_func = None
+        else:
+            I_value = float(I_func)
+
+            def resolved_I_func(_t: float) -> float:
+                return I_value
+
         t_eval = np.arange(t0, t1 + 0.5 * dt, dt, dtype=float)
         if t_eval.size and t_eval[-1] > t1:
             t_eval = t_eval[:-1]
+        if t_eval.size == 0 or t_eval[0] != t0:
+            t_eval = np.insert(t_eval, 0, t0)
 
         events: list[Callable] = []
         if clamp_u is not None:
@@ -720,29 +940,50 @@ class FieldResolvedCPPThieleModel:
             _edge_event.direction = 1.0  # type: ignore[attr-defined]
             events.append(_edge_event)
 
-        sol = solve_ivp(
-            fun=lambda t, y: self.rhs(t, y, J_func, B_func, polarizer_func),
-            t_span=(t0, t1),
-            y0=x_init,
-            t_eval=t_eval,
-            events=events if events else None,
-            method=method,
-            max_step=ivp_kwargs.pop("max_step", dt),
-            rtol=ivp_kwargs.pop("rtol", 1e-8),
-            atol=ivp_kwargs.pop("atol", 1e-13),
-            **ivp_kwargs,
-        )
-        if not sol.success:
-            raise RuntimeError(
-                f"Field-resolved Thiele integration failed: {sol.message}"
+        edge_limited = False
+        if solve_ivp is not None:
+            sol = solve_ivp(
+                fun=lambda t, y: self.rhs(
+                    t, y, J_func, B_func, polarizer_func, resolved_I_func
+                ),
+                t_span=(t0, t1),
+                y0=x_init,
+                t_eval=t_eval,
+                events=events if events else None,
+                method=method,
+                max_step=ivp_kwargs.pop("max_step", dt),
+                rtol=ivp_kwargs.pop("rtol", 1e-8),
+                atol=ivp_kwargs.pop("atol", 1e-13),
+                **ivp_kwargs,
             )
+            if not sol.success:
+                raise RuntimeError(
+                    f"Field-resolved Thiele integration failed: {sol.message}"
+                )
+            t_out = np.asarray(sol.t, dtype=float)
+            x = np.asarray(sol.y[0], dtype=float)
+            y = np.asarray(sol.y[1], dtype=float)
+            edge_limited = bool(
+                getattr(sol, "t_events", None) and len(sol.t_events[0]) > 0
+            )
+        else:
+            t_out, xy = self._simulate_rk4(
+                t_eval,
+                x_init,
+                J_func=J_func,
+                B_func=B_func,
+                polarizer_func=polarizer_func,
+                I_func=resolved_I_func,
+                clamp_u=clamp_u,
+            )
+            x = xy[:, 0]
+            y = xy[:, 1]
+            edge_limited = bool(t_out.size < t_eval.size)
 
-        x = np.asarray(sol.y[0], dtype=float)
-        y = np.asarray(sol.y[1], dtype=float)
         R = float(self.geom.R)
         return FieldResolvedTrajectoryResult(
             model_name=f"FieldResolvedCPPThieleModel(p={self.polarity:+d}, C={self.chirality:+d})",
-            t=np.asarray(sol.t, dtype=float),
+            t=np.asarray(t_out, dtype=float),
             x=x,
             y=y,
             sx=x / R,
@@ -768,11 +1009,244 @@ class FieldResolvedCPPThieleModel:
             },
             metadata={
                 "mode": "field-resolved CPP Thiele",
-                "edge_limited": bool(
-                    getattr(sol, "t_events", None) and len(sol.t_events[0]) > 0
-                ),
+                "edge_limited": edge_limited,
             },
         )
+
+    def _simulate_rk4(
+        self,
+        t_eval: np.ndarray,
+        x_init: np.ndarray,
+        *,
+        J_func: CurrentFunc | None,
+        B_func: FieldFunc | None,
+        polarizer_func: PolarizerFunc | None,
+        I_func: CurrentFunc | None,
+        clamp_u: float | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Small fixed-step RK4 fallback used when SciPy is unavailable."""
+        values = [np.asarray(x_init, dtype=float).reshape(2)]
+        times = [float(t_eval[0])]
+        for idx in range(1, int(t_eval.size)):
+            t = float(t_eval[idx - 1])
+            h = float(t_eval[idx] - t_eval[idx - 1])
+            y0 = values[-1]
+            k1 = self.rhs(t, y0, J_func, B_func, polarizer_func, I_func)
+            k2 = self.rhs(t + 0.5 * h, y0 + 0.5 * h * k1, J_func, B_func, polarizer_func, I_func)
+            k3 = self.rhs(t + 0.5 * h, y0 + 0.5 * h * k2, J_func, B_func, polarizer_func, I_func)
+            k4 = self.rhs(t + h, y0 + h * k3, J_func, B_func, polarizer_func, I_func)
+            y_next = y0 + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+            if clamp_u is not None and np.linalg.norm(y_next) / self.geom.R >= float(clamp_u):
+                break
+            values.append(np.asarray(y_next, dtype=float))
+            times.append(float(t_eval[idx]))
+        return np.asarray(times, dtype=float), np.vstack(values)
+
+    @staticmethod
+    def _result_time(result: Any) -> np.ndarray:
+        if hasattr(result, "t"):
+            return np.asarray(result.t, dtype=float)
+        return np.asarray(result.time, dtype=float)
+
+    @staticmethod
+    def _result_xy(result: Any) -> tuple[np.ndarray, np.ndarray]:
+        return (
+            np.asarray(result.x, dtype=float),
+            np.asarray(result.y, dtype=float),
+        )
+
+    def _time_mask(
+        self,
+        result: Any,
+        *,
+        t_min: float | None = None,
+        transient_fraction: float | None = None,
+    ) -> np.ndarray:
+        t = self._result_time(result)
+        if t.size == 0:
+            return np.zeros(0, dtype=bool)
+        if t_min is None and transient_fraction is not None:
+            frac = min(max(float(transient_fraction), 0.0), 0.95)
+            t_min = float(t[0] + frac * (t[-1] - t[0]))
+        if t_min is None:
+            return np.ones_like(t, dtype=bool)
+        return t >= float(t_min)
+
+    def orbit_center(
+        self,
+        result: Any,
+        mode: str | tuple[float, float] | np.ndarray = "mean",
+        t_min: float | None = None,
+    ) -> np.ndarray:
+        """Estimate orbit center after transient [m]."""
+        if isinstance(mode, str):
+            mode_norm = mode.lower()
+            if mode_norm == "mean":
+                x, y = self._result_xy(result)
+                mask = self._time_mask(result, t_min=t_min)
+                if not np.any(mask):
+                    return np.array([float("nan"), float("nan")], dtype=float)
+                return np.array([float(np.mean(x[mask])), float(np.mean(y[mask]))])
+            if mode_norm == "conservative_equilibrium":
+                return self.equilibrium_conservative()
+            if mode_norm == "disk" or mode_norm == "origin":
+                return np.zeros(2, dtype=float)
+            raise ValueError("center mode must be 'mean', 'conservative_equilibrium', or 'disk'")
+        center = np.asarray(mode, dtype=float).reshape(2)
+        return center
+
+    def frequency_geometric(
+        self,
+        result: Any,
+        center: str | tuple[float, float] | np.ndarray | None = "mean",
+        t_min: float | None = None,
+        transient_fraction: float | None = None,
+        signed: bool = False,
+    ) -> float:
+        """Mean orbital frequency around selected center [Hz]."""
+        t = self._result_time(result)
+        x, y = self._result_xy(result)
+        mask = self._time_mask(
+            result,
+            t_min=t_min,
+            transient_fraction=transient_fraction,
+        )
+        if np.count_nonzero(mask) < 3:
+            return float("nan")
+        center_value = "mean" if center is None else center
+        c = self.orbit_center(result, center_value, t_min=t[mask][0])
+        z = (x[mask] - c[0]) + 1j * (y[mask] - c[1])
+        if np.nanmax(np.abs(z)) <= 0.0:
+            return float("nan")
+        phase = np.unwrap(np.angle(z))
+        omega = np.gradient(phase, t[mask])
+        freq = float(np.mean(omega) / (2.0 * math.pi))
+        return freq if signed else abs(freq)
+
+    def _fft_peak_hz(
+        self,
+        signal: np.ndarray,
+        time: np.ndarray,
+        *,
+        window: str = "hann",
+    ) -> float:
+        x = np.asarray(signal, dtype=float).reshape(-1)
+        t = np.asarray(time, dtype=float).reshape(-1)
+        if x.size < 3 or t.size != x.size:
+            return float("nan")
+        dt = float(np.median(np.diff(t)))
+        if not np.isfinite(dt) or dt <= 0.0:
+            return float("nan")
+        centered = x - float(np.mean(x))
+        if window == "hann":
+            centered = centered * np.hanning(centered.size)
+        spectrum = np.fft.rfft(centered)
+        freqs = np.fft.rfftfreq(centered.size, d=dt)
+        power = np.abs(spectrum) ** 2
+        if power.size <= 1:
+            return float("nan")
+        idx = int(np.argmax(power[1:]) + 1)
+        return float(freqs[idx])
+
+    def frequency_fft(
+        self,
+        result: Any,
+        signal: str = "resistance",
+        t_min: float | None = None,
+        transient_fraction: float | None = None,
+        window: str = "hann",
+    ) -> float:
+        """FFT-based frequency proxy matching MTJ measurements [Hz]."""
+        t = self._result_time(result)
+        x, y = self._result_xy(result)
+        mask = self._time_mask(
+            result,
+            t_min=t_min,
+            transient_fraction=transient_fraction,
+        )
+        if np.count_nonzero(mask) < 3:
+            return float("nan")
+        signal_norm = str(signal).lower()
+        if signal_norm in {"x", "core_x"}:
+            values = x[mask]
+        elif signal_norm in {"y", "core_y"}:
+            values = y[mask]
+        elif signal_norm in {"radius", "r"}:
+            c = self.orbit_center(result, "mean", t_min=t[mask][0])
+            values = np.hypot(x[mask] - c[0], y[mask] - c[1])
+        elif signal_norm in {"resistance", "mtj", "voltage"}:
+            p = self.polarizer[:2]
+            if float(np.dot(p, p)) > 0.0:
+                values = p[0] * x[mask] + p[1] * y[mask]
+            else:
+                values = x[mask]
+        else:
+            raise ValueError("signal must be 'resistance', 'x', 'y', or 'radius'")
+        return self._fft_peak_hz(values, t[mask], window=window)
+
+    def simulate_dc_sweep(
+        self,
+        I_values_A,
+        B: ExternalFieldLike = 0.0,
+        *,
+        t_total: float,
+        dt: float,
+        transient_fraction: float = 0.5,
+        s0: tuple[float, float] = (1e-3, 0.0),
+        frequency_signal: str = "resistance",
+        **kwargs: Any,
+    ):
+        """Return frequency, amplitude, center, and diagnostics for a DC-current sweep."""
+        import pandas as pd
+
+        rows: list[dict[str, Any]] = []
+        for value in np.asarray(I_values_A, dtype=float).reshape(-1):
+            J = self.current_drive.J_from_I(float(value), self.geom)
+            result = self.simulate(
+                (0.0, float(t_total)),
+                I_func=float(value),
+                B_func=field_dc(B),
+                dt=float(dt),
+                s0=s0,
+                **kwargs,
+            )
+            mask = self._time_mask(result, transient_fraction=transient_fraction)
+            center = self.orbit_center(result, "mean", t_min=result.t[mask][0] if np.any(mask) else None)
+            u = result.u[mask] if np.any(mask) else np.array([], dtype=float)
+            f_geom = self.frequency_geometric(
+                result,
+                center=center,
+                transient_fraction=transient_fraction,
+            )
+            f_fft = self.frequency_fft(
+                result,
+                signal=frequency_signal,
+                transient_fraction=transient_fraction,
+            )
+            growth = self.radial_growth_rate_small_signal(J, B)
+            edge_limited = bool(result.metadata.get("edge_limited", False))
+            if edge_limited:
+                regime = "edge_limited"
+            elif not np.isfinite(growth) or growth <= 0.0:
+                regime = "damped"
+            else:
+                regime = "stable_gyro"
+            rows.append(
+                {
+                    "I_A": float(value),
+                    "I_mA": float(value) * 1e3,
+                    "J_Apm2": float(J),
+                    "frequency_geom_hz": float(f_geom),
+                    "frequency_fft_hz": float(f_fft),
+                    "u_mean": float(np.mean(u)) if u.size else float("nan"),
+                    "u_max": float(np.max(u)) if u.size else float("nan"),
+                    "center_x_m": float(center[0]),
+                    "center_y_m": float(center[1]),
+                    "regime": regime,
+                    "edge_limited": edge_limited,
+                }
+            )
+        return pd.DataFrame(rows)
 
 
 __all__ = [
@@ -783,6 +1257,11 @@ __all__ = [
     "current_dc",
     "field_dc",
     "normalize_polarizer",
+    "CurrentDrive",
+    "SaturationCalibration",
+    "OerstedCalibration",
+    "ThermalCalibration",
+    "FrequencyExtractionConfig",
     "FieldResolvedCalibration",
     "FieldResolvedTrajectoryResult",
     "FieldResolvedCPPThieleModel",

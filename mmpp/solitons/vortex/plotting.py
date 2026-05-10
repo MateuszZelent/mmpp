@@ -1289,6 +1289,7 @@ class VortexPlotInterface:
         tracking_kwargs: dict[str, Any] | None = None,
         ax=None,
         show_center: bool = True,
+        health=None,
         **kwargs,
     ) -> VortexOrbitPlotHandle:
         plot_kwargs = dict(kwargs)
@@ -1346,6 +1347,13 @@ class VortexPlotInterface:
         ax.set_title(f"Vortex orbit ({trajectory_source})")
         ax.set_aspect("equal")
         apply_axes_style(ax, style_kwargs)
+
+        # Attach health annotation
+        if health is not None:
+            try:
+                health.warn_on_plot(ax)
+            except Exception:
+                pass
 
         return VortexOrbitPlotHandle(
             fig=ax.figure,

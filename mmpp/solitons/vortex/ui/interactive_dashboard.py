@@ -240,7 +240,10 @@ class VortexInteractiveDashboard:
         self._fig: Optional[Figure] = None
         self._output: Any = None
         self._status: Any = None
+        self._health_widget: Any = None  # HTML widget showing health status
         self._controls: dict[str, Any] = {}
+        self._display_handle: Any = None
+        self._css_displayed = False
         self._built = False
 
     # ------------------------------------------------------------------
@@ -251,8 +254,13 @@ class VortexInteractiveDashboard:
         """Build and display the interactive dashboard."""
         self._build()
         plt.ioff()  # prevent %matplotlib widget from auto-displaying figures to cell output
-        display(HTML(_CSS))
-        display(self._root)
+        if not self._css_displayed:
+            display(HTML(_CSS))
+            self._css_displayed = True
+        if self._display_handle is None:
+            self._display_handle = display(self._root, display_id=True)
+        else:
+            self._display_handle.update(self._root)
         return self
 
     # ------------------------------------------------------------------
@@ -272,6 +280,8 @@ class VortexInteractiveDashboard:
         self._status = widgets.HTML(
             value=self._fmt_status("Ready — select a module and click Run", "info")
         )
+        # Health status banner (updated on each computation)
+        self._health_widget = widgets.HTML(value="")
 
         # ---- Assemble tabs --------------------------------------------------
         tab_items = [
@@ -300,6 +310,7 @@ class VortexInteractiveDashboard:
         left_panel = widgets.VBox(
             [
                 job_info,
+                self._health_widget,
                 preset_row,
                 tab,
             ],
@@ -674,13 +685,65 @@ class VortexInteractiveDashboard:
         with self._output:
             clear_output(wait=True)
 
-    def _show_figure(self, fig):
+    def _get_health(self, force: bool = False):
+        """Return cached CoreHealthStatus, running the check on first call."""
+        try:
+            status = self._vx.check_health(force=force)
+            self._update_health_widget(status)
+            return status
+        except Exception:
+            return None
+
+    def _update_health_widget(self, status) -> None:
+        """Update the health banner HTML widget."""
+        if self._health_widget is None:
+            return
+        if status is None:
+            self._health_widget.value = ""
+            return
+        if status.is_healthy:
+            html = (
+                "<div style='background:#052e16;border:1px solid #166534;"
+                "border-radius:5px;padding:3px 8px;margin:2px 0;"
+                "font-family:monospace;font-size:10px;color:#86efac;'>"
+                "&#10003; Core health: OK"
+                "</div>"
+            )
+        else:
+            problems = ", ".join(status.warnings)
+            html = (
+                "<div style='background:#431407;border:1px solid #f97316;"
+                "border-radius:5px;padding:4px 8px;margin:2px 0;"
+                "font-family:monospace;font-size:10px;color:#fdba74;"
+                "word-break:break-word;'>"
+                f"&#9888; {problems}"
+                "</div>"
+            )
+        self._health_widget.value = html
+
+    def _show_figure(self, fig, health=None):
         """Render figure to PNG and display in Output widget.
 
         Using PNG avoids all ipympl canvas-widget duplication issues
         regardless of the active matplotlib backend.
+
+        Parameters
+        ----------
+        fig : matplotlib Figure
+        health : CoreHealthStatus or None
+            When provided and not healthy, a warning annotation is drawn on
+            the figure before it is rasterised.
         """
         import io
+
+        # Attach health warning annotation to the first axes of the figure
+        if health is not None and not health.is_healthy:
+            try:
+                if fig.axes:
+                    health.warn_on_plot(fig.axes[0])
+            except Exception:
+                pass
+
         buf = io.BytesIO()
         fig.savefig(buf, format="png", bbox_inches="tight",
                     facecolor=fig.get_facecolor())
@@ -704,6 +767,9 @@ class VortexInteractiveDashboard:
         try:
             traj = self._vx.core.track()
             self._state.trajectory = traj
+
+            # Check simulation health (annihilation / boundary collision)
+            health = self._get_health()
 
             t_start_idx = int(c["t_start"].value) or None
             t_end_idx = int(c["t_end"].value) or None
@@ -752,7 +818,7 @@ class VortexInteractiveDashboard:
             ax_t.grid(True, alpha=0.25)
 
             fig.suptitle("🎯 Core Tracking", fontsize=12, color="#e94560")
-            self._show_figure(fig)
+            self._show_figure(fig, health=health)
             self._set_status(
                 f"Core tracked: {len(x_nm)} steps, "
                 f"⟨r⟩ = {np.mean(r_nm):.1f} nm", "ok"
@@ -766,6 +832,7 @@ class VortexInteractiveDashboard:
     def _run_topology(self, c: dict):
         self._set_status("Computing topology…", "info")
         try:
+            health = self._get_health()
             t_idx = int(c["t_index"].value)
             result = self._vx.topology.detect(frame=t_idx)
             self._state.topology_result = result
@@ -804,7 +871,7 @@ class VortexInteractiveDashboard:
                 f"🌀 Vortex Topology  ·  frame {t_idx}  ·  Q = {Q:.4f}",
                 fontsize=12, color="#e94560",
             )
-            self._show_figure(fig)
+            self._show_figure(fig, health=health)
             self._set_status(f"Topology | p={polarity:+d}, c={vorticity:+d}, Q={Q:.4f}", "ok")
         except Exception as exc:
             self._set_status(f"Topology failed: {exc}", "error")
@@ -815,6 +882,7 @@ class VortexInteractiveDashboard:
     def _run_trajectory(self, c: dict):
         self._set_status("Analyzing trajectory…", "info")
         try:
+            health = self._get_health()
             traj = self._state.trajectory
             if traj is None:
                 traj = self._vx.core.track()
@@ -894,7 +962,7 @@ class VortexInteractiveDashboard:
                 )
                 fig.suptitle(f"📐 Trajectory  ·  {stats}", fontsize=10, color="#a8b2d8")
 
-            self._show_figure(fig)
+            self._show_figure(fig, health=health)
             self._set_status(
                 f"Trajectory done | ⟨r⟩={np.mean(r_nm):.1f} nm, max={np.max(r_nm):.1f} nm",
                 "ok",
@@ -908,6 +976,7 @@ class VortexInteractiveDashboard:
     def _run_spectrum(self, c: dict):
         self._set_status("Computing spectrum…", "info")
         try:
+            health = self._get_health()
             traj = self._state.trajectory
             if traj is None:
                 traj = self._vx.core.track()
@@ -975,7 +1044,7 @@ class VortexInteractiveDashboard:
                 ax.grid(True, alpha=0.25)
 
             fig.suptitle("📊 Vortex Spectrum", fontsize=12, color="#e94560")
-            self._show_figure(fig)
+            self._show_figure(fig, health=health)
             self._set_status("Spectrum computed", "ok")
         except Exception as exc:
             self._set_status(f"Spectrum failed: {exc}", "error")
@@ -986,6 +1055,7 @@ class VortexInteractiveDashboard:
     def _run_spectrogram(self, c: dict):
         self._set_status("Computing spectrogram…", "info")
         try:
+            health = self._get_health()
             traj = self._state.trajectory
             if traj is None:
                 traj = self._vx.core.track()
@@ -1027,7 +1097,7 @@ class VortexInteractiveDashboard:
             ax.set_title(f"🌈 Spectrogram · {component} component", fontsize=11)
             ax.grid(False)
 
-            self._show_figure(fig)
+            self._show_figure(fig, health=health)
             self._set_status("Spectrogram done", "ok")
         except Exception as exc:
             self._set_status(f"Spectrogram failed: {exc}", "error")
@@ -1038,6 +1108,7 @@ class VortexInteractiveDashboard:
     def _run_modes(self, c: dict):
         self._set_status("Computing vortex modes…", "info")
         try:
+            health = self._get_health()
             n = int(c["n_modes"].value)
             mode_list = self._vx.modes.classify_all(max_modes=n)
             self._state.mode_result = mode_list
@@ -1047,7 +1118,7 @@ class VortexInteractiveDashboard:
                 ax.text(0.5, 0.5, "No modes detected", ha="center", va="center",
                         transform=ax.transAxes, fontsize=14, color="#a8b2d8")
                 ax.axis("off")
-                self._show_figure(fig)
+                self._show_figure(fig, health=health)
                 self._set_status("No modes detected", "warn")
                 return
 
@@ -1073,7 +1144,7 @@ class VortexInteractiveDashboard:
             ax_p.grid(True, alpha=0.25, axis="y")
 
             fig.suptitle("🎭 Vortex Modes", fontsize=12, color="#e94560")
-            self._show_figure(fig)
+            self._show_figure(fig, health=health)
             self._set_status(f"Modes: {len(mode_list)} found", "ok")
         except Exception as exc:
             self._set_status(f"Modes failed: {exc}", "error")
@@ -1084,6 +1155,7 @@ class VortexInteractiveDashboard:
     def _run_events(self, c: dict):
         self._set_status("Detecting events…", "info")
         try:
+            health = self._get_health()
             traj = self._state.trajectory
             if traj is None:
                 traj = self._vx.core.track()
@@ -1132,7 +1204,7 @@ class VortexInteractiveDashboard:
                 by_label = dict(zip(labels, handles))
                 ax.legend(by_label.values(), by_label.keys(), fontsize=8)
 
-            self._show_figure(fig)
+            self._show_figure(fig, health=health)
             self._set_status(f"Events: {len(events)} found", "ok")
         except Exception as exc:
             self._set_status(f"Event detection failed: {exc}", "error")
@@ -1143,6 +1215,7 @@ class VortexInteractiveDashboard:
     def _run_signals(self, c: dict):
         self._set_status("Computing synthetic signal…", "info")
         try:
+            health = self._get_health()
             traj = self._state.trajectory
             if traj is None:
                 traj = self._vx.core.track()
@@ -1194,7 +1267,7 @@ class VortexInteractiveDashboard:
                 ax_t.grid(True, alpha=0.25)
 
             fig.suptitle("📡 Synthetic Signal", fontsize=12, color="#e94560")
-            self._show_figure(fig)
+            self._show_figure(fig, health=health)
             self._set_status("Signal computed", "ok")
         except Exception as exc:
             self._set_status(f"Signal failed: {exc}", "error")
@@ -1289,6 +1362,8 @@ class VortexInteractiveDashboard:
                 f"🔬 Thiele ({model_type}) | f = {f_val:.3f} GHz, r = {r_val:.1f} nm",
                 fontsize=11, color="#e94560",
             )
+            # Note: Thiele quick tab uses analytical model, not the simulation
+            # data — no health annotation needed here (skip)
             self._show_figure(fig)
             self._set_status(
                 f"Thiele ({model_type}): f = {f_val:.3f} GHz, r = {r_val:.1f} nm", "ok"

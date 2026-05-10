@@ -433,6 +433,40 @@ def test_missing_batch_html_cards_are_present() -> None:
         assert "<div" in html
 
 
+def test_batch_vortex_interactive_displays_single_selected_result() -> None:
+    calls: list[tuple[str, tuple[float, float], int]] = []
+
+    class _InteractiveVortex:
+        def __init__(self, label: str):
+            self.label = label
+
+        def interactive(self, *, figsize=(10, 7), dpi=100):
+            calls.append((self.label, figsize, dpi))
+            return f"dashboard-{self.label}"
+
+    class _InteractiveSolitons:
+        def __init__(self, label: str):
+            self.vortex = _InteractiveVortex(label)
+
+    class _InteractiveResult:
+        def __init__(self, label: str, current_ma: float):
+            self.path = f"{label}.zarr"
+            self.attrs = {"i_pillar_ma": current_ma}
+            self.solitons = _InteractiveSolitons(label)
+
+    interface = BatchVortexInterface(
+        [
+            _InteractiveResult("high", 2.0),
+            _InteractiveResult("low", 1.0),
+        ]
+    )
+
+    dashboard = interface.interactive(index=0, figsize=(8, 5), dpi=150)
+
+    assert dashboard == "dashboard-low"
+    assert calls == [("low", (8, 5), 150)]
+
+
 def test_canonical_nonlinear_thiele_module_alias() -> None:
     from mmpp.solitons.vortex.nonlinear.nonlinear_thiele import ThieleAnalyzer
     from mmpp.solitons.vortex.nonlinear.nonliniearthiele import (
