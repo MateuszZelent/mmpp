@@ -542,6 +542,94 @@ def test_vortex_dashboard_show_figure_uses_output_widget_not_global_display(
     assert global_display_calls == []
 
 
+def test_api_help_html_includes_signatures_parameters_and_examples() -> None:
+    from mmpp._repr_helpers import api_help_html
+
+    class Demo:
+        def compute(self, value: float, *, scale: float = 1.0) -> float:
+            """Compute a scaled value."""
+            return value * scale
+
+    html = api_help_html(
+        Demo(),
+        title="Demo help",
+        prefix="demo",
+        properties=[("plt", "Plotting accessor")],
+        methods=["compute"],
+    )
+
+    assert "Demo help" in html
+    assert ".compute(" in html
+    assert "value" in html
+    assert "scale" in html
+    assert "Compute a scaled value." in html
+    assert "demo.compute(value=...)" in html
+    assert "demo.plt" in html
+
+
+def test_spectrum_plot_accessor_repr_includes_live_api_help() -> None:
+    from mmpp.fft.spectrum._plotting.accessor import SpectrumPlotAccessor
+
+    class _Modes:
+        def interactive(self, **kwargs):
+            return kwargs
+
+    class _Result:
+        modes = _Modes()
+
+    html = SpectrumPlotAccessor(_Result())._repr_html_()
+
+    assert "Spectrum plot accessor API help" in html
+    assert ".spectrum(**kwargs)" in html
+    assert ".interactive(**kwargs)" in html
+    assert "spec.plot.spectrum()" in html
+
+
+def test_spectrum_quick_plot_repr_includes_forwarded_api_help() -> None:
+    from mmpp.fft.spectrum.helpers import _SpectrumQuickPlot
+
+    class _Helper:
+        def __call__(self, **kwargs):
+            return kwargs
+
+    html = _SpectrumQuickPlot(_Helper())._repr_html_()
+
+    assert "Spectrum quick-plot API help" in html
+    assert ".spectrum(**compute_kw)" in html
+    assert ".interactive(**compute_kw)" in html
+    assert "job[0].fft.spectrum.plot.spectrum()" in html
+
+
+def test_spectrum_modes_plot_repr_includes_live_api_help() -> None:
+    from mmpp.fft.spectrum.modes.accessor import SpectrumModesPlotAccessor
+
+    html = SpectrumModesPlotAccessor(object())._repr_html_()
+
+    assert "Spectrum modes plot API help" in html
+    assert ".imshow(" in html
+    assert "component" in html
+    assert ".animation(" in html
+    assert "spec.modes.plot.imshow(f=...)" in html
+
+
+def test_mode_plot_repr_includes_live_api_help() -> None:
+    from mmpp.fft.modes.interface import ModePlotAccessor
+
+    class _Mode:
+        frequency = 5.2
+        z_layer = -1
+
+        def get_component(self, component="z", value="magnitude"):
+            return np.zeros((2, 2))
+
+    html = ModePlotAccessor(_Mode())._repr_html_()
+
+    assert "Mode plot API help" in html
+    assert ".imshow(" in html
+    assert ".interactive(" in html
+    assert "mode.plot.imshow()" in html
+
+
 def test_canonical_nonlinear_thiele_module_alias() -> None:
     from mmpp.solitons.vortex.nonlinear.nonlinear_thiele import ThieleAnalyzer
     from mmpp.solitons.vortex.nonlinear.nonliniearthiele import (

@@ -85,7 +85,7 @@ class MMPP:
         """
         # Configure logging - reconfigure if debug/level specified
         from ..cli.logging_config import setup_mmpp_logging
-        
+
         if log_level is not None:
             # Explicit level always reconfigures
             level_int: int
@@ -97,7 +97,7 @@ class MMPP:
         elif debug:
             # Debug flag reconfigures to DEBUG level
             setup_mmpp_logging(debug=True, level=logging.DEBUG)
-        
+
         self.debug = debug  # Store for child components (FFT, etc.)
 
         # Translate virtual path to host path if needed
@@ -141,9 +141,7 @@ class MMPP:
             job = Pyzfn(self.base_path)
             attrs = job.attributes
             # Create a minimal DataFrame
-            self.df = pd.DataFrame(
-                [{"path": self.base_path, **attrs}]
-            )
+            self.df = pd.DataFrame([{"path": self.base_path, **attrs}])
             # Create ZarrJobResult, not Pyzfn
             result = ZarrJobResult(self.base_path, attrs)
             result._set_mmpp_ref(self)
@@ -209,142 +207,178 @@ class MMPP:
         path_display = self.base_path
         if len(path_display) > 60:
             path_display = "..." + path_display[-57:]
-        
+
         if n_results == 0:
             return f"<MMPP: {path_display} (empty)>"
-        
+
         return f"<MMPP: {path_display} | {n_results} result{'s' if n_results != 1 else ''}>"
 
     def _repr_html_(self) -> str:
         """Return rich HTML representation for Jupyter notebooks."""
+        from mmpp._repr_helpers import api_help_html
+
         n_results = len(self.zarr_results)
-        
+        api_card = api_help_html(
+            self,
+            title="MMPP API help",
+            prefix="job",
+            subtitle="Top-level navigation with live method signatures.",
+            properties=[
+                ("dataframe", "Scan results DataFrame alias"),
+                ("columns", "Available parameter/filter columns"),
+                (
+                    "fft",
+                    "FFT accessor for the first result; prefer job[0].fft or job[:].fft",
+                ),
+                ("mpl", "Batch plotting accessor"),
+                ("matplotlib", "Alias for mpl"),
+            ],
+            methods=[
+                "scan",
+                "force_rescan",
+                "find",
+            ],
+        )
+
         # Elegant dark navy-charcoal gradient theme
-        html = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 18px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 25px rgba(0,0,0,0.3), 0 0 0 1px rgba(148,163,184,0.1) inset;">'
+        html = "<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 18px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 25px rgba(0,0,0,0.3), 0 0 0 1px rgba(148,163,184,0.1) inset;\">"
         html += '<h3 style="margin: 0 0 12px 0; color: #f1f5f9; font-weight: 600; letter-spacing: 0.5px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">📊 MMPP Job Manager</h3>'
         html += f'<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
         html += f'<b style="color: #94a3b8;">Path:</b> <code style="background: rgba(15,23,42,0.6); padding: 4px 10px; border-radius: 5px; font-family: \'Courier New\', monospace; font-size: 0.9em; color: #cbd5e1; border: 1px solid rgba(71,85,105,0.3);">{self.base_path}</code><br>'
         html += f'<b style="color: #94a3b8;">Results:</b> <span style="color: #60a5fa; font-weight: 600;">{n_results}</span> <span style="color: #cbd5e1;">zarr file{"s" if n_results != 1 else ""}</span>'
-        html += '</div>'
-        
+        html += "</div>"
+
         if n_results == 0:
             html += '<div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px;">'
-            html += '⚠️ No simulation results found. Check path or run scan.'
-            html += '</div></div>'
-            return html
-        
+            html += "⚠️ No simulation results found. Check path or run scan."
+            html += "</div></div>"
+            return html + api_card
+
         # Get parameter statistics
         param_stats = self._get_parameter_stats()
-        
+
         import uuid as _uuid_mod
+
         unique_id = str(_uuid_mod.uuid4())[:8]
-        
+
         if param_stats:
             html += '<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
             html += '<b style="color: #94a3b8;">📋 Parameters:</b> <small style="color: #64748b; margin-left: 8px;">(click to see values)</small><br>'
             html += '<table style="width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 0.9em;">'
             html += '<tr style="background: linear-gradient(135deg, rgba(71,85,105,0.3) 0%, rgba(51,65,85,0.3) 100%); border-bottom: 2px solid rgba(148,163,184,0.2);"><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Parameter</th><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Unique Values</th><th style="text-align:left; padding: 8px; font-weight: 600; color: #cbd5e1;">Range</th></tr>'
-            
+
             # Show first 8 parameters
             for idx, (param, info) in enumerate(list(param_stats.items())[:8]):
-                unique_count = info['unique']
+                unique_count = info["unique"]
                 if unique_count > 1:
                     range_str = f"{info['min']:.4g} → {info['max']:.4g}"
                 else:
                     range_str = f"{info['min']:.4g} (constant)"
-                
+
                 # Get all unique values for this parameter
                 values_list = sorted(self.df[param].dropna().unique())
-                values_str = ', '.join([f"{v:.6g}" if isinstance(v, (int, float)) else str(v) for v in values_list])
+                values_str = ", ".join(
+                    [
+                        f"{v:.6g}" if isinstance(v, (int, float)) else str(v)
+                        for v in values_list
+                    ]
+                )
                 param_detail_id = f"param-detail-{unique_id}-{idx}"
-                
-                html += f'<tr style="border-bottom: 1px solid rgba(71,85,105,0.3); cursor: pointer;" onclick="var elem = document.getElementById(\'{param_detail_id}\'); elem.style.display = elem.style.display === \'none\' ? \'table-row\' : \'none\';">'
+
+                html += f"<tr style=\"border-bottom: 1px solid rgba(71,85,105,0.3); cursor: pointer;\" onclick=\"var elem = document.getElementById('{param_detail_id}'); elem.style.display = elem.style.display === 'none' ? 'table-row' : 'none';\">"
                 html += f'<td style="padding: 6px 8px;"><code style="background: rgba(15,23,42,0.6); padding: 3px 8px; border-radius: 4px; color: #60a5fa; border: 1px solid rgba(71,85,105,0.3); font-weight: 500;">{param}</code></td>'
                 html += f'<td style="padding: 6px 8px; text-align: center; color: #a5b4fc; font-weight: 600;">{unique_count}</td>'
                 html += f'<td style="padding: 6px 8px; font-family: monospace; color: #cbd5e1;">{range_str}</td>'
-                html += '</tr>'
-                
+                html += "</tr>"
+
                 # Hidden row with values
                 html += f'<tr id="{param_detail_id}" style="display: none; background: rgba(15,23,42,0.4);">'
                 html += f'<td colspan="3" style="padding: 8px 12px;">'
                 html += f'<div style="color: #94a3b8; font-size: 0.85em; margin-bottom: 4px;">💡 Copy for find():</div>'
                 html += f'<code style="display: block; background: rgba(15,23,42,0.8); padding: 8px; border-radius: 4px; color: #10b981; font-size: 0.85em; border: 1px solid rgba(71,85,105,0.4); overflow-x: auto; white-space: nowrap;">{param}=[{values_str}]</code>'
-                html += '</td></tr>'
-            
+                html += "</td></tr>"
+
             # Add collapsible section for remaining parameters
             if len(param_stats) > 8:
                 html += f'<tr id="more-params-{unique_id}" style="display: none;">'
-                for idx, (param, info) in enumerate(list(param_stats.items())[8:], start=8):
-                    unique_count = info['unique']
+                for idx, (param, info) in enumerate(
+                    list(param_stats.items())[8:], start=8
+                ):
+                    unique_count = info["unique"]
                     if unique_count > 1:
                         range_str = f"{info['min']:.4g} → {info['max']:.4g}"
                     else:
                         range_str = f"{info['min']:.4g} (constant)"
-                    
+
                     # Get all unique values for this parameter
                     values_list = sorted(self.df[param].dropna().unique())
-                    values_str = ', '.join([f"{v:.6g}" if isinstance(v, (int, float)) else str(v) for v in values_list])
+                    values_str = ", ".join(
+                        [
+                            f"{v:.6g}" if isinstance(v, (int, float)) else str(v)
+                            for v in values_list
+                        ]
+                    )
                     param_detail_id = f"param-detail-{unique_id}-{idx}"
-                    
-                    html += f'</tr><tr id="more-params-{unique_id}" style="display: none; border-bottom: 1px solid rgba(71,85,105,0.3); cursor: pointer;" onclick="var elem = document.getElementById(\'{param_detail_id}\'); elem.style.display = elem.style.display === \'none\' ? \'table-row\' : \'none\';">'
+
+                    html += f"</tr><tr id=\"more-params-{unique_id}\" style=\"display: none; border-bottom: 1px solid rgba(71,85,105,0.3); cursor: pointer;\" onclick=\"var elem = document.getElementById('{param_detail_id}'); elem.style.display = elem.style.display === 'none' ? 'table-row' : 'none';\">"
                     html += f'<td style="padding: 6px 8px;"><code style="background: rgba(15,23,42,0.6); padding: 3px 8px; border-radius: 4px; color: #60a5fa; border: 1px solid rgba(71,85,105,0.3); font-weight: 500;">{param}</code></td>'
                     html += f'<td style="padding: 6px 8px; text-align: center; color: #a5b4fc; font-weight: 600;">{unique_count}</td>'
                     html += f'<td style="padding: 6px 8px; font-family: monospace; color: #cbd5e1;">{range_str}</td></tr>'
-                    
+
                     # Hidden row with values
                     html += f'<tr id="{param_detail_id}" style="display: none; background: rgba(15,23,42,0.4);">'
                     html += f'<td colspan="3" style="padding: 8px 12px;">'
                     html += f'<div style="color: #94a3b8; font-size: 0.85em; margin-bottom: 4px;">💡 Copy for find():</div>'
                     html += f'<code style="display: block; background: rgba(15,23,42,0.8); padding: 8px; border-radius: 4px; color: #10b981; font-size: 0.85em; border: 1px solid rgba(71,85,105,0.4); overflow-x: auto; white-space: nowrap;">{param}=[{values_str}]</code>'
-                    html += '</td></tr>'
-                
-                html += '</table>'
-                html += f'<button onclick="var elems = document.querySelectorAll(\'#more-params-{unique_id}\'); elems.forEach(e => e.style.display = e.style.display === \'none\' ? \'table-row\' : \'none\'); this.textContent = this.textContent.includes(\'Show\') ? \'▲ Hide {len(param_stats) - 8} more parameters\' : \'▼ Show {len(param_stats) - 8} more parameters\';" style="margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, rgba(96,165,250,0.2) 0%, rgba(79,70,229,0.2) 100%); border: 1px solid rgba(96,165,250,0.3); border-radius: 6px; color: #93c5fd; cursor: pointer; font-size: 0.85em; font-weight: 600; transition: all 0.2s; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">▼ Show {len(param_stats) - 8} more parameters</button>'
+                    html += "</td></tr>"
+
+                html += "</table>"
+                html += f"<button onclick=\"var elems = document.querySelectorAll('#more-params-{unique_id}'); elems.forEach(e => e.style.display = e.style.display === 'none' ? 'table-row' : 'none'); this.textContent = this.textContent.includes('Show') ? '▲ Hide {len(param_stats) - 8} more parameters' : '▼ Show {len(param_stats) - 8} more parameters';\" style=\"margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, rgba(96,165,250,0.2) 0%, rgba(79,70,229,0.2) 100%); border: 1px solid rgba(96,165,250,0.3); border-radius: 6px; color: #93c5fd; cursor: pointer; font-size: 0.85em; font-weight: 600; transition: all 0.2s; text-shadow: 0 1px 2px rgba(0,0,0,0.3);\">▼ Show {len(param_stats) - 8} more parameters</button>"
             else:
-                html += '</table>'
-            
-            html += '</div>'
-        
+                html += "</table>"
+
+            html += "</div>"
+
         # ---- Results list -------------------------------------------------------
         html += self._repr_html_results_list(unique_id)
-        
+
         # Available methods
         html += '<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
         html += '<b style="color: #94a3b8;">🔧 Quick Start:</b><br>'
-        html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job.find(param=value)</code> '
-        html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job.columns</code> '
-        html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job[0].m</code> '
-        html += '<code style="background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: \'Courier New\', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;">job[:].m.mpl</code><br>'
+        html += "<code style=\"background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: 'Courier New', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;\">job.find(param=value)</code> "
+        html += "<code style=\"background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: 'Courier New', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;\">job.columns</code> "
+        html += "<code style=\"background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: 'Courier New', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;\">job[0].m</code> "
+        html += "<code style=\"background: rgba(15,23,42,0.8); padding: 5px 10px; border-radius: 5px; display: inline-block; margin: 4px; font-family: 'Courier New', monospace; font-size: 0.85em; color: #60a5fa; border: 1px solid rgba(71,85,105,0.4); font-weight: 500;\">job[:].m.mpl</code><br>"
         html += '<small style="color: #94a3b8; margin-top: 6px; display: inline-block;">💡 Tip: Click on any parameter above to see all values and copy for <code style="background: rgba(15,23,42,0.6); padding: 2px 6px; border-radius: 3px; color: #93c5fd; border: 1px solid rgba(71,85,105,0.3);">find()</code></small>'
-        html += '</div></div>'
-        
-        return html
+        html += "</div></div>"
+
+        return html + api_card
 
     def _get_parameter_stats(self) -> dict:
         """Get statistics about parameter values across all results."""
         if self.df.empty:
             return {}
-        
+
         stats = {}
         # Focus on numeric columns that vary
-        numeric_cols = self.df.select_dtypes(include=['number']).columns
-        
+        numeric_cols = self.df.select_dtypes(include=["number"]).columns
+
         for col in numeric_cols:
-            if col == 'path':
+            if col == "path":
                 continue
             try:
                 values = self.df[col].dropna()
                 if len(values) > 0:
                     stats[col] = {
-                        'unique': values.nunique(),
-                        'min': values.min(),
-                        'max': values.max()
+                        "unique": values.nunique(),
+                        "min": values.min(),
+                        "max": values.max(),
                     }
             except Exception:
                 continue
-        
+
         # Sort by number of unique values (descending) - varying parameters first
-        return dict(sorted(stats.items(), key=lambda x: x[1]['unique'], reverse=True))
+        return dict(sorted(stats.items(), key=lambda x: x[1]["unique"], reverse=True))
 
     def _repr_html_results_list(self, uid: str) -> str:
         """Build an expandable HTML block listing all scanned results with indices."""
@@ -356,7 +390,9 @@ class MMPP:
 
         # Determine which parameters vary so we can highlight them in the list
         param_stats = self._get_parameter_stats()
-        varying = [p for p, s in param_stats.items() if s["unique"] > 1][:6]  # at most 6 cols
+        varying = [p for p, s in param_stats.items() if s["unique"] > 1][
+            :6
+        ]  # at most 6 cols
 
         # Section container – collapsed by default when there are many results
         show_initially = len(results) <= 10
@@ -375,7 +411,7 @@ class MMPP:
         btn_html = (
             f'<button id="{btn_id}" onclick="{toggle_js}" '
             f'style="padding:4px 12px;background:linear-gradient(135deg,rgba(96,165,250,0.15),rgba(79,70,229,0.15));'
-            f'border:1px solid rgba(96,165,250,0.3);border-radius:5px;color:#93c5fd;cursor:pointer;'
+            f"border:1px solid rgba(96,165,250,0.3);border-radius:5px;color:#93c5fd;cursor:pointer;"
             f'font-size:0.8em;font-weight:600;float:right;">{open_label}</button>'
         )
 
@@ -429,7 +465,11 @@ class MMPP:
 
         for i, res in enumerate(results):
             attrs = res.attributes if isinstance(res.attributes, dict) else {}
-            row_extra = "" if i < VISIBLE else f'class="results-more-{uid}" style="display:none;"'
+            row_extra = (
+                ""
+                if i < VISIBLE
+                else f'class="results-more-{uid}" style="display:none;"'
+            )
             out += f"<tr {row_extra}>"
             # index cell with copyable job[i] snippet
             out += (
@@ -459,7 +499,7 @@ class MMPP:
             out += (
                 f'<button id="{more_btn_id}" onclick="{more_js}" '
                 f'style="margin-top:6px;padding:5px 14px;background:rgba(96,165,250,0.1);'
-                f'border:1px solid rgba(96,165,250,0.25);border-radius:5px;color:#93c5fd;'
+                f"border:1px solid rgba(96,165,250,0.25);border-radius:5px;color:#93c5fd;"
                 f'cursor:pointer;font-size:0.8em;font-weight:600;">▼ Show {n - VISIBLE} more results</button>'
             )
 
@@ -495,10 +535,11 @@ class MMPP:
                 "FFT functionality not available. Check fft module import."
             )
         if not self.zarr_results:
-             raise ValueError("No zarr results available for FFT analysis.")
-        
+            raise ValueError("No zarr results available for FFT analysis.")
+
         if len(self.zarr_results) > 1:
             import warnings
+
             warnings.warn(
                 f"job.fft operates on the FIRST result only ({len(self.zarr_results)} results "
                 "available). Use job[0].fft for single-result FFT or job[:].fft for batch FFT.",
@@ -510,17 +551,17 @@ class MMPP:
     def columns(self) -> list[str]:
         """
         List of available column names for filtering with `find()`.
-        
+
         Returns
         -------
         list[str]
             Column names from the database DataFrame.
-            
+
         Examples
         --------
         >>> job.columns
         ['path', 'Nx', 'Ny', 'Nz', 'dx', 'dy', 'dz', 'PBCx', 'PBCy', 'solver', ...]
-        
+
         >>> 'Nx' in job.columns
         True
         """
@@ -581,17 +622,17 @@ class MMPP:
             Dictionary of parameters extracted from this component
         """
         params = {}
-        
+
         # Remove .zarr extension if present
         name = component.replace(".zarr", "")
-        
+
         # Split by underscore or other delimiters
         # Common pattern: param1_val1_param2_val2
         # Or: param1=val1, param2=val2 (less common in folder names but possible)
-        
+
         # Regex for key-value pairs like "key=value" or "key_value" where value is number
         # This is heuristic and might need adjustment based on specific naming conventions
-        
+
         # Strategy 1: Look for explicit assignments (e.g. Nx=128)
         assignments = re.findall(r"([a-zA-Z0-9]+)=([a-zA-Z0-9\.\-+eE]+)", name)
         for key, val in assignments:
@@ -603,10 +644,12 @@ class MMPP:
                     params[key] = int(val)
             except ValueError:
                 params[key] = val
-        
+
         # Strategy 2: Look for underscore-separated key_value patterns (e.g., kc2_60000.0, phi_0.5)
         # Match pattern: letters followed by underscore and numeric value (including scientific notation)
-        underscore_patterns = re.findall(r"([a-zA-Z][a-zA-Z0-9]*)_([\-+]?[0-9]*\.?[0-9]+(?:[eE][\-+]?[0-9]+)?)", name)
+        underscore_patterns = re.findall(
+            r"([a-zA-Z][a-zA-Z0-9]*)_([\-+]?[0-9]*\.?[0-9]+(?:[eE][\-+]?[0-9]+)?)", name
+        )
         for key, val in underscore_patterns:
             if key not in params:  # Don't override = assignments
                 try:
@@ -617,7 +660,7 @@ class MMPP:
                         params[key] = int(val)
                 except ValueError:
                     params[key] = val
-        
+
         return params
 
     def _scan_single_zarr(self, zarr_path: str) -> ScanResult:
@@ -726,17 +769,17 @@ class MMPP:
             if res.error is None:
                 entry = {"path": res.path, **res.attributes}
                 data.append(entry)
-        
+
         if not data:
             return pd.DataFrame()
-            
+
         return pd.DataFrame(data)
 
     def _save_database(self) -> None:
         """Save the current DataFrame to pickle file."""
         if self.df.empty:
             return
-            
+
         db_path = os.path.join(self.base_path, f"{self.database_name}.pkl")
         try:
             with open(db_path, "wb") as f:
@@ -749,19 +792,19 @@ class MMPP:
     def _translate_path(path: str) -> str:
         """
         Translate virtual container path to host filesystem path.
-        
+
         Translation rules (NEW microlab structure):
         - /mnt/local/kkingstoun/{user}/pcss_storage/{project}/{rest} -> {STORAGE_ROOT}/projects/{project}/{rest}
         - /mnt/local/kkingstoun/{user}/projects/{project}/{rest} -> {STORAGE_ROOT}/projects/{project}/{rest}
         - /mnt/local/kkingstoun/{user}/{project}/{rest} -> {STORAGE_ROOT}/projects/{project}/{rest}
-        
+
         Also supports legacy storage for backward compatibility.
-        
+
         Parameters:
         -----------
         path : str
             Path to translate (may be virtual or real)
-            
+
         Returns:
         --------
         str
@@ -769,28 +812,30 @@ class MMPP:
         """
         if not path:
             return path
-        
+
         # NEW unified microlab storage structure
         STORAGE_ROOT = "/mnt/storage_6/project_data/pl0095-01/mateuszz/microlab"
         # Legacy storage (for backward compatibility)
         LEGACY_STORAGE_ROOT = "/mnt/storage_2/scratch/pl0095-01/zelent"
         CONTAINER_PREFIX = "/mnt/local/kkingstoun"
-        
+
         # Already in new host format
         if path.startswith(STORAGE_ROOT):
             return path
-        
+
         # Already in legacy host format - check if should be migrated
         if path.startswith(LEGACY_STORAGE_ROOT):
             return path  # Keep using legacy path if it exists
-        
+
         # Not a container path
         if not path.startswith(CONTAINER_PREFIX):
             return path
-        
+
         # Pattern 1: pcss_storage paths (legacy)
         # /mnt/local/kkingstoun/{user}/pcss_storage/{project}/{rest}
-        pcss_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/pcss_storage/([^/]+)(/.*)?"
+        pcss_pattern = (
+            rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/pcss_storage/([^/]+)(/.*)?"
+        )
         pcss_match = re.match(pcss_pattern, path)
         if pcss_match:
             project = pcss_match.group(1)
@@ -798,20 +843,24 @@ class MMPP:
             new_path = f"{STORAGE_ROOT}/projects/{project}{rest}".replace("//", "/")
             # Fallback to legacy if new path doesn't exist
             if not os.path.exists(new_path):
-                legacy_path = f"{LEGACY_STORAGE_ROOT}/{project}{rest}".replace("//", "/")
+                legacy_path = f"{LEGACY_STORAGE_ROOT}/{project}{rest}".replace(
+                    "//", "/"
+                )
                 if os.path.exists(legacy_path):
                     return legacy_path
             return new_path
-        
+
         # Pattern 2: /projects/ paths in container
         # /mnt/local/kkingstoun/{user}/projects/{project}/{rest}
-        projects_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/projects/([^/]+)(/.*)?"
+        projects_pattern = (
+            rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/projects/([^/]+)(/.*)?"
+        )
         projects_match = re.match(projects_pattern, path)
         if projects_match:
             project = projects_match.group(1)
             rest = projects_match.group(2) or ""
             return f"{STORAGE_ROOT}/projects/{project}{rest}".replace("//", "/")
-        
+
         # Pattern 3: Direct project paths (fallback)
         # /mnt/local/kkingstoun/{user}/{project}/{rest}
         standard_pattern = rf"^{re.escape(CONTAINER_PREFIX)}/[^/]+/([^/]+)(/.*)?"
@@ -820,22 +869,34 @@ class MMPP:
             project_or_subdir = standard_match.group(1)
             rest = standard_match.group(2) or ""
             # Skip special directories that are not projects
-            if project_or_subdir in ("pcss_storage", "projects", ".config", ".local", ".cache"):
+            if project_or_subdir in (
+                "pcss_storage",
+                "projects",
+                ".config",
+                ".local",
+                ".cache",
+            ):
                 return path  # Don't translate special dirs
-            new_path = f"{STORAGE_ROOT}/projects/{project_or_subdir}{rest}".replace("//", "/")
+            new_path = f"{STORAGE_ROOT}/projects/{project_or_subdir}{rest}".replace(
+                "//", "/"
+            )
             # Fallback to legacy
             if not os.path.exists(new_path):
-                legacy_path = f"{LEGACY_STORAGE_ROOT}/{project_or_subdir}{rest}".replace("//", "/")
+                legacy_path = (
+                    f"{LEGACY_STORAGE_ROOT}/{project_or_subdir}{rest}".replace(
+                        "//", "/"
+                    )
+                )
                 if os.path.exists(legacy_path):
                     return legacy_path
             return new_path
-            
+
         return path
 
     def _load_database(self) -> bool:
         """
         Load existing database from pickle file.
-        
+
         Validates and translates paths during loading. If a path doesn't exist,
         attempts to translate it from virtual to host path.
 
@@ -847,18 +908,18 @@ class MMPP:
         db_path = os.path.join(self.base_path, f"{self.database_name}.pkl")
         if not os.path.exists(db_path):
             return False
-            
+
         try:
             with open(db_path, "rb") as f:
                 self.df = pickle.load(f)
-            
+
             # Reconstruct ZarrJobResult objects with path validation and translation
             self.zarr_results = []
             valid_paths = []
-            
+
             for _, row in self.df.iterrows():
                 path = row["path"]
-                
+
                 # Check if path exists, if not try to translate
                 if not os.path.exists(path):
                     translated_path = self._translate_path(path)
@@ -867,31 +928,40 @@ class MMPP:
                         if os.path.exists(translated_path):
                             path = translated_path
                         else:
-                            log.warning(f"Path does not exist after translation: {translated_path}")
+                            log.warning(
+                                f"Path does not exist after translation: {translated_path}"
+                            )
                             continue  # Skip this entry
                     else:
                         log.warning(f"Path does not exist: {path}")
                         continue  # Skip this entry
-                
+
                 # Filter out path from attributes
                 attrs = {k: v for k, v in row.items() if k != "path"}
                 result = ZarrJobResult(path, attrs)
                 result._set_mmpp_ref(self)
                 self.zarr_results.append(result)
                 valid_paths.append(path)
-            
+
             # Update DataFrame with valid paths only
             if len(valid_paths) < len(self.df):
-                log.info(f"Filtered {len(self.df) - len(valid_paths)} invalid paths from database")
-                self.df = self.df[self.df["path"].apply(lambda p: 
-                    os.path.exists(p) or os.path.exists(self._translate_path(p))
-                )]
-                # Update paths in DataFrame to translated versions
-                self.df["path"] = self.df["path"].apply(lambda p: 
-                    self._translate_path(p) if not os.path.exists(p) else p
+                log.info(
+                    f"Filtered {len(self.df) - len(valid_paths)} invalid paths from database"
                 )
-                
-            log.info(f"Loaded database from {db_path} ({len(self.zarr_results)} valid entries)")
+                self.df = self.df[
+                    self.df["path"].apply(
+                        lambda p: os.path.exists(p)
+                        or os.path.exists(self._translate_path(p))
+                    )
+                ]
+                # Update paths in DataFrame to translated versions
+                self.df["path"] = self.df["path"].apply(
+                    lambda p: self._translate_path(p) if not os.path.exists(p) else p
+                )
+
+            log.info(
+                f"Loaded database from {db_path} ({len(self.zarr_results)} valid entries)"
+            )
             self._sort_zarr_results()
             return True
         except Exception as e:
@@ -915,8 +985,11 @@ class MMPP:
         all_attrs: list[dict[str, Any]] = []
         for r in self.zarr_results:
             all_attrs.append(
-                {k: v for k, v in r.attributes.items()
-                 if isinstance(v, (int, float)) and k != "path"}
+                {
+                    k: v
+                    for k, v in r.attributes.items()
+                    if isinstance(v, (int, float)) and k != "path"
+                }
             )
 
         # Find the attribute(s) that actually vary across jobs
@@ -937,9 +1010,7 @@ class MMPP:
         if len(varying) == 1:
             sort_key = varying[0][0]
             log.info(f"Auto-sorting {len(self.zarr_results)} jobs by '{sort_key}'")
-            self.zarr_results.sort(
-                key=lambda r: float(r.attributes.get(sort_key, 0))
-            )
+            self.zarr_results.sort(key=lambda r: float(r.attributes.get(sort_key, 0)))
         elif len(varying) > 1:
             # Multiple varying params — pick the one with most unique values
             sort_key = max(varying, key=lambda x: x[1])[0]
@@ -947,13 +1018,10 @@ class MMPP:
                 f"Multiple varying params detected ({[v[0] for v in varying]}); "
                 f"sorting by '{sort_key}' (most unique values: {max(v[1] for v in varying)})"
             )
-            self.zarr_results.sort(
-                key=lambda r: float(r.attributes.get(sort_key, 0))
-            )
+            self.zarr_results.sort(key=lambda r: float(r.attributes.get(sort_key, 0)))
         else:
             # No numeric variation — sort by path
             self.zarr_results.sort(key=lambda r: r.path)
-
 
     def scan(self, force: bool = False) -> pd.DataFrame:
         """
@@ -978,7 +1046,7 @@ class MMPP:
 
         scan_results = self._scan_all_zarr_folders(zarr_folders)
         self.df = self._create_dataframe(scan_results)
-        
+
         # Create ZarrJobResult objects
         self.zarr_results = []
         for res in scan_results:
@@ -1025,7 +1093,7 @@ class MMPP:
     def find(self, **kwargs: Any) -> "BatchOperations":
         """
         Find zarr folders that match the given criteria.
-        
+
         Returns a batch collection wrapper containing all matching
         :class:`~mmpp.core.job.ZarrJobResult` objects.
 
@@ -1033,7 +1101,7 @@ class MMPP:
         ----------
         **kwargs : Any
             Attribute criteria to filter by. Each keyword argument must match
-            a column name in the database (see `job.columns` property or 
+            a column name in the database (see `job.columns` property or
             `job.df.columns` for available columns).
 
         Common Simulation Parameters
@@ -1082,37 +1150,37 @@ class MMPP:
         -------
         BatchOperations
             Batch collection object containing matching ZarrJobResult objects.
-            Supports indexing like `result[0]`, iteration, and 
+            Supports indexing like `result[0]`, iteration, and
             plotting methods like `.mpl.plot()` and batch helpers.
 
         Examples
         --------
         Find simulations with specific grid size:
-        
+
         >>> results = job.find(Nx=1296, Ny=1296)
         >>> len(results)
         5
 
         Find simulations with periodic boundary conditions:
-        
+
         >>> results = job.find(PBCx=1, PBCy=1)
 
         Find simulations with specific solver:
-        
+
         >>> results = job.find(solver=3)
 
         Combine multiple criteria:
-        
+
         >>> results = job.find(Nx=1024, PBCx=1, alpha=0.01)
 
         Access matching jobs:
-        
+
         >>> results = job.find(Nx=1296)
         >>> for res in results:
         ...     print(res.path)
 
         Get single matching job:
-        
+
         >>> result = job.find(Nx=1296)[0]
         >>> result.m  # Access magnetization data
 
@@ -1136,41 +1204,47 @@ class MMPP:
 
         # Filter DataFrame - use nearest match for numeric values
         filtered_df = self.df.copy()
-        
+
         for key, target_value in kwargs.items():
             if key not in filtered_df.columns:
-                log.error(f"Column '{key}' not found in database. Available columns: {list(filtered_df.columns)}")
+                log.error(
+                    f"Column '{key}' not found in database. Available columns: {list(filtered_df.columns)}"
+                )
                 from ..batch_operations import BatchOperations
 
                 return BatchOperations([], self)
-            
+
             # Check if column is numeric
             if pd.api.types.is_numeric_dtype(filtered_df[key]):
                 # Find nearest value for numeric columns
                 column_values = filtered_df[key].values
-                
+
                 # Handle NaN values
                 valid_mask = ~pd.isna(column_values)
                 if not valid_mask.any():
                     log.warning(f"All values in column '{key}' are NaN")
                     filtered_df = filtered_df.iloc[0:0]  # Empty DataFrame
                     break
-                
+
                 valid_values = column_values[valid_mask]
                 differences = np.abs(valid_values - target_value)
                 nearest_value = valid_values[np.argmin(differences)]
-                
-                log.info(f"find({key}={target_value}): Using nearest value {nearest_value}")
-                
+
+                log.info(
+                    f"find({key}={target_value}): Using nearest value {nearest_value}"
+                )
+
                 # Filter to rows with nearest value
                 filtered_df = filtered_df[filtered_df[key] == nearest_value]
             else:
                 # Exact match for non-numeric columns
                 filtered_df = filtered_df[filtered_df[key] == target_value]
-        
+
         # Get matching ZarrJobResults
         matching_paths = set(filtered_df["path"])
-        matching_results = [res for res in self.zarr_results if res.path in matching_paths]
+        matching_results = [
+            res for res in self.zarr_results if res.path in matching_paths
+        ]
 
         from ..batch_operations import BatchOperations
 
@@ -1192,5 +1266,5 @@ class MMPP:
         """
         proxy = self.find(**kwargs)
         if hasattr(proxy, "results"):
-             return [job.path for job in proxy.results]
-        return [job.path for job in proxy] # type: ignore
+            return [job.path for job in proxy.results]
+        return [job.path for job in proxy]  # type: ignore

@@ -14,7 +14,11 @@ from ._compute_loading import resolve_dt_from_metadata
 from .compute_fft import FFTCompute, FFTComputeResult
 from .method_helpers import CallableMethodHelper
 from .plot import FFTPlotter
-from .spectrum.compute import build_cache_key, compute_fft_cached, format_slice_identifier
+from .spectrum.compute import (
+    build_cache_key,
+    compute_fft_cached,
+    format_slice_identifier,
+)
 from .transmission.interface import FFTTransmissionInterface
 from ..cli.logging_config import get_mmpp_logger
 
@@ -43,7 +47,12 @@ except ImportError:
     DISPERSION_AVAILABLE = False
     find_peaks_1d = None  # type: ignore
 
-from .spectrum import MultiSpectrumResult, SpectrumFilterChain, SpectrumHelper, SpectrumResult
+from .spectrum import (
+    MultiSpectrumResult,
+    SpectrumFilterChain,
+    SpectrumHelper,
+    SpectrumResult,
+)
 
 
 def generate_pastel_colors(n: int) -> list:
@@ -51,8 +60,9 @@ def generate_pastel_colors(n: int) -> list:
     try:
         import matplotlib.pyplot as plt
         from matplotlib.colors import to_rgba
+
         colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
-        return [to_rgba(c) for c in colors[:int(n)]]
+        return [to_rgba(c) for c in colors[: int(n)]]
     except ImportError:
         return [(0.4 + 0.15 * i, 0.6, 0.8, 1.0) for i in range(max(1, int(n)))]
 
@@ -306,10 +316,10 @@ class FFT:
     @property
     def spectrum(self) -> SpectrumHelper:
         """Get spectrum helper (shows help when accessed, callable to compute).
-        
+
         When accessed directly in notebook, shows usage help.
         When called, computes FFT spectrum.
-        
+
         Examples
         --------
         >>> job[0].fft.spectrum  # Shows help
@@ -385,21 +395,21 @@ class FFT:
             If find_peaks is None: (frequencies, complex FFT spectrum)
             If find_peaks is provided: (frequencies, complex FFT spectrum, peaks_info)
             where peaks_info is a dict with 'indices', 'frequencies', and 'amplitudes'
-        
+
         Examples:
         ---------
         >>> # Basic usage
         >>> freqs, spec = job[0].fft.spectrum()
-        >>> 
+        >>>
         >>> # With time slicing
         >>> freqs, spec = job[0].fft.spectrum(tmin=0, tmax=1000)
-        >>> 
+        >>>
         >>> # Equivalent using slice notation
         >>> freqs, spec = job[0].m[:1000,...].fft.spectrum()
         """
         if tmin is not None or tmax is not None:
             slice_info = self._merge_time_slice(slice_info, tmin=tmin, tmax=tmax)
-        
+
         result = self._compute_fft(
             dset,
             z_layer,
@@ -422,7 +432,9 @@ class FFT:
             if fmax is not None:
                 freq_mask &= frequencies <= fmax
             frequencies = frequencies[freq_mask]
-            spectrum = spectrum[freq_mask] if spectrum.ndim == 1 else spectrum[freq_mask, ...]
+            spectrum = (
+                spectrum[freq_mask] if spectrum.ndim == 1 else spectrum[freq_mask, ...]
+            )
 
         peaks_info = None
         if find_peaks is not None:
@@ -443,12 +455,16 @@ class FFT:
                     # Spatial axes are 1, 2, ...
                     spatial_axes = tuple(range(1, spectrum_abs.ndim))
                     spectrum_for_peaks = np.mean(spectrum_abs, axis=spatial_axes)
-                    log.debug(f"Averaged spectrum over axes {spatial_axes} for peak finding")
+                    log.debug(
+                        f"Averaged spectrum over axes {spatial_axes} for peak finding"
+                    )
                 else:
                     spectrum_for_peaks = spectrum_abs
 
                 # Find peaks
-                peak_indices = find_peaks_1d(spectrum_for_peaks, min_prominence=min_prominence)
+                peak_indices = find_peaks_1d(
+                    spectrum_for_peaks, min_prominence=min_prominence
+                )
 
                 # Create peaks info dictionary
                 # Use amplitudes from the spectrum used for peak finding
@@ -458,7 +474,9 @@ class FFT:
                     "amplitudes": spectrum_for_peaks[peak_indices],
                 }
 
-                log.info(f"Found {len(peak_indices)} peaks with prominence >= {min_prominence}")
+                log.info(
+                    f"Found {len(peak_indices)} peaks with prominence >= {min_prominence}"
+                )
 
         # Determine whether a specific magnetization component was selected.
         component_label = None
@@ -470,7 +488,7 @@ class FFT:
             component_label = r"$m_y$"
         elif component_index == 2:
             component_label = r"$m_z$"
-        
+
         # Mark the spectrum result to indicate single-component selection
         result = SpectrumResult(
             frequencies,
@@ -637,15 +655,19 @@ class FFT:
                     log.debug(f"Ignoring invalid tmax value: {tmax}")
 
             dt = None
-            if hasattr(data_set, 'dt'):
+            if hasattr(data_set, "dt"):
                 try:
                     dt = data_set.dt
                     log.debug(f"Using dt from data_set.dt property: {dt}")
                 except AttributeError:
                     pass  # Fall through to manual checks
             if dt is None:
-                job_meta = type("_JobMeta", (), {"attrs": getattr(zarr_group, "attrs", {})})()
-                dt = resolve_dt_from_metadata(data_set=data_set, job=job_meta, logger=log)
+                job_meta = type(
+                    "_JobMeta", (), {"attrs": getattr(zarr_group, "attrs", {})}
+                )()
+                dt = resolve_dt_from_metadata(
+                    data_set=data_set, job=job_meta, logger=log
+                )
 
             # Determine FFT length (same logic as in compute_fft)
             fft_length = n_timesteps
@@ -945,10 +967,39 @@ class FFT:
             return ""
 
     def _html_fft_display(self) -> str:
+        from mmpp._repr_helpers import api_help_html
+
         job_result = self.job_result
         job_name = getattr(job_result, "name", "unknown")
         job_path = getattr(job_result, "path", "")
         cache_size = len(self._cache)
+        api_card = api_help_html(
+            self,
+            title="FFT API help",
+            prefix="job[0].fft",
+            subtitle="Live signatures generated from the FFT interface.",
+            properties=[
+                (
+                    "spectrum",
+                    "Spectrum namespace with filters, computation and plotting helpers",
+                ),
+                ("modes", "FMR mode analysis namespace"),
+                ("dispersion", "Dispersion relation analysis namespace"),
+                ("transmission", "Transmission / absorption analysis namespace"),
+                ("plt", "Plotting shortcut accessor when available"),
+            ],
+            methods=[
+                "filters",
+                "power",
+                "frequencies",
+                "magnitude",
+                "phase",
+                "plot_spectrum",
+                "plot_modes",
+                "interactive_spectrum",
+                "clear_cache",
+            ],
+        )
 
         # ── method groups ───────────────────────────────────────
         section_style = (
@@ -958,27 +1009,39 @@ class FFT:
         row_html = ""
 
         groups: list[tuple[str, list[tuple[str, str]]]] = [
-            ("Compute", [
-                ("spectrum()", "FFT spectrum → SpectrumResult"),
-                ("filters(**f).spectrum()", "Fluent filter chain → SpectrumResult"),
-                ("power()", "Power spectrum |FFT|²"),
-                ("frequencies()", "Frequency axis (Hz)"),
-                ("magnitude()", "Magnitude spectrum |FFT|"),
-                ("phase()", "Phase spectrum (radians)"),
-            ]),
-            ("Analysis", [
-                ("dispersion", "Dispersion relation analysis"),
-                ("modes", "FMR mode analysis interface"),
-                ("transmission", "Transmission / absorption analysis"),
-            ]),
-            ("Plotting", [
-                ("plot_spectrum()", "Quick-look power spectrum plot"),
-                ("interactive_spectrum()", "Interactive mode spectrum viewer"),
-            ]),
-            ("Utilities", [
-                ("clear_cache()", "Clear in-memory FFT cache"),
-                ("plotter", "Low-level FFTPlotter instance"),
-            ]),
+            (
+                "Compute",
+                [
+                    ("spectrum()", "FFT spectrum → SpectrumResult"),
+                    ("filters(**f).spectrum()", "Fluent filter chain → SpectrumResult"),
+                    ("power()", "Power spectrum |FFT|²"),
+                    ("frequencies()", "Frequency axis (Hz)"),
+                    ("magnitude()", "Magnitude spectrum |FFT|"),
+                    ("phase()", "Phase spectrum (radians)"),
+                ],
+            ),
+            (
+                "Analysis",
+                [
+                    ("dispersion", "Dispersion relation analysis"),
+                    ("modes", "FMR mode analysis interface"),
+                    ("transmission", "Transmission / absorption analysis"),
+                ],
+            ),
+            (
+                "Plotting",
+                [
+                    ("plot_spectrum()", "Quick-look power spectrum plot"),
+                    ("interactive_spectrum()", "Interactive mode spectrum viewer"),
+                ],
+            ),
+            (
+                "Utilities",
+                [
+                    ("clear_cache()", "Clear in-memory FFT cache"),
+                    ("plotter", "Low-level FFTPlotter instance"),
+                ],
+            ),
         ]
 
         for group_name, methods in groups:
@@ -996,26 +1059,28 @@ class FFT:
                 )
 
         # ── examples ────────────────────────────────────────────
-        example_code = "\n".join([
-            "# Preferred: access FFT through a dataset",
-            "data = job[0].m_layer13[:200, ...]",
-            "result = data.fft.spectrum()",
-            "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
-            "",
-            "# Job-level FFT (auto-selects largest m dataset)",
-            "result = job[0].fft.spectrum()",
-            "",
-            "# Fluent filter chain",
-            "job[0].fft.filters(remove_static=True).spectrum()",
-            "",
-            "# Frequency range & peak detection",
-            "result = job[0].fft.spectrum(fmin=1e9, fmax=20e9,",
-            "                            find_peaks={'min_prominence': 0.1})",
-            "",
-            "# Analysis sub-interfaces",
-            "job[0].fft.modes.interactive_spectrum(dpi=150)",
-            "job[0].fft.dispersion.plot_dispersion(axis='x')",
-        ])
+        example_code = "\n".join(
+            [
+                "# Preferred: access FFT through a dataset",
+                "data = job[0].m_layer13[:200, ...]",
+                "result = data.fft.spectrum()",
+                "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
+                "",
+                "# Job-level FFT (auto-selects largest m dataset)",
+                "result = job[0].fft.spectrum()",
+                "",
+                "# Fluent filter chain",
+                "job[0].fft.filters(remove_static=True).spectrum()",
+                "",
+                "# Frequency range & peak detection",
+                "result = job[0].fft.spectrum(fmin=1e9, fmax=20e9,",
+                "                            find_peaks={'min_prominence': 0.1})",
+                "",
+                "# Analysis sub-interfaces",
+                "job[0].fft.modes.interactive_spectrum(dpi=150)",
+                "job[0].fft.dispersion.plot_dispersion(axis='x')",
+            ]
+        )
 
         html = f"""
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
@@ -1028,8 +1093,8 @@ class FFT:
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
             <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
               <div><span style="color:#94a3b8;">Cache entries:</span> <span style="color:#cbd5e1;">{cache_size}</span></div>
-              <div><span style="color:#94a3b8;">Modes:</span> <span style="color:#cbd5e1;">{_html_escape('available' if MODES_AVAILABLE else 'unavailable')}</span></div>
-              <div><span style="color:#94a3b8;">Dispersion:</span> <span style="color:#cbd5e1;">{_html_escape('available' if DISPERSION_AVAILABLE else 'unavailable')}</span></div>
+              <div><span style="color:#94a3b8;">Modes:</span> <span style="color:#cbd5e1;">{_html_escape("available" if MODES_AVAILABLE else "unavailable")}</span></div>
+              <div><span style="color:#94a3b8;">Dispersion:</span> <span style="color:#cbd5e1;">{_html_escape("available" if DISPERSION_AVAILABLE else "unavailable")}</span></div>
             </div>
           </div>
 
@@ -1053,7 +1118,7 @@ class FFT:
           </div>
         </div>
         """
-        return html
+        return html + api_card
 
     def _rich_fft_display(self) -> str:
         """Create rich documentation display with panels and proper styling."""
@@ -1151,7 +1216,9 @@ class FFT:
 
             # Batch operations panel content
             batch_methods_text = Text()
-            batch_methods_text.append("📦 Batch Operations (job[:].fft):\n", style="bold green")
+            batch_methods_text.append(
+                "📦 Batch Operations (job[:].fft):\n", style="bold green"
+            )
             batch_methods = [
                 ("spectrum.compute_all()", "Compute all spectra in batch"),
                 ("transmission.compute_all()", "Compute all transmissions"),
@@ -1188,19 +1255,31 @@ class FFT:
                 ("force", "Force recalculation", "True/False"),
                 ("zero_padding", "Pad to power-of-two", "True/False (default: True)"),
                 ("nfft", "Manual FFT length", "int or None (auto)"),
-                ("filter_type", "Preprocessing filter", "remove_mean, savgol_smooth, high_pass, band_pass"),
-                ("window", "Window function", "hann (default), flattop, nuttall, blackman"),
+                (
+                    "filter_type",
+                    "Preprocessing filter",
+                    "remove_mean, savgol_smooth, high_pass, band_pass",
+                ),
+                (
+                    "window",
+                    "Window function",
+                    "hann (default), flattop, nuttall, blackman",
+                ),
                 ("dpi", "Plot resolution", "int (e.g., 100, 300)"),
                 ("log_scale", "Logarithmic Y-scale", "True (default) / False"),
                 ("normalize", "Normalize power", "True/False (default: False)"),
                 ("show_peaks", "Show peak markers", "True (default) / False"),
-                ("freq_unit", "Frequency display unit", "Hz, kHz, MHz, GHz (default), THz"),
+                (
+                    "freq_unit",
+                    "Frequency display unit",
+                    "Hz, kHz, MHz, GHz (default), THz",
+                ),
             ]
 
             for param, desc, values in params:
                 params_table.add_row(param, desc, values)
 
-            example_code = '''# Basic FFT operations
+            example_code = """# Basic FFT operations
 freqs, spectrum = job[0].fft.spectrum()
 power = job[0].fft.power()
 
@@ -1219,7 +1298,7 @@ batch = job[:].fft.spectrum.compute_all(
     extract_parameters=["B0"],
 )
 batch[0].plot()                    # Plot single spectrum
-batch.plot_heatmap("B0")           # 2D heatmap vs B0'''
+batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
 
             syntax = Syntax(
                 example_code, "python", theme="monokai", background_color="default"
@@ -1469,7 +1548,7 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0'''
     def modes(self) -> "FFTModeInterfaceNew":
         """
         Get mode visualization interface.
-        
+
         Supports slice propagation for component selection.
 
         Returns:

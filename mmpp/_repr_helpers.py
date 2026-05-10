@@ -12,8 +12,8 @@ Every ``PlotAccessor`` can produce a rich Jupyter card by calling::
 from __future__ import annotations
 
 import inspect
+from collections.abc import Sequence
 from html import escape as _esc
-from typing import Sequence
 
 __all__ = ["api_help_html", "plot_accessor_html"]
 
@@ -47,8 +47,44 @@ def plot_accessor_html(
         "onmouseout=\"this.style.background='transparent'\""
     )
 
+    rows = "".join(
+        f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
+        f"<td style='padding:4px 10px;font-family:monospace;color:#93c5fd;"
+        f"font-size:.88em;white-space:nowrap;'>{_esc(sig)}</td>"
+        f"<td style='padding:4px 10px;color:#cbd5e1;font-size:.85em;'>"
+        f"{_esc(desc)}</td></tr>"
+        for sig, desc, tip in methods
+    )
 
-def _public_callables(obj: object, names: Sequence[str] | None = None) -> list[tuple[str, object]]:
+    footer_html = ""
+    if footer:
+        footer_html = (
+            f"<div style='margin-top:8px;font-size:.78em;color:#475569;'>{footer}</div>"
+        )
+    else:
+        footer_html = (
+            "<div style='margin-top:8px;font-size:.78em;color:#475569;'>"
+            "All methods return <code style='color:#bae6fd;'>(fig, ax)</code> "
+            "and accept <code style='color:#bae6fd;'>save=</code> path."
+            "</div>"
+        )
+
+    return (
+        f"<div style='font-family:-apple-system,sans-serif;border:2px solid {accent};"
+        f"border-radius:10px;padding:12px;margin:6px 0;background:#0f172a;"
+        f"color:#e2e8f0;max-width:720px;'>"
+        f"<div style='font-weight:700;color:{title_color};margin-bottom:8px;'>"
+        f"{_esc(title)}"
+        f"<span style='font-size:.75em;color:#475569;font-weight:400;"
+        f"margin-left:8px;'>(hover rows for parameter details)</span></div>"
+        f"<table style='width:100%;border-collapse:collapse;'>{rows}</table>"
+        f"{footer_html}</div>"
+    )
+
+
+def _public_callables(
+    obj: object, names: Sequence[str] | None = None
+) -> list[tuple[str, object]]:
     selected = names if names is not None else dir(obj)
     out: list[tuple[str, object]] = []
     for name in selected:
@@ -82,25 +118,23 @@ def _summary_text(func: object) -> str:
 
 
 def _example_for(prefix: str, name: str, func: object) -> str:
-    sig = _signature_text(func)
     call_args = ""
-    if sig.startswith("(") and sig.endswith(")"):
-        params = []
-        try:
-            signature = inspect.signature(func)
-            for param in signature.parameters.values():
-                if param.name in {"self", "cls"}:
-                    continue
-                if param.kind in {
-                    inspect.Parameter.VAR_POSITIONAL,
-                    inspect.Parameter.VAR_KEYWORD,
-                }:
-                    continue
-                if param.default is inspect.Parameter.empty:
-                    params.append(f"{param.name}=...")
-            call_args = ", ".join(params[:3])
-        except Exception:
-            call_args = ""
+    params = []
+    try:
+        signature = inspect.signature(func)
+        for param in signature.parameters.values():
+            if param.name in {"self", "cls"}:
+                continue
+            if param.kind in {
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            }:
+                continue
+            if param.default is inspect.Parameter.empty:
+                params.append(f"{param.name}=...")
+        call_args = ", ".join(params[:3])
+    except Exception:
+        call_args = ""
     return f"{prefix}.{name}({call_args})"
 
 
@@ -170,7 +204,7 @@ def api_help_html(
         "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
         "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
         "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-        "color:#e2e8f0;max-width:980px;\">"
+        'color:#e2e8f0;max-width:980px;">'
         f"<div style='font-size:1.04em;font-weight:700;color:#f1f5f9;'>{_esc(title)}</div>"
         f"{subtitle_html}{props_block}"
         "<div style='font-weight:600;color:#f1f5f9;margin:10px 0 4px;'>Methods</div>"
@@ -180,39 +214,4 @@ def api_help_html(
         "<th style='padding:4px 8px;'>Example</th></tr></thead>"
         f"<tbody>{method_rows}</tbody></table>"
         "</div>"
-    )
-
-    rows = "".join(
-        f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
-        f"<td style='padding:4px 10px;font-family:monospace;color:#93c5fd;"
-        f"font-size:.88em;white-space:nowrap;'>{_esc(sig)}</td>"
-        f"<td style='padding:4px 10px;color:#cbd5e1;font-size:.85em;'>"
-        f"{_esc(desc)}</td></tr>"
-        for sig, desc, tip in methods
-    )
-
-    footer_html = ""
-    if footer:
-        footer_html = (
-            f"<div style='margin-top:8px;font-size:.78em;color:#475569;'>"
-            f"{footer}</div>"
-        )
-    else:
-        footer_html = (
-            "<div style='margin-top:8px;font-size:.78em;color:#475569;'>"
-            "All methods return <code style='color:#bae6fd;'>(fig, ax)</code> "
-            "and accept <code style='color:#bae6fd;'>save=</code> path."
-            "</div>"
-        )
-
-    return (
-        f"<div style='font-family:-apple-system,sans-serif;border:2px solid {accent};"
-        f"border-radius:10px;padding:12px;margin:6px 0;background:#0f172a;"
-        f"color:#e2e8f0;max-width:720px;'>"
-        f"<div style='font-weight:700;color:{title_color};margin-bottom:8px;'>"
-        f"{_esc(title)}"
-        f"<span style='font-size:.75em;color:#475569;font-weight:400;"
-        f"margin-left:8px;'>(hover rows for parameter details)</span></div>"
-        f"<table style='width:100%;border-collapse:collapse;'>{rows}</table>"
-        f"{footer_html}</div>"
     )

@@ -56,28 +56,28 @@ class BatchFFT:
         from .fft.transmission.batch import BatchTransmission
 
         # Check if dataset context was set (from BatchDatasetWrapper)
-        dataset_name = getattr(self, '_dataset_name', None)
-        slice_info = getattr(self, '_slice_info', None)
+        dataset_name = getattr(self, "_dataset_name", None)
+        slice_info = getattr(self, "_slice_info", None)
 
         return BatchTransmission(
             self.results,
             self.mmpp_ref,
             dataset_name=dataset_name,
-            slice_info=slice_info
+            slice_info=slice_info,
         )
 
     @property
     def spectrum(self) -> "BatchSpectrum":
         """Get batch spectrum analyzer.
-        
+
         Returns batch spectrum processor for computing FFT spectra
         across multiple simulation results.
-        
+
         Returns
         -------
         BatchSpectrum
             Batch spectrum processor
-            
+
         Examples
         --------
         >>> # Compute batch spectrum
@@ -90,8 +90,8 @@ class BatchFFT:
         """
         from .fft.spectrum_batch import BatchSpectrum
 
-        dataset_name = getattr(self, '_dataset_name', None)
-        slice_info = getattr(self, '_slice_info', None)
+        dataset_name = getattr(self, "_dataset_name", None)
+        slice_info = getattr(self, "_slice_info", None)
 
         return BatchSpectrum(
             self.results,
@@ -182,9 +182,9 @@ class BatchFFT:
         # ── header ──────────────────────────────────────────────
         html = (
             '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
-            'border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;'
-            'background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);'
-            'color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),'
+            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
             '0 0 0 1px rgba(148,163,184,0.1) inset;">'
         )
         html += (
@@ -224,20 +224,38 @@ class BatchFFT:
 
         # ── available operations ────────────────────────────────
         groups = [
-            ("Spectrum", [
-                ("job[:].fft.spectrum.compute_all(…)", "Compute spectra for all jobs → BatchSpectrumResult"),
-                ("batch.plot.heatmap('B0')", "2D heatmap vs swept parameter"),
-            ]),
-            ("Modes", [
-                ("job[:].fft.modes.compute_modes()", "Batch FMR mode detection"),
-                ("job[:].fft.modes.analyze_all()", "Analyze peaks across all jobs"),
-            ]),
-            ("Transmission", [
-                ("job[:].m[…].fft.transmission.compute_all(…)", "Batch transmission analysis"),
-            ]),
-            ("General", [
-                ("job[:].fft.compute_all()", "Run raw FFT on all jobs"),
-            ]),
+            (
+                "Spectrum",
+                [
+                    (
+                        "job[:].fft.spectrum.compute_all(…)",
+                        "Compute spectra for all jobs → BatchSpectrumResult",
+                    ),
+                    ("batch.plot.heatmap('B0')", "2D heatmap vs swept parameter"),
+                ],
+            ),
+            (
+                "Modes",
+                [
+                    ("job[:].fft.modes.compute_modes()", "Batch FMR mode detection"),
+                    ("job[:].fft.modes.analyze_all()", "Analyze peaks across all jobs"),
+                ],
+            ),
+            (
+                "Transmission",
+                [
+                    (
+                        "job[:].m[…].fft.transmission.compute_all(…)",
+                        "Batch transmission analysis",
+                    ),
+                ],
+            ),
+            (
+                "General",
+                [
+                    ("job[:].fft.compute_all()", "Run raw FFT on all jobs"),
+                ],
+            ),
         ]
 
         section_style = (
@@ -270,7 +288,7 @@ class BatchFFT:
         example_id = f"batch-fft-ex-{uid}"
         html += (
             f'<div style="margin-top:4px;">'
-            f'<span onclick="var e=document.getElementById(\'{example_id}\');'
+            f"<span onclick=\"var e=document.getElementById('{example_id}');"
             f"e.style.display=e.style.display==='none'?'block':'none';\""
             f' style="cursor:pointer;color:#60a5fa;font-size:0.9em;">'
             f"▶ Quick-start examples</span>"
@@ -555,13 +573,13 @@ class BatchModeAnalyzer:
 
 class BatchDatasetWrapper:
     """Wrapper for dataset-aware batch operations.
-    
+
     Allows syntax like: job[:].m_layer13[:,...,0].fft.transmission(...)
     """
 
     def __init__(self, results: list[Any], mmpp_ref: Any, dataset_name: str):
         """Initialize dataset wrapper.
-        
+
         Parameters
         ----------
         results : List[Any]
@@ -604,7 +622,9 @@ class BatchDatasetWrapper:
                 source_shape = None
 
         if source_shape is not None:
-            new_plan = make_index_plan(key, source_shape, previous_plan=self._index_plan)
+            new_plan = make_index_plan(
+                key, source_shape, previous_plan=self._index_plan
+            )
             new._index_plan = new_plan
             new.slice_info = new_plan.storage_key
         else:
@@ -624,13 +644,30 @@ class BatchDatasetWrapper:
         batch_fft._slice_info = self.slice_info
         return batch_fft
 
+    def _repr_html_(self) -> str:
+        """HTML card for Jupyter notebooks."""
+        n = len(self.results)
+        slice_info = f"<code>{self.slice_info}</code>" if self.slice_info is not None else "<i>none</i>"
+        return (
+            "<div style='border:1px solid #334155;padding:8px;border-radius:6px;"
+            "font-family:monospace;display:inline-block'>"
+            f"<b>BatchDatasetWrapper</b> &mdash; <code>{self.dataset_name}</code><br>"
+            f"<table style='border-collapse:collapse;margin-top:4px'>"
+            f"<tr><td><b>jobs</b></td><td>{n}</td></tr>"
+            f"<tr><td><b>slice</b></td><td>{slice_info}</td></tr>"
+            "</table></div>"
+        )
+
+    def __repr__(self) -> str:
+        return f"BatchDatasetWrapper('{self.dataset_name}', {len(self.results)} jobs)"
+
 
 class BatchNumpyDatasetWrapper:
     """Wrapper that returns stacked numpy arrays from multiple jobs.
-    
+
     Used by job[:].get.dataset_name[slice] to return 6D numpy arrays
     with shape [n_jobs, t, z, y, x, c] (or appropriate dimensions based on data).
-    
+
     Example
     -------
     >>> arr = job[:].get.m[:]  # Returns 6D array [n_jobs, t, z, y, x, c]
@@ -644,7 +681,7 @@ class BatchNumpyDatasetWrapper:
 
     def __getitem__(self, key) -> np.ndarray:
         """Return stacked sliced data as numpy array from all jobs.
-        
+
         Returns array with shape [n_jobs, ...original_dims...]
         """
         arrays = []
@@ -654,7 +691,9 @@ class BatchNumpyDatasetWrapper:
                 member = result._get_zarr_member(self._dataset_name)
                 arrays.append(np.asarray(member[key]))
             except (NameError, KeyError) as e:
-                log.warning(f"Dataset '{self._dataset_name}' not found in {result.path}: {e}")
+                log.warning(
+                    f"Dataset '{self._dataset_name}' not found in {result.path}: {e}"
+                )
                 continue
 
         if not arrays:
@@ -681,15 +720,15 @@ class BatchNumpyDatasetWrapper:
 
 class BatchNumpyGetter:
     """Helper providing direct numpy access for batch operations.
-    
+
     Returns stacked numpy arrays from all jobs with shape [n_jobs, t, z, y, x, c].
-    
+
     Example
     -------
     >>> # Batch access - returns 6D stacked array
     >>> arr = job[:].get.m[:]  # shape: [n_jobs, t, z, y, x, c]
     >>> arr = job[:].get.m[0:100, :, :, :, 0]  # sliced stack
-    >>> 
+    >>>
     >>> # Works with any dataset name
     >>> arr = job[:].get.m_layer13[:]
     >>> arr = job[:].get["m_layer13"][:]
@@ -732,7 +771,9 @@ class BatchOperations:
     - `op[:].get.m[:]` (direct numpy access, returns stacked array)
     """
 
-    def __init__(self, results: list[Any], mmpp_ref: Any, _filter_kwargs: dict | None = None):
+    def __init__(
+        self, results: list[Any], mmpp_ref: Any, _filter_kwargs: dict | None = None
+    ):
         """
         Initialize batch operations.
 
@@ -792,7 +833,9 @@ class BatchOperations:
                     setter = getattr(res, "_set_mmpp_ref", None)
                     if callable(setter):
                         setter(self.mmpp_ref)
-            return BatchOperations(sliced_results, self.mmpp_ref, _filter_kwargs=self._filter_kwargs)
+            return BatchOperations(
+                sliced_results, self.mmpp_ref, _filter_kwargs=self._filter_kwargs
+            )
 
         result = self.results[index]
         if self.mmpp_ref is not None:
@@ -809,22 +852,22 @@ class BatchOperations:
     @property
     def get(self) -> BatchNumpyGetter:
         """Access datasets with direct numpy output (batch version).
-        
+
         Returns a BatchNumpyGetter that provides direct stacked numpy array
         access when slicing datasets. Returns arrays with shape [n_jobs, ...]
         where the first dimension corresponds to the number of jobs in batch.
-        
+
         Returns
         -------
         BatchNumpyGetter
             Helper object for numpy-direct batch dataset access
-        
+
         Example
         -------
         >>> # Batch numpy access - returns 6D array [n_jobs, t, z, y, x, c]
         >>> arr = job[:].get.m[:]
         >>> arr = job[:].get.m[0:100, :, :, :, 0]
-        >>> 
+        >>>
         >>> # Shape will be [n_jobs, ...original_dims...]
         >>> arr.shape  # e.g. (10, 443, 1, 94, 7520, 3) for 10 jobs
         """
@@ -844,14 +887,14 @@ class BatchOperations:
 
     def __getattr__(self, name: str):
         """Intercept dataset names to enable dataset-aware batch operations.
-        
+
         This allows syntax like: job[:].m_layer13.fft.transmission(...)
-        
+
         Parameters
         ----------
         name : str
             Attribute name (potentially a dataset name)
-            
+
         Returns
         -------
         BatchDatasetWrapper
@@ -871,14 +914,20 @@ class BatchOperations:
         try:
             plotter = self.mpl
         except ImportError:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
         try:
             return getattr(plotter, name)
         except AttributeError as exc:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from exc
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            ) from exc
 
         # Not a dataset — raise standard error
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
 
     def __len__(self) -> int:
         """Return number of results in batch."""
@@ -898,8 +947,15 @@ class BatchOperations:
             return "0"
         abs_val = abs(value)
         si = [
-            (1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k"),
-            (1, ""), (1e-3, "m"), (1e-6, "µ"), (1e-9, "n"), (1e-12, "p"),
+            (1e12, "T"),
+            (1e9, "G"),
+            (1e6, "M"),
+            (1e3, "k"),
+            (1, ""),
+            (1e-3, "m"),
+            (1e-6, "µ"),
+            (1e-9, "n"),
+            (1e-12, "p"),
         ]
         for threshold, prefix in si:
             if abs_val >= threshold * 0.999:
@@ -915,29 +971,45 @@ class BatchOperations:
         import html as _html
         import uuid as _uuid
 
+        from mmpp._repr_helpers import api_help_html
+
         n = len(self.results)
         uid = str(_uuid.uuid4())[:8]
         _fmt = self._fmt_num  # local shortcut
+        api_card = api_help_html(
+            self,
+            title="BatchOperations API help",
+            prefix="job[:]",
+            subtitle="Batch-level accessors, methods, signatures and examples.",
+            properties=[
+                ("fft", "Batch FFT namespace"),
+                ("get", "Direct stacked numpy access"),
+                ("solitons", "Batch soliton analysis namespace"),
+                ("vortex", "Shortcut for solitons.vortex"),
+                ("mpl", "Batch plotting helper"),
+            ],
+            methods=["process"],
+        )
 
         # ── styles ──────────────────────────────────────────────
         _card = (
-            'background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
-            'rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;'
-            'margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);'
+            "background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,"
+            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;"
+            "margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);"
         )
         _code = (
             "background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;"
             "color:#60a5fa;border:1px solid rgba(71,85,105,0.3);font-weight:500;"
             "font-family:'Courier New',monospace;font-size:0.88em;"
         )
-        _bdr = 'border-bottom:1px solid rgba(71,85,105,0.3);'
+        _bdr = "border-bottom:1px solid rgba(71,85,105,0.3);"
 
         # ── outer container ─────────────────────────────────────
         html = (
             '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
-            'border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;'
-            'background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);'
-            'color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),'
+            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
             '0 0 0 1px rgba(148,163,184,0.1) inset;">'
         )
 
@@ -945,10 +1017,10 @@ class BatchOperations:
         html += (
             '<h3 style="margin:0 0 12px 0;color:#f1f5f9;font-weight:600;'
             'letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);">'
-            f'📦 Batch Operations &nbsp;'
+            f"📦 Batch Operations &nbsp;"
             f'<span style="color:#60a5fa;font-weight:700;">{n}</span>'
             f'<span style="color:#cbd5e1;font-weight:400;font-size:0.9em;"> result{"s" if n != 1 else ""}</span>'
-            '</h3>'
+            "</h3>"
         )
 
         if n == 0:
@@ -969,7 +1041,7 @@ class BatchOperations:
                     f'<span style="color:#cbd5e1;"> = </span>'
                     f'<span style="color:#10b981;font-family:monospace;">{_html.escape(fmt_v)}</span></span>'
                 )
-            html += '</div></div>'
+            html += "</div></div>"
 
         # ── detect varying parameters ───────────────────────────
         try:
@@ -977,6 +1049,7 @@ class BatchOperations:
                 extract_job_metadata,
                 find_differing_parameters,
             )
+
             diff = find_differing_parameters(self.results)
             varying = diff.differing_params
             all_meta = [extract_job_metadata(r) for r in self.results]
@@ -990,7 +1063,9 @@ class BatchOperations:
         # ── 2. varying parameters summary ───────────────────────
         if varying:
             html += f'<div style="{_card}">'
-            html += f'<b style="color:#94a3b8;">📊 Varying Parameters ({len(varying)}):</b>'
+            html += (
+                f'<b style="color:#94a3b8;">📊 Varying Parameters ({len(varying)}):</b>'
+            )
             html += (
                 '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.88em;">'
                 f'<tr style="{_bdr}">'
@@ -1000,7 +1075,9 @@ class BatchOperations:
             )
             for pname in varying_keys:
                 vals = varying[pname]
-                nums = [v for v in vals if isinstance(v, (int, float)) and v is not None]
+                nums = [
+                    v for v in vals if isinstance(v, (int, float)) and v is not None
+                ]
                 if nums:
                     uv = sorted(set(nums))
                     n_uniq = len(uv)
@@ -1016,7 +1093,7 @@ class BatchOperations:
                     f'<td style="padding:5px 8px;text-align:center;color:#a5b4fc;font-weight:600;">{n_uniq}</td>'
                     f'<td style="padding:5px 8px;font-family:monospace;color:#cbd5e1;">{rng}</td></tr>'
                 )
-            html += '</table></div>'
+            html += "</table></div>"
 
         # ── 3. full results table (open by default) ─────────────
         html += f'<div style="{_card}">'
@@ -1038,7 +1115,7 @@ class BatchOperations:
             html += f'<th style="padding:6px 8px;text-align:center;color:#a5b4fc;">{_html.escape(vk)}</th>'
         html += (
             '<th style="padding:6px 8px;text-align:left;color:#94a3b8;">Path</th>'
-            '</tr></thead><tbody>'
+            "</tr></thead><tbody>"
         )
 
         # rows
@@ -1051,7 +1128,7 @@ class BatchOperations:
             else:
                 short_path = result.path
 
-            bg = 'background:rgba(15,23,42,0.3);' if idx % 2 == 0 else ''
+            bg = "background:rgba(15,23,42,0.3);" if idx % 2 == 0 else ""
             html += f'<tr style="{_bdr}{bg}">'
             html += f'<td style="padding:4px 8px;text-align:center;color:#64748b;">{idx}</td>'
             html += f'<td style="padding:4px 8px;"><code style="color:#e2e8f0;">{_html.escape(name)}</code></td>'
@@ -1071,9 +1148,9 @@ class BatchOperations:
                 f'<td style="padding:4px 8px;color:#64748b;font-size:0.85em;" '
                 f'title="{_html.escape(result.path)}">{_html.escape(short_path)}</td>'
             )
-            html += '</tr>'
+            html += "</tr>"
 
-        html += '</tbody></table></div></div>'
+        html += "</tbody></table></div></div>"
 
         # ── 4. available operations table ────────────────────────
         ops = [
@@ -1094,32 +1171,32 @@ class BatchOperations:
                 f'<code style="{_code}">{code}</code></td>'
                 f'<td style="padding:6px 8px;color:#cbd5e1;">{desc}</td></tr>'
             )
-        html += '</table></div>'
+        html += "</table></div>"
 
         # ── 5. quick-start examples (collapsible) ───────────────
         example_id = f"batch-examples-{uid}"
         html += (
             f'<div style="margin-top:4px;">'
-            f'<span onclick="var e=document.getElementById(\'{example_id}\');'
+            f"<span onclick=\"var e=document.getElementById('{example_id}');"
             f"e.style.display=e.style.display==='none'?'block':'none';\""
             f' style="cursor:pointer;color:#60a5fa;font-size:0.9em;">'
-            f'▶ Quick-start examples</span>'
+            f"▶ Quick-start examples</span>"
             f'<div id="{example_id}" style="display:none;margin-top:8px;">'
             f'<pre style="background:rgba(15,23,42,0.8);padding:10px;border-radius:6px;'
             f"font-family:'Courier New',monospace;font-size:0.85em;color:#10b981;"
             f'border:1px solid rgba(71,85,105,0.4);overflow-x:auto;">'
-            '# Batch spectrum\n'
-            'batch = job[:].fft.spectrum.compute_all(fmin=5e9, fmax=25e9)\n'
+            "# Batch spectrum\n"
+            "batch = job[:].fft.spectrum.compute_all(fmin=5e9, fmax=25e9)\n"
             'batch.plot.heatmap("B0")\n\n'
-            '# Batch numpy access\n'
-            'arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n'
-            '# Full pipeline\n'
+            "# Batch numpy access\n"
+            "arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n"
+            "# Full pipeline\n"
             'job[:].process(dset="m")'
-            '</pre></div></div>'
+            "</pre></div></div>"
         )
 
-        html += '</div>'
-        return html
+        html += "</div>"
+        return html + api_card
 
     def __iter__(self):
         """Make batch operations iterable."""

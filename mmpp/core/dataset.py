@@ -541,7 +541,20 @@ class DatasetAwareWrapper:
                 stacklevel=2,
             )
 
-        arr = np.asarray(self._resolve_source())
+        if self.is_lazy and self.estimated_nbytes > _LARGE_BYTES:
+            warnings.warn(
+                f"Materializing ~{self.estimated_nbytes / (1 << 30):.1f} GiB. "
+                "Consider using chunks, downsample, or .sel() first.",
+                stacklevel=2,
+            )
+
+        source = self._resolve_source()
+        # Zarr arrays and H5QuantityGroup-like objects (shape but not ndarray)
+        # must be explicitly loaded via [:] because np.asarray would misinterpret
+        # them (e.g., iterating over dict-like keys for H5 groups).
+        if not isinstance(source, np.ndarray) and hasattr(source, "shape") and hasattr(source, "__getitem__"):
+            source = source[:]
+        arr = np.asarray(source)
 
         if not keepdims and self._index_plan is not None:
             dropped = self._index_plan.dropped_axes

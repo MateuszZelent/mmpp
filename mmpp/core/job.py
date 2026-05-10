@@ -474,6 +474,36 @@ class ZarrJobResult:
     def __str__(self) -> str:
         return f"ZarrJobResult('{self.name}')"
 
+    def _repr_html_(self) -> str:
+        """HTML card for Jupyter notebooks."""
+        try:
+            datasets = self.datasets
+            attrs = dict(self.attrs)
+        except Exception:
+            datasets = []
+            attrs = {}
+        finished = self.is_finished()
+        fin_symbol = "&#10003;" if finished else "&#10007;"
+        fin_color = "#22c55e" if finished else "#ef4444"
+        ds_list = "".join(f"<li><code>{d}</code></li>" for d in datasets[:10])
+        if len(datasets) > 10:
+            ds_list += f"<li><i>…and {len(datasets) - 10} more</i></li>"
+        meta_rows = "".join(
+            f"<tr><td><b>{k}</b></td><td>{v}</td></tr>"
+            for k, v in list(attrs.items())[:8]
+        )
+        return (
+            "<div style='border:1px solid #334155;padding:10px;border-radius:6px;"
+            "font-family:monospace;display:inline-block;max-width:600px'>"
+            f"<b>ZarrJobResult</b> &mdash; <i>{self.name}</i>"
+            f"&nbsp;&nbsp;<span style='color:{fin_color}'>{fin_symbol}</span><br>"
+            "<details><summary style='cursor:pointer;margin:4px 0'>Datasets</summary>"
+            f"<ul style='margin:2px 0'>{ds_list}</ul></details>"
+            "<details><summary style='cursor:pointer;margin:4px 0'>Attributes</summary>"
+            f"<table style='border-collapse:collapse'>{meta_rows}</table></details>"
+            "</div>"
+        )
+
     @property
     def pp(self):
         """Pretty print the zarr tree interactively using rich console.
