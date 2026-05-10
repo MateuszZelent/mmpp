@@ -18,15 +18,9 @@ Usage:
     disp.plt.plot()
 """
 
+from . import nonlinear_stno
 from .base import AnalyticalResult, DispersionResult, FMRResult
 from .constants import G_FACTOR_DEFAULT, GAMMA_E, MU0, gamma
-from . import nonlinear_stno
-from .nonlinear_stno import (
-    STNOParameters,
-    run_all_sweeps_parallel,
-    SpectrumAnalyzer,
-    DashboardPlotter,
-)
 from .dispersion import (
     backward_volume,
     bottcher,
@@ -37,10 +31,21 @@ from .dispersion import (
     kalinikos_no_approx,
     kim,
 )
+from .field_resolved_thiele import (
+    FieldResolvedCalibration,
+    FieldResolvedCPPThieleModel,
+    FieldResolvedTrajectoryResult,
+)
 from .fmr import (
     kittel,
     kittel_exchange,
     kittel_oop,
+)
+from .nonlinear_stno import (
+    DashboardPlotter,
+    SpectrumAnalyzer,
+    STNOParameters,
+    run_all_sweeps_parallel,
 )
 from .thiele import (
     CIPThieleModel,
@@ -119,6 +124,9 @@ __all__ = [
     "field_rotating_inplane",
     "omega0_novosad",
     "f0_novosad_ghz",
+    "FieldResolvedCPPThieleModel",
+    "FieldResolvedCalibration",
+    "FieldResolvedTrajectoryResult",
     # Nonlinear STNO dynamics (DBAT 2.0)
     "nonlinear_stno",
     "STNOParameters",

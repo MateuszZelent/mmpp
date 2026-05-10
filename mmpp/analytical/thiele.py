@@ -1527,7 +1527,11 @@ class CPPThieleModel:
         The coefficient ``seq_per_T`` [1/T] should be calibrated from
         micromagnetic simulations.
         """
-        B = field_state if field_state is not None else self.field
+        B = (
+            ExternalField.from_any(field_state)
+            if field_state is not None
+            else self.field
+        )
         sx, sy = self.field_cal.s_eq(field_state=B)
         out = np.array([sx, sy], dtype=float)
         norm = float(np.linalg.norm(out))

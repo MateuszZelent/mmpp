@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from mmpp._shared.spectral import compute_psd, infer_dt
+
 
 @dataclass
 class DirectionalSpectrumResult:
@@ -20,7 +22,9 @@ class DirectionalSpectrumResult:
 
     @property
     def total_power(self) -> np.ndarray:
-        return np.asarray(self.power_ccw, dtype=float) + np.asarray(self.power_cw, dtype=float)
+        return np.asarray(self.power_ccw, dtype=float) + np.asarray(
+            self.power_cw, dtype=float
+        )
 
     @property
     def plt(self):
@@ -57,11 +61,17 @@ class _DirectionalSpectrumPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("DirectionalSpectrumPlotAccessor", [
-            (".power_spectrum(unit='hz')",
-             "CCW/CW/total directional power spectrum",
-             "unit: 'hz' or 'ghz'. Accepts matplotlib kwargs."),
-        ])
+
+        return plot_accessor_html(
+            "DirectionalSpectrumPlotAccessor",
+            [
+                (
+                    ".power_spectrum(unit='hz')",
+                    "CCW/CW/total directional power spectrum",
+                    "unit: 'hz' or 'ghz'. Accepts matplotlib kwargs.",
+                ),
+            ],
+        )
 
 
 class TrajectoryOrbitAccessor:
@@ -123,54 +133,39 @@ class TrajectorySpectrumAccessor:
                 metadata={"status": "insufficient_samples"},
             )
 
-        dt = float(np.median(np.diff(time)))
+        dt = infer_dt(time)
         if dt <= 0.0:
             raise ValueError("time axis must be strictly increasing")
 
         method_norm = str(method).lower()
-        if method_norm == "welch":
-            try:
-                from scipy.signal import welch
-
-                fs = 1.0 / dt
-                seg = int(nperseg) if nperseg is not None else min(256, signal.size)
-                seg = max(8, min(seg, signal.size))
-                overlap = seg // 2 if noverlap is None else int(noverlap)
-
-                freq, pxx = welch(signal, fs=fs, nperseg=seg, noverlap=overlap)
-                _, pxx_conj = welch(np.conjugate(signal), fs=fs, nperseg=seg, noverlap=overlap)
-
-                return DirectionalSpectrumResult(
-                    frequencies=np.asarray(freq, dtype=float),
-                    power_ccw=np.asarray(np.real(pxx), dtype=float),
-                    power_cw=np.asarray(np.real(pxx_conj), dtype=float),
-                    method="welch",
-                    metadata={"dt": dt, "requested_method": method_norm},
-                )
-            except Exception:
-                method_norm = "periodogram"
-
-        if method_norm != "periodogram":
+        if method_norm == "fft":
+            method_norm = "periodogram"
+        if method_norm not in {"welch", "periodogram"}:
             raise ValueError("method must be 'welch' or 'periodogram'")
 
-        centered = signal - np.mean(signal)
-        centered_conj = np.conjugate(centered)
-
-        fft_ccw = np.fft.fft(centered)
-        fft_cw = np.fft.fft(centered_conj)
-        freq = np.fft.fftfreq(centered.size, d=dt)
-
-        mask = freq >= 0.0
-        freq = freq[mask]
-        power_ccw = ((np.abs(fft_ccw) ** 2) / max(centered.size, 1))[mask]
-        power_cw = ((np.abs(fft_cw) ** 2) / max(centered.size, 1))[mask]
+        freq, power_ccw, used_method, metadata = compute_psd(
+            signal,
+            dt=dt,
+            method=method_norm,
+            nperseg=nperseg,
+            noverlap=noverlap,
+        )
+        _, power_cw, used_method_cw, _ = compute_psd(
+            np.conjugate(signal),
+            dt=dt,
+            method=method_norm,
+            nperseg=nperseg,
+            noverlap=noverlap,
+        )
+        used = used_method if used_method == used_method_cw else "mixed"
+        metadata["method"] = used
 
         return DirectionalSpectrumResult(
             frequencies=np.asarray(freq, dtype=float),
-            power_ccw=np.asarray(power_ccw, dtype=float),
-            power_cw=np.asarray(power_cw, dtype=float),
-            method="periodogram",
-            metadata={"dt": dt, "requested_method": method},
+            power_ccw=np.asarray(np.real(power_ccw), dtype=float),
+            power_cw=np.asarray(np.real(power_cw), dtype=float),
+            method=used,
+            metadata=metadata,
         )
 
 

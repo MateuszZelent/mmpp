@@ -28,7 +28,7 @@ log = logging.getLogger("mmpp.solitons.vortex.ui")
 
 try:
     import ipywidgets as widgets
-    from IPython.display import display, clear_output, HTML
+    from IPython.display import display, clear_output, HTML, Image as IPyImage
     _HAS_WIDGETS = True
 except ImportError:
     _HAS_WIDGETS = False
@@ -250,6 +250,7 @@ class VortexInteractiveDashboard:
     def show(self) -> Any:
         """Build and display the interactive dashboard."""
         self._build()
+        plt.ioff()  # prevent %matplotlib widget from auto-displaying figures to cell output
         display(HTML(_CSS))
         display(self._root)
         return self
@@ -674,9 +675,27 @@ class VortexInteractiveDashboard:
             clear_output(wait=True)
 
     def _show_figure(self, fig):
+        """Render figure to PNG and display in Output widget.
+
+        Using PNG avoids all ipympl canvas-widget duplication issues
+        regardless of the active matplotlib backend.
+        """
+        import io
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight",
+                    facecolor=fig.get_facecolor())
+        buf.seek(0)
+        img_data = buf.read()
+        plt.close(fig)
+        if self._fig is not None:
+            try:
+                plt.close(self._fig)
+            except Exception:
+                pass
+            self._fig = None
         with self._output:
             clear_output(wait=True)
-            display(fig.canvas if hasattr(fig, 'canvas') else fig)
+            display(IPyImage(data=img_data, format="png"))
 
     # ---- CORE -------------------------------------------------------
 
@@ -741,8 +760,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Core tracking failed: {exc}", "error")
             log.exception("Core tracking error")
-        finally:
-            plt.close("all")
 
     # ---- TOPOLOGY ---------------------------------------------------
 
@@ -792,8 +809,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Topology failed: {exc}", "error")
             log.exception("Topology error")
-        finally:
-            plt.close("all")
 
     # ---- TRAJECTORY -------------------------------------------------
 
@@ -887,8 +902,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Trajectory failed: {exc}", "error")
             log.exception("Trajectory error")
-        finally:
-            plt.close("all")
 
     # ---- SPECTRUM ---------------------------------------------------
 
@@ -967,8 +980,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Spectrum failed: {exc}", "error")
             log.exception("Spectrum error")
-        finally:
-            plt.close("all")
 
     # ---- SPECTROGRAM ------------------------------------------------
 
@@ -1021,8 +1032,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Spectrogram failed: {exc}", "error")
             log.exception("Spectrogram error")
-        finally:
-            plt.close("all")
 
     # ---- MODES ------------------------------------------------------
 
@@ -1069,8 +1078,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Modes failed: {exc}", "error")
             log.exception("Modes error")
-        finally:
-            plt.close("all")
 
     # ---- EVENTS -----------------------------------------------------
 
@@ -1130,8 +1137,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Event detection failed: {exc}", "error")
             log.exception("Events error")
-        finally:
-            plt.close("all")
 
     # ---- SIGNALS ----------------------------------------------------
 
@@ -1194,8 +1199,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Signal failed: {exc}", "error")
             log.exception("Signals error")
-        finally:
-            plt.close("all")
 
     # ---- THIELE QUICK -----------------------------------------------
 
@@ -1293,8 +1296,6 @@ class VortexInteractiveDashboard:
         except Exception as exc:
             self._set_status(f"Thiele failed: {exc}", "error")
             log.exception("Thiele error")
-        finally:
-            plt.close("all")
 
     # ---- THIELE FULL DASHBOARD --------------------------------------
 

@@ -6,6 +6,21 @@ from typing import Any
 
 import numpy as np
 
+try:  # pragma: no cover - optional dependency availability is environment-specific
+    from numba import njit
+
+    HAS_NUMBA = True
+except Exception:  # pragma: no cover
+    HAS_NUMBA = False
+
+    def njit(*args, **kwargs):  # type: ignore[misc]
+        def decorator(func):
+            return func
+
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return decorator
+
 
 def _y_axis_value(convention: Any | None) -> str:
     if convention is None:
@@ -28,7 +43,9 @@ def normalize_magnetization(m: np.ndarray) -> np.ndarray:
     """Normalize magnetization vectors with safe divide guard."""
     arr = np.asarray(m, dtype=float)
     if arr.ndim < 3 or arr.shape[-1] < 3:
-        raise ValueError("Expected magnetization with trailing vector axis of size >= 3")
+        raise ValueError(
+            "Expected magnetization with trailing vector axis of size >= 3"
+        )
 
     arr = arr[..., :3]
     norm = np.linalg.norm(arr, axis=-1, keepdims=True)
@@ -66,19 +83,78 @@ def _triangle_charge(m1: np.ndarray, m2: np.ndarray, m3: np.ndarray) -> float:
     return float(omega / (4.0 * np.pi))
 
 
-def berg_luscher_Q(
-    m: np.ndarray,
-    *,
-    convention: Any | None = None,
-    return_density: bool = False,
-    dx: float = 1.0,
-    dy: float = 1.0,
-) -> float | tuple[np.ndarray, float]:
-    """Berg-Luscher topological charge, optionally with density map."""
-    m_hat = normalize_magnetization(m)
-    oriented, sign, flipped = _orient_field(m_hat, convention)
-    ny, nx, _ = oriented.shape
+@njit(fastmath=True)
+def _triangle_charge_scalar(
+    ax: float,
+    ay: float,
+    az: float,
+    bx: float,
+    by: float,
+    bz: float,
+    cx: float,
+    cy: float,
+    cz: float,
+) -> float:
+    cross_x = by * cz - bz * cy
+    cross_y = bz * cx - bx * cz
+    cross_z = bx * cy - by * cx
+    numerator = ax * cross_x + ay * cross_y + az * cross_z
+    denominator = (
+        1.0
+        + ax * bx
+        + ay * by
+        + az * bz
+        + bx * cx
+        + by * cy
+        + bz * cz
+        + cx * ax
+        + cy * ay
+        + cz * az
+    )
+    omega = 2.0 * np.arctan2(numerator, denominator)
+    return omega / (4.0 * np.pi)
 
+
+@njit(fastmath=True)
+def _berg_luscher_integral_numba(oriented: np.ndarray) -> tuple[np.ndarray, float]:
+    ny, nx, _ = oriented.shape
+    integral_map = np.zeros((ny, nx), dtype=np.float64)
+    q_total = 0.0
+
+    for iy in range(ny - 1):
+        for ix in range(nx - 1):
+            ax = oriented[iy, ix, 0]
+            ay = oriented[iy, ix, 1]
+            az = oriented[iy, ix, 2]
+            bx = oriented[iy, ix + 1, 0]
+            by = oriented[iy, ix + 1, 1]
+            bz = oriented[iy, ix + 1, 2]
+            cx = oriented[iy + 1, ix + 1, 0]
+            cy = oriented[iy + 1, ix + 1, 1]
+            cz = oriented[iy + 1, ix + 1, 2]
+            dx_ = oriented[iy + 1, ix, 0]
+            dy_ = oriented[iy + 1, ix, 1]
+            dz_ = oriented[iy + 1, ix, 2]
+
+            q1 = _triangle_charge_scalar(ax, ay, az, bx, by, bz, cx, cy, cz)
+            q2 = _triangle_charge_scalar(ax, ay, az, cx, cy, cz, dx_, dy_, dz_)
+            q_total += q1 + q2
+
+            third_q1 = q1 / 3.0
+            integral_map[iy, ix] += third_q1
+            integral_map[iy, ix + 1] += third_q1
+            integral_map[iy + 1, ix + 1] += third_q1
+
+            third_q2 = q2 / 3.0
+            integral_map[iy, ix] += third_q2
+            integral_map[iy + 1, ix + 1] += third_q2
+            integral_map[iy + 1, ix] += third_q2
+
+    return integral_map, q_total
+
+
+def _berg_luscher_integral_python(oriented: np.ndarray) -> tuple[np.ndarray, float]:
+    ny, nx, _ = oriented.shape
     integral_map = np.zeros((ny, nx), dtype=float)
     q_total = 0.0
 
@@ -100,6 +176,26 @@ def berg_luscher_Q(
             integral_map[iy, ix] += q2 / 3.0
             integral_map[iy + 1, ix + 1] += q2 / 3.0
             integral_map[iy + 1, ix] += q2 / 3.0
+
+    return integral_map, q_total
+
+
+def berg_luscher_Q(
+    m: np.ndarray,
+    *,
+    convention: Any | None = None,
+    return_density: bool = False,
+    dx: float = 1.0,
+    dy: float = 1.0,
+) -> float | tuple[np.ndarray, float]:
+    """Berg-Luscher topological charge, optionally with density map."""
+    m_hat = normalize_magnetization(m)
+    oriented, sign, flipped = _orient_field(m_hat, convention)
+    integral_map, q_total = (
+        _berg_luscher_integral_numba(oriented)
+        if HAS_NUMBA
+        else _berg_luscher_integral_python(oriented)
+    )
 
     q_total *= sign
     if not return_density:
