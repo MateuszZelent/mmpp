@@ -41,23 +41,23 @@ _HELPER_CARD_FONT = (
     "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; "
 )
 _HELPER_CARD_CHROME = (
-    "border: 2px solid #334155; border-radius: 12px; padding: 18px; "
-    "margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, "
-    "#1e293b 50%, #334155 100%); color: #e2e8f0; "
-    "box-shadow: 0 10px 25px rgba(0,0,0,0.3), "
-    "0 0 0 1px rgba(148,163,184,0.1) inset;"
+    "border: 2px solid #6272a4; border-radius: 12px; padding: 18px; "
+    "margin: 10px 0; background: linear-gradient(135deg, #282a36 0%, "
+    "#21222c 50%, #44475a 100%); color: #f8f8f2; "
+    "box-shadow: 0 10px 28px rgba(0,0,0,0.45), "
+    "0 0 0 1px rgba(98,114,164,0.15) inset;"
 )
 _HELPER_SECTION_CHROME = (
-    "background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, "
-    "rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; "
-    "margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.15); "
+    "background: linear-gradient(135deg, rgba(68,71,90,0.55) 0%, "
+    "rgba(40,42,54,0.55) 100%); padding: 12px; border-radius: 8px; "
+    "margin-bottom: 14px; border: 1px solid rgba(98,114,164,0.25); "
     "backdrop-filter: blur(10px);"
 )
 _HELPER_CODE_CHIP = (
-    "background: rgba(15,23,42,0.8); padding: 5px 10px; "
+    "background: rgba(40,42,54,0.9); padding: 5px 10px; "
     "border-radius: 5px; display: inline-block; margin: 4px; "
     "font-family: 'Courier New', monospace; font-size: 0.85em; "
-    "border: 1px solid rgba(71,85,105,0.4); font-weight: 500;"
+    "border: 1px solid rgba(98,114,164,0.4); font-weight: 500;"
 )
 # Inner-panel style: same gradient as the card but no outer chrome.
 # Used for the Overview tab body inside node_card_html().
@@ -68,11 +68,11 @@ _HELPER_CARD_INNER = (
 # ── Node-card chip colour palette ──────────────────────────────────────────
 # Use these consistently across all analysis-namespace helpers so that
 # "Compute" is always blue, "Analysis" always green, etc.
-NODE_COLOR_COMPUTE = "#38bdf8"    # blue   — compute / primary actions
-NODE_COLOR_ANALYSIS = "#34d399"   # green  — analysis sub-interfaces
-NODE_COLOR_PLOT = "#a78bfa"       # purple — plotting
-NODE_COLOR_UTIL = "#fb923c"       # orange — utilities / cache
-NODE_COLOR_ADVANCED = "#f472b6"   # pink   — experimental / advanced
+NODE_COLOR_COMPUTE = "#8be9fd"    # Dracula cyan   — compute / primary actions
+NODE_COLOR_ANALYSIS = "#50fa7b"  # Dracula green  — analysis sub-interfaces
+NODE_COLOR_PLOT = "#bd93f9"      # Dracula purple — plotting
+NODE_COLOR_UTIL = "#ffb86c"      # Dracula orange — utilities / cache
+NODE_COLOR_ADVANCED = "#ff79c6" # Dracula pink   — experimental / advanced
 
 
 def metrics_section_html(
@@ -226,7 +226,7 @@ def node_card_html(
     title_html += (
         "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;"
         "margin:0 0 6px 0;letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);'>"
-        f"as asd{prefix}{_esc(title)}{badge_html}</div>"
+        f"{prefix}{_esc(title)}{badge_html}</div>"
     )
     subtitle_html = (
         f"<div style='font-size:0.85em;color:#94a3b8;margin-bottom:12px;'>"
@@ -258,7 +258,7 @@ def node_card_html(
     )
 
 
-
+def _html_id(value: str) -> str:
     """Return a safe HTML id fragment for inline notebook controls."""
     safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip()).strip("-").lower()
     return safe or "mmpp-helper"
