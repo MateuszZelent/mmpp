@@ -18,8 +18,7 @@ Usage
 from __future__ import annotations
 
 import logging
-import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import numpy as np
@@ -28,7 +27,9 @@ log = logging.getLogger("mmpp.solitons.vortex.ui")
 
 try:
     import ipywidgets as widgets
-    from IPython.display import display, clear_output, HTML, Image as IPyImage
+    from IPython.display import HTML, clear_output, display
+    from IPython.display import Image as IPyImage
+
     _HAS_WIDGETS = True
 except ImportError:
     _HAS_WIDGETS = False
@@ -38,6 +39,7 @@ try:
     import matplotlib
     import matplotlib.pyplot as plt
     from matplotlib.figure import Figure
+
     _HAS_MATPLOTLIB = True
 except ImportError:
     _HAS_MATPLOTLIB = False
@@ -145,6 +147,7 @@ def _int_slider(desc, val, lo, hi, step=1, **kw):
 def _dropdown(desc, options, value=None, **kw):
     style = dict(_CTRL_STYLE)
     style.update(kw.pop("style", {}))
+
     # When options are (label, value) tuples, extract the raw value
     def _extract(v):
         return v[1] if isinstance(v, tuple) and len(v) == 2 else v
@@ -184,18 +187,18 @@ def _btn(desc, style="primary", icon=""):
 
 
 def _section(text):
-    return widgets.HTML(
-        f"<div class='vdash-section'>{text}</div>"
-    )
+    return widgets.HTML(f"<div class='vdash-section'>{text}</div>")
 
 
 # ---------------------------------------------------------------------------
 # Dashboard state container
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _DashboardState:
     """Cached computation results shared between tabs."""
+
     trajectory: Any = None
     topology_result: Any = None
     orbit_fit: Any = None
@@ -211,6 +214,7 @@ class _DashboardState:
 # ---------------------------------------------------------------------------
 # Main dashboard class
 # ---------------------------------------------------------------------------
+
 
 class VortexInteractiveDashboard:
     """Professional interactive dashboard for vortex dynamics analysis.
@@ -273,9 +277,7 @@ class VortexInteractiveDashboard:
         self._built = True
 
         # Global output widget (right panel)
-        self._output = widgets.Output(
-            layout=widgets.Layout(**_OUTPUT_LAYOUT)
-        )
+        self._output = widgets.Output(layout=widgets.Layout(**_OUTPUT_LAYOUT))
         # Status bar
         self._status = widgets.HTML(
             value=self._fmt_status("Ready — select a module and click Run", "info")
@@ -285,15 +287,15 @@ class VortexInteractiveDashboard:
 
         # ---- Assemble tabs --------------------------------------------------
         tab_items = [
-            ("🎯 Core",      self._build_tab_core()),
-            ("🌀 Topology",  self._build_tab_topology()),
-            ("📐 Trajectory",self._build_tab_trajectory()),
-            ("📊 Spectrum",  self._build_tab_spectrum()),
-            ("🌈 Spectrogram",self._build_tab_spectrogram()),
-            ("🎭 Modes",     self._build_tab_modes()),
-            ("⚡ Events",    self._build_tab_events()),
-            ("📡 Signals",   self._build_tab_signals()),
-            ("🔬 Thiele",    self._build_tab_thiele()),
+            ("🎯 Core", self._build_tab_core()),
+            ("🌀 Topology", self._build_tab_topology()),
+            ("📐 Trajectory", self._build_tab_trajectory()),
+            ("📊 Spectrum", self._build_tab_spectrum()),
+            ("🌈 Spectrogram", self._build_tab_spectrogram()),
+            ("🎭 Modes", self._build_tab_modes()),
+            ("⚡ Events", self._build_tab_events()),
+            ("📡 Signals", self._build_tab_signals()),
+            ("🔬 Thiele", self._build_tab_thiele()),
         ]
 
         tab = widgets.Tab(
@@ -325,10 +327,10 @@ class VortexInteractiveDashboard:
 
         # ---- Header ---------------------------------------------------------
         header = widgets.HTML(
-            f"<div class='vdash-header'>"
-            f"🌀 Vortex Dynamics <em>Interactive Dashboard</em>"
-            f"<span class='sub'>All modules · mmpp</span>"
-            f"</div>"
+            "<div class='vdash-header'>"
+            "🌀 Vortex Dynamics <em>Interactive Dashboard</em>"
+            "<span class='sub'>All modules · mmpp</span>"
+            "</div>"
         )
 
         self._root = widgets.VBox(
@@ -376,10 +378,12 @@ class VortexInteractiveDashboard:
         )
         self._w_preset_save.on_click(self._on_save_preset)
         self._w_preset_load.observe(self._on_load_preset, names="value")
-        row = widgets.VBox([
-            widgets.HBox([self._w_preset_name, self._w_preset_save]),
-            self._w_preset_load,
-        ])
+        row = widgets.VBox(
+            [
+                widgets.HBox([self._w_preset_name, self._w_preset_save]),
+                self._w_preset_load,
+            ]
+        )
         self._refresh_preset_list()
         return row
 
@@ -389,37 +393,60 @@ class VortexInteractiveDashboard:
 
     def _build_tab_core(self):
         c = {}
-        c["threshold"] = _slider("Threshold", 0.5, 0.0, 1.0, 0.01,
-                                 description_tooltip="Skyrmion-number threshold for core detection")
-        c["method"] = _dropdown("Method",
-                                [("Center-of-mass", "com"), ("Peak", "peak"), ("Fit", "fit")],
-                                ("Center-of-mass", "com"))
-        c["t_start"] = _int_slider("t start [idx]", 0, 0, 5000,
-                                   description_tooltip="First time step to include")
-        c["t_end"] = _int_slider("t end [idx]", 0, 0, 5000,
-                                 description_tooltip="Last time step (0 = all)")
-        c["component"] = _dropdown("Component",
-                                   [("mz (default)", "z"), ("mx", "x"), ("my", "y")])
+        c["threshold"] = _slider(
+            "Threshold",
+            0.5,
+            0.0,
+            1.0,
+            0.01,
+            description_tooltip="Skyrmion-number threshold for core detection",
+        )
+        c["method"] = _dropdown(
+            "Method",
+            [("Center-of-mass", "com"), ("Peak", "peak"), ("Fit", "fit")],
+            ("Center-of-mass", "com"),
+        )
+        c["t_start"] = _int_slider(
+            "t start [idx]",
+            0,
+            0,
+            5000,
+            description_tooltip="First time step to include",
+        )
+        c["t_end"] = _int_slider(
+            "t end [idx]", 0, 0, 5000, description_tooltip="Last time step (0 = all)"
+        )
+        c["component"] = _dropdown(
+            "Component", [("mz (default)", "z"), ("mx", "x"), ("my", "y")]
+        )
         c["smooth"] = _checkbox("Smooth trajectory", True)
         c["smooth_window"] = _int_slider("Smooth window", 5, 1, 51, 2)
         c["show_orbit"] = _checkbox("Show orbit", True)
-        c["cmap"] = _dropdown("Colormap",
-                              ["viridis", "plasma", "inferno", "cividis", "turbo"])
+        c["cmap"] = _dropdown(
+            "Colormap", ["viridis", "plasma", "inferno", "cividis", "turbo"]
+        )
 
         btn = _btn("▶  Run Core Tracking", "success", "play")
         btn.on_click(lambda _: self._run_core(c))
 
         self._controls["core"] = c
-        return widgets.VBox([
-            _section("📌 Detection Parameters"),
-            c["threshold"], c["method"], c["component"],
-            _section("🕐 Time Range"),
-            c["t_start"], c["t_end"],
-            _section("✨ Visualization"),
-            c["smooth"], c["smooth_window"],
-            c["show_orbit"], c["cmap"],
-            btn,
-        ])
+        return widgets.VBox(
+            [
+                _section("📌 Detection Parameters"),
+                c["threshold"],
+                c["method"],
+                c["component"],
+                _section("🕐 Time Range"),
+                c["t_start"],
+                c["t_end"],
+                _section("✨ Visualization"),
+                c["smooth"],
+                c["smooth_window"],
+                c["show_orbit"],
+                c["cmap"],
+                btn,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────────── TAB: TOPOLOGY ────────────────────────────
@@ -427,28 +454,36 @@ class VortexInteractiveDashboard:
 
     def _build_tab_topology(self):
         c = {}
-        c["component"] = _dropdown("Component",
-                                   [("mz", "z"), ("mx", "x"), ("my", "y")])
-        c["t_index"] = _int_slider("Frame index", 0, 0, 5000,
-                                   description_tooltip="Time frame to analyze")
+        c["component"] = _dropdown("Component", [("mz", "z"), ("mx", "x"), ("my", "y")])
+        c["t_index"] = _int_slider(
+            "Frame index", 0, 0, 5000, description_tooltip="Time frame to analyze"
+        )
         c["threshold"] = _slider("Threshold", 0.5, 0.01, 1.0, 0.01)
-        c["method"] = _dropdown("Topo. method",
-                                [("Discrete", "discrete"), ("Continuous", "continuous")])
-        c["cmap"] = _dropdown("Colormap",
-                              ["RdBu_r", "seismic", "coolwarm", "bwr", "twilight"])
+        c["method"] = _dropdown(
+            "Topo. method", [("Discrete", "discrete"), ("Continuous", "continuous")]
+        )
+        c["cmap"] = _dropdown(
+            "Colormap", ["RdBu_r", "seismic", "coolwarm", "bwr", "twilight"]
+        )
         c["show_charge"] = _checkbox("Annotate charge", True)
 
         btn = _btn("▶  Detect Topology", "success", "play")
         btn.on_click(lambda _: self._run_topology(c))
 
         self._controls["topology"] = c
-        return widgets.VBox([
-            _section("🔬 Detection"),
-            c["component"], c["t_index"], c["threshold"], c["method"],
-            _section("✨ Display"),
-            c["cmap"], c["show_charge"],
-            btn,
-        ])
+        return widgets.VBox(
+            [
+                _section("🔬 Detection"),
+                c["component"],
+                c["t_index"],
+                c["threshold"],
+                c["method"],
+                _section("✨ Display"),
+                c["cmap"],
+                c["show_charge"],
+                btn,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────────── TAB: TRAJECTORY ──────────────────────────
@@ -460,24 +495,36 @@ class VortexInteractiveDashboard:
         c["detrend"] = _checkbox("Detrend (remove drift)", False)
         c["show_velocity"] = _checkbox("Show velocity", False)
         c["show_stats"] = _checkbox("Show statistics", True)
-        c["color_by"] = _dropdown("Color by",
-                                  [("time", "time"), ("speed", "speed"),
-                                   ("radius", "radius"), ("none", "none")])
-        c["cmap"] = _dropdown("Colormap",
-                              ["plasma", "viridis", "inferno", "magma", "turbo"])
+        c["color_by"] = _dropdown(
+            "Color by",
+            [
+                ("time", "time"),
+                ("speed", "speed"),
+                ("radius", "radius"),
+                ("none", "none"),
+            ],
+        )
+        c["cmap"] = _dropdown(
+            "Colormap", ["plasma", "viridis", "inferno", "magma", "turbo"]
+        )
 
         btn = _btn("▶  Analyze Trajectory", "success", "play")
         btn.on_click(lambda _: self._run_trajectory(c))
 
         self._controls["trajectory"] = c
-        return widgets.VBox([
-            _section("📐 Analysis Options"),
-            c["fit_orbit"], c["detrend"],
-            _section("✨ Visualization"),
-            c["show_velocity"], c["show_stats"],
-            c["color_by"], c["cmap"],
-            btn,
-        ])
+        return widgets.VBox(
+            [
+                _section("📐 Analysis Options"),
+                c["fit_orbit"],
+                c["detrend"],
+                _section("✨ Visualization"),
+                c["show_velocity"],
+                c["show_stats"],
+                c["color_by"],
+                c["cmap"],
+                btn,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────────── TAB: SPECTRUM ────────────────────────────
@@ -485,12 +532,13 @@ class VortexInteractiveDashboard:
 
     def _build_tab_spectrum(self):
         c = {}
-        c["mode"] = _dropdown("Spectrum",
-                              [("Gyration", "gyration"), ("Breathing", "breathing"),
-                               ("Both", "both")])
-        c["method"] = _dropdown("PSD method",
-                                [("Welch", "welch"),
-                                 ("Periodogram", "periodogram")])
+        c["mode"] = _dropdown(
+            "Spectrum",
+            [("Gyration", "gyration"), ("Breathing", "breathing"), ("Both", "both")],
+        )
+        c["method"] = _dropdown(
+            "PSD method", [("Welch", "welch"), ("Periodogram", "periodogram")]
+        )
         c["nperseg"] = _int_slider("nperseg", 256, 32, 4096, 32)
         c["f_max_ghz"] = _slider("f max [GHz]", 10.0, 0.1, 50.0, 0.1)
         c["log_scale"] = _checkbox("Log Y scale", False)
@@ -502,14 +550,21 @@ class VortexInteractiveDashboard:
         btn.on_click(lambda _: self._run_spectrum(c))
 
         self._controls["spectrum"] = c
-        return widgets.VBox([
-            _section("📊 Spectral Analysis"),
-            c["mode"], c["method"], c["nperseg"],
-            _section("🎛️ Display"),
-            c["f_max_ghz"], c["log_scale"],
-            c["show_peaks"], c["peak_prom"], c["normalize"],
-            btn,
-        ])
+        return widgets.VBox(
+            [
+                _section("📊 Spectral Analysis"),
+                c["mode"],
+                c["method"],
+                c["nperseg"],
+                _section("🎛️ Display"),
+                c["f_max_ghz"],
+                c["log_scale"],
+                c["show_peaks"],
+                c["peak_prom"],
+                c["normalize"],
+                btn,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────────── TAB: SPECTROGRAM ─────────────────────────
@@ -517,30 +572,36 @@ class VortexInteractiveDashboard:
 
     def _build_tab_spectrogram(self):
         c = {}
-        c["component"] = _dropdown("Signal",
-                                   [("Radius", "radius"), ("X", "x"),
-                                    ("Y", "y"), ("Angle", "angle")])
-        c["method"] = _dropdown("Method",
-                                [("STFT", "stft"), ("Welch", "welch")])
+        c["component"] = _dropdown(
+            "Signal", [("Radius", "radius"), ("X", "x"), ("Y", "y"), ("Angle", "angle")]
+        )
+        c["method"] = _dropdown("Method", [("STFT", "stft"), ("Welch", "welch")])
         c["nperseg"] = _int_slider("nperseg", 128, 32, 1024, 32)
         c["noverlap_pct"] = _int_slider("Overlap %", 75, 0, 99, 5)
         c["f_max_ghz"] = _slider("f max [GHz]", 10.0, 0.1, 50.0, 0.1)
-        c["cmap"] = _dropdown("Colormap",
-                              ["viridis", "plasma", "inferno", "hot", "turbo"])
+        c["cmap"] = _dropdown(
+            "Colormap", ["viridis", "plasma", "inferno", "hot", "turbo"]
+        )
         c["log_power"] = _checkbox("Log power", True)
 
         btn = _btn("▶  Compute Spectrogram", "success", "play")
         btn.on_click(lambda _: self._run_spectrogram(c))
 
         self._controls["spectrogram"] = c
-        return widgets.VBox([
-            _section("🌈 Spectrogram Config"),
-            c["component"], c["method"],
-            c["nperseg"], c["noverlap_pct"],
-            _section("🎛️ Display"),
-            c["f_max_ghz"], c["cmap"], c["log_power"],
-            btn,
-        ])
+        return widgets.VBox(
+            [
+                _section("🌈 Spectrogram Config"),
+                c["component"],
+                c["method"],
+                c["nperseg"],
+                c["noverlap_pct"],
+                _section("🎛️ Display"),
+                c["f_max_ghz"],
+                c["cmap"],
+                c["log_power"],
+                btn,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────────── TAB: MODES ───────────────────────────────
@@ -549,9 +610,9 @@ class VortexInteractiveDashboard:
     def _build_tab_modes(self):
         c = {}
         c["n_modes"] = _int_slider("Num. modes", 3, 1, 12)
-        c["component"] = _dropdown("Component",
-                                   [("mz", "z"), ("mx", "x"), ("my", "y"),
-                                    ("|m|", "amplitude")])
+        c["component"] = _dropdown(
+            "Component", [("mz", "z"), ("mx", "x"), ("my", "y"), ("|m|", "amplitude")]
+        )
         c["z_layer"] = _int_slider("Z layer", -1, -20, 20)
         c["cmap_real"] = _dropdown("Cmap (real)", ["RdBu_r", "seismic", "coolwarm"])
         c["cmap_amp"] = _dropdown("Cmap (amp)", ["viridis", "plasma", "hot", "inferno"])
@@ -562,14 +623,20 @@ class VortexInteractiveDashboard:
         btn.on_click(lambda _: self._run_modes(c))
 
         self._controls["modes"] = c
-        return widgets.VBox([
-            _section("🎭 Mode Parameters"),
-            c["n_modes"], c["component"], c["z_layer"],
-            _section("✨ Display"),
-            c["cmap_real"], c["cmap_amp"],
-            c["normalize_modes"], c["show_colorbar"],
-            btn,
-        ])
+        return widgets.VBox(
+            [
+                _section("🎭 Mode Parameters"),
+                c["n_modes"],
+                c["component"],
+                c["z_layer"],
+                _section("✨ Display"),
+                c["cmap_real"],
+                c["cmap_amp"],
+                c["normalize_modes"],
+                c["show_colorbar"],
+                btn,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────────── TAB: EVENTS ──────────────────────────────
@@ -577,9 +644,15 @@ class VortexInteractiveDashboard:
 
     def _build_tab_events(self):
         c = {}
-        c["event_type"] = _dropdown("Event type",
-                                    [("All", "all"), ("Annihilation", "annihilation"),
-                                     ("Creation", "creation"), ("Switching", "switching")])
+        c["event_type"] = _dropdown(
+            "Event type",
+            [
+                ("All", "all"),
+                ("Annihilation", "annihilation"),
+                ("Creation", "creation"),
+                ("Switching", "switching"),
+            ],
+        )
         c["threshold"] = _slider("Threshold", 0.5, 0.0, 1.0, 0.01)
         c["min_duration"] = _int_slider("Min duration [fs]", 10, 1, 500)
         c["show_on_trajectory"] = _checkbox("Overlay on trajectory", True)
@@ -588,13 +661,17 @@ class VortexInteractiveDashboard:
         btn.on_click(lambda _: self._run_events(c))
 
         self._controls["events"] = c
-        return widgets.VBox([
-            _section("⚡ Event Detection"),
-            c["event_type"], c["threshold"], c["min_duration"],
-            _section("✨ Display"),
-            c["show_on_trajectory"],
-            btn,
-        ])
+        return widgets.VBox(
+            [
+                _section("⚡ Event Detection"),
+                c["event_type"],
+                c["threshold"],
+                c["min_duration"],
+                _section("✨ Display"),
+                c["show_on_trajectory"],
+                btn,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────────── TAB: SIGNALS ─────────────────────────────
@@ -602,28 +679,33 @@ class VortexInteractiveDashboard:
 
     def _build_tab_signals(self):
         c = {}
-        c["signal_type"] = _dropdown("Signal type",
-                                     [("TMR proxy", "tmr"), ("MR proxy", "mr"),
-                                      ("Voltage", "voltage")])
+        c["signal_type"] = _dropdown(
+            "Signal type",
+            [("TMR proxy", "tmr"), ("MR proxy", "mr"), ("Voltage", "voltage")],
+        )
         c["polarizer_angle"] = _slider("Polarizer angle [°]", 0.0, -180.0, 180.0, 5.0)
-        c["chirality"] = _dropdown("Chirality",
-                                   [("CCW (+1)", 1), ("CW (-1)", -1)])
+        c["chirality"] = _dropdown("Chirality", [("CCW (+1)", 1), ("CW (-1)", -1)])
         c["show_psd"] = _checkbox("Show PSD", True)
-        c["method"] = _dropdown("PSD method",
-                                [("Welch", "welch"), ("FFT", "fft")])
+        c["method"] = _dropdown("PSD method", [("Welch", "welch"), ("FFT", "fft")])
         c["f_max_ghz"] = _slider("f max [GHz]", 10.0, 0.1, 50.0, 0.1)
 
         btn = _btn("▶  Compute Signal", "success", "play")
         btn.on_click(lambda _: self._run_signals(c))
 
         self._controls["signals"] = c
-        return widgets.VBox([
-            _section("📡 Signal Parameters"),
-            c["signal_type"], c["polarizer_angle"], c["chirality"],
-            _section("📊 Power Spectral Density"),
-            c["show_psd"], c["method"], c["f_max_ghz"],
-            btn,
-        ])
+        return widgets.VBox(
+            [
+                _section("📡 Signal Parameters"),
+                c["signal_type"],
+                c["polarizer_angle"],
+                c["chirality"],
+                _section("📊 Power Spectral Density"),
+                c["show_psd"],
+                c["method"],
+                c["f_max_ghz"],
+                btn,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────────── TAB: THIELE ──────────────────────────────
@@ -631,15 +713,19 @@ class VortexInteractiveDashboard:
 
     def _build_tab_thiele(self):
         c = {}
-        c["model"] = _dropdown("Model",
-                               [("CPP (Slonczewski)", "CPP"),
-                                ("CIP (Zhang-Li)", "CIP")])
+        c["model"] = _dropdown(
+            "Model", [("CPP (Slonczewski)", "CPP"), ("CIP (Zhang-Li)", "CIP")]
+        )
         c["diameter_nm"] = _slider("Diameter [nm]", 250.0, 50.0, 1000.0, 5.0)
         c["thickness_nm"] = _slider("Thickness [nm]", 10.0, 2.0, 100.0, 0.5)
         c["ms_kA"] = _slider("M_s [kA/m]", 800.0, 100.0, 2000.0, 10.0)
         c["alpha"] = widgets.FloatLogSlider(
             description="Damping α",
-            value=0.01, base=10, min=-4, max=-1, step=0.01,
+            value=0.01,
+            base=10,
+            min=-4,
+            max=-1,
+            step=0.01,
             continuous_update=False,
             style=_CTRL_STYLE,
             layout=widgets.Layout(width="270px"),
@@ -657,17 +743,25 @@ class VortexInteractiveDashboard:
         btn_quick.on_click(lambda _: self._run_thiele_quick(c))
 
         self._controls["thiele"] = c
-        return widgets.VBox([
-            _section("🔬 Geometry & Material"),
-            c["model"], c["diameter_nm"], c["thickness_nm"],
-            c["ms_kA"], c["alpha"],
-            _section("⚡ STT & Field"),
-            c["current_mA"], c["polarization"], c["bz_mT"],
-            _section("🔧 Analysis"),
-            c["fit_to_data"], c["show_psd"],
-            btn_quick,
-            btn_thiele,
-        ])
+        return widgets.VBox(
+            [
+                _section("🔬 Geometry & Material"),
+                c["model"],
+                c["diameter_nm"],
+                c["thickness_nm"],
+                c["ms_kA"],
+                c["alpha"],
+                _section("⚡ STT & Field"),
+                c["current_mA"],
+                c["polarization"],
+                c["bz_mT"],
+                _section("🔧 Analysis"),
+                c["fit_to_data"],
+                c["show_psd"],
+                btn_quick,
+                btn_thiele,
+            ]
+        )
 
     # ------------------------------------------------------------------
     # ─────────────────── COMPUTE HANDLERS ─────────────────────────────
@@ -745,8 +839,9 @@ class VortexInteractiveDashboard:
                 pass
 
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight",
-                    facecolor=fig.get_facecolor())
+        fig.savefig(
+            buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor()
+        )
         buf.seek(0)
         img_data = buf.read()
         plt.close(fig)
@@ -773,7 +868,11 @@ class VortexInteractiveDashboard:
 
             t_start_idx = int(c["t_start"].value) or None
             t_end_idx = int(c["t_end"].value) or None
-            sl = slice(t_start_idx, t_end_idx) if (t_start_idx or t_end_idx) else slice(None)
+            sl = (
+                slice(t_start_idx, t_end_idx)
+                if (t_start_idx or t_end_idx)
+                else slice(None)
+            )
 
             fig, axes = plt.subplots(1, 2, figsize=self.figsize, dpi=self.dpi)
             ax_xy, ax_t = axes
@@ -786,8 +885,9 @@ class VortexInteractiveDashboard:
             color_by_time = t_ns if c["show_orbit"].value else None
 
             if color_by_time is not None:
-                sc = ax_xy.scatter(x_nm, y_nm, c=t_ns, cmap=cmap_name,
-                                   s=2, lw=0, alpha=0.8)
+                sc = ax_xy.scatter(
+                    x_nm, y_nm, c=t_ns, cmap=cmap_name, s=2, lw=0, alpha=0.8
+                )
                 fig.colorbar(sc, ax=ax_xy, label="t [ns]", shrink=0.8)
             else:
                 ax_xy.plot(x_nm, y_nm, "o", ms=1.5, alpha=0.6, color="#58a6ff")
@@ -801,16 +901,24 @@ class VortexInteractiveDashboard:
             if c["smooth"].value:
                 w = max(int(c["smooth_window"].value) | 1, 3)
                 from scipy.signal import savgol_filter
+
                 try:
                     x_s = savgol_filter(x_nm, w, 2)
                     y_s = savgol_filter(y_nm, w, 2)
-                    ax_xy.plot(x_s, y_s, "-", lw=1.2, color="#e94560", alpha=0.9,
-                               label="smoothed")
+                    ax_xy.plot(
+                        x_s,
+                        y_s,
+                        "-",
+                        lw=1.2,
+                        color="#e94560",
+                        alpha=0.9,
+                        label="smoothed",
+                    )
                     ax_xy.legend(fontsize=8)
                 except Exception:
                     pass
 
-            r_nm = np.sqrt(x_nm ** 2 + y_nm ** 2)
+            r_nm = np.sqrt(x_nm**2 + y_nm**2)
             ax_t.plot(t_ns, r_nm, lw=1.2, color="#58a6ff")
             ax_t.set_xlabel("t [ns]", fontsize=10)
             ax_t.set_ylabel("r [nm]", fontsize=10)
@@ -820,8 +928,7 @@ class VortexInteractiveDashboard:
             fig.suptitle("🎯 Core Tracking", fontsize=12, color="#e94560")
             self._show_figure(fig, health=health)
             self._set_status(
-                f"Core tracked: {len(x_nm)} steps, "
-                f"⟨r⟩ = {np.mean(r_nm):.1f} nm", "ok"
+                f"Core tracked: {len(x_nm)} steps, ⟨r⟩ = {np.mean(r_nm):.1f} nm", "ok"
             )
         except Exception as exc:
             self._set_status(f"Core tracking failed: {exc}", "error")
@@ -855,10 +962,14 @@ class VortexInteractiveDashboard:
                 f"Chirality conf: {confidence:.3f}"
             )
             ax.text(
-                0.5, 0.5, summary_text,
+                0.5,
+                0.5,
+                summary_text,
                 transform=ax.transAxes,
-                ha="center", va="center",
-                fontsize=14, family="monospace",
+                ha="center",
+                va="center",
+                fontsize=14,
+                family="monospace",
                 color="#e2e8f0",
                 bbox=dict(
                     boxstyle="round,pad=1.0",
@@ -869,10 +980,13 @@ class VortexInteractiveDashboard:
             )
             ax.set_title(
                 f"🌀 Vortex Topology  ·  frame {t_idx}  ·  Q = {Q:.4f}",
-                fontsize=12, color="#e94560",
+                fontsize=12,
+                color="#e94560",
             )
             self._show_figure(fig, health=health)
-            self._set_status(f"Topology | p={polarity:+d}, c={vorticity:+d}, Q={Q:.4f}", "ok")
+            self._set_status(
+                f"Topology | p={polarity:+d}, c={vorticity:+d}, Q={Q:.4f}", "ok"
+            )
         except Exception as exc:
             self._set_status(f"Topology failed: {exc}", "error")
             log.exception("Topology error")
@@ -929,8 +1043,16 @@ class VortexInteractiveDashboard:
                     a_nm = float(getattr(orbit, "semi_major", 50.0)) * 1e9
                     b_nm = float(getattr(orbit, "semi_minor", a_nm)) * 1e9
                     angle = float(getattr(orbit, "tilt_angle", 0.0))
-                    xe = cx + a_nm * np.cos(theta) * np.cos(angle) - b_nm * np.sin(theta) * np.sin(angle)
-                    ye = cy + a_nm * np.cos(theta) * np.sin(angle) + b_nm * np.sin(theta) * np.cos(angle)
+                    xe = (
+                        cx
+                        + a_nm * np.cos(theta) * np.cos(angle)
+                        - b_nm * np.sin(theta) * np.sin(angle)
+                    )
+                    ye = (
+                        cy
+                        + a_nm * np.cos(theta) * np.sin(angle)
+                        + b_nm * np.sin(theta) * np.cos(angle)
+                    )
                     ax_xy.plot(xe, ye, "--", lw=2, color="#e94560", label="orbit fit")
                     ax_xy.legend(fontsize=8)
                 except Exception:
@@ -999,8 +1121,9 @@ class VortexInteractiveDashboard:
                 self._state.breathing_spectrum = specs["breathing"]
 
             n = len(specs)
-            fig, axes = plt.subplots(1, n, figsize=self.figsize, dpi=self.dpi,
-                                     squeeze=False)
+            fig, axes = plt.subplots(
+                1, n, figsize=self.figsize, dpi=self.dpi, squeeze=False
+            )
 
             colors = {"gyration": "#58a6ff", "breathing": "#3fb950"}
             f_max = float(c["f_max_ghz"].value)
@@ -1019,27 +1142,39 @@ class VortexInteractiveDashboard:
                     p_p = p_p / p_p.max()
 
                 if c["log_scale"].value:
-                    ax.semilogy(f_p, p_p + 1e-12, color=colors.get(name, "#e94560"),
-                                lw=1.4)
+                    ax.semilogy(
+                        f_p, p_p + 1e-12, color=colors.get(name, "#e94560"), lw=1.4
+                    )
                 else:
                     ax.plot(f_p, p_p, color=colors.get(name, "#e94560"), lw=1.4)
-                    ax.fill_between(f_p, p_p, alpha=0.2, color=colors.get(name, "#e94560"))
+                    ax.fill_between(
+                        f_p, p_p, alpha=0.2, color=colors.get(name, "#e94560")
+                    )
 
                 if c["show_peaks"].value:
                     try:
                         from scipy.signal import find_peaks
+
                         min_prom = float(c["peak_prom"].value) * (p_p.max() or 1.0)
                         peak_idx, _ = find_peaks(p_p, prominence=min_prom)
                         if peak_idx.size:
-                            ax.plot(f_p[peak_idx], p_p[peak_idx],
-                                    "v", ms=8, color="#e94560", zorder=5,
-                                    label=f"peaks: {', '.join(f'{f_p[i]:.2f}' for i in peak_idx[:5])} GHz")
+                            ax.plot(
+                                f_p[peak_idx],
+                                p_p[peak_idx],
+                                "v",
+                                ms=8,
+                                color="#e94560",
+                                zorder=5,
+                                label=f"peaks: {', '.join(f'{f_p[i]:.2f}' for i in peak_idx[:5])} GHz",
+                            )
                             ax.legend(fontsize=8)
                     except Exception:
                         pass
 
                 ax.set_xlabel("f [GHz]", fontsize=10)
-                ax.set_ylabel("PSD (norm.)" if c["normalize"].value else "PSD", fontsize=10)
+                ax.set_ylabel(
+                    "PSD (norm.)" if c["normalize"].value else "PSD", fontsize=10
+                )
                 ax.set_title(f"{name.title()} spectrum", fontsize=11)
                 ax.grid(True, alpha=0.25)
 
@@ -1086,12 +1221,13 @@ class VortexInteractiveDashboard:
                 S_p = 10 * np.log10(S_p + 1e-30)
 
             fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
-            im = ax.pcolormesh(t_ns, f_p, S_p,
-                               cmap=c["cmap"].value,
-                               shading="auto")
-            fig.colorbar(im, ax=ax,
-                         label="Power [dB]" if c["log_power"].value else "Power",
-                         shrink=0.8)
+            im = ax.pcolormesh(t_ns, f_p, S_p, cmap=c["cmap"].value, shading="auto")
+            fig.colorbar(
+                im,
+                ax=ax,
+                label="Power [dB]" if c["log_power"].value else "Power",
+                shrink=0.8,
+            )
             ax.set_xlabel("t [ns]", fontsize=10)
             ax.set_ylabel("f [GHz]", fontsize=10)
             ax.set_title(f"🌈 Spectrogram · {component} component", fontsize=11)
@@ -1115,8 +1251,16 @@ class VortexInteractiveDashboard:
 
             if not mode_list:
                 fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
-                ax.text(0.5, 0.5, "No modes detected", ha="center", va="center",
-                        transform=ax.transAxes, fontsize=14, color="#a8b2d8")
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No modes detected",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                    fontsize=14,
+                    color="#a8b2d8",
+                )
                 ax.axis("off")
                 self._show_figure(fig, health=health)
                 self._set_status("No modes detected", "warn")
@@ -1192,12 +1336,19 @@ class VortexInteractiveDashboard:
                 from_v = getattr(ev, "from_p", getattr(ev, "from_state", "?"))
                 to_v = getattr(ev, "to_p", getattr(ev, "to_state", "?"))
                 color = ev_colors.get(event_type, "#e94560")
-                ax.axvline(t_ev, color=color, lw=1.5, alpha=0.8,
-                           label=f"{from_v}→{to_v} @ {t_ev:.1f} ns")
+                ax.axvline(
+                    t_ev,
+                    color=color,
+                    lw=1.5,
+                    alpha=0.8,
+                    label=f"{from_v}→{to_v} @ {t_ev:.1f} ns",
+                )
 
             ax.set_xlabel("t [ns]", fontsize=10)
             ax.set_ylabel("r [nm]", fontsize=10)
-            ax.set_title(f"⚡ Event Detection  ·  {len(events)} events found", fontsize=11)
+            ax.set_title(
+                f"⚡ Event Detection  ·  {len(events)} events found", fontsize=11
+            )
             ax.grid(True, alpha=0.25)
             if events:
                 handles, labels = ax.get_legend_handles_labels()
@@ -1222,8 +1373,8 @@ class VortexInteractiveDashboard:
                 self._state.trajectory = traj
 
             from mmpp.solitons.vortex.nonlinear.interactive import (
-                proxy_signal_from_trajectory,
                 proxy_psd,
+                proxy_signal_from_trajectory,
             )
 
             chirality = int(c["chirality"].value)
@@ -1245,7 +1396,9 @@ class VortexInteractiveDashboard:
                 f_ghz = f_hz / 1e9
                 mask = f_ghz <= f_max
 
-                fig, (ax_t, ax_f) = plt.subplots(1, 2, figsize=self.figsize, dpi=self.dpi)
+                fig, (ax_t, ax_f) = plt.subplots(
+                    1, 2, figsize=self.figsize, dpi=self.dpi
+                )
                 ax_t.plot(t_ns, sig, lw=1.0, color="#58a6ff")
                 ax_t.set_xlabel("t [ns]")
                 ax_t.set_ylabel("TMR signal (a.u.)")
@@ -1279,12 +1432,13 @@ class VortexInteractiveDashboard:
         self._set_status("Running Thiele quick fit…", "info")
         try:
             import math
+
             from mmpp.analytical.thiele import (
-                CPPThieleModel,
                 CIPThieleModel,
+                CPPThieleModel,
                 DiskGeometry,
-                MaterialParams,
                 ExternalField,
+                MaterialParams,
                 current_dc,
                 field_dc,
                 omega0_novosad,
@@ -1305,7 +1459,7 @@ class VortexInteractiveDashboard:
             omega0 = omega0_novosad(mat, geom)
 
             # Convert mA to A/m² via pillar cross-section area
-            area = math.pi * R_m ** 2
+            area = math.pi * R_m**2
             J_dc = (I_mA * 1e-3) / max(area, 1e-20)
             J_func = current_dc(J_dc)
             B_func = field_dc(b_field)
@@ -1336,7 +1490,9 @@ class VortexInteractiveDashboard:
             )
             self._state.nonlinear_result = result
 
-            fig, (ax_orbit, ax_r) = plt.subplots(1, 2, figsize=self.figsize, dpi=self.dpi)
+            fig, (ax_orbit, ax_r) = plt.subplots(
+                1, 2, figsize=self.figsize, dpi=self.dpi
+            )
 
             x_nm = result.x * 1e9
             y_nm = result.y * 1e9
@@ -1360,7 +1516,8 @@ class VortexInteractiveDashboard:
             r_val = result.steady_state_radius_m * 1e9
             fig.suptitle(
                 f"🔬 Thiele ({model_type}) | f = {f_val:.3f} GHz, r = {r_val:.1f} nm",
-                fontsize=11, color="#e94560",
+                fontsize=11,
+                color="#e94560",
             )
             # Note: Thiele quick tab uses analytical model, not the simulation
             # data — no health annotation needed here (skip)
@@ -1380,6 +1537,7 @@ class VortexInteractiveDashboard:
             from mmpp.solitons.vortex.nonlinear.interactive import (
                 ThieleInteractiveDashboard,
             )
+
             db = ThieleInteractiveDashboard()
             with self._output:
                 clear_output(wait=True)
@@ -1424,6 +1582,7 @@ class VortexInteractiveDashboard:
     def _get_presets_dir(self):
         import os
         from pathlib import Path
+
         cwd = Path(os.getcwd())
         d = cwd / ".mmpp_presets" / "vortex_dashboard"
         d.mkdir(parents=True, exist_ok=True)
@@ -1441,6 +1600,7 @@ class VortexInteractiveDashboard:
 
     def _on_save_preset(self, _):
         import json
+
         name = self._w_preset_name.value.strip()
         if not name:
             self._set_status("Enter a preset name first", "warn")
@@ -1457,6 +1617,7 @@ class VortexInteractiveDashboard:
 
     def _on_load_preset(self, change):
         import json
+
         name = change["new"]
         if name.startswith("—"):
             return

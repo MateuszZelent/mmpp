@@ -567,6 +567,7 @@ class BatchVortexInterface:
                 # Health check: warn or exclude annihilated simulations
                 try:
                     from mmpp.solitons.vortex.health import check_core_health
+
                     health = check_core_health(
                         result,
                         trajectory=trajectory,
@@ -574,6 +575,7 @@ class BatchVortexInterface:
                     if not health.is_healthy:
                         if exclude_annihilated:
                             import warnings
+
                             path_label = str(getattr(result, "path", index))
                             warnings.warn(
                                 f"spectrum_map: excluding {path_label} — "
@@ -581,13 +583,18 @@ class BatchVortexInterface:
                                 UserWarning,
                                 stacklevel=4,
                             )
-                            return coord_value, None, None, {
-                                "index": index,
-                                "path": getattr(result, "path", None),
-                                "coordinate": coord_value,
-                                "error": "excluded (annihilated): "
-                                + "; ".join(health.warnings),
-                            }
+                            return (
+                                coord_value,
+                                None,
+                                None,
+                                {
+                                    "index": index,
+                                    "path": getattr(result, "path", None),
+                                    "coordinate": coord_value,
+                                    "error": "excluded (annihilated): "
+                                    + "; ".join(health.warnings),
+                                },
+                            )
                         else:
                             health.issue_python_warnings()
                 except Exception:
@@ -734,7 +741,9 @@ class BatchVortexInterface:
                     current_ma = _coerce_numeric(
                         attrs.get("i_pillar_ma", attrs.get("ma", np.nan))
                     )
-                    current_a = current_ma * 1e-3 if np.isfinite(current_ma) else float("nan")
+                    current_a = (
+                        current_ma * 1e-3 if np.isfinite(current_ma) else float("nan")
+                    )
                 else:
                     raw = attrs.get(current, np.nan)
                     current_a = _coerce_numeric(raw)
@@ -817,7 +826,9 @@ class BatchVortexInterface:
         """
         ordered = self._ordered_results(sort_by)
         if not ordered:
-            raise ValueError("Cannot open batch vortex interactive dashboard for an empty batch")
+            raise ValueError(
+                "Cannot open batch vortex interactive dashboard for an empty batch"
+            )
 
         selected = ordered[index]
         vortex = selected.solitons.vortex
