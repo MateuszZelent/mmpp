@@ -38,41 +38,132 @@ __all__ = [
 
 
 _HELPER_CARD_FONT = (
-    "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; "
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
 )
 _HELPER_CARD_CHROME = (
-    "border: 2px solid #6272a4; border-radius: 12px; padding: 18px; "
-    "margin: 10px 0; background: linear-gradient(135deg, #282a36 0%, "
-    "#21222c 50%, #44475a 100%); color: #f8f8f2; "
-    "box-shadow: 0 10px 28px rgba(0,0,0,0.45), "
-    "0 0 0 1px rgba(98,114,164,0.15) inset;"
+    "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
+    "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+    "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
+    "0 0 0 1px rgba(148,163,184,0.1) inset;"
 )
 _HELPER_SECTION_CHROME = (
-    "background: linear-gradient(135deg, rgba(68,71,90,0.55) 0%, "
-    "rgba(40,42,54,0.55) 100%); padding: 12px; border-radius: 8px; "
-    "margin-bottom: 14px; border: 1px solid rgba(98,114,164,0.25); "
-    "backdrop-filter: blur(10px);"
+    "background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+    "padding:12px;border-radius:8px;margin-bottom:12px;"
+    "border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);"
 )
 _HELPER_CODE_CHIP = (
-    "background: rgba(40,42,54,0.9); padding: 5px 10px; "
-    "border-radius: 5px; display: inline-block; margin: 4px; "
-    "font-family: 'Courier New', monospace; font-size: 0.85em; "
-    "border: 1px solid rgba(98,114,164,0.4); font-weight: 500;"
+    "background:rgba(15,23,42,0.8);padding:5px 10px;border-radius:5px;"
+    "display:inline-block;margin:4px;font-family:'Courier New',monospace;"
+    "font-size:0.85em;border:1px solid rgba(71,85,105,0.4);font-weight:500;"
 )
 # Inner-panel style: same gradient as the card but no outer chrome.
 # Used for the Overview tab body inside node_card_html().
 _HELPER_CARD_INNER = (
-    "padding: 4px 0 0 0;"
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+    "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+    "color:#e2e8f0;padding:4px 0 0 0;"
 )
 
 # ── Node-card chip colour palette ──────────────────────────────────────────
 # Use these consistently across all analysis-namespace helpers so that
 # "Compute" is always blue, "Analysis" always green, etc.
-NODE_COLOR_COMPUTE = "#8be9fd"    # Dracula cyan   — compute / primary actions
-NODE_COLOR_ANALYSIS = "#50fa7b"  # Dracula green  — analysis sub-interfaces
-NODE_COLOR_PLOT = "#bd93f9"      # Dracula purple — plotting
-NODE_COLOR_UTIL = "#ffb86c"      # Dracula orange — utilities / cache
-NODE_COLOR_ADVANCED = "#ff79c6" # Dracula pink   — experimental / advanced
+NODE_COLOR_COMPUTE = "#38bdf8"  # compute / primary actions
+NODE_COLOR_ANALYSIS = "#34d399"  # analysis sub-interfaces
+NODE_COLOR_PLOT = "#a78bfa"  # plotting
+NODE_COLOR_UTIL = "#fb923c"  # utilities / cache
+NODE_COLOR_ADVANCED = "#f472b6"  # experimental / advanced
+
+_HELPER_TITLE_COLOR = "#f1f5f9"
+_HELPER_LABEL_COLOR = "#94a3b8"
+_HELPER_MUTED_COLOR = "#64748b"
+_HELPER_VALUE_COLOR = "#cbd5e1"
+_HELPER_ACTIVE_TEXT = "#dbeafe"
+_HELPER_ACTIVE_BG = "rgba(96,165,250,0.22)"
+_HELPER_IDLE_TEXT = "#93c5fd"
+_HELPER_IDLE_BG = "rgba(15,23,42,0.65)"
+_HELPER_TABLE_HEAD_BG = "rgba(51,65,85,0.6)"
+_HELPER_TABLE_ROW_BORDER = "rgba(71,85,105,0.35)"
+
+
+def _helper_metric_html(label: object, value: object, color: str | None = None) -> str:
+    value_color = _esc(color) if color else _HELPER_VALUE_COLOR
+    return (
+        f"<b style='color:{_HELPER_LABEL_COLOR}'>{_esc(str(label))}:</b> "
+        "<code style='background:rgba(15,23,42,0.6);padding:4px 10px;"
+        f"border-radius:5px;font-size:0.9em;color:{value_color};"
+        "border:1px solid rgba(71,85,105,0.3);'>"
+        f"{_esc(str(value))}</code>"
+    )
+
+
+def _helper_header_html(
+    title: str,
+    *,
+    icon: str = "",
+    subtitle: str | None = None,
+    badge_html: str = "",
+) -> str:
+    prefix = f"{icon} " if icon else ""
+    subtitle_html = (
+        f"<div style='font-size:0.85em;color:{_HELPER_LABEL_COLOR};margin-bottom:12px;'>"
+        f"{subtitle}</div>"
+        if subtitle
+        else ""
+    )
+    return (
+        "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+        f"{prefix}{_esc(title)}{badge_html}</div>"
+        f"{subtitle_html}"
+    )
+
+
+def _helper_overview_html(
+    title: str,
+    *,
+    icon: str = "",
+    subtitle: str | None = None,
+    badge_html: str = "",
+    sections: Sequence[str] | None = None,
+    leading_html: str = "",
+) -> str:
+    sections_html = "".join(sections or [])
+    return (
+        f"<div style='{_HELPER_CARD_INNER}'>"
+        f"{_helper_header_html(title, icon=icon, subtitle=subtitle, badge_html=badge_html)}"
+        f"{leading_html}{sections_html}</div>"
+    )
+
+
+def _helper_outer_card_html(
+    tabs: Sequence[tuple[str, str]],
+    *,
+    uid: str,
+    max_width: str | None = None,
+    accent: str | None = None,
+) -> str:
+    accent_style = f"border-color:{_esc(accent)};" if accent else ""
+    max_width_style = f"max-width:{_esc(max_width)};" if max_width else ""
+    return (
+        f"<div style='{_HELPER_CARD_FONT}{_HELPER_CARD_CHROME}{accent_style}{max_width_style}'>"
+        f"{html_tabs(tabs, uid=uid)}</div>"
+    )
+
+
+def _helper_table_html(
+    headers: Sequence[str],
+    rows_html: str,
+    *,
+    font_size: str = "0.88em",
+) -> str:
+    head = "".join(
+        f"<th style='padding:4px 8px;color:{_HELPER_TITLE_COLOR};'>{_esc(header)}</th>"
+        for header in headers
+    )
+    return (
+        f"<table style='width:100%;border-collapse:collapse;font-size:{font_size};margin-top:6px;'>"
+        f"<thead><tr style='text-align:left;background:{_HELPER_TABLE_HEAD_BG};'>{head}</tr></thead>"
+        f"<tbody>{rows_html}</tbody></table>"
+    )
 
 
 def metrics_section_html(
@@ -91,13 +182,7 @@ def metrics_section_html(
         return ""
     parts = []
     for label, value, color in rows:
-        vc = _esc(color) if color else "#f8f8f2"
-        parts.append(
-            f"<b style='color:#bd93f9'>{_esc(str(label))}:</b> "
-            "<code style='background:rgba(40,42,54,0.72);padding:4px 10px;"
-            f"border-radius:5px;font-size:0.9em;color:{vc};"
-            f"border:1px solid rgba(98,114,164,0.35);'>{_esc(str(value))}</code>"
-        )
+        parts.append(_helper_metric_html(label, value, color))
     inner = "<br>".join(parts)
     return f"<div style='{_HELPER_SECTION_CHROME}'>{inner}</div>"
 
@@ -123,12 +208,12 @@ def accessors_section_html(
             for code, color in items
         )
         rows += (
-            f"<small style='color:#6272a4;margin-right:6px;'>{_esc(label)}</small>"
+            f"<small style='color:{_HELPER_MUTED_COLOR};margin-right:6px;'>{_esc(label)}</small>"
             f"{chips}<br>"
         )
     return (
         f"<div style='{_HELPER_SECTION_CHROME}'>"
-        "<b style='color:#bd93f9;'>ACCESSORS &amp; METHODS</b><br>"
+        f"<b style='color:{_HELPER_LABEL_COLOR};'>ACCESSORS &amp; METHODS</b><br>"
         f"{rows}</div>"
     )
 
@@ -145,9 +230,9 @@ def examples_section_html(code: str, *, title: str = "Examples") -> str:
     """
     return (
         f"<div style='{_HELPER_SECTION_CHROME}'>"
-        f"<b style='color:#bd93f9;'>{_esc(title)}</b><br>"
-        "<pre style='margin:6px 0 0 0;background:rgba(40,42,54,0.92);"
-        "padding:10px;border-radius:6px;color:#f8f8f2;overflow-x:auto;"
+        f"<b style='color:{_HELPER_LABEL_COLOR};'>{_esc(title)}</b><br>"
+        "<pre style='margin:6px 0 0 0;background:rgba(15,23,42,0.85);"
+        "padding:10px;border-radius:6px;color:#e2e8f0;overflow-x:auto;"
         f"font-size:0.85em;'><code>{_esc(code)}</code></pre>"
         "</div>"
     )
@@ -176,15 +261,15 @@ def node_card_html(
     ::
 
         outer div (gradient background + border + box-shadow)
-          title <div>  (always visible, above tabs — NOT <h3>!)
-          subtitle <div>
-          └─ html_tabs
-               ├─ Overview tab
-               │    section₁  (from metrics_section_html / accessors_section_html / …)
-               │    section₂
-               │    …
-               └─ API tab
-                    api_help_html(..., chrome=False)
+          html_tabs()   # always first child of the outer card
+            ├─ Overview tab
+            │    title <div>
+            │    subtitle <div>
+            │    section₁  (from metrics_section_html / accessors_section_html / …)
+            │    section₂
+            │    …
+            └─ API tab
+                 api_help_html(..., chrome=False)
 
     Parameters
     ----------
@@ -210,52 +295,29 @@ def node_card_html(
     extra_tabs : list[(label, body)], optional
         Additional tabs inserted after "Overview" and before "API".
     """
-    # ── badge ──────────────────────────────────────────────────────────────
     badge_html = ""
     if badge:
         blabel, bcolor = badge
-        badge_html = (
-            f"<span style='background:{_esc(bcolor)};color:#282a36;"
-            "padding:1px 6px;border-radius:10px;font-size:10px;"
-            f"margin-left:8px;'>{_esc(blabel)}</span>"
-        )
+        badge_html = helper_badge_html(
+            blabel,
+            color=bcolor,
+            text_color="#0f172a",
+        ).replace("<span ", "<span style='margin-left:8px;' ", 1)
 
-    # ── title / subtitle ───────────────────────────────────────────────────
-    prefix = f"{icon} " if icon else ""
-    title_html = "<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #6272a4; border-radius: 12px; padding: 18px; margin: 10px 0; background: linear-gradient(135deg, #282a36 0%, #21222c 50%, #44475a 100%); color: #f8f8f2; box-shadow: 0 10px 25px rgba(0,0,0,0.45), 0 0 0 1px rgba(98,114,164,0.15) inset;\">"
-    title_html += (
-        "<div style='font-size:1.1em;font-weight:600;color:#f8f8f2;"
-        "margin:0 0 6px 0;letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);'>"
-        f"{prefix}{_esc(title)}{badge_html}</div>"
-    )
-    subtitle_html = (
-        f"<div style='font-size:0.85em;color:#6272a4;margin-bottom:12px;'>"
-        f"{subtitle}</div>"  # subtitle is trusted caller HTML (already escaped/built)
-        if subtitle
-        else ""
+    overview_html = _helper_overview_html(
+        title,
+        icon=icon,
+        subtitle=subtitle,
+        badge_html=badge_html,
+        sections=sections,
     )
 
-    # ── overview panel (sections only, no title — title lives above tabs) ──
-    sections_html = "".join(sections or [])
-    overview_html = (
-        f"<div style='{_HELPER_CARD_INNER}'>"
-        f"{sections_html}"
-        "</div>"
-    )
-
-    # ── assemble tabs ─────────────────────────────────────────────────────
     tabs: list[tuple[str, str]] = [("Overview", overview_html)]
-    for label, body in (extra_tabs or []):
+    for label, body in extra_tabs or []:
         tabs.append((label, body))
     tabs.append(("API", api))
 
-    # ── outer card: title above tabs (matches MMPP Job Manager pattern) ───
-    return (
-        f"<div style='{_HELPER_CARD_FONT}{_HELPER_CARD_CHROME}'>"
-        f"{title_html}{subtitle_html}"
-        + html_tabs(tabs, uid=uid)
-        + "</div>"
-    )
+    return _helper_outer_card_html(tabs, uid=uid)
 
 
 def _html_id(value: str) -> str:
@@ -284,13 +346,16 @@ def helper_table_html(rows: Sequence[tuple[str, object]]) -> str:
         return ""
     body = "".join(
         "<tr>"
-            f"<td style='color:#bd93f9;padding-right:14px'>{_esc(str(key))}</td>"
-        f"<td><code>{_esc(str(value))}</code></td>"
+        f"<td style='color:{_HELPER_LABEL_COLOR};padding:4px 14px 4px 0;vertical-align:top;'>{_esc(str(key))}</td>"
+        "<td style='padding:4px 0;'>"
+        "<code style='background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:5px;"
+        f"font-size:0.88em;color:{_HELPER_VALUE_COLOR};border:1px solid rgba(71,85,105,0.3);'>"
+        f"{_esc(str(value))}</code></td>"
         "</tr>"
         for key, value in rows
     )
     return (
-        "<table style='border-collapse:collapse;font-size:12px;margin-bottom:4px'>"
+        "<table style='border-collapse:collapse;font-size:0.88em;width:100%;margin-top:4px'>"
         f"{body}</table>"
     )
 
@@ -313,8 +378,8 @@ def helper_code_grid_html(
             for code, desc, color in items
         )
         cards.append(
-            "<div style='margin-bottom: 6px;'>"
-            f"<small style='color: #6272a4; margin-right: 6px;'>{_esc(heading)}:</small>"
+            "<div style='margin-bottom:6px;'>"
+            f"<small style='color:{_HELPER_MUTED_COLOR};margin-right:6px;'>{_esc(heading)}:</small>"
             f"{item_html}</div>"
         )
     return "".join(cards)
@@ -323,7 +388,7 @@ def helper_code_grid_html(
 def _helper_section_html(title: str, body: str) -> str:
     return (
         f"<div style='{_HELPER_SECTION_CHROME}'>"
-        f'<b style="color: #bd93f9;">{_esc(title)}</b><br>'
+        f"<b style='color:{_HELPER_LABEL_COLOR};'>{_esc(title)}</b><br>"
         f"{body}"
         "</div>"
     )
@@ -332,16 +397,7 @@ def _helper_section_html(title: str, body: str) -> str:
 def _helper_metrics_html(rows: Sequence[tuple[str, object]]) -> str:
     if not rows:
         return ""
-    parts = []
-    for key, value in rows:
-        parts.append(
-            f'<b style="color: #bd93f9;">{_esc(str(key))}:</b> '
-            '<code style="background: rgba(40,42,54,0.72); padding: 4px 10px; '
-            "border-radius: 5px; font-family: 'Courier New', monospace; "
-            "font-size: 0.9em; color: #f8f8f2; "
-            f'border: 1px solid rgba(98,114,164,0.35);">{_esc(str(value))}</code>'
-        )
-    return "<br>".join(parts)
+    return "<br>".join(_helper_metric_html(key, value) for key, value in rows)
 
 
 def helper_code_chip_html(code: str, *, color: str = NODE_COLOR_COMPUTE) -> str:
@@ -371,16 +427,15 @@ def helper_card_html(
     card, stat/action sections, and optional JavaScript-backed Overview/API
     tabs.
     """
-    badge = ""
+    badge_html = ""
     if status:
         label, color = status
-        badge = f"&nbsp;&nbsp;{helper_badge_html(label, color=color)}"
+        badge_html = helper_badge_html(
+            label,
+            color=color,
+            text_color="#0f172a",
+        ).replace("<span ", "<span style='margin-left:8px;' ", 1)
 
-    subtitle_html = (
-        f'<div style="color: #6272a4; margin-top: 4px;">{_esc(subtitle)}</div>'
-        if subtitle
-        else ""
-    )
     overview_parts: list[str] = []
     if metrics:
         overview_parts.append(
@@ -397,28 +452,29 @@ def helper_card_html(
         _helper_section_html(label, body) for label, body in (details or [])
     )
 
-    body_html = "".join(overview_parts)
-    if tabs:
-        tabs_uid = uid or _html_id(title)
-        tab_items = list(tabs)
-        if overview_parts:
-            first_label, first_body = tab_items[0]
-            if first_label.lower() == "overview":
-                tab_items[0] = (first_label, body_html + first_body)
-            else:
-                tab_items.insert(0, ("Overview", body_html))
-        body_html = html_tabs(tab_items, uid=tabs_uid)
+    tabs_uid = uid or _html_id(title)
+    tab_items = list(tabs or [])
+    overview_extra_html = ""
+    if tab_items and tab_items[0][0].lower() == "overview":
+        _, overview_extra_html = tab_items.pop(0)
+    overview_html = _helper_overview_html(
+        title,
+        subtitle=subtitle,
+        badge_html=badge_html,
+        sections=overview_parts,
+        leading_html=overview_extra_html,
+    )
+    final_tabs: list[tuple[str, str]] = [("Overview", overview_html)]
+    final_tabs.extend(tab_items)
 
-    return (
-        f"<div style='{_HELPER_CARD_FONT}{_HELPER_CARD_CHROME}"
-        f"{f'max-width: {_esc(max_width)}; ' if max_width else ''}"
-        f"border-color: {_esc(accent)};'>"
-        '<h3 style="margin: 0 0 12px 0; color: #f1f5f9; font-weight: 600; '
-        'letter-spacing: 0.5px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">'
-        f"{_esc(title)}{badge}</h3>"
-        f"{subtitle_html}"
-        f"{body_html}"
-        "</div>"
+    if not final_tabs:
+        final_tabs = [("Overview", overview_html)]
+
+    return _helper_outer_card_html(
+        final_tabs,
+        uid=tabs_uid,
+        max_width=max_width,
+        accent=accent,
     )
 
 
@@ -427,13 +483,13 @@ def html_tabs(tabs: Sequence[tuple[str, str]], *, uid: str) -> str:
     if not tabs:
         return ""
     tab_button_style = (
-        "padding:7px 12px;border:1px solid rgba(96,165,250,0.35);"
-        "border-radius:6px;background:rgba(15,23,42,0.65);color:#93c5fd;"
+        f"padding:7px 12px;border:1px solid rgba(96,165,250,0.35);"
+        f"border-radius:6px;background:{_HELPER_IDLE_BG};color:{_HELPER_IDLE_TEXT};"
         "cursor:pointer;font-size:0.85em;font-weight:600;margin-right:6px;"
     )
     active_tab_style = (
-        "padding:7px 12px;border:1px solid rgba(96,165,250,0.65);"
-        "border-radius:6px;background:rgba(96,165,250,0.22);color:#dbeafe;"
+        f"padding:7px 12px;border:1px solid rgba(96,165,250,0.65);"
+        f"border-radius:6px;background:{_HELPER_ACTIVE_BG};color:{_HELPER_ACTIVE_TEXT};"
         "cursor:pointer;font-size:0.85em;font-weight:700;margin-right:6px;"
     )
     button_html = ""
@@ -610,60 +666,53 @@ def api_help_html(
     if properties:
         prop_rows = "".join(
             "<tr>"
-            f"<td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(name)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(desc)}</td>"
-            f"<td style='padding:4px 8px;font-family:monospace;color:#a7f3d0;'>{_esc(prefix + '.' + name)}</td>"
+            f"<td style='padding:4px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};'>{_esc(name)}</td>"
+            f"<td style='padding:4px 8px;color:{_HELPER_VALUE_COLOR};'>{_esc(desc)}</td>"
+            f"<td style='padding:4px 8px;font-family:monospace;color:{NODE_COLOR_ANALYSIS};'>{_esc(prefix + '.' + name)}</td>"
             "</tr>"
             for name, desc in properties
         )
 
     method_rows = "".join(
-        "<tr style='border-top:1px solid rgba(71,85,105,.35);'>"
-        f"<td style='padding:5px 8px;font-family:monospace;color:#93c5fd;white-space:nowrap;'>"
+        f"<tr style='border-top:1px solid {_HELPER_TABLE_ROW_BORDER};'>"
+        f"<td style='padding:5px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};white-space:nowrap;'>"
         f"{_esc('.' + name + _signature_text(func))}</td>"
-        f"<td style='padding:5px 8px;color:#cbd5e1;'>{_esc(_summary_text(func))}</td>"
-        f"<td style='padding:5px 8px;font-family:monospace;color:#a7f3d0;'>{_esc(_example_for(prefix, name, func))}</td>"
+        f"<td style='padding:5px 8px;color:{_HELPER_VALUE_COLOR};'>{_esc(_summary_text(func))}</td>"
+        f"<td style='padding:5px 8px;font-family:monospace;color:{NODE_COLOR_ANALYSIS};'>{_esc(_example_for(prefix, name, func))}</td>"
         "</tr>"
         for name, func in callables
     )
     if not method_rows:
         method_rows = (
-            "<tr><td colspan='3' style='padding:6px 8px;color:#94a3b8;'>"
+            f"<tr><td colspan='3' style='padding:6px 8px;color:{_HELPER_LABEL_COLOR};'>"
             "No public callable methods detected.</td></tr>"
         )
 
     props_block = ""
     if prop_rows:
         props_block = (
-            "<div style='font-weight:600;color:#f1f5f9;margin:10px 0 4px;'>Namespaces / properties</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:.88em;'>"
-            "<thead><tr style='text-align:left;color:#94a3b8;'>"
-            "<th style='padding:4px 8px;'>Accessor</th><th style='padding:4px 8px;'>Description</th>"
-            "<th style='padding:4px 8px;'>Example</th></tr></thead>"
-            f"<tbody>{prop_rows}</tbody></table>"
+            f"<div style='{_HELPER_SECTION_CHROME}'>"
+            f"<b style='color:{_HELPER_LABEL_COLOR};'>Namespaces / properties</b><br>"
+            f"{_helper_table_html(['Accessor', 'Description', 'Example'], prop_rows)}"
+            "</div>"
         )
 
     subtitle_html = (
-        f"<div style='color:#94a3b8;font-size:.85em;margin-top:3px;'>{_esc(subtitle)}</div>"
+        f"<div style='color:{_HELPER_LABEL_COLOR};font-size:0.85em;margin-bottom:12px;'>{_esc(subtitle)}</div>"
         if subtitle
         else ""
     )
     inner = (
-        f"<div style='font-size:1.04em;font-weight:700;color:#f1f5f9;'>{_esc(title)}</div>"
-        f"{subtitle_html}{props_block}"
-        "<div style='font-weight:600;color:#f1f5f9;margin:10px 0 4px;'>Methods</div>"
-        "<table style='width:100%;border-collapse:collapse;font-size:.86em;'>"
-        "<thead><tr style='text-align:left;color:#94a3b8;'>"
-        "<th style='padding:4px 8px;'>Signature</th><th style='padding:4px 8px;'>Description</th>"
-        "<th style='padding:4px 8px;'>Example</th></tr></thead>"
-        f"<tbody>{method_rows}</tbody></table>"
+        f"<div style='font-size:1.1em;font-weight:600;color:{_HELPER_TITLE_COLOR};margin-bottom:4px;'>{_esc(title)}</div>"
+        f"{subtitle_html}"
+        f"{props_block}"
+        f"<div style='{_HELPER_SECTION_CHROME}'>"
+        f"<b style='color:{_HELPER_LABEL_COLOR};'>Methods</b><br>"
+        f"{_helper_table_html(['Signature', 'Description', 'Example'], method_rows, font_size='0.86em')}"
+        "</div>"
     )
     if not chrome:
-        return (
-            "<div style='background:rgba(15,23,42,0.6);padding:12px;"
-            "border-radius:8px;margin-top:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            f"{inner}</div>"
-        )
+        return f"<div style='{_HELPER_CARD_INNER}'>{inner}</div>"
 
     return (
         "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"

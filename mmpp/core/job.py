@@ -12,7 +12,19 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 from ..pyzfn import Pyzfn
 from ..pyzfn.h5_backend import detect_h5_quantities, H5QuantityGroup
 from ..cli.logging_config import get_mmpp_logger
-from .constants import SPECIAL_ATTRS, ArraySlice, npf32, npc64, np1d, np2d, np3d, np4d, np5d, np4dc, RICH_AVAILABLE
+from .constants import (
+    SPECIAL_ATTRS,
+    ArraySlice,
+    npf32,
+    npc64,
+    np1d,
+    np2d,
+    np3d,
+    np4d,
+    np5d,
+    np4dc,
+    RICH_AVAILABLE,
+)
 from .attributes import AttributesView
 from .dataset import DatasetAwareWrapper
 from .dataset_geometry import AxisGeometry, DatasetGeometry
@@ -52,6 +64,7 @@ class _TreeDisplay:
 
     def _repr_html_(self) -> str:  # rich Jupyter rendering
         import html
+
         escaped = html.escape(self._tree)
         return (
             "<pre style='"
@@ -295,12 +308,9 @@ class ZarrJobResult:
         else:
             log.warning("No script found to display.")
 
-
-
-
     def __getitem__(self, item: str) -> Union[zarr.Array, zarr.Group]:
         """Get zarr dataset or group by key.
-        
+
         Prioritizes datasets over attributes. If a dataset with the given name
         exists, it will be returned. Use job[i].attrs[key] for attribute access.
         """
@@ -420,17 +430,17 @@ class ZarrJobResult:
 
     def has_dataset(self, name: str) -> bool:
         """Check if a dataset (zarr.Array) with given name exists.
-        
+
         Parameters
         ----------
         name : str
             Name of the dataset to check
-            
+
         Returns
         -------
         bool
             True if dataset exists, False otherwise
-            
+
         Example
         -------
         >>> job[0].has_dataset('alpha')  # Check if 'alpha' is a dataset
@@ -447,17 +457,17 @@ class ZarrJobResult:
 
     def has_attr(self, name: str) -> bool:
         """Check if an attribute with given name exists in zarr attrs.
-        
+
         Parameters
         ----------
         name : str
             Name of the attribute to check
-            
+
         Returns
         -------
         bool
             True if attribute exists, False otherwise
-            
+
         Example
         -------
         >>> job[0].has_attr('alpha')  # Check if 'alpha' is an attribute
@@ -476,7 +486,20 @@ class ZarrJobResult:
 
     def _repr_html_(self) -> str:
         """HTML card for Jupyter notebooks."""
+        import uuid as _uuid
         from html import escape as _esc
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
         try:
             datasets = self.datasets
             attrs = dict(self.attrs)
@@ -487,83 +510,113 @@ class ZarrJobResult:
         fin_label = "finished" if finished else "running"
         fin_color = "#22c55e" if finished else "#ef4444"
         ds_rows = "".join(
-            f"<tr><td><code style='color:#7dd3fc'>{_esc(d)}</code></td></tr>"
+            f"<tr><td><code style='color:{NODE_COLOR_COMPUTE}'>{_esc(d)}</code></td></tr>"
             for d in datasets[:12]
         )
         if len(datasets) > 12:
-            ds_rows += f"<tr><td style='color:#64748b'><i>…and {len(datasets) - 12} more</i></td></tr>"
+            ds_rows += f"<tr><td style='color:#6272a4'><i>…and {len(datasets) - 12} more</i></td></tr>"
         attr_rows = "".join(
-            f"<tr><td style='color:#94a3b8;padding-right:12px'>{_esc(str(k))}</td>"
+            f"<tr><td style='color:#bd93f9;padding-right:12px'>{_esc(str(k))}</td>"
             f"<td><code>{_esc(str(v))}</code></td></tr>"
             for k, v in list(attrs.items())[:8]
         )
-        accessors_html = (
-            "<details style='margin-top:8px'>"
-            "<summary style='cursor:pointer;font-weight:bold;color:#cbd5e1;"
-            "letter-spacing:.04em;font-size:12px'>ACCESSORS &amp; METHODS</summary>"
-            "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px'>"
-            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
-            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Navigation</div>"
-            "<div style='display:flex;flex-direction:column;gap:2px'>"
-            "<code style='color:#38bdf8'>[0]</code><span style='color:#64748b;font-size:10px'>&nbsp;single result</span>"
-            "<code style='color:#38bdf8'>[:]</code><span style='color:#64748b;font-size:10px'>&nbsp;batch operations</span>"
-            "<code style='color:#38bdf8'>[-1]</code><span style='color:#64748b;font-size:10px'>&nbsp;last result</span>"
-            "</div></div>"
-            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
-            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Datasets</div>"
-            "<div style='display:flex;flex-direction:column;gap:2px'>"
-            "<code style='color:#a78bfa'>.m</code><span style='color:#64748b;font-size:10px'>&nbsp;magnetization</span>"
-            "<code style='color:#a78bfa'>.datasets</code><span style='color:#64748b;font-size:10px'>&nbsp;list available</span>"
-            "<code style='color:#a78bfa'>.attrs</code><span style='color:#64748b;font-size:10px'>&nbsp;simulation attrs</span>"
-            "</div></div>"
-            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
-            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Analysis</div>"
-            "<div style='display:flex;flex-direction:column;gap:2px'>"
-            "<code style='color:#34d399'>.fft</code><span style='color:#64748b;font-size:10px'>&nbsp;FFT namespace</span>"
-            "<code style='color:#34d399'>.analyze</code><span style='color:#64748b;font-size:10px'>&nbsp;analysis tools</span>"
-            "</div></div>"
-            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
-            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Inspection</div>"
-            "<div style='display:flex;flex-direction:column;gap:2px'>"
-            "<code style='color:#fb923c'>.p</code><span style='color:#64748b;font-size:10px'>&nbsp;zarr tree string</span>"
-            "<code style='color:#fb923c'>.pp</code><span style='color:#64748b;font-size:10px'>&nbsp;pretty-print tree</span>"
-            "<code style='color:#fb923c'>.is_finished()</code><span style='color:#64748b;font-size:10px'>&nbsp;completion check</span>"
-            "</div></div>"
-            "</div></details>"
+        datasets_html = (
+            "<div style='background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);"
+            "backdrop-filter:blur(10px);'>"
+            "<b style='color:#bd93f9;'>Datasets</b><br>"
+            f"<table style='border-collapse:collapse;margin-top:6px'>{ds_rows}</table></div>"
         )
-        return (
-            "<div style='border:1px solid #334155;padding:12px 14px;border-radius:8px;"
-            "font-family:monospace;display:inline-block;max-width:760px;"
-            "background:#0f172a;color:#e2e8f0'>"
-            f"<div style='font-size:13px;margin-bottom:8px'>"
-            f"<b style='color:#7dd3fc'>ZarrJobResult</b>"
-            f"&nbsp;&mdash;&nbsp;<span style='color:#f8fafc'>{_esc(self.name)}</span>"
-            f"&nbsp;&nbsp;<span style='background:{fin_color};color:#0f172a;"
-            f"padding:1px 6px;border-radius:10px;font-size:10px'>{fin_label}</span>"
-            "</div>"
-            "<table style='border-collapse:collapse;font-size:12px;margin-bottom:4px'>"
-            f"<tr><td style='color:#94a3b8;padding-right:14px'>datasets</td>"
-            f"<td>{len(datasets)}</td></tr>"
-            "</table>"
-            "<details style='font-size:12px;margin-top:4px'>"
-            "<summary style='cursor:pointer;color:#94a3b8'>Datasets</summary>"
-            f"<table style='border-collapse:collapse;margin-top:4px'>{ds_rows}</table>"
-            "</details>"
-            "<details style='font-size:12px;margin-top:4px'>"
-            "<summary style='cursor:pointer;color:#94a3b8'>Attributes</summary>"
-            f"<table style='border-collapse:collapse;margin-top:4px'>{attr_rows}</table>"
-            "</details>"
-            f"{accessors_html}"
-            "</div>"
+        attrs_html = (
+            "<div style='background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);"
+            "backdrop-filter:blur(10px);'>"
+            "<b style='color:#bd93f9;'>Attributes</b><br>"
+            f"<table style='border-collapse:collapse;margin-top:6px'>{attr_rows}</table></div>"
+        )
+        api_card = api_help_html(
+            self,
+            title="ZarrJobResult API help",
+            prefix="job[0]",
+            subtitle="Single-result navigation with live method signatures.",
+            properties=[
+                ("datasets", "List available datasets"),
+                ("attrs", "Simulation attributes"),
+                ("m", "Magnetization dataset accessor"),
+                ("fft", "FFT analysis namespace"),
+                ("analyze", "Unified analysis namespace"),
+                ("solitons", "Soliton analysis entry point"),
+                ("vortex", "Shortcut for solitons.vortex"),
+                ("get", "Direct numpy access namespace"),
+                ("p", "Zarr tree string"),
+                ("pp", "Pretty-print zarr tree"),
+            ],
+            methods=["has_dataset", "has_attr", "is_finished"],
+            chrome=False,
+        )
+        return node_card_html(
+            "ZarrJobResult",
+            icon="🧾",
+            subtitle=self.name,
+            badge=(fin_label, fin_color),
+            sections=[
+                metrics_section_html(
+                    [
+                        ("path", self.path, None),
+                        ("datasets", len(datasets), NODE_COLOR_COMPUTE),
+                        ("attributes", len(attrs), NODE_COLOR_ANALYSIS),
+                    ]
+                ),
+                datasets_html,
+                attrs_html,
+                accessors_section_html(
+                    [
+                        (
+                            "Navigation:",
+                            [
+                                ("job[0]", NODE_COLOR_COMPUTE),
+                                ("job[:]", NODE_COLOR_COMPUTE),
+                            ],
+                        ),
+                        (
+                            "Datasets:",
+                            [
+                                (".m", NODE_COLOR_PLOT),
+                                (".datasets", NODE_COLOR_PLOT),
+                                (".attrs", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                        (
+                            "Analysis:",
+                            [
+                                (".fft", NODE_COLOR_ANALYSIS),
+                                (".analyze", NODE_COLOR_ANALYSIS),
+                                (".vortex", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                        (
+                            "Inspection:",
+                            [
+                                (".p", NODE_COLOR_UTIL),
+                                (".pp", NODE_COLOR_UTIL),
+                                (".is_finished()", NODE_COLOR_UTIL),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html("job[0].m\njob[0].fft.spectrum()\njob[0].attrs"),
+            ],
+            api=api_card,
+            uid=f"zarr-job-{str(_uuid.uuid4())[:8]}",
         )
 
     @property
     def pp(self):
         """Pretty print the zarr tree interactively using rich console.
-        
+
         This displays a nicely formatted tree structure of the zarr group.
         Best used in interactive Python/IPython/Jupyter sessions.
-        
+
         Example
         -------
         >>> job[0].pp  # Prints tree to console
@@ -590,15 +643,15 @@ class ZarrJobResult:
     @property
     def p(self):
         """Return the zarr tree as a string representation.
-        
+
         Use this when you need the tree as a string (e.g., for logging or saving).
         For interactive display, use .pp instead.
-        
+
         Returns
         -------
         str
             String representation of the zarr tree structure
-            
+
         Example
         -------
         >>> tree_str = job[0].p
@@ -623,9 +676,7 @@ class ZarrJobResult:
         target = (base / dset).resolve()
         # Security: reject paths that would escape the job directory
         if not str(target).startswith(str(base) + "/") and target != base:
-            raise ValueError(
-                f"Refusing to delete path outside job directory: {dset!r}"
-            )
+            raise ValueError(f"Refusing to delete path outside job directory: {dset!r}")
         shutil.rmtree(target, ignore_errors=True)
 
     def is_finished(self) -> bool:
@@ -896,6 +947,7 @@ class ZarrJobResult:
     def mpl(self):
         """Get matplotlib plotter for this single result."""
         from ..plotting import MMPPlotter
+
         return MMPPlotter([self], self._mmpp_ref)
 
     @property
@@ -906,27 +958,28 @@ class ZarrJobResult:
     @property
     def get(self):
         """Access datasets with direct numpy output.
-        
+
         Returns a NumpyGetter that provides direct numpy array access
         when slicing datasets. Unlike regular dataset access which returns
         DatasetAwareWrapper, this returns numpy arrays directly.
-        
+
         Returns
         -------
         NumpyGetter
             Helper object for numpy-direct dataset access
-        
+
         Example
         -------
         >>> # Direct numpy access
         >>> arr = job[0].get.m[:]  # Returns numpy.ndarray
         >>> arr = job[0].get.m[0:100, :, :, :, 0]
-        >>> 
+        >>>
         >>> # Compare to regular access
         >>> wrapper = job[0].m[:]  # Returns DatasetAwareWrapper
         >>> arr = job[0].m[:].numpy()  # Explicit conversion
         """
         from .dataset import NumpyGetter
+
         return NumpyGetter(self)
 
     @property

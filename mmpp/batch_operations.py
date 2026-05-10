@@ -647,6 +647,7 @@ class BatchDatasetWrapper:
     def _repr_html_(self) -> str:
         """HTML card for Jupyter notebooks."""
         from html import escape as _esc
+
         n = len(self.results)
         slice_str = (
             f"<code style='font-size:11px'>{_esc(str(self.slice_info))}</code>"
@@ -1003,7 +1004,17 @@ class BatchOperations:
         import html as _html
         import uuid as _uuid
 
-        from mmpp._repr_helpers import api_help_html, html_tabs
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
 
         n = len(self.results)
         uid = str(_uuid.uuid4())[:8]
@@ -1024,64 +1035,54 @@ class BatchOperations:
             chrome=False,
         )
 
-        # ── styles ──────────────────────────────────────────────
-        _card = (
-            "background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,"
-            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;"
-            "margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);"
-        )
-        _code = (
-            "background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;"
-            "color:#60a5fa;border:1px solid rgba(71,85,105,0.3);font-weight:500;"
-            "font-family:'Courier New',monospace;font-size:0.88em;"
-        )
-        _bdr = "border-bottom:1px solid rgba(71,85,105,0.3);"
-
-        # ── outer container ─────────────────────────────────────
-        html = (
-            '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
-            '0 0 0 1px rgba(148,163,184,0.1) inset;">'
-        )
-
-        # ── header ──────────────────────────────────────────────
-        html += (
-            '<h3 style="margin:0 0 12px 0;color:#f1f5f9;font-weight:600;'
-            'letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);">'
-            f"📦 Batch Operations &nbsp;"
-            f'<span style="color:#60a5fa;font-weight:700;">{n}</span>'
-            f'<span style="color:#cbd5e1;font-weight:400;font-size:0.9em;"> result{"s" if n != 1 else ""}</span>'
-            "</h3>"
-        )
-
+        sections = [
+            metrics_section_html(
+                [
+                    (
+                        "results",
+                        f"{n} result{'s' if n != 1 else ''}",
+                        NODE_COLOR_COMPUTE,
+                    ),
+                    ("filters", len(self._filter_kwargs), NODE_COLOR_UTIL),
+                ]
+            )
+        ]
         if n == 0:
-            overview_html = f'<div style="{_card}"><span style="color:#fbbf24;">⚠️ Empty batch – no results.</span></div>'
-            html += html_tabs(
-                [("Overview", overview_html), ("API", api_card)],
+            sections.append(
+                "<div style='background:rgba(255,255,255,0.1);padding:10px;"
+                "border-radius:5px;margin-bottom:12px;'>"
+                "⚠️ Empty batch – no results.</div>"
+            )
+            return node_card_html(
+                "Batch Operations",
+                icon="📦",
+                subtitle="Batch-level accessors, methods, signatures and examples.",
+                badge=("empty", "#ffb86c"),
+                sections=sections,
+                api=api_card,
                 uid=f"batch-{uid}",
             )
-            html += "</div>"
-            return html
 
-        # ── 1. applied filter criteria (pill badges) ────────────
         if self._filter_kwargs:
-            html += f'<div style="{_card}">'
-            html += '<b style="color:#94a3b8;">🔍 Applied Filters:</b>'
-            html += '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;">'
+            filter_html = (
+                "<div style='background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+                "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);'>"
+                "<b style='color:#bd93f9;'>🔍 Applied Filters:</b>"
+                "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;'>"
+            )
             for k, v in self._filter_kwargs.items():
                 fmt_v = _fmt(v) if isinstance(v, (int, float)) else str(v)
-                html += (
-                    f'<span style="background:rgba(96,165,250,0.15);border:1px solid rgba(96,165,250,0.3);'
-                    f'border-radius:20px;padding:3px 12px;font-size:0.85em;">'
-                    f'<b style="color:#93c5fd;">{_html.escape(str(k))}</b>'
-                    f'<span style="color:#cbd5e1;"> = </span>'
-                    f'<span style="color:#10b981;font-family:monospace;">{_html.escape(fmt_v)}</span></span>'
+                filter_html += (
+                    "<span style='background:rgba(98,114,164,0.18);"
+                    "border:1px solid rgba(98,114,164,0.35);"
+                    "border-radius:20px;padding:3px 12px;font-size:0.85em;'>"
+                    f"<b style='color:{NODE_COLOR_COMPUTE};'>{_html.escape(str(k))}</b>"
+                    "<span style='color:#f8f8f2;'> = </span>"
+                    f"<span style='color:{NODE_COLOR_ANALYSIS};font-family:monospace;'>"
+                    f"{_html.escape(fmt_v)}</span></span>"
                 )
-            html += "</div></div>"
+            sections.append(filter_html + "</div></div>")
 
-        # ── detect varying parameters ───────────────────────────
         try:
             from .core.metadata_diff import (
                 extract_job_metadata,
@@ -1095,21 +1096,17 @@ class BatchOperations:
             varying = {}
             all_meta = [{} for _ in self.results]
 
-        # columns for the table — only params that truly vary, cap at 8
         varying_keys = list(varying.keys())[:8]
-
-        # ── 2. varying parameters summary ───────────────────────
         if varying:
-            html += f'<div style="{_card}">'
-            html += (
-                f'<b style="color:#94a3b8;">📊 Varying Parameters ({len(varying)}):</b>'
-            )
-            html += (
-                '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.88em;">'
-                f'<tr style="{_bdr}">'
-                '<th style="padding:5px 8px;text-align:left;color:#94a3b8;">Parameter</th>'
-                '<th style="padding:5px 8px;text-align:center;color:#94a3b8;">Unique</th>'
-                '<th style="padding:5px 8px;text-align:left;color:#94a3b8;">Range</th></tr>'
+            varying_html = (
+                "<div style='background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+                "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);'>"
+                f"<b style='color:#bd93f9;'>📊 Varying Parameters ({len(varying)}):</b>"
+                "<table style='width:100%;margin-top:8px;border-collapse:collapse;font-size:0.88em;'>"
+                "<tr style='border-bottom:1px solid rgba(98,114,164,0.25);'>"
+                "<th style='padding:5px 8px;text-align:left;color:#bd93f9;'>Parameter</th>"
+                "<th style='padding:5px 8px;text-align:center;color:#bd93f9;'>Unique</th>"
+                "<th style='padding:5px 8px;text-align:left;color:#bd93f9;'>Range</th></tr>"
             )
             for pname in varying_keys:
                 vals = varying[pname]
@@ -1124,53 +1121,45 @@ class BatchOperations:
                     uv = sorted(set(str(v) for v in vals if v is not None))
                     n_uniq = len(uv)
                     rng = ", ".join(uv[:5]) + (" …" if len(uv) > 5 else "")
-
-                html += (
-                    f'<tr style="{_bdr}">'
-                    f'<td style="padding:5px 8px;"><code style="{_code}">{_html.escape(pname)}</code></td>'
-                    f'<td style="padding:5px 8px;text-align:center;color:#a5b4fc;font-weight:600;">{n_uniq}</td>'
-                    f'<td style="padding:5px 8px;font-family:monospace;color:#cbd5e1;">{rng}</td></tr>'
+                varying_html += (
+                    "<tr style='border-bottom:1px solid rgba(98,114,164,0.25);'>"
+                    f"<td style='padding:5px 8px;'><code style='color:{NODE_COLOR_COMPUTE};'>"
+                    f"{_html.escape(pname)}</code></td>"
+                    f"<td style='padding:5px 8px;text-align:center;color:{NODE_COLOR_PLOT};"
+                    f"font-weight:600;'>{n_uniq}</td>"
+                    f"<td style='padding:5px 8px;font-family:monospace;color:#f8f8f2;'>"
+                    f"{_html.escape(rng)}</td></tr>"
                 )
-            html += "</table></div>"
+            sections.append(varying_html + "</table></div>")
 
-        # ── 3. full results table (open by default) ─────────────
-        html += f'<div style="{_card}">'
-        html += f'<b style="color:#94a3b8;">📋 Results ({n}):</b>'
-        html += (
-            '<div style="margin-top:8px;max-height:400px;overflow:auto;'
-            'border:1px solid rgba(71,85,105,0.3);border-radius:6px;">'
-            '<table style="width:100%;border-collapse:collapse;font-size:0.84em;white-space:nowrap;">'
-        )
-
-        # header
-        html += (
-            '<thead style="position:sticky;top:0;z-index:1;">'
-            f'<tr style="background:#1e293b;{_bdr}">'
-            '<th style="padding:6px 8px;text-align:center;color:#94a3b8;">#</th>'
-            '<th style="padding:6px 8px;text-align:left;color:#94a3b8;">Name</th>'
+        table_html = (
+            "<div style='background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);'>"
+            f"<b style='color:#bd93f9;'>📋 Results ({n}):</b>"
+            "<div style='margin-top:8px;max-height:400px;overflow:auto;"
+            "border:1px solid rgba(98,114,164,0.25);border-radius:6px;'>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.84em;white-space:nowrap;'>"
+            "<thead style='position:sticky;top:0;z-index:1;'>"
+            "<tr style='background:#282a36;border-bottom:1px solid rgba(98,114,164,0.25);'>"
+            "<th style='padding:6px 8px;text-align:center;color:#bd93f9;'>#</th>"
+            "<th style='padding:6px 8px;text-align:left;color:#bd93f9;'>Name</th>"
         )
         for vk in varying_keys:
-            html += f'<th style="padding:6px 8px;text-align:center;color:#a5b4fc;">{_html.escape(vk)}</th>'
-        html += (
-            '<th style="padding:6px 8px;text-align:left;color:#94a3b8;">Path</th>'
-            "</tr></thead><tbody>"
-        )
-
-        # rows
+            table_html += f"<th style='padding:6px 8px;text-align:center;color:{NODE_COLOR_PLOT};'>{_html.escape(vk)}</th>"
+        table_html += "<th style='padding:6px 8px;text-align:left;color:#bd93f9;'>Path</th></tr></thead><tbody>"
         for idx, result in enumerate(self.results):
             name = result.path.split("/")[-1]
-            # show only relative-ish path: last 2-3 dirs + filename
             parts = result.path.rstrip("/").split("/")
             if len(parts) > 3:
                 short_path = "/".join(parts[-3:])
             else:
                 short_path = result.path
-
-            bg = "background:rgba(15,23,42,0.3);" if idx % 2 == 0 else ""
-            html += f'<tr style="{_bdr}{bg}">'
-            html += f'<td style="padding:4px 8px;text-align:center;color:#64748b;">{idx}</td>'
-            html += f'<td style="padding:4px 8px;"><code style="color:#e2e8f0;">{_html.escape(name)}</code></td>'
-
+            bg = "background:rgba(40,42,54,0.35);" if idx % 2 == 0 else ""
+            table_html += (
+                f"<tr style='border-bottom:1px solid rgba(98,114,164,0.25);{bg}'>"
+            )
+            table_html += f"<td style='padding:4px 8px;text-align:center;color:#6272a4;'>{idx}</td>"
+            table_html += f"<td style='padding:4px 8px;'><code style='color:#f8f8f2;'>{_html.escape(name)}</code></td>"
             meta = all_meta[idx] if idx < len(all_meta) else {}
             for vk in varying_keys:
                 val = meta.get(vk)
@@ -1180,70 +1169,59 @@ class BatchOperations:
                     cell = str(val)
                 else:
                     cell = "–"
-                html += f'<td style="padding:4px 8px;text-align:center;color:#cbd5e1;font-family:monospace;">{_html.escape(cell)}</td>'
-
-            html += (
-                f'<td style="padding:4px 8px;color:#64748b;font-size:0.85em;" '
-                f'title="{_html.escape(result.path)}">{_html.escape(short_path)}</td>'
+                table_html += f"<td style='padding:4px 8px;text-align:center;color:#f8f8f2;font-family:monospace;'>{_html.escape(cell)}</td>"
+            table_html += (
+                f"<td style='padding:4px 8px;color:#6272a4;font-size:0.85em;' "
+                f"title='{_html.escape(result.path)}'>{_html.escape(short_path)}</td></tr>"
             )
-            html += "</tr>"
-
-        html += "</tbody></table></div></div>"
-
-        # ── 4. available operations table ────────────────────────
-        ops = [
-            ("job[:].fft.spectrum", "Batch FFT spectrum computation"),
-            ("job[:].fft.modes", "Batch FMR mode analysis"),
-            ("job[:].fft.transmission", "Batch transmission analysis"),
-            ("job[:].get.&lt;dset&gt;[:]", "Stacked numpy arrays [n_jobs, …]"),
-            ("job[:].process(…)", "Full analysis pipeline"),
-        ]
-
-        html += f'<div style="{_card}">'
-        html += '<b style="color:#94a3b8;">🔧 Available Operations:</b>'
-        html += '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;">'
-        for code, desc in ops:
-            html += (
-                f'<tr style="{_bdr}">'
-                f'<td style="padding:6px 8px;">'
-                f'<code style="{_code}">{code}</code></td>'
-                f'<td style="padding:6px 8px;color:#cbd5e1;">{desc}</td></tr>'
-            )
-        html += "</table></div>"
-
-        # ── 5. quick-start examples (collapsible) ───────────────
-        example_id = f"batch-examples-{uid}"
-        html += (
-            f'<div style="margin-top:4px;">'
-            f"<span onclick=\"var e=document.getElementById('{example_id}');"
-            f"e.style.display=e.style.display==='none'?'block':'none';\""
-            f' style="cursor:pointer;color:#60a5fa;font-size:0.9em;">'
-            f"▶ Quick-start examples</span>"
-            f'<div id="{example_id}" style="display:none;margin-top:8px;">'
-            f'<pre style="background:rgba(15,23,42,0.8);padding:10px;border-radius:6px;'
-            f"font-family:'Courier New',monospace;font-size:0.85em;color:#10b981;"
-            f'border:1px solid rgba(71,85,105,0.4);overflow-x:auto;">'
-            "# Batch spectrum\n"
-            "batch = job[:].fft.spectrum.compute_all(fmin=5e9, fmax=25e9)\n"
-            'batch.plot.heatmap("B0")\n\n'
-            "# Batch numpy access\n"
-            "arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n"
-            "# Full pipeline\n"
-            'job[:].process(dset="m")'
-            "</pre></div></div>"
+        sections.append(table_html + "</tbody></table></div></div>")
+        sections.extend(
+            [
+                accessors_section_html(
+                    [
+                        (
+                            "Analysis:",
+                            [
+                                ("job[:].fft.spectrum", NODE_COLOR_ANALYSIS),
+                                ("job[:].fft.modes", NODE_COLOR_ANALYSIS),
+                                ("job[:].fft.transmission", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                        (
+                            "Data:",
+                            [
+                                ("job[:].get.<dset>[:]", NODE_COLOR_COMPUTE),
+                                ("job[:].process(...)", NODE_COLOR_COMPUTE),
+                            ],
+                        ),
+                        (
+                            "Plotting:",
+                            [
+                                ("job[:].mpl", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "# Batch spectrum\n"
+                    "batch = job[:].fft.spectrum.compute_all(fmin=5e9, fmax=25e9)\n"
+                    'batch.plot.heatmap("B0")\n\n'
+                    "# Batch numpy access\n"
+                    "arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n"
+                    "# Full pipeline\n"
+                    'job[:].process(dset="m")',
+                    title="Quick-start examples",
+                ),
+            ]
         )
-
-        overview_html = html + "</div>"
-        return (
-            '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            'color:#e2e8f0;">'
-            + html_tabs(
-                [("Overview", overview_html), ("API", api_card)],
-                uid=f"batch-{uid}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Batch Operations",
+            icon="📦",
+            subtitle="Batch-level accessors, methods, signatures and examples.",
+            badge=("ready", "#22c55e"),
+            sections=sections,
+            api=api_card,
+            uid=f"batch-{uid}",
         )
 
     def __iter__(self):

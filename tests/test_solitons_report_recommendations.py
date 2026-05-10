@@ -587,6 +587,70 @@ def test_api_help_html_includes_signatures_parameters_and_examples() -> None:
     assert "demo.plt" in html
 
 
+def test_api_help_html_chrome_false_matches_overview_visual_language() -> None:
+    from mmpp._repr_helpers import api_help_html
+
+    class Demo:
+        def compute(self, value: float, *, scale: float = 1.0) -> float:
+            """Compute a scaled value."""
+            return value * scale
+
+    html = api_help_html(
+        Demo(),
+        title="Demo API help",
+        prefix="demo",
+        subtitle="Live signatures from the interface.",
+        properties=[("plt", "Plotting accessor")],
+        methods=["compute"],
+        chrome=False,
+    )
+
+    assert "font-size:1.1em;font-weight:600;color:#f1f5f9" in html
+    assert (
+        "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%)" in html
+    )
+    assert (
+        "background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%)"
+        in html
+    )
+    assert "Namespaces / properties" in html
+    assert "Methods" in html
+    assert "Accessor" in html
+    assert "Signature" in html
+    assert "border:1px solid rgba(148,163,184,0.15)" in html
+
+
+def test_node_card_html_uses_canonical_single_card_tabs_first_layout() -> None:
+    from mmpp._repr_helpers import (
+        NODE_COLOR_ANALYSIS,
+        accessors_section_html,
+        examples_section_html,
+        metrics_section_html,
+        node_card_html,
+    )
+
+    html = node_card_html(
+        "Demo Node",
+        icon="🧪",
+        subtitle="Live signatures from the interface.",
+        badge=("ready", "#22c55e"),
+        sections=[
+            metrics_section_html([("dataset", "m", "#93c5fd")]),
+            accessors_section_html([("Analysis:", [(".fft", NODE_COLOR_ANALYSIS)])]),
+            examples_section_html("demo.fft()"),
+        ],
+        api="<div>api body</div>",
+        uid="demo-node",
+    )
+
+    assert "<h3" not in html
+    assert "border:2px solid #334155" in html
+    assert "box-shadow:0 10px 25px rgba(0,0,0,0.3)" in html
+    assert html.find(">Overview</button>") < html.find("Demo Node")
+    assert html.find("Demo Node") < html.find("dataset")
+    assert "demo-node-panel-1" in html
+
+
 def test_helper_card_html_provides_canonical_tabs_badge_and_action_grid() -> None:
     from mmpp._repr_helpers import helper_card_html, helper_table_html
 
@@ -620,18 +684,17 @@ def test_helper_card_html_provides_canonical_tabs_badge_and_action_grid() -> Non
     assert "Demo Helper" in html
     assert "Canonical helper template" in html
     assert "ready" in html
-    assert (
-        "background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)"
-        in html
-    )
-    assert "box-shadow: 0 10px 25px rgba(0,0,0,0.3)" in html
-    assert "font-family: 'Courier New', monospace" in html
+    assert "border:2px solid #334155" in html
+    assert "box-shadow:0 10px 25px rgba(0,0,0,0.3)" in html
+    assert "font-family:'Courier New',monospace" in html
     assert "datasets" in html
     assert "ACCESSORS &amp; METHODS" in html
     assert ".fft" in html
     assert ">Overview</button>" in html
     assert ">API</button>" in html
     assert "demo-helper-panel-1" in html
+    assert "<h3" not in html
+    assert html.find(">Overview</button>") < html.find("Demo Helper")
 
 
 def test_mmpp_repr_keeps_api_help_inside_single_job_manager_card() -> None:
@@ -664,12 +727,9 @@ def test_fft_repr_uses_tabs_for_overview_and_api() -> None:
     assert "FFT Analysis Interface" in html
     assert "FFT API help" in html
     assert "ready" in html
-    assert (
-        "background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)"
-        in html
-    )
-    assert "box-shadow: 0 10px 25px rgba(0,0,0,0.3)" in html
-    assert "font-family: 'Courier New', monospace" in html
+    assert "border:2px solid #334155" in html
+    assert "box-shadow:0 10px 25px rgba(0,0,0,0.3)" in html
+    assert "font-family:'Courier New',monospace" in html
     assert "cache entries" in html
     assert "ACCESSORS &amp; METHODS" in html
     assert ".spectrum()" in html
@@ -678,7 +738,10 @@ def test_fft_repr_uses_tabs_for_overview_and_api() -> None:
     assert ".transmission" in html
     assert ">Overview</button>" in html
     assert ">API</button>" in html
-    assert "fft-helper-panel-1" in html
+    assert "<h3" not in html
+    assert html.find(">Overview</button>") < html.find("FFT Analysis Interface")
+    assert "fft-job-" in html
+    assert "-panel-1" in html
 
 
 def test_zarr_job_fft_property_uses_lazy_import_even_when_feature_flag_is_stale() -> (
