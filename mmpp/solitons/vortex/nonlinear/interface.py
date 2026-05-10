@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import numpy as np
+
+from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
 
 from .._plotting import (
     apply_axes_style,
@@ -65,7 +68,12 @@ class NonlinearInterface:
         force: bool = False,
     ) -> AmplitudeEquationResult:
         """Compute nonlinear amplitude equation variables ``c(t)``, ``p(t)``, ``omega(t)``."""
-        if not force and self._last_amplitude is not None and trajectory is None and reference_radius is None:
+        if (
+            not force
+            and self._last_amplitude is not None
+            and trajectory is None
+            and reference_radius is None
+        ):
             return self._last_amplitude
 
         cfg = self._config.nonlinear
@@ -117,7 +125,9 @@ class NonlinearInterface:
                 if steady_state_fraction is None
                 else float(steady_state_fraction)
             ),
-            reference_radius=(cfg.reference_radius if reference_radius is None else reference_radius),
+            reference_radius=(
+                cfg.reference_radius if reference_radius is None else reference_radius
+            ),
             current_a=current_a,
         )
         self._last_st = result
@@ -212,10 +222,16 @@ class NonlinearInterface:
         methods = [
             (".amplitude_equation()", "Compute c(t), p(t), ω(t) from orbit"),
             (".slavin_tiberkevich()", "Extract ST parameters (Q, Γ+, Γ−, N)"),
-            (".slavin_tiberkevich_batch(jobs, currents)", "ST parameters across current sweep"),
+            (
+                ".slavin_tiberkevich_batch(jobs, currents)",
+                "ST parameters across current sweep",
+            ),
             (".thiele", "Thiele equation analysis namespace"),
             (".force_balance(**kw)", "Shortcut → thiele.force_balance()"),
-            (".interactive_dashboard(**kw)", "Shortcut → thiele.interactive_dashboard()"),
+            (
+                ".interactive_dashboard(**kw)",
+                "Shortcut → thiele.interactive_dashboard()",
+            ),
             (".plt.power_vs_current()", "Plot P(I) from batch results"),
             (".plt.linewidth_vs_current()", "Plot Δf(I) from batch results"),
             (".plt.force_balance()", "Plot Thiele force decomposition"),
@@ -241,11 +257,11 @@ class NonlinearInterface:
             "vortex.nonlinear.force_balance()\n"
             "vortex.nonlinear.thiele.interactive_dashboard()"
         )
-        return (
+        overview = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "Nonlinear Dynamics Interface</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
@@ -262,6 +278,35 @@ class NonlinearInterface:
             "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
             f"<code>{example}</code></pre></div>"
             "</div>"
+        )
+        api = api_help_html(
+            self,
+            title="Nonlinear dynamics API help",
+            prefix="vortex.nonlinear",
+            properties=[
+                ("thiele", "Thiele-force analysis and analytical simulation helpers"),
+                ("plt", "Convenience plotting namespace"),
+            ],
+            methods=[
+                "amplitude_equation",
+                "slavin_tiberkevich",
+                "slavin_tiberkevich_batch",
+                "force_balance",
+                "interactive_dashboard",
+            ],
+            subtitle="Live public API for Slavin-Tiberkevich, Thiele, and amplitude analysis.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-nonlinear-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
 
@@ -342,15 +387,41 @@ class NonlinearInterfacePlotAccessor:
         return result.plt.force_balance(**plot_kwargs)
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("NonlinearInterfacePlotAccessor", [
-            (".power_vs_current()",
-             "Generation power P(I) from batch or single ST result",
-             "Uses latest batch if available, else single-point."),
-            (".linewidth_vs_current(as_mhz=True)",
-             "Linewidth Δf(I) from batch or single-point",
-             "as_mhz: convert to MHz."),
-            (".force_balance(as_norm=True)",
-             "Thiele force decomposition vs time",
-             "as_norm: True for |F| norms. Accepts compute_kwargs dict."),
-        ])
+        overview = plot_accessor_html(
+            "NonlinearInterfacePlotAccessor",
+            [
+                (
+                    ".power_vs_current()",
+                    "Generation power P(I) from batch or single ST result",
+                    "Uses latest batch if available, else single-point.",
+                ),
+                (
+                    ".linewidth_vs_current(as_mhz=True)",
+                    "Linewidth Δf(I) from batch or single-point",
+                    "as_mhz: convert to MHz.",
+                ),
+                (
+                    ".force_balance(as_norm=True)",
+                    "Thiele force decomposition vs time",
+                    "as_norm: True for |F| norms. Accepts compute_kwargs dict.",
+                ),
+            ],
+        )
+        api = api_help_html(
+            self,
+            title="Nonlinear plot API help",
+            prefix="vortex.nonlinear.plt",
+            methods=["power_vs_current", "linewidth_vs_current", "force_balance"],
+            subtitle="Plot helpers for latest nonlinear results or on-demand calculations.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:#0f172a;color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-nonlinear-plot-{uuid.uuid4().hex}",
+            )
+            + "</div>"
+        )

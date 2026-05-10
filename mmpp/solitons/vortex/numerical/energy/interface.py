@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import uuid
 import warnings
 from typing import Any
 
+from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
+from mmpp._shared.repr_html import make_simple_card
+
 from ...config import VortexConfig
 from ..._shared.models import TrajectoryResult
-from mmpp._shared.repr_html import make_simple_card
 from .models import EnergyTimeSeriesResult, EffectivePotentialResult, PinningResult
 from .pinning import detect_pinning_sites
 from .potential import potential_from_boltzmann, potential_from_energy_channel
@@ -42,13 +45,16 @@ class EnergyInterface:
         force: bool = False,
     ) -> EnergyTimeSeriesResult:
         """Load energy-vs-time channels from the simulation table."""
-        if not force and self._last_result is not None and columns is None and strict is None:
+        if (
+            not force
+            and self._last_result is not None
+            and columns is None
+            and strict is None
+        ):
             return self._last_result
 
         strict_mode = (
-            bool(self._config.energy.strict_missing)
-            if strict is None
-            else bool(strict)
+            bool(self._config.energy.strict_missing) if strict is None else bool(strict)
         )
         result = extract_energy_time_series(
             self._job,
@@ -59,8 +65,7 @@ class EnergyInterface:
         if strict_mode and (not result.channels):
             available = result.metadata.get("available_columns", [])
             raise ValueError(
-                "No energy channels found in table. "
-                f"Available columns: {available}"
+                f"No energy channels found in table. Available columns: {available}"
             )
 
         if not result.channels:
@@ -161,11 +166,15 @@ class EnergyInterface:
         ):
             return self._last_pinning
 
-        pot = potential if potential is not None else self.potential(
-            trajectory=trajectory,
-            method=method,
-            temperature_k=temperature_k,
-            bins=bins,
+        pot = (
+            potential
+            if potential is not None
+            else self.potential(
+                trajectory=trajectory,
+                method=method,
+                temperature_k=temperature_k,
+                bins=bins,
+            )
         )
         result = detect_pinning_sites(
             pot,
@@ -188,10 +197,30 @@ class EnergyInterface:
             (".plt.potential()", "Plot effective potential"),
             (".plt.pinning()", "Plot potential with pinning sites"),
         ]
-        return make_simple_card(
+        overview = make_simple_card(
             title="Vortex Energy Interface",
             subtitle="Energy channels, effective potential and pinning analysis",
             rows=methods,
+        )
+        api = api_help_html(
+            self,
+            title="Vortex energy API help",
+            prefix="vortex.energy",
+            properties=[("plt", "Convenience plotting namespace")],
+            methods=["time_resolved", "potential", "pinning"],
+            subtitle="Live public API for energy time series, effective potential, and pinning.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-energy-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
 
@@ -215,6 +244,46 @@ class EnergyPlotFacade:
         """Compute and plot potential with detected pinning sites."""
         result = self._interface.pinning()
         return result.plt.potential_with_sites(**kwargs)
+
+    def _repr_html_(self) -> str:
+        overview = plot_accessor_html(
+            "EnergyPlotFacade",
+            [
+                (
+                    ".time_resolved()",
+                    "Compute + plot energy channels vs time",
+                    "Delegates to EnergyTimeSeriesResult.plt.time_resolved().",
+                ),
+                (
+                    ".potential()",
+                    "Compute + plot effective potential",
+                    "Delegates to EffectivePotentialResult.plt.potential().",
+                ),
+                (
+                    ".pinning()",
+                    "Compute + plot potential with pinning sites",
+                    "Delegates to PinningResult.plt.potential_with_sites().",
+                ),
+            ],
+        )
+        api = api_help_html(
+            self,
+            title="Vortex energy plot API help",
+            prefix="vortex.energy.plt",
+            methods=["time_resolved", "potential", "pinning"],
+            subtitle="Plot helpers that compute the matching energy result when needed.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:#0f172a;color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-energy-plot-{uuid.uuid4().hex}",
+            )
+            + "</div>"
+        )
 
 
 __all__ = ["EnergyInterface"]

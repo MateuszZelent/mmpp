@@ -18,7 +18,6 @@ class VortexInterface:
         slice_info: Any | None = None,
         config: VortexConfig | None = None,
     ):
-
         self._job = job_result
         self._dataset = dataset_name
         self._mmpp = mmpp_instance
@@ -394,7 +393,9 @@ class VortexInterface:
             "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);"
         )
         th_style = "padding:5px 8px;text-align:left;color:#e2e8f0;font-weight:600;"
-        td_mono = "padding:4px 8px;font-family:monospace;color:#93c5fd;font-size:0.85em;"
+        td_mono = (
+            "padding:4px 8px;font-family:monospace;color:#93c5fd;font-size:0.85em;"
+        )
         td_val = "padding:4px 8px;color:#e2e8f0;font-size:0.85em;font-family:monospace;"
         td_src = "padding:4px 8px;color:#94a3b8;font-size:0.8em;"
         badge = (
@@ -418,23 +419,60 @@ class VortexInterface:
 
         # Group parameters
         groups = [
-            ("🧲 Material", ["Ms", "alpha", "P", "P_raw", "P_eff", "P_model", "A",
-                             "Lambda", "epsilonprime"]),
-            ("📐 Geometry", ["R", "L", "D", "Area", "L_stt", "dx", "dy", "dz",
-                             "Nx", "Ny", "Nz"]),
-            ("⚡ Current & STT", ["current_density", "current", "current_A", "current_mA",
-                                  "current_dir", "polarizer", "p_z",
-                                  "FixedLayerPosition", "fixed_layer_position",
-                                  "slonczewski_current_sign"]),
-            ("🧭 Field", ["field", "Bx_T", "By_T", "Bz_T",
-                          "Bx_mT", "By_mT", "Bz_mT"]),
-            ("🎯 Model / Vortex", ["omega0", "N", "chi_scale", "polarity",
-                                   "domega0_dJ", "domega0_dJ_user", "domega0_dJ_stt",
-                                   "phase_polarization", "d0_scale"]),
+            (
+                "🧲 Material",
+                [
+                    "Ms",
+                    "alpha",
+                    "P",
+                    "P_raw",
+                    "P_eff",
+                    "P_model",
+                    "A",
+                    "Lambda",
+                    "epsilonprime",
+                ],
+            ),
+            (
+                "📐 Geometry",
+                ["R", "L", "D", "Area", "L_stt", "dx", "dy", "dz", "Nx", "Ny", "Nz"],
+            ),
+            (
+                "⚡ Current & STT",
+                [
+                    "current_density",
+                    "current",
+                    "current_A",
+                    "current_mA",
+                    "current_dir",
+                    "polarizer",
+                    "p_z",
+                    "FixedLayerPosition",
+                    "fixed_layer_position",
+                    "slonczewski_current_sign",
+                ],
+            ),
+            ("🧭 Field", ["field", "Bx_T", "By_T", "Bz_T", "Bx_mT", "By_mT", "Bz_mT"]),
+            (
+                "🎯 Model / Vortex",
+                [
+                    "omega0",
+                    "N",
+                    "chi_scale",
+                    "polarity",
+                    "domega0_dJ",
+                    "domega0_dJ_user",
+                    "domega0_dJ_stt",
+                    "phase_polarization",
+                    "d0_scale",
+                ],
+            ),
         ]
 
         for title, keys in groups:
-            present = [(k, resolved[k], sources.get(k, "?")) for k in keys if k in resolved]
+            present = [
+                (k, resolved[k], sources.get(k, "?")) for k in keys if k in resolved
+            ]
             if not present:
                 continue
 
@@ -512,7 +550,7 @@ class VortexInterface:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #dc2626;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#1c1917 0%,#292524 50%,#44403c 100%);"
-            "color:#fef2f2;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#fef2f2;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#fca5a5;margin-bottom:8px;'>"
             "❌ Parameter Resolution Failed</div>"
             f"<div style='font-size:0.9em;color:#fef2f2;margin-bottom:8px;'>"
@@ -551,42 +589,47 @@ class VortexInterface:
                 return "0"
             # SI formatting for common physics ranges
             if abs_val >= 1e12:
-                return f"{fval:.4g} ({fval/1e12:.4g} T·unit)"
+                return f"{fval:.4g} ({fval / 1e12:.4g} T·unit)"
             if abs_val >= 1e9:
-                return f"{fval:.4g} ({fval/1e9:.4g} G)"
+                return f"{fval:.4g} ({fval / 1e9:.4g} G)"
             if abs_val >= 1e6:
-                return f"{fval:.4g} ({fval/1e6:.4g} M)"
+                return f"{fval:.4g} ({fval / 1e6:.4g} M)"
             if abs_val >= 1e3:
-                return f"{fval:.4g} ({fval/1e3:.4g} k)"
+                return f"{fval:.4g} ({fval / 1e3:.4g} k)"
             if abs_val >= 1:
                 return f"{fval:.4g}"
             if abs_val >= 1e-3:
-                return f"{fval:.4g} ({fval*1e3:.4g} m)"
+                return f"{fval:.4g} ({fval * 1e3:.4g} m)"
             if abs_val >= 1e-6:
-                return f"{fval:.4g} ({fval*1e6:.4g} µ)"
+                return f"{fval:.4g} ({fval * 1e6:.4g} µ)"
             if abs_val >= 1e-9:
-                return f"{fval:.4g} ({fval*1e9:.4g} n)"
+                return f"{fval:.4g} ({fval * 1e9:.4g} n)"
             if abs_val >= 1e-12:
-                return f"{fval:.4g} ({fval*1e12:.4g} p)"
+                return f"{fval:.4g} ({fval * 1e12:.4g} p)"
             return f"{fval:.4g}"
         return str(value)
 
     def __repr__(self) -> str:
         dataset_label = self._dataset if self._dataset is not None else "auto"
-        return (
-            f"VortexInterface(dataset={dataset_label!r}, "
-            f"slice={self._slice_info!r})"
-        )
+        return f"VortexInterface(dataset={dataset_label!r}, slice={self._slice_info!r})"
 
     def _repr_html_(self) -> str:
         """Compact notebook card with available vortex submodules."""
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
         from html import escape as _esc
 
         dataset = _esc(str(self._dataset if self._dataset is not None else "auto"))
-        slice_label = _esc(str(self._slice_info)) if self._slice_info is not None else "full"
+        slice_label = (
+            _esc(str(self._slice_info)) if self._slice_info is not None else "full"
+        )
         namespaces = [
             (".topology", "Topological charge & winding number detection"),
-            (".core", "Vortex core position tracking (auto, table, Gaussian, CoM, ...)"),
+            (
+                ".core",
+                "Vortex core position tracking (auto, table, Gaussian, CoM, ...)",
+            ),
             (".trajectory", "Core trajectory analysis & statistics"),
             (".spectrum", "Gyration frequency spectrum (FFT of core motion)"),
             (".modes", "Mode classification & identification"),
@@ -626,11 +669,11 @@ class VortexInterface:
             "vortex.spectrum.compute()\n"
             "vortex.spectrum.plot()"
         )
-        return (
+        html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "Vortex Dynamics Interface</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
@@ -667,6 +710,48 @@ class VortexInterface:
             "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
             f"<code>{example}</code></pre></div>"
             "</div>"
+        )
+        api_card = api_help_html(
+            self,
+            title="Vortex API help",
+            prefix="job[0].vortex",
+            properties=[
+                ("config", "Mutable vortex configuration"),
+                ("topology", "Topological charge and winding number detection"),
+                ("core", "Vortex core tracking namespace"),
+                ("trajectory", "Trajectory analysis namespace"),
+                ("spectrum", "Vortex-specific spectrum analysis namespace"),
+                ("modes", "Mode classification namespace"),
+                ("nonlinear", "Nonlinear dynamics namespace"),
+                ("events", "Event detection namespace"),
+                ("signals", "MR/TMR, voltage and signal spectra namespace"),
+                ("energy", "Energy-analysis namespace"),
+                ("model", "Analytical model namespace"),
+                ("bridge", "Numerical-to-analytical comparison/fit namespace"),
+                ("autofit", "Physics-informed autofit namespace"),
+                ("plot", "High-level vortex plotting namespace"),
+                ("plt", "Alias for plot"),
+            ],
+            methods=[
+                "track",
+                "detect",
+                "check_health",
+                "show_simulation_params",
+                "interactive",
+            ],
+            subtitle="Live signatures for top-level vortex shortcuts and namespace map.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"vortex-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
         )
 
     def interactive(self, figsize=(10, 7), dpi=100):

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import numpy as np
 
+from mmpp._repr_helpers import api_help_html, html_tabs
 from mmpp._shared.repr_html import make_simple_card
 
 from .._cache import InMemoryResultCache, build_cache_key
@@ -149,10 +151,36 @@ class TopologyInterface:
             (".winding_number(...)", "Return vorticity sign"),
             (".topological_charge(...)", "Return skyrmion number Q"),
         ]
-        return make_simple_card(
+        overview = make_simple_card(
             title="Topology Interface",
             subtitle=f"Snapshot topology analysis for dataset '{self.dataset_name}'",
             rows=methods,
+        )
+        api = api_help_html(
+            self,
+            title="Topology API help",
+            prefix="vortex.topology",
+            properties=[("dataset_name", "Resolved magnetization dataset name")],
+            methods=[
+                "detect",
+                "polarity",
+                "chirality",
+                "winding_number",
+                "topological_charge",
+            ],
+            subtitle="Live public API for snapshot topology analysis.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-topology-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
 

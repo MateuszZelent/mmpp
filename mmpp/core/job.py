@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 from ..pyzfn import Pyzfn
 from ..pyzfn.h5_backend import detect_h5_quantities, H5QuantityGroup
 from ..cli.logging_config import get_mmpp_logger
-from .constants import SPECIAL_ATTRS, ArraySlice, npf32, npc64, np1d, np2d, np3d, np4d, np5d, np4dc, RICH_AVAILABLE, FFT_AVAILABLE
+from .constants import SPECIAL_ATTRS, ArraySlice, npf32, npc64, np1d, np2d, np3d, np4d, np5d, np4dc, RICH_AVAILABLE
 from .attributes import AttributesView
 from .dataset import DatasetAwareWrapper
 from .dataset_geometry import AxisGeometry, DatasetGeometry
@@ -476,6 +476,7 @@ class ZarrJobResult:
 
     def _repr_html_(self) -> str:
         """HTML card for Jupyter notebooks."""
+        from html import escape as _esc
         try:
             datasets = self.datasets
             attrs = dict(self.attrs)
@@ -483,24 +484,76 @@ class ZarrJobResult:
             datasets = []
             attrs = {}
         finished = self.is_finished()
-        fin_symbol = "&#10003;" if finished else "&#10007;"
+        fin_label = "finished" if finished else "running"
         fin_color = "#22c55e" if finished else "#ef4444"
-        ds_list = "".join(f"<li><code>{d}</code></li>" for d in datasets[:10])
-        if len(datasets) > 10:
-            ds_list += f"<li><i>…and {len(datasets) - 10} more</i></li>"
-        meta_rows = "".join(
-            f"<tr><td><b>{k}</b></td><td>{v}</td></tr>"
+        ds_rows = "".join(
+            f"<tr><td><code style='color:#7dd3fc'>{_esc(d)}</code></td></tr>"
+            for d in datasets[:12]
+        )
+        if len(datasets) > 12:
+            ds_rows += f"<tr><td style='color:#64748b'><i>…and {len(datasets) - 12} more</i></td></tr>"
+        attr_rows = "".join(
+            f"<tr><td style='color:#94a3b8;padding-right:12px'>{_esc(str(k))}</td>"
+            f"<td><code>{_esc(str(v))}</code></td></tr>"
             for k, v in list(attrs.items())[:8]
         )
+        accessors_html = (
+            "<details style='margin-top:8px'>"
+            "<summary style='cursor:pointer;font-weight:bold;color:#cbd5e1;"
+            "letter-spacing:.04em;font-size:12px'>ACCESSORS &amp; METHODS</summary>"
+            "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px'>"
+            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
+            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Navigation</div>"
+            "<div style='display:flex;flex-direction:column;gap:2px'>"
+            "<code style='color:#38bdf8'>[0]</code><span style='color:#64748b;font-size:10px'>&nbsp;single result</span>"
+            "<code style='color:#38bdf8'>[:]</code><span style='color:#64748b;font-size:10px'>&nbsp;batch operations</span>"
+            "<code style='color:#38bdf8'>[-1]</code><span style='color:#64748b;font-size:10px'>&nbsp;last result</span>"
+            "</div></div>"
+            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
+            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Datasets</div>"
+            "<div style='display:flex;flex-direction:column;gap:2px'>"
+            "<code style='color:#a78bfa'>.m</code><span style='color:#64748b;font-size:10px'>&nbsp;magnetization</span>"
+            "<code style='color:#a78bfa'>.datasets</code><span style='color:#64748b;font-size:10px'>&nbsp;list available</span>"
+            "<code style='color:#a78bfa'>.attrs</code><span style='color:#64748b;font-size:10px'>&nbsp;simulation attrs</span>"
+            "</div></div>"
+            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
+            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Analysis</div>"
+            "<div style='display:flex;flex-direction:column;gap:2px'>"
+            "<code style='color:#34d399'>.fft</code><span style='color:#64748b;font-size:10px'>&nbsp;FFT namespace</span>"
+            "<code style='color:#34d399'>.analyze</code><span style='color:#64748b;font-size:10px'>&nbsp;analysis tools</span>"
+            "</div></div>"
+            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
+            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Inspection</div>"
+            "<div style='display:flex;flex-direction:column;gap:2px'>"
+            "<code style='color:#fb923c'>.p</code><span style='color:#64748b;font-size:10px'>&nbsp;zarr tree string</span>"
+            "<code style='color:#fb923c'>.pp</code><span style='color:#64748b;font-size:10px'>&nbsp;pretty-print tree</span>"
+            "<code style='color:#fb923c'>.is_finished()</code><span style='color:#64748b;font-size:10px'>&nbsp;completion check</span>"
+            "</div></div>"
+            "</div></details>"
+        )
         return (
-            "<div style='border:1px solid #334155;padding:10px;border-radius:6px;"
-            "font-family:monospace;display:inline-block;max-width:600px'>"
-            f"<b>ZarrJobResult</b> &mdash; <i>{self.name}</i>"
-            f"&nbsp;&nbsp;<span style='color:{fin_color}'>{fin_symbol}</span><br>"
-            "<details><summary style='cursor:pointer;margin:4px 0'>Datasets</summary>"
-            f"<ul style='margin:2px 0'>{ds_list}</ul></details>"
-            "<details><summary style='cursor:pointer;margin:4px 0'>Attributes</summary>"
-            f"<table style='border-collapse:collapse'>{meta_rows}</table></details>"
+            "<div style='border:1px solid #334155;padding:12px 14px;border-radius:8px;"
+            "font-family:monospace;display:inline-block;max-width:760px;"
+            "background:#0f172a;color:#e2e8f0'>"
+            f"<div style='font-size:13px;margin-bottom:8px'>"
+            f"<b style='color:#7dd3fc'>ZarrJobResult</b>"
+            f"&nbsp;&mdash;&nbsp;<span style='color:#f8fafc'>{_esc(self.name)}</span>"
+            f"&nbsp;&nbsp;<span style='background:{fin_color};color:#0f172a;"
+            f"padding:1px 6px;border-radius:10px;font-size:10px'>{fin_label}</span>"
+            "</div>"
+            "<table style='border-collapse:collapse;font-size:12px;margin-bottom:4px'>"
+            f"<tr><td style='color:#94a3b8;padding-right:14px'>datasets</td>"
+            f"<td>{len(datasets)}</td></tr>"
+            "</table>"
+            "<details style='font-size:12px;margin-top:4px'>"
+            "<summary style='cursor:pointer;color:#94a3b8'>Datasets</summary>"
+            f"<table style='border-collapse:collapse;margin-top:4px'>{ds_rows}</table>"
+            "</details>"
+            "<details style='font-size:12px;margin-top:4px'>"
+            "<summary style='cursor:pointer;color:#94a3b8'>Attributes</summary>"
+            f"<table style='border-collapse:collapse;margin-top:4px'>{attr_rows}</table>"
+            "</details>"
+            f"{accessors_html}"
             "</div>"
         )
 
@@ -879,11 +932,12 @@ class ZarrJobResult:
     @property
     def fft(self):
         """Get FFT analyzer for this single result."""
-        if not FFT_AVAILABLE:
+        try:
+            from ..fft import FFT
+        except ImportError as exc:
             raise ImportError(
                 "FFT functionality not available. Check fft module import."
-            )
-        from ..fft import FFT
+            ) from exc
         return FFT(self, self._mmpp_ref)
 
     @property

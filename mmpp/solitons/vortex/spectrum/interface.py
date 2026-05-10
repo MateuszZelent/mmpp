@@ -52,6 +52,7 @@ class VortexSpectrumInterface:
         # Health check
         try:
             from ..health import check_core_health
+
             status = check_core_health(
                 self._job,
                 dataset_name=self._dataset_name,
@@ -61,8 +62,7 @@ class VortexSpectrumInterface:
             if not status.is_healthy:
                 if exclude_annihilated:
                     raise ValueError(
-                        "Gyration spectrum excluded: "
-                        + "; ".join(status.warnings)
+                        "Gyration spectrum excluded: " + "; ".join(status.warnings)
                     )
                 status.issue_python_warnings()
         except ValueError:
@@ -101,6 +101,7 @@ class VortexSpectrumInterface:
         # Health check
         try:
             from ..health import check_core_health
+
             status = check_core_health(
                 self._job,
                 dataset_name=self._dataset_name,
@@ -110,8 +111,7 @@ class VortexSpectrumInterface:
             if not status.is_healthy:
                 if exclude_annihilated:
                     raise ValueError(
-                        "Breathing spectrum excluded: "
-                        + "; ".join(status.warnings)
+                        "Breathing spectrum excluded: " + "; ".join(status.warnings)
                     )
                 status.issue_python_warnings()
         except ValueError:
@@ -157,6 +157,9 @@ class VortexSpectrumInterface:
         return SpectrumInterfacePlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
         from html import escape as _esc
 
         methods = [
@@ -187,7 +190,7 @@ class VortexSpectrumInterface:
             "vortex.spectrum.plt.power_spectrum()\n"
             "vortex.spectrum.plt.spectrogram()"
         )
-        return (
+        html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
@@ -209,6 +212,26 @@ class VortexSpectrumInterface:
             f"<code>{example}</code></pre></div>"
             "</div>"
         )
+        api_card = api_help_html(
+            self,
+            title="Vortex spectrum API help",
+            prefix="vortex.spectrum",
+            properties=[("plt", "Plotting shortcuts for spectrum and spectrogram")],
+            methods=["gyration", "breathing", "spectrogram"],
+            subtitle="Live signatures for vortex spectral analysis methods.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"vortex-spectrum-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )
 
 
 class SpectrumInterfacePlotAccessor:
@@ -228,9 +251,11 @@ class SpectrumInterfacePlotAccessor:
         return result.plt.spectrogram(**kwargs)
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
+        import uuid as _uuid
 
-        return plot_accessor_html(
+        from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
+
+        html = plot_accessor_html(
             "SpectrumInterfacePlotAccessor",
             [
                 (
@@ -244,4 +269,23 @@ class SpectrumInterfacePlotAccessor:
                     "Delegates to VortexSpectrogramResult.plt.spectrogram().",
                 ),
             ],
+        )
+        api_card = api_help_html(
+            self,
+            title="Vortex spectrum plot API help",
+            prefix="vortex.spectrum.plt",
+            methods=["power_spectrum", "spectrogram"],
+            subtitle="Live signatures for spectrum plotting shortcuts.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"vortex-spectrum-plot-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
         )

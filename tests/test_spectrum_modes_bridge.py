@@ -43,7 +43,9 @@ def test_spectrum_modes_bridge_interactive_passes_existing_spectrum_result():
     assert fake_modes._slice_context == (slice(0, 100), Ellipsis, 2)
 
 
-def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(monkeypatch):
+def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(
+    monkeypatch,
+):
     class _DummySpectrumResult:
         def __init__(self):
             self.frequencies = np.linspace(1.0, 30.0, 128)
@@ -530,5 +532,7 @@ def test_transmission_modes_result_save_visualizations(tmp_path):
     modes_phase = result.calculate_modes(k=[2], component=0, t_show=0, phase_deg=45.0)
     assert modes_phase.modes[0]["phase_shift_deg"] == 45.0
 
-    modes_phasor = result.calculate_modes(k=[2], component=0, t_show=0, reconstruction="phasor")
+    modes_phasor = result.calculate_modes(
+        k=[2], component=0, t_show=0, reconstruction="phasor"
+    )
     assert modes_phasor.modes[0]["reconstruction"] == "phasor"

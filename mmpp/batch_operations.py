@@ -646,16 +646,48 @@ class BatchDatasetWrapper:
 
     def _repr_html_(self) -> str:
         """HTML card for Jupyter notebooks."""
+        from html import escape as _esc
         n = len(self.results)
-        slice_info = f"<code>{self.slice_info}</code>" if self.slice_info is not None else "<i>none</i>"
+        slice_str = (
+            f"<code style='font-size:11px'>{_esc(str(self.slice_info))}</code>"
+            if self.slice_info is not None
+            else "<span style='color:#64748b'>none</span>"
+        )
+        accessors_html = (
+            "<details style='margin-top:8px'>"
+            "<summary style='cursor:pointer;font-weight:bold;color:#cbd5e1;"
+            "letter-spacing:.04em;font-size:12px'>ACCESSORS &amp; METHODS</summary>"
+            "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px'>"
+            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
+            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Data extraction</div>"
+            "<div style='display:flex;flex-direction:column;gap:2px'>"
+            "<code style='color:#38bdf8'>[:]</code><span style='color:#64748b;font-size:10px'>&nbsp;stacked numpy array</span>"
+            "<code style='color:#38bdf8'>[0:100, ..., 0]</code><span style='color:#64748b;font-size:10px'>&nbsp;sliced batch</span>"
+            "</div></div>"
+            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
+            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Analysis</div>"
+            "<div style='display:flex;flex-direction:column;gap:2px'>"
+            "<code style='color:#34d399'>.fft</code><span style='color:#64748b;font-size:10px'>&nbsp;batch FFT</span>"
+            "<code style='color:#34d399'>.fft.spectrum()</code><span style='color:#64748b;font-size:10px'>&nbsp;compute spectra</span>"
+            "</div></div>"
+            "</div></details>"
+        )
         return (
-            "<div style='border:1px solid #334155;padding:8px;border-radius:6px;"
-            "font-family:monospace;display:inline-block'>"
-            f"<b>BatchDatasetWrapper</b> &mdash; <code>{self.dataset_name}</code><br>"
-            f"<table style='border-collapse:collapse;margin-top:4px'>"
-            f"<tr><td><b>jobs</b></td><td>{n}</td></tr>"
-            f"<tr><td><b>slice</b></td><td>{slice_info}</td></tr>"
-            "</table></div>"
+            "<div style='border:1px solid #334155;padding:12px 14px;border-radius:8px;"
+            "font-family:monospace;display:inline-block;max-width:760px;"
+            "background:#0f172a;color:#e2e8f0'>"
+            f"<div style='font-size:13px;margin-bottom:8px'>"
+            f"<b style='color:#7dd3fc'>BatchDatasetWrapper</b>"
+            f"&nbsp;&mdash;&nbsp;<code style='color:#f8fafc'>{_esc(self.dataset_name)}</code>"
+            f"&nbsp;&nbsp;<span style='background:#334155;color:#e2e8f0;"
+            f"padding:1px 6px;border-radius:10px;font-size:10px'>{n} jobs</span>"
+            "</div>"
+            "<table style='border-collapse:collapse;font-size:12px;margin-bottom:2px'>"
+            f"<tr><td style='color:#94a3b8;padding-right:14px'>jobs</td><td>{n}</td></tr>"
+            f"<tr><td style='color:#94a3b8;padding-right:14px'>slice</td><td>{slice_str}</td></tr>"
+            "</table>"
+            f"{accessors_html}"
+            "</div>"
         )
 
     def __repr__(self) -> str:
@@ -971,7 +1003,7 @@ class BatchOperations:
         import html as _html
         import uuid as _uuid
 
-        from mmpp._repr_helpers import api_help_html
+        from mmpp._repr_helpers import api_help_html, html_tabs
 
         n = len(self.results)
         uid = str(_uuid.uuid4())[:8]
@@ -989,6 +1021,7 @@ class BatchOperations:
                 ("mpl", "Batch plotting helper"),
             ],
             methods=["process"],
+            chrome=False,
         )
 
         # ── styles ──────────────────────────────────────────────
@@ -1024,7 +1057,12 @@ class BatchOperations:
         )
 
         if n == 0:
-            html += f'<div style="{_card}"><span style="color:#fbbf24;">⚠️ Empty batch – no results.</span></div></div>'
+            overview_html = f'<div style="{_card}"><span style="color:#fbbf24;">⚠️ Empty batch – no results.</span></div>'
+            html += html_tabs(
+                [("Overview", overview_html), ("API", api_card)],
+                uid=f"batch-{uid}",
+            )
+            html += "</div>"
             return html
 
         # ── 1. applied filter criteria (pill badges) ────────────
@@ -1195,8 +1233,18 @@ class BatchOperations:
             "</pre></div></div>"
         )
 
-        html += "</div>"
-        return html + api_card
+        overview_html = html + "</div>"
+        return (
+            '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", overview_html), ("API", api_card)],
+                uid=f"batch-{uid}",
+            )
+            + "</div>"
+        )
 
     def __iter__(self):
         """Make batch operations iterable."""

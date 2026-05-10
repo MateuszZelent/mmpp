@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import uuid
 from html import escape as _esc
 from typing import Any
+
+from mmpp._repr_helpers import api_help_html, html_tabs
 
 
 class AnalyzeInterface:
@@ -46,8 +49,12 @@ class AnalyzeInterface:
     def _repr_html_(self) -> str:
         job_name = _esc(str(getattr(self._job, "name", "unknown")))
         job_path = _esc(str(getattr(self._job, "path", "")))
-        dataset = _esc(str(self._dataset_name)) if self._dataset_name is not None else "auto"
-        slice_label = _esc(str(self._slice_info)) if self._slice_info is not None else "full"
+        dataset = (
+            _esc(str(self._dataset_name)) if self._dataset_name is not None else "auto"
+        )
+        slice_label = (
+            _esc(str(self._slice_info)) if self._slice_info is not None else "full"
+        )
 
         methods = [
             (".hysteresis", "Hysteresis loop analysis namespace"),
@@ -67,11 +74,11 @@ class AnalyzeInterface:
             ]
         )
 
-        return (
+        overview = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:10px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 10px 22px rgba(0,0,0,0.28);\">"
+            'color:#e2e8f0;box-shadow:0 10px 22px rgba(0,0,0,0.28);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;'>Analyze Interface</div>"
             f"<div style='color:#94a3b8;margin-top:4px;'>Job: {job_name}</div>"
             f"<div style='color:#94a3b8;margin-top:2px;'>Path: <code style='color:#cbd5e1;'>{job_path}</code></div>"
@@ -94,6 +101,25 @@ class AnalyzeInterface:
             "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;border-radius:6px;"
             f"color:#e2e8f0;overflow-x:auto;font-size:0.85em;'><code>{_esc(example)}</code></pre>"
             "</div></div>"
+        )
+        api = api_help_html(
+            self,
+            title="Analyze API help",
+            prefix="job[0].analyze",
+            properties=[("hysteresis", "Hysteresis loop analysis namespace")],
+            subtitle="Live public API for job-level analysis helpers.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:10px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 10px 22px rgba(0,0,0,0.28);'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-analyze-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
     def _repr_mimebundle_(self, include=None, exclude=None):

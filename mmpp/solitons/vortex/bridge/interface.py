@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
+
+from mmpp._repr_helpers import api_help_html, html_tabs
 from mmpp._shared.repr_html import make_simple_card
 
 from .compare import compare_trajectories
@@ -55,13 +58,42 @@ class BridgeInterface:
     def _repr_html_(self) -> str:
         rows = [
             (".compare.with_(lhs, rhs)", "Overlay/metric comparison of trajectories"),
-            (".fit.thiele_from_trajectory(traj)", "Fit Thiele-like proxy from trajectory"),
-            (".extract.model_defaults(...)", "Resolve analytical parameters from attrs/.mx3/manual overrides"),
+            (
+                ".fit.thiele_from_trajectory(traj)",
+                "Fit Thiele-like proxy from trajectory",
+            ),
+            (
+                ".extract.model_defaults(...)",
+                "Resolve analytical parameters from attrs/.mx3/manual overrides",
+            ),
         ]
-        return make_simple_card(
+        overview = make_simple_card(
             title="Vortex Bridge Interface",
             subtitle="Numerical <-> analytical glue utilities",
             rows=rows,
+        )
+        api = api_help_html(
+            self,
+            title="Vortex bridge API help",
+            prefix="vortex.bridge",
+            properties=[
+                ("compare", "Trajectory comparison accessor"),
+                ("fit", "Analytical fitting accessor"),
+                ("extract", "Model-default extraction accessor"),
+            ],
+            subtitle="Live public API for numerical-to-analytical bridge helpers.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-bridge-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
 

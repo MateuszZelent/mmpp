@@ -11,6 +11,7 @@ from mmpp.solitons.vortex.events.models import (
     PolaritySwitchEvent,
     StateSwitchEvent,
 )
+from mmpp.solitons.vortex.events.interface import EventsInterface
 from mmpp.solitons.vortex.model.interface import VortexModelInterface
 from mmpp.solitons.vortex.modes.models import VortexModeResult
 from mmpp.solitons.vortex.numerical.topology.interface import TopologyInterface
@@ -105,7 +106,47 @@ def test_stage3_event_and_interface_html_helpers_smoke():
     assert "Topology Interface" in topology_interface._repr_html_()
 
     model_interface = VortexModelInterface(job_result=object(), dataset_name="m")
-    assert "Vortex Model Interface" in model_interface._repr_html_()
+    model_html = model_interface._repr_html_()
+    assert "Vortex Model Interface" in model_html
+    assert "Vortex model API help" in model_html
+    assert ">Overview</button>" in model_html
+    assert ">API</button>" in model_html
 
     bridge_interface = BridgeInterface()
-    assert "Vortex Bridge Interface" in bridge_interface._repr_html_()
+    bridge_html = bridge_interface._repr_html_()
+    assert "Vortex Bridge Interface" in bridge_html
+    assert "Vortex bridge API help" in bridge_html
+    assert ">Overview</button>" in bridge_html
+    assert ">API</button>" in bridge_html
+
+
+def test_events_interface_and_plot_repr_use_tabs():
+    class _Core:
+        def track(self):
+            t = np.linspace(0.0, 1e-9, 8)
+            return TrajectoryResult(
+                time=t,
+                x=np.zeros_like(t),
+                y=np.zeros_like(t),
+                polarity=np.ones_like(t),
+                method="synthetic",
+                confidence=np.ones_like(t),
+            )
+
+    interface = EventsInterface(
+        job_result=object(),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_Core(),
+        trajectory_interface=object(),
+    )
+    html = interface._repr_html_()
+    plot_html = interface.plt._repr_html_()
+
+    assert "Vortex events API help" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+    assert "Vortex events plot API help" in plot_html
+    assert ">Overview</button>" in plot_html
+    assert ">API</button>" in plot_html

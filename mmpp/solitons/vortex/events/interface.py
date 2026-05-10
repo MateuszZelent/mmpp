@@ -49,7 +49,9 @@ class EventsInterface:
         self._last_states: tuple[list[StateSwitchEvent], np.ndarray] | None = None
         self._last_expulsions: list[CoreExpulsionEvent] | None = None
 
-    def _resolve_trajectory(self, trajectory: TrajectoryResult | None = None) -> TrajectoryResult:
+    def _resolve_trajectory(
+        self, trajectory: TrajectoryResult | None = None
+    ) -> TrajectoryResult:
         if trajectory is not None:
             return trajectory
         return self._core.track()
@@ -162,8 +164,14 @@ class EventsInterface:
         ):
             return self._last_expulsions
 
-        radius = self._infer_disk_radius() if disk_radius is None else float(disk_radius)
-        center_xy = self._infer_disk_center() if center is None else (float(center[0]), float(center[1]))
+        radius = (
+            self._infer_disk_radius() if disk_radius is None else float(disk_radius)
+        )
+        center_xy = (
+            self._infer_disk_center()
+            if center is None
+            else (float(center[0]), float(center[1]))
+        )
         result = detect_core_expulsions(
             self._resolve_trajectory(trajectory),
             disk_radius=radius,
@@ -206,13 +214,25 @@ class EventsInterface:
         return EventsPlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
         from html import escape as _esc
 
         methods = [
             (".polarity_switches(threshold=0.5)", "Detect p=+1 ↔ −1 switching events"),
-            (".state_switches(radius_threshold=0.6)", "Detect G-state ↔ C-state transitions"),
-            (".core_expulsions(expulsion_ratio=0.95)", "Detect core expulsion near disk boundary"),
-            (".dwell_times(state='G-state')", "Dwell-time statistics for selected state"),
+            (
+                ".state_switches(radius_threshold=0.6)",
+                "Detect G-state ↔ C-state transitions",
+            ),
+            (
+                ".core_expulsions(expulsion_ratio=0.95)",
+                "Detect core expulsion near disk boundary",
+            ),
+            (
+                ".dwell_times(state='G-state')",
+                "Dwell-time statistics for selected state",
+            ),
             (".plt.event_timeline()", "Plot trajectory with event markers"),
             (".plt.dwell_histogram(state=...)", "Plot dwell-time histogram"),
         ]
@@ -239,11 +259,11 @@ class EventsInterface:
             "vortex.events.plt.event_timeline()\n"
             "vortex.events.plt.dwell_histogram()"
         )
-        return (
+        html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "Events Interface</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
@@ -261,6 +281,33 @@ class EventsInterface:
             f"<code>{example}</code></pre></div>"
             "</div>"
         )
+        api_card = api_help_html(
+            self,
+            title="Vortex events API help",
+            prefix="vortex.events",
+            properties=[
+                ("plt", "Plot accessor for event timeline and dwell histogram")
+            ],
+            methods=[
+                "polarity_switches",
+                "state_switches",
+                "core_expulsions",
+                "dwell_times",
+            ],
+            subtitle="Live signatures for vortex event detection methods.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"vortex-events-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )
 
 
 class EventsPlotAccessor:
@@ -269,7 +316,9 @@ class EventsPlotAccessor:
     def __init__(self, interface: EventsInterface):
         self._interface = interface
 
-    def event_timeline(self, *, trajectory: TrajectoryResult | None = None, ax=None, **kwargs):
+    def event_timeline(
+        self, *, trajectory: TrajectoryResult | None = None, ax=None, **kwargs
+    ):
         """Plot trajectory with event markers."""
         plot_kwargs = dict(kwargs)
         style_kwargs = pop_axes_style_kwargs(plot_kwargs)
@@ -315,12 +364,41 @@ class EventsPlotAccessor:
         return result.plt.dwell_histogram(ax=ax, **kwargs)
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("EventsPlotAccessor", [
-            (".event_timeline()",
-             "Trajectory + event markers (polarity, state, expulsion)",
-             "trajectory: optional pre-computed TrajectoryResult."),
-            (".dwell_histogram(state='G-state')",
-             "Dwell-time distribution histogram",
-             "state: 'G-state' or 'C-state'. bins, as_ns kwargs."),
-        ])
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
+
+        html = plot_accessor_html(
+            "EventsPlotAccessor",
+            [
+                (
+                    ".event_timeline()",
+                    "Trajectory + event markers (polarity, state, expulsion)",
+                    "trajectory: optional pre-computed TrajectoryResult.",
+                ),
+                (
+                    ".dwell_histogram(state='G-state')",
+                    "Dwell-time distribution histogram",
+                    "state: 'G-state' or 'C-state'. bins, as_ns kwargs.",
+                ),
+            ],
+        )
+        api_card = api_help_html(
+            self,
+            title="Vortex events plot API help",
+            prefix="vortex.events.plt",
+            methods=["event_timeline", "dwell_histogram"],
+            subtitle="Live signatures for event plotting shortcuts.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"vortex-events-plot-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )

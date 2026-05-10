@@ -21,6 +21,7 @@ def _progress(iterable, **kwargs):
         return iterable
     return tqdm(iterable, **kwargs)
 
+
 # Try to use scipy.fft (faster) with fallback to numpy.fft
 # Can be disabled via environment variable MMPP_USE_NUMPY_FFT=1
 _FORCE_NUMPY = os.environ.get("MMPP_USE_NUMPY_FFT", "").lower() in ("1", "true", "yes")
@@ -104,16 +105,14 @@ class TransmissionConfig:
     filter_type: Optional[FILTER_TYPES] = "remove_mean"  # None = no filtering
 
     # Spatial averaging controls
-    spatial_window: int = 5  # Set to 1 for no spatial averaging (0/False are treated as 1)
-    spatial_step: int = 1
-    spatial_window_mode: SpatialWindowMode = (
-        "post_fft"  # "pre_fft" = sum neighbors before FFT (slower, local), "post_fft" = extract from full FFT (faster)
+    spatial_window: int = (
+        5  # Set to 1 for no spatial averaging (0/False are treated as 1)
     )
+    spatial_step: int = 1
+    spatial_window_mode: SpatialWindowMode = "post_fft"  # "pre_fft" = sum neighbors before FFT (slower, local), "post_fft" = extract from full FFT (faster)
     average_mode: AverageMode = "mean"  # "none" = no y/z averaging
     edge_taper_power: float = 1.5
-    y_integration_mode: YIntegrationMode = (
-        "sum_fft"  # "sum_m" = sum before FFT, "sum_fft" = sum complex FFT along y (phase-preserving), "none" = no y-sum
-    )
+    y_integration_mode: YIntegrationMode = "sum_fft"  # "sum_m" = sum before FFT, "sum_fft" = sum complex FFT along y (phase-preserving), "none" = no y-sum
 
     # Component selection
     component_weights: Tuple[float, float, float] = (1.0, 1.0, 0.1)
@@ -215,6 +214,40 @@ class TransmissionResult:
     longitudinal_power: Optional[np.ndarray] = None
     # Optional lightweight complex-spectrum summary when keep_complex_fft is True
     complex_spectra_summary: Optional[np.ndarray] = None
+
+    def _repr_html_(self) -> str:
+        """HTML representation for Jupyter notebooks."""
+        try:
+            from mmpp._repr_helpers import api_help_html
+
+            return api_help_html(
+                self,
+                title="TransmissionResult API help",
+                prefix="transmission",
+                subtitle=(
+                    "Computed transmission result with plotting, cross-section, "
+                    "overlay and mode-visualization helpers."
+                ),
+                properties=[
+                    ("frequencies", "Frequency axis"),
+                    ("x_positions", "Position axis"),
+                    ("transmission", "Transmission map"),
+                    ("power_map", "Power map used to build transmission"),
+                    ("config", "TransmissionConfig used for computation"),
+                    ("metadata", "Additional compute metadata"),
+                ],
+                methods=[
+                    "plot_transmission",
+                    "plot_transmission_crosssection",
+                    "overlay_transmission",
+                    "visualize_mode",
+                    "visualize_modes",
+                    "animate_mode",
+                    "save_mode_visualizations",
+                ],
+            )
+        except Exception:
+            return ""
 
     def plot_transmission(self, plot_config=None, **kwargs):
         """Render a frequency-position transmission map.
@@ -603,9 +636,7 @@ class TransmissionResult:
         # Create figure if needed
         _dpi = kwargs.pop("dpi", 100)
         if ax is None:
-            fig, ax = plt.subplots(
-                figsize=kwargs.pop("figsize", (10, 6)), dpi=_dpi
-            )
+            fig, ax = plt.subplots(figsize=kwargs.pop("figsize", (10, 6)), dpi=_dpi)
         else:
             fig = ax.figure
             fig.set_dpi(_dpi)
@@ -675,11 +706,13 @@ class TransmissionResult:
         width_info = ""
         if x_width is not None and x_width > 0:
             if self.dx is not None:
-                width_info = f" (±{x_width/2:.1f} nm avg)"
+                width_info = f" (±{x_width / 2:.1f} nm avg)"
             else:
-                width_info = f" (±{x_width/2:.1f} cells avg)"
+                width_info = f" (±{x_width / 2:.1f} cells avg)"
 
-        plot_title = "Transmission Cross-section" if not use_power_map else "Power Cross-section"
+        plot_title = (
+            "Transmission Cross-section" if not use_power_map else "Power Cross-section"
+        )
         ax.set_title(
             f"{plot_title} at x = {position_label}{width_info}"
             + (f" (trimmed {trim_idx} pts)" if trim_idx > 0 else ""),
@@ -880,7 +913,11 @@ class TransmissionResult:
             ax.legend(
                 loc=legend_kwargs.get("loc", "best"),
                 framealpha=legend_kwargs.get("framealpha", 0.8),
-                **{k: v for k, v in legend_kwargs.items() if k not in {"loc", "framealpha"}},
+                **{
+                    k: v
+                    for k, v in legend_kwargs.items()
+                    if k not in {"loc", "framealpha"}
+                },
             )
         if find_minima is not None:
             return fig, ax, minima_freqs
@@ -920,7 +957,9 @@ class TransmissionResult:
                     comp_idx,
                 )
                 return 0
-            raise ValueError(f"component index {comp_idx} out of range for n_comp={n_comp}")
+            raise ValueError(
+                f"component index {comp_idx} out of range for n_comp={n_comp}"
+            )
         return comp_idx
 
     @staticmethod
@@ -938,7 +977,11 @@ class TransmissionResult:
         This avoids allocating full ``zeros_like(spectrum)`` and full inverse FFT volume.
         """
         phase = np.exp(
-            1j * (2.0 * np.pi * float(k_idx) * float(t_idx) / float(n_time) + float(phase_offset_rad))
+            1j
+            * (
+                2.0 * np.pi * float(k_idx) * float(t_idx) / float(n_time)
+                + float(phase_offset_rad)
+            )
         )
         if k_idx == 0 or (n_time % 2 == 0 and k_idx == n_time // 2):
             scale = 1.0 / float(n_time)
@@ -1085,7 +1128,9 @@ class TransmissionResult:
 
         freqs = np.asarray(self.frequencies, dtype=float)
         if freqs.ndim != 1 or freqs.size == 0:
-            raise ValueError("TransmissionResult.frequencies must be a non-empty 1D array")
+            raise ValueError(
+                "TransmissionResult.frequencies must be a non-empty 1D array"
+            )
 
         spectrum = np.asarray(self.transmission)
         if not np.iscomplexobj(spectrum):
@@ -1121,7 +1166,9 @@ class TransmissionResult:
         except (TypeError, ValueError):
             n_time = int(2 * (freqs.size - 1))
         if n_time <= 0:
-            raise ValueError("Unable to infer valid n_time for inverse FFT reconstruction")
+            raise ValueError(
+                "Unable to infer valid n_time for inverse FFT reconstruction"
+            )
 
         n_z = int(spectrum.shape[1])
         z_idx = int(z_layer)
@@ -1253,7 +1300,13 @@ class TransmissionResult:
 
         if y_lines is not None:
             for y_line in y_lines:
-                ax.axhline(float(y_line), color="cyan", linewidth=1.1, linestyle="--", alpha=0.9)
+                ax.axhline(
+                    float(y_line),
+                    color="cyan",
+                    linewidth=1.1,
+                    linestyle="--",
+                    alpha=0.9,
+                )
 
         if y_spans is not None:
             for y0, y1 in y_spans:
@@ -1323,7 +1376,9 @@ class TransmissionResult:
         if figsize is None:
             figsize = (5.6 * ncols_int, 4.1 * nrows)
 
-        fig, axes = plt.subplots(nrows, ncols_int, figsize=figsize, dpi=dpi, squeeze=False)
+        fig, axes = plt.subplots(
+            nrows, ncols_int, figsize=figsize, dpi=dpi, squeeze=False
+        )
         axes_flat = axes.reshape(-1)
         used_axes = []
         metas = []
@@ -1416,7 +1471,9 @@ class TransmissionResult:
 
         freqs = np.asarray(self.frequencies, dtype=float)
         if freqs.ndim != 1 or freqs.size == 0:
-            raise ValueError("TransmissionResult.frequencies must be a non-empty 1D array")
+            raise ValueError(
+                "TransmissionResult.frequencies must be a non-empty 1D array"
+            )
 
         spectrum = np.asarray(self.transmission)
         if not np.iscomplexobj(spectrum):
@@ -1436,7 +1493,9 @@ class TransmissionResult:
         except (TypeError, ValueError):
             n_time = int(2 * (freqs.size - 1))
         if n_time <= 0:
-            raise ValueError("Unable to infer valid n_time for inverse FFT reconstruction")
+            raise ValueError(
+                "Unable to infer valid n_time for inverse FFT reconstruction"
+            )
 
         n_z = int(spectrum.shape[1])
         z_idx = int(z_layer)
@@ -1495,7 +1554,9 @@ class TransmissionResult:
                 out = [int(v) for v in spec]
             for idx in out:
                 if idx < 0 or idx >= upper:
-                    raise ValueError(f"{name} contains {idx}, allowed range [0, {upper - 1}]")
+                    raise ValueError(
+                        f"{name} contains {idx}, allowed range [0, {upper - 1}]"
+                    )
             return out
 
         generic_frames = _materialize_indices(
@@ -1506,18 +1567,21 @@ class TransmissionResult:
 
         frame_pairs: list[tuple[int, int]] = []
         if animate_key == "k":
-            k_list = (
-                generic_frames
-                or _materialize_indices(k_frames, upper=freqs.size, name="k_frames")
+            k_list = generic_frames or _materialize_indices(
+                k_frames, upper=freqs.size, name="k_frames"
             )
             if k_list is None:
                 if k is not None:
                     k_val = int(k)
                     if k_val < 0 or k_val >= freqs.size:
-                        raise ValueError(f"k={k_val} out of range [0, {freqs.size - 1}]")
+                        raise ValueError(
+                            f"k={k_val} out of range [0, {freqs.size - 1}]"
+                        )
                     k_list = [k_val]
                 elif f is not None:
-                    k_list = [int(np.argmin(np.abs(freqs - float(f) * float(freq_scale))))]
+                    k_list = [
+                        int(np.argmin(np.abs(freqs - float(f) * float(freq_scale))))
+                    ]
                 else:
                     k_list = list(range(freqs.size))
 
@@ -1525,7 +1589,9 @@ class TransmissionResult:
             frame_pairs = [(int(k_idx), t_fixed) for k_idx in k_list]
         else:
             if (f is None) == (k is None):
-                raise ValueError("For animate='t', provide exactly one selector: either f=... or k=...")
+                raise ValueError(
+                    "For animate='t', provide exactly one selector: either f=... or k=..."
+                )
 
             if k is None:
                 k_fixed = int(np.argmin(np.abs(freqs - float(f) * float(freq_scale))))
@@ -1598,7 +1664,9 @@ class TransmissionResult:
                     peak = float(np.max(np.abs(xy_vis0))) if xy_vis0.size > 0 else 0.0
                     iter_pairs = frame_pairs[1:]
                     if show_progress and len(frame_pairs) > 2:
-                        iter_pairs = _progress(iter_pairs, desc="Computing animation color scale")
+                        iter_pairs = _progress(
+                            iter_pairs, desc="Computing animation color scale"
+                        )
                     for k_idx, t_idx in iter_pairs:
                         _, frame_vis, _ = _frame_data(k_idx, t_idx)
                         if frame_vis.size > 0:
@@ -1665,7 +1733,13 @@ class TransmissionResult:
 
         if y_lines is not None:
             for y_line in y_lines:
-                ax.axhline(float(y_line), color="cyan", linewidth=1.1, linestyle="--", alpha=0.9)
+                ax.axhline(
+                    float(y_line),
+                    color="cyan",
+                    linewidth=1.1,
+                    linestyle="--",
+                    alpha=0.9,
+                )
 
         if y_spans is not None:
             for y0, y1 in y_spans:
@@ -1740,7 +1814,9 @@ class TransmissionResult:
             save_kwargs.setdefault("dpi", int(dpi))
             animation.save(str(save_path), writer=writer_name, **save_kwargs)
 
-        frame_values = [int(pair[0] if animate_key == "k" else pair[1]) for pair in frame_pairs]
+        frame_values = [
+            int(pair[0] if animate_key == "k" else pair[1]) for pair in frame_pairs
+        ]
         meta = {
             "animate": animate_key,
             "frame_count": int(len(frame_pairs)),
@@ -1787,7 +1863,9 @@ class TransmissionResult:
 
         freqs = np.asarray(self.frequencies, dtype=float)
         if freqs.ndim != 1 or freqs.size == 0:
-            raise ValueError("TransmissionResult.frequencies must be a non-empty 1D array")
+            raise ValueError(
+                "TransmissionResult.frequencies must be a non-empty 1D array"
+            )
 
         unit_scales = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
         freq_scale = unit_scales.get(str(freq_unit).lower())
@@ -1821,7 +1899,9 @@ class TransmissionResult:
 
         iterator = selected_bins
         if show_progress and len(selected_bins) > 1:
-            iterator = _progress(selected_bins, desc="Saving transmission mode visualizations")
+            iterator = _progress(
+                selected_bins, desc="Saving transmission mode visualizations"
+            )
 
         saved_paths: list[Path] = []
         for k_idx in iterator:
@@ -1896,7 +1976,9 @@ class TransmissionResult:
 
         freqs = np.asarray(self.frequencies, dtype=float)
         if freqs.ndim != 1 or freqs.size == 0:
-            raise ValueError("TransmissionResult.frequencies must be a non-empty 1D array")
+            raise ValueError(
+                "TransmissionResult.frequencies must be a non-empty 1D array"
+            )
 
         spectrum = np.asarray(self.transmission)
         if not np.iscomplexobj(spectrum):
@@ -1939,7 +2021,9 @@ class TransmissionResult:
         except (TypeError, ValueError):
             n_time = int(2 * (freqs.size - 1))
         if n_time <= 0:
-            raise ValueError("Unable to infer valid n_time for inverse FFT reconstruction")
+            raise ValueError(
+                "Unable to infer valid n_time for inverse FFT reconstruction"
+            )
 
         n_z = int(spectrum.shape[1])
         z_idx = int(z_layer)
@@ -2068,7 +2152,9 @@ class TransmissionModesResult:
                     f"Unsupported freq_unit={freq_unit!r}. Use one of {list(unit_scales)}."
                 )
             target_hz = float(f) * float(scale)
-            arr = np.asarray([float(m["frequency_hz"]) for m in self.modes], dtype=float)
+            arr = np.asarray(
+                [float(m["frequency_hz"]) for m in self.modes], dtype=float
+            )
             return [int(np.argmin(np.abs(arr - target_hz)))]
 
         if len(self.modes) == 1:
@@ -2168,7 +2254,9 @@ class TransmissionModesResult:
                 1e9,
             )
             f_disp = float(meta["frequency_hz"]) / float(out_scale)
-            ax.set_title(f"Mode @ f={f_disp:.4g} {unit_out} (k={meta['k']}, t={meta['time_index']})")
+            ax.set_title(
+                f"Mode @ f={f_disp:.4g} {unit_out} (k={meta['k']}, t={meta['time_index']})"
+            )
             ax.set_xlabel(f"x [{x_label}]")
             ax.set_ylabel("y [index]")
 
@@ -2179,7 +2267,13 @@ class TransmissionModesResult:
 
             if y_lines is not None:
                 for y_line in y_lines:
-                    ax.axhline(float(y_line), color="cyan", linewidth=1.1, linestyle="--", alpha=0.9)
+                    ax.axhline(
+                        float(y_line),
+                        color="cyan",
+                        linewidth=1.1,
+                        linestyle="--",
+                        alpha=0.9,
+                    )
 
             if y_spans is not None:
                 for y0, y1 in y_spans:
@@ -2240,7 +2334,9 @@ class TransmissionModesResult:
         nrows = int(math.ceil(len(selected) / float(ncols_int)))
         if figsize is None:
             figsize = (5.6 * ncols_int, 4.1 * nrows)
-        fig, axes = plt.subplots(nrows, ncols_int, figsize=figsize, dpi=dpi, squeeze=False)
+        fig, axes = plt.subplots(
+            nrows, ncols_int, figsize=figsize, dpi=dpi, squeeze=False
+        )
         axes_flat = axes.reshape(-1)
         used_axes = []
         metas = []
@@ -2280,7 +2376,9 @@ class TransmissionModesResult:
         selected = self._select_indices(index=index, f=f, k=k, freq_unit=unit_out)
         out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_scale = float({"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}.get(unit_out.lower(), 1e9))
+        out_scale = float(
+            {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}.get(unit_out.lower(), 1e9)
+        )
 
         fmt = str(image_format).lower().strip(".")
         fig_save_kwargs = dict(savefig_kwargs or {})
@@ -2289,7 +2387,9 @@ class TransmissionModesResult:
 
         iterator = selected
         if show_progress and len(selected) > 1:
-            iterator = _progress(selected, desc="Saving precomputed transmission mode visualizations")
+            iterator = _progress(
+                selected, desc="Saving precomputed transmission mode visualizations"
+            )
 
         saved_paths: list[Path] = []
         for mode_idx in iterator:
@@ -2370,7 +2470,9 @@ def _apply_transmission_method(
 ) -> np.ndarray:
     """Convert complex spectrum to real-valued transmission metric."""
     if spectrum.ndim < 2:
-        raise ValueError(f"Spectrum must have at least 2 dims (..., comp), got {spectrum.shape}")
+        raise ValueError(
+            f"Spectrum must have at least 2 dims (..., comp), got {spectrum.shape}"
+        )
 
     n_comp = spectrum.shape[-1]
     if component_weights.size < n_comp:
@@ -2437,7 +2539,9 @@ def _aggregate_pre_fft(
         if mode == "median":
             return np.median(metric, axis=1)
         if mode == "edge_taper":
-            return _edge_taper_weighted_average(metric, axes=(1,), taper_power=edge_taper_power)
+            return _edge_taper_weighted_average(
+                metric, axes=(1,), taper_power=edge_taper_power
+            )
         raise ValueError(f"Unsupported average mode: {mode}")
 
     if metric.ndim == 3:
@@ -2449,10 +2553,14 @@ def _aggregate_pre_fft(
         if mode == "median":
             return np.median(metric, axis=(1, 2))
         if mode == "edge_taper":
-            return _edge_taper_weighted_average(metric, axes=(1, 2), taper_power=edge_taper_power)
+            return _edge_taper_weighted_average(
+                metric, axes=(1, 2), taper_power=edge_taper_power
+            )
         raise ValueError(f"Unsupported average mode: {mode}")
 
-    raise ValueError(f"Expected pre-FFT metric with ndim 2 or 3, got shape {metric.shape}")
+    raise ValueError(
+        f"Expected pre-FFT metric with ndim 2 or 3, got shape {metric.shape}"
+    )
 
 
 def _aggregate_spatial(

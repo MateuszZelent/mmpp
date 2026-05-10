@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import zarr
 import numpy as np
 import inspect
@@ -292,62 +294,65 @@ job[0].fft.modes  # Shows mode analysis options'''
         return f"[{inner}]"
 
     def _html_dataset_fft_display(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
         job_result = self._job_result
         job_name = getattr(job_result, "name", "unknown")
-        job_path = getattr(job_result, "path", "")
         slice_label = self._format_slice_display()
-        dataset_access = self.dataset_name if isinstance(self.dataset_name, str) else str(self.dataset_name)
-        if isinstance(self.dataset_name, str) and self.dataset_name.isidentifier():
-            prefix = f"job[0].{self.dataset_name}{slice_label}.fft"
-        else:
-            prefix = f"job[0][{self.dataset_name!r}]{slice_label}.fft"
-
-        # ── method groups ───────────────────────────────────────
-        section_style = (
-            "padding:4px 8px; font-weight:600; color:#f1f5f9; "
-            "background:rgba(51,65,85,0.8); text-align:left;"
+        dataset_access = (
+            self.dataset_name
+            if isinstance(self.dataset_name, str)
+            else str(self.dataset_name)
         )
-        row_html = ""
+        if isinstance(self.dataset_name, str) and self.dataset_name.isidentifier():
+            data_prefix = f"job[0].{self.dataset_name}{slice_label}"
+        else:
+            data_prefix = f"job[0][{self.dataset_name!r}]{slice_label}"
+        fft_prefix = f"{data_prefix}.fft"
+        uid = str(_uuid.uuid4())[:8]
 
-        groups: list[tuple[str, list[tuple[str, str]]]] = [
-            ("Compute", [
-                ("spectrum()", "FFT spectrum → SpectrumResult"),
-                ("filters(**f).spectrum()", "Fluent filter chain → SpectrumResult"),
-                ("power()", "Power spectrum |FFT|²"),
-                ("frequencies()", "Frequency axis (Hz)"),
-                ("magnitude()", "Magnitude spectrum |FFT|"),
-                ("phase()", "Phase spectrum (radians)"),
-            ]),
-            ("Analysis", [
-                ("dispersion", "Dispersion relation analysis"),
-                ("modes", "FMR mode analysis interface"),
-                ("transmission", "Transmission / absorption analysis"),
-            ]),
-            ("Plotting", [
-                ("plot_spectrum()", "Quick-look power spectrum plot"),
-                ("interactive_spectrum()", "Interactive mode spectrum viewer"),
-            ]),
-        ]
+        status = metrics_section_html([
+            ("job", job_name, None),
+            ("dataset", dataset_access, "#93c5fd"),
+            ("slice", slice_label if slice_label else "full",
+             "#fbbf24" if slice_label else None),
+        ])
 
-        for group_name, methods in groups:
-            row_html += (
-                f"<tr><td colspan='2' style='{section_style}'>"
-                f"{_html_escape(group_name)}</td></tr>"
-            )
-            for name, desc in methods:
-                row_html += (
-                    "<tr>"
-                    f"<td style='padding:5px 8px 5px 16px; font-family:monospace; "
-                    f"color:#93c5fd; white-space:nowrap;'>{_html_escape(name)}</td>"
-                    f"<td style='padding:5px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
-                    "</tr>"
-                )
+        accessors = accessors_section_html([
+            ("Compute:", [
+                ("spectrum()", NODE_COLOR_COMPUTE),
+                ("filters(**f).spectrum()", NODE_COLOR_COMPUTE),
+                ("power()", NODE_COLOR_COMPUTE),
+                ("frequencies()", NODE_COLOR_COMPUTE),
+                ("magnitude()", NODE_COLOR_COMPUTE),
+                ("phase()", NODE_COLOR_COMPUTE),
+            ]),
+            ("Analysis:", [
+                ("dispersion", NODE_COLOR_ANALYSIS),
+                ("modes", NODE_COLOR_ANALYSIS),
+                ("transmission", NODE_COLOR_ANALYSIS),
+            ]),
+            ("Plotting:", [
+                ("plot_spectrum()", NODE_COLOR_PLOT),
+                ("interactive_spectrum()", NODE_COLOR_PLOT),
+            ]),
+        ])
 
-        # ── context-aware examples ──────────────────────────────
-        example_code = "\n".join([
-            f"data = {prefix.rsplit('.fft', 1)[0]}",
+        examples = examples_section_html("\n".join([
+            f"data = {data_prefix}",
             "",
-            "# Compute spectrum (dataset & slice are pre-set)",
+            "# Compute spectrum (dataset & slice pre-set)",
             "result = data.fft.spectrum()",
             "",
             "# Plot power spectrum",
@@ -356,53 +361,48 @@ job[0].fft.modes  # Shows mode analysis options'''
             "# Fluent filter chain",
             "data.fft.filters(remove_static=True).spectrum()",
             "",
-            "# Frequency range",
-            "result = data.fft.spectrum(fmin=1e9, fmax=20e9)",
-            "",
-            "# Peak detection",
-            "result = data.fft.spectrum(find_peaks={'min_prominence': 0.1})",
+            "# Frequency range & peak detection",
+            "result = data.fft.spectrum(fmin=1e9, fmax=20e9,",
+            "                          find_peaks={'min_prominence': 0.1})",
             "",
             "# Analysis sub-interfaces",
             "data.fft.modes.interactive_spectrum(dpi=150)",
             "data.fft.dispersion.plot_dispersion(axis='x')",
-        ])
+        ]))
 
-        html = f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
-          <div style="margin-bottom: 12px;">
-            <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">Dataset FFT Interface</div>
-            <div style="color: #94a3b8; margin-top: 4px;">Job: {_html_escape(job_name)}</div>
-            <div style="color: #94a3b8; margin-top: 2px;">Path: <code style="color:#cbd5e1;">{_html_escape(job_path)}</code></div>
-          </div>
+        api = api_help_html(
+            self,
+            title="Dataset FFT API help",
+            prefix=fft_prefix,
+            subtitle="Dataset and slice context are pre-bound; all methods operate on the selected view.",
+            properties=[
+                ("spectrum", "Callable spectrum helper"),
+                ("dispersion", "Dispersion relation namespace"),
+                ("modes", "FMR mode analysis namespace"),
+                ("transmission", "Transmission / absorption namespace"),
+            ],
+            methods=["filters", "power", "frequencies", "magnitude", "phase",
+                     "plot_spectrum", "plot_modes", "interactive_spectrum"],
+            chrome=False,
+        )
 
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
-            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
-              <div><span style="color:#94a3b8;">Dataset:</span> <code style="color:#93c5fd;">{_html_escape(dataset_access)}</code></div>
-              <div><span style="color:#94a3b8;">Slice:</span> <code style="color:#93c5fd;">{_html_escape(slice_label or 'full')}</code></div>
-            </div>
-          </div>
+        slice_part = (
+            f" · slice <code style='color:#fbbf24'>{_html_escape(slice_label)}</code>"
+            if slice_label else ""
+        )
+        subtitle = (
+            f"Pre-bound to <code style='color:#93c5fd'>{_html_escape(dataset_access)}</code>"
+            + slice_part
+        )
 
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
-            <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
-              <thead>
-                <tr style="text-align:left; background: rgba(51,65,85,0.6);">
-                  <th style="padding:6px 8px; color:#e2e8f0;">Method</th>
-                  <th style="padding:6px 8px; color:#e2e8f0;">Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                {row_html}
-              </tbody>
-            </table>
-          </div>
-
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
-            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
-            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto; font-size:0.85em;"><code>{_html_escape(example_code)}</code></pre>
-          </div>
-        </div>
-        """
-        return html
+        return node_card_html(
+            "Dataset FFT Interface",
+            icon="📊",
+            subtitle=subtitle,
+            sections=[status, accessors, examples],
+            api=api,
+            uid=f"dsfft-{dataset_access}-{uid}",
+        )
 
 
 class DatasetAwareWrapper:
@@ -584,6 +584,21 @@ class DatasetAwareWrapper:
         """Alias for :attr:`values`."""
         return self.numpy(copy=False)
 
+    @property
+    def np(self) -> "WrapperNumpyGetter":
+        """Eager NumPy getter — returns plain ``np.ndarray`` on indexing.
+
+        This is a shorthand for chained slicing that immediately materializes
+        data with standard NumPy dimension-dropping semantics.
+
+        Examples
+        --------
+        >>> arr = job[0].m.np[0, ..., 0]        # shape (nz, ny, nx)
+        >>> arr = job[0].m[0, ...].np[..., 0]   # chained: shape (ny, nx)
+        >>> arr.shape                             # plain np.ndarray
+        """
+        return WrapperNumpyGetter(self)
+
     def __array__(self, dtype=None, copy=None):
         arr = self.numpy(copy=False, dtype=dtype)
         if copy:
@@ -594,7 +609,7 @@ class DatasetAwareWrapper:
         """Delegate to zarr_array for most attributes (but not our own properties)"""
         # Don't delegate properties that are defined on this class
         if name in ("dt", "fft", "analyze", "shape", "data", "plot", "geometry", "region", "cell",
-                    "analysis_shape", "numpy_shape", "is_lazy", "is_materialized", "values", "array"):
+                    "analysis_shape", "numpy_shape", "is_lazy", "is_materialized", "values", "array", "np"):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
         # Never forward numpy array protocol attributes — numpy uses these before
@@ -1180,13 +1195,6 @@ class DatasetAwareWrapper:
             )
         return self.zarr_array
 
-    def __array__(self, dtype=None):
-        """Support implicit numpy conversions (e.g. np.asarray)."""
-        array = self.numpy(copy=False)
-        if dtype is not None:
-            array = array.astype(dtype, copy=False)
-        return array
-
     def __iter__(self):
         return iter(self.numpy(copy=False))
 
@@ -1194,28 +1202,116 @@ class DatasetAwareWrapper:
         return len(self.numpy(copy=False))
 
     def _repr_html_(self) -> str:
-        """HTML card for Jupyter notebooks."""
-        job_name = getattr(self.job_result, "name", "?")
-        shape_str = " × ".join(str(s) for s in self.analysis_shape)
-        numpy_shape_str = " × ".join(str(s) for s in self.numpy_shape)
+        """Rich HTML card for Jupyter notebooks."""
+        job_name = _html_escape(getattr(self.job_result, "name", "?"))
+        ds_name = _html_escape(self.dataset_name)
+        shape_str = " &times; ".join(str(s) for s in self.analysis_shape)
+        numpy_shape_str = " &times; ".join(str(s) for s in self.numpy_shape)
         state = "materialized" if self.is_materialized else "lazy"
-        dtype = getattr(self.zarr_array, "dtype", "unknown")
-        slice_row = (
-            f"<tr><td><b>slice</b></td><td><code>{self.slice_info}</code></td></tr>"
-            if self.slice_info is not None
-            else ""
-        )
+        state_color = "#22c55e" if self.is_materialized else "#94a3b8"
+        dtype = str(getattr(self.zarr_array, "dtype", "unknown"))
+
+        # Chunks info (only for zarr arrays)
+        try:
+            chunks = getattr(self.zarr_array, "chunks", None)
+            chunks_str = " &times; ".join(str(c) for c in chunks) if chunks else "n/a"
+        except Exception:
+            chunks_str = "n/a"
+
+        # Slice info row
+        slice_row = ""
+        if self.slice_info is not None:
+            slice_str = _html_escape(str(self.slice_info))
+            slice_row = f"<tr><td style='color:#94a3b8'>slice</td><td><code style='font-size:11px'>{slice_str}</code></td></tr>"
+
+        # --- Accessor groups ---
+        accessors_html = """
+        <details open style='margin-top:8px'>
+          <summary style='cursor:pointer;font-weight:bold;color:#cbd5e1;letter-spacing:.04em;font-size:12px'>ACCESSORS &amp; METHODS</summary>
+          <div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px'>
+
+            <div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:160px'>
+              <div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Data extraction</div>
+              <div style='display:flex;flex-direction:column;gap:2px'>
+                <code style='color:#38bdf8'>.numpy()</code><span style='color:#64748b;font-size:10px'>&nbsp;NumPy array (axes dropped)</span>
+                <code style='color:#38bdf8'>.numpy(keepdims=True)</code><span style='color:#64748b;font-size:10px'>&nbsp;preserve all axes</span>
+                <code style='color:#38bdf8'>.values</code><span style='color:#64748b;font-size:10px'>&nbsp;alias for numpy()</span>
+                <code style='color:#38bdf8'>.np[...]</code><span style='color:#64748b;font-size:10px'>&nbsp;eager ndarray getter</span>
+                <code style='color:#38bdf8'>.np.shape</code><span style='color:#64748b;font-size:10px'>&nbsp;NumPy-like shape</span>
+              </div>
+            </div>
+
+            <div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:160px'>
+              <div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Slicing &amp; selection</div>
+              <div style='display:flex;flex-direction:column;gap:2px'>
+                <code style='color:#a78bfa'>[t, z, y, x, c]</code><span style='color:#64748b;font-size:10px'>&nbsp;returns new wrapper</span>
+                <code style='color:#a78bfa'>.sel(t=0.5e-9)</code><span style='color:#64748b;font-size:10px'>&nbsp;coordinate selection</span>
+                <code style='color:#a78bfa'>.downsample(2, 1, 2, 2)</code><span style='color:#64748b;font-size:10px'>&nbsp;spatial downsampling</span>
+                <code style='color:#a78bfa'>.frame(n)</code><span style='color:#64748b;font-size:10px'>&nbsp;select time frame n</span>
+              </div>
+            </div>
+
+            <div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:160px'>
+              <div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Analysis</div>
+              <div style='display:flex;flex-direction:column;gap:2px'>
+                <code style='color:#34d399'>.fft</code><span style='color:#64748b;font-size:10px'>&nbsp;FFT / spectrum analysis</span>
+                <code style='color:#34d399'>.fft.spectrum()</code><span style='color:#64748b;font-size:10px'>&nbsp;compute FFT</span>
+                <code style='color:#34d399'>.fft.modes()</code><span style='color:#64748b;font-size:10px'>&nbsp;mode analysis</span>
+                <code style='color:#34d399'>.analyze</code><span style='color:#64748b;font-size:10px'>&nbsp;general analysis tools</span>
+              </div>
+            </div>
+
+            <div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:160px'>
+              <div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Geometry &amp; info</div>
+              <div style='display:flex;flex-direction:column;gap:2px'>
+                <code style='color:#fb923c'>.analysis_shape</code><span style='color:#64748b;font-size:10px'>&nbsp;shape for analysis</span>
+                <code style='color:#fb923c'>.numpy_shape</code><span style='color:#64748b;font-size:10px'>&nbsp;shape after axis drop</span>
+                <code style='color:#fb923c'>.geometry</code><span style='color:#64748b;font-size:10px'>&nbsp;physical geometry</span>
+                <code style='color:#fb923c'>.dtype</code><span style='color:#64748b;font-size:10px'>&nbsp;data type</span>
+                <code style='color:#fb923c'>.is_lazy / .is_materialized</code>
+              </div>
+            </div>
+
+            <div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:160px'>
+              <div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Visualization</div>
+              <div style='display:flex;flex-direction:column;gap:2px'>
+                <code style='color:#f472b6'>.plot</code><span style='color:#64748b;font-size:10px'>&nbsp;plotting helpers</span>
+                <code style='color:#f472b6'>.plot.quiver()</code><span style='color:#64748b;font-size:10px'>&nbsp;vector field plot</span>
+                <code style='color:#f472b6'>.plot.heatmap()</code><span style='color:#64748b;font-size:10px'>&nbsp;scalar heatmap</span>
+              </div>
+            </div>
+
+          </div>
+        </details>"""
+
         return (
-            "<div style='border:1px solid #ccc;padding:8px;border-radius:4px;"
-            "font-family:monospace;display:inline-block'>"
-            f"<b>DatasetAwareWrapper</b> — <i>{job_name}</i> / <code>{self.dataset_name}</code><br>"
-            "<table style='border-collapse:collapse;margin-top:4px'>"
-            f"<tr><td><b>analysis shape</b></td><td>{shape_str}</td></tr>"
-            f"<tr><td><b>numpy shape</b></td><td>{numpy_shape_str}</td></tr>"
-            f"<tr><td><b>dtype</b></td><td>{dtype}</td></tr>"
-            f"<tr><td><b>state</b></td><td>{state}</td></tr>"
+            "<div style='border:1px solid #334155;padding:12px 14px;border-radius:8px;"
+            "font-family:monospace;display:inline-block;max-width:760px;"
+            "background:#0f172a;color:#e2e8f0'>"
+            # Header
+            f"<div style='font-size:13px;margin-bottom:8px'>"
+            f"<b style='color:#7dd3fc'>DatasetAwareWrapper</b>"
+            f"&nbsp;&mdash;&nbsp;<span style='color:#94a3b8'>{job_name}</span>"
+            f"&nbsp;/&nbsp;<code style='color:#f8fafc'>{ds_name}</code>"
+            f"&nbsp;&nbsp;<span style='background:{state_color};color:#0f172a;"
+            f"padding:1px 6px;border-radius:10px;font-size:10px'>{state}</span>"
+            "</div>"
+            # Info table
+            "<table style='border-collapse:collapse;font-size:12px;margin-bottom:2px'>"
+            "<tr>"
+            f"<td style='color:#94a3b8;padding-right:14px'>analysis shape</td>"
+            f"<td style='color:#fbbf24'><b>{shape_str}</b></td>"
+            f"<td style='color:#94a3b8;padding-left:18px;padding-right:14px'>numpy shape</td>"
+            f"<td style='color:#a3e635'><b>{numpy_shape_str}</b></td>"
+            "</tr>"
+            "<tr>"
+            f"<td style='color:#94a3b8'>dtype</td><td><code>{dtype}</code></td>"
+            f"<td style='color:#94a3b8;padding-left:18px'>chunks</td><td><code>{chunks_str}</code></td>"
+            "</tr>"
             f"{slice_row}"
-            "</table></div>"
+            "</table>"
+            f"{accessors_html}"
+            "</div>"
         )
 
     def __repr__(self):
@@ -1225,11 +1321,54 @@ class DatasetAwareWrapper:
         )
 
 
+class WrapperNumpyGetter:
+    """Eager NumPy accessor for :class:`DatasetAwareWrapper`.
+
+    Returned by the ``.np`` property.  Indexing immediately materializes the
+    view as a plain ``np.ndarray`` with standard NumPy dimension-dropping
+    semantics (integer indices remove axes).
+
+    Examples
+    --------
+    >>> job[0].m.np[0, ..., 0]         # shape (nz, ny, nx)
+    >>> job[0].m[0, ...].np[..., 0]   # shape (ny, nx)
+    """
+
+    def __init__(self, wrapper: "DatasetAwareWrapper") -> None:
+        self._wrapper = wrapper
+
+    def __getitem__(self, key) -> np.ndarray:
+        """Index the wrapper and return a plain ``np.ndarray``."""
+        sliced = self._wrapper[key]
+        return sliced.numpy(copy=False)
+
+    @property
+    def shape(self) -> tuple:
+        """NumPy-like shape of the view (integer-indexed axes are dropped)."""
+        return self._wrapper.numpy_shape
+
+    @property
+    def dtype(self):
+        """Data type of the underlying dataset."""
+        return self._wrapper.dtype
+
+    @property
+    def ndim(self) -> int:
+        """Number of dimensions in the NumPy-like view."""
+        return len(self._wrapper.numpy_shape)
+
+    def __repr__(self) -> str:
+        return (
+            f"WrapperNumpyGetter({self._wrapper.dataset_name}, "
+            f"shape={self._wrapper.analysis_shape})"
+        )
+
+
 class NumpyDatasetWrapper:
     """Wrapper that returns numpy array directly on slicing.
-    
+
     Used by job[0].get.dataset_name[slice] to return numpy arrays directly.
-    
+
     Example
     -------
     >>> arr = job[0].get.m[:]  # Returns numpy array directly

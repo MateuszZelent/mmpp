@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import numpy as np
+
+from mmpp._repr_helpers import api_help_html, html_tabs
 
 from ..._cache import InMemoryResultCache, build_cache_key
 from ..._shared.models import TrajectoryResult
@@ -53,7 +56,9 @@ def _read_table_columns(job_result) -> dict[str, np.ndarray]:
     return out
 
 
-def _resolve_column_name(columns: dict[str, np.ndarray], aliases: tuple[str, ...]) -> str | None:
+def _resolve_column_name(
+    columns: dict[str, np.ndarray], aliases: tuple[str, ...]
+) -> str | None:
     lut = {name.lower(): name for name in columns}
     for alias in aliases:
         key = lut.get(alias.lower())
@@ -294,7 +299,12 @@ class CoreInterface:
         **kwargs,
     ) -> TrajectoryResult:
         """Track core trajectory over time."""
-        if not force and self._last_trajectory is not None and method is None and not kwargs:
+        if (
+            not force
+            and self._last_trajectory is not None
+            and method is None
+            and not kwargs
+        ):
             return self._last_trajectory
 
         cfg = self._config.tracking
@@ -304,7 +314,9 @@ class CoreInterface:
         selected_gaussian_roi = kwargs.pop("gaussian_roi", cfg.gaussian_roi)
         selected_convention = kwargs.pop("convention", cfg.convention)
         selected_p_up = kwargs.pop("polarity_threshold_up", cfg.polarity_threshold_up)
-        selected_p_down = kwargs.pop("polarity_threshold_down", cfg.polarity_threshold_down)
+        selected_p_down = kwargs.pop(
+            "polarity_threshold_down", cfg.polarity_threshold_down
+        )
         selected_p_roi = kwargs.pop("polarity_roi_pixels", cfg.polarity_roi_pixels)
         selected_roi = kwargs.pop("roi", None)
         selected_x_column = kwargs.pop("x_column", None)
@@ -379,7 +391,9 @@ class CoreInterface:
         else:
             data = None
 
-        effective_method = "gaussian" if requested_method == "auto" else requested_method
+        effective_method = (
+            "gaussian" if requested_method == "auto" else requested_method
+        )
 
         key, config_json = build_cache_key(
             effective_method,
@@ -427,7 +441,11 @@ class CoreInterface:
         }
 
         # Prefer lazy per-frame reads for zarr arrays (stage-2 memory behavior).
-        if lazy_source is not None and shape_for_key is not None and len(shape_for_key) in {4, 5}:
+        if (
+            lazy_source is not None
+            and shape_for_key is not None
+            and len(shape_for_key) in {4, 5}
+        ):
             result = track_core_lazy(
                 lazy_source,
                 dx,
@@ -478,7 +496,9 @@ class CoreInterface:
     def _repr_html_(self) -> str:
         from html import escape as _esc
 
-        dataset = _esc(str(self._dataset_name if self._dataset_name is not None else "auto"))
+        dataset = _esc(
+            str(self._dataset_name if self._dataset_name is not None else "auto")
+        )
         methods = [
             (".track(method=..., **kw)", "Track core trajectory from dataset or table"),
             (".position(t=None)", "Position at time t or full array"),
@@ -493,7 +513,11 @@ class CoreInterface:
             ("method", "config", "'auto', 'table', 'gaussian', 'centroid', 'maximum'"),
             ("z_layer", "config", "Z-layer for magnetization-based analysis"),
             ("roi", "None", "Optional ROI (x0,x1,y0,y1) in index coords"),
-            ("core_threshold", "config", "Threshold for centroid/Gaussian core detection"),
+            (
+                "core_threshold",
+                "config",
+                "Threshold for centroid/Gaussian core detection",
+            ),
             ("gaussian_roi", "config", "ROI size for Gaussian fitting (pixels)"),
             ("x_column", "None", "Override table X-position column name"),
             ("y_column", "None", "Override table Y-position column name"),
@@ -506,11 +530,11 @@ class CoreInterface:
             f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(desc)}</td></tr>"
             for n, d, desc in params
         )
-        return (
+        overview = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "Core Tracking Interface</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
@@ -527,6 +551,25 @@ class CoreInterface:
             "<th style='padding:4px 8px;color:#e2e8f0;'>Default</th>"
             "<th style='padding:4px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
             f"<tbody>{param_rows}</tbody></table></div></div>"
+        )
+        api = api_help_html(
+            self,
+            title="Core tracking API help",
+            prefix="vortex.core",
+            methods=["track", "position", "velocity"],
+            subtitle="Live public API for vortex-core trajectory tracking.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-core-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
 

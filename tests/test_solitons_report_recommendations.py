@@ -318,6 +318,26 @@ def test_vortex_spectrum_interface_reuses_cache_until_force() -> None:
     assert core.calls == 2
 
 
+def test_vortex_spectrum_interface_and_plot_repr_use_tabs() -> None:
+    interface = VortexSpectrumInterface(
+        job_result=None,
+        dataset_name=None,
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_CountingCore(),
+    )
+
+    html = interface._repr_html_()
+    plot_html = interface.plt._repr_html_()
+
+    assert "Vortex spectrum API help" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+    assert "Vortex spectrum plot API help" in plot_html
+    assert ">Overview</button>" in plot_html
+    assert ">API</button>" in plot_html
+
+
 def test_solitons_plot_accessors_accept_save(tmp_path) -> None:
     import matplotlib
 
@@ -567,6 +587,123 @@ def test_api_help_html_includes_signatures_parameters_and_examples() -> None:
     assert "demo.plt" in html
 
 
+def test_helper_card_html_provides_canonical_tabs_badge_and_action_grid() -> None:
+    from mmpp._repr_helpers import helper_card_html, helper_table_html
+
+    html = helper_card_html(
+        "Demo Helper",
+        subtitle="Canonical helper template",
+        status=("ready", "#22c55e"),
+        metrics=[("datasets", 2)],
+        details=[
+            (
+                "Datasets",
+                helper_table_html([("m", "magnetization"), ("table", "scalar data")]),
+            )
+        ],
+        action_groups=[
+            (
+                "Analysis",
+                [
+                    (".fft", "FFT namespace", "#34d399"),
+                    (".analyze", "analysis tools", "#34d399"),
+                ],
+            )
+        ],
+        tabs=[
+            ("Overview", "<p>overview body</p>"),
+            ("API", "<p>api body</p>"),
+        ],
+        uid="demo-helper",
+    )
+
+    assert "Demo Helper" in html
+    assert "Canonical helper template" in html
+    assert "ready" in html
+    assert (
+        "background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)"
+        in html
+    )
+    assert "box-shadow: 0 10px 25px rgba(0,0,0,0.3)" in html
+    assert "font-family: 'Courier New', monospace" in html
+    assert "datasets" in html
+    assert "ACCESSORS &amp; METHODS" in html
+    assert ".fft" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+    assert "demo-helper-panel-1" in html
+
+
+def test_mmpp_repr_keeps_api_help_inside_single_job_manager_card() -> None:
+    from mmpp.core.mmpp import MMPP
+
+    job = MMPP.__new__(MMPP)
+    job.base_path = "/tmp/empty"
+    job.zarr_results = []
+
+    html = job._repr_html_()
+
+    assert "MMPP Job Manager" in html
+    assert "MMPP API help" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+    assert "style='display:none;'" in html
+    assert html.count("MMPP Job Manager") == 1
+
+
+def test_fft_repr_uses_tabs_for_overview_and_api() -> None:
+    from mmpp.fft.core import FFT
+
+    class _Job:
+        name = "run"
+        path = "/tmp/run.zarr"
+
+    fft = FFT(_Job())
+    html = fft._repr_html_()
+
+    assert "FFT Analysis Interface" in html
+    assert "FFT API help" in html
+    assert "ready" in html
+    assert (
+        "background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)"
+        in html
+    )
+    assert "box-shadow: 0 10px 25px rgba(0,0,0,0.3)" in html
+    assert "font-family: 'Courier New', monospace" in html
+    assert "cache entries" in html
+    assert "ACCESSORS &amp; METHODS" in html
+    assert ".spectrum()" in html
+    assert ".modes" in html
+    assert ".dispersion" in html
+    assert ".transmission" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+    assert "fft-helper-panel-1" in html
+
+
+def test_zarr_job_fft_property_uses_lazy_import_even_when_feature_flag_is_stale() -> (
+    None
+):
+    from mmpp.core.job import ZarrJobResult
+
+    job = ZarrJobResult("/tmp/run.zarr", {})
+    fft = job.fft
+
+    assert fft.job_result is job
+    assert "FFT Analysis Interface" in fft._repr_html_()
+
+
+def test_batch_repr_uses_tabs_for_overview_and_api() -> None:
+    from mmpp.batch_operations import BatchOperations
+
+    html = BatchOperations([], None)._repr_html_()
+
+    assert "BatchOperations API help" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+    assert "style='display:none;'" in html
+
+
 def test_spectrum_plot_accessor_repr_includes_live_api_help() -> None:
     from mmpp.fft.spectrum._plotting.accessor import SpectrumPlotAccessor
 
@@ -583,6 +720,8 @@ def test_spectrum_plot_accessor_repr_includes_live_api_help() -> None:
     assert ".spectrum(**kwargs)" in html
     assert ".interactive(**kwargs)" in html
     assert "spec.plot.spectrum()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
 
 
 def test_spectrum_quick_plot_repr_includes_forwarded_api_help() -> None:
@@ -598,6 +737,8 @@ def test_spectrum_quick_plot_repr_includes_forwarded_api_help() -> None:
     assert ".spectrum(**compute_kw)" in html
     assert ".interactive(**compute_kw)" in html
     assert "job[0].fft.spectrum.plot.spectrum()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
 
 
 def test_spectrum_modes_plot_repr_includes_live_api_help() -> None:
@@ -610,6 +751,8 @@ def test_spectrum_modes_plot_repr_includes_live_api_help() -> None:
     assert "component" in html
     assert ".animation(" in html
     assert "spec.modes.plot.imshow(f=...)" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
 
 
 def test_mode_plot_repr_includes_live_api_help() -> None:
@@ -628,6 +771,337 @@ def test_mode_plot_repr_includes_live_api_help() -> None:
     assert ".imshow(" in html
     assert ".interactive(" in html
     assert "mode.plot.imshow()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+
+def test_dispersion_plot_accessor_repr_includes_live_api_help() -> None:
+    from mmpp.fft.dispersion._plotting.accessor import DispersionPlotAccessor
+
+    html = DispersionPlotAccessor(object())._repr_html_()
+
+    assert "Dispersion plot API help" in html
+    assert ".heatmap(" in html
+    assert ".branch(" in html
+    assert ".add_analytics(" in html
+    assert "disp.plot.heatmap()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+
+def test_dispersion_modes_bridge_repr_includes_live_api_help() -> None:
+    from mmpp.fft.dispersion.modes.bridge import DispersionModesBridge
+
+    html = DispersionModesBridge(object())._repr_html_()
+
+    assert "Dispersion modes bridge API help" in html
+    assert ".interactive(" in html
+    assert ".at(" in html
+    assert "disp_result.modes.interactive()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+
+def test_dispersion_mode_plot_repr_includes_live_api_help() -> None:
+    from mmpp.fft.dispersion.modes.bridge import (
+        DispersionModePlotAccessor,
+        DispersionModeResult,
+    )
+
+    mode = DispersionModeResult(
+        mode_data=np.zeros((2, 2)),
+        k_rad_um=1.0,
+        f_ghz=5.0,
+        z_layer=0,
+        component="z",
+        result=object(),
+    )
+    html = DispersionModePlotAccessor(mode)._repr_html_()
+
+    assert "Dispersion mode plot API help" in html
+    assert ".imshow(" in html
+    assert ".phase(" in html
+    assert "mode.plot.imshow()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+
+def test_dispersion_modes_plot_repr_includes_live_api_help() -> None:
+    from mmpp.fft.dispersion.modes.bridge import DispersionModesPlotAccessor
+
+    html = DispersionModesPlotAccessor(object())._repr_html_()
+
+    assert "Dispersion modes plot API help" in html
+    assert ".animation(" in html
+    assert "disp_result.modes.plot.animation()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+
+def test_dispersion_interface_repr_uses_tabs_for_overview_and_api() -> None:
+    from types import SimpleNamespace
+
+    from mmpp.fft.core import FFT
+    from mmpp.fft.dispersion.interface import FFTDispersionInterface
+
+    parent_fft = FFT(SimpleNamespace(name="run", path="/tmp/run.zarr"))
+    html = FFTDispersionInterface(parent_fft)._repr_html_()
+
+    assert "FFT dispersion API help" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+
+def test_transmission_interface_repr_includes_live_api_help() -> None:
+    from mmpp.fft.transmission.interface import FFTTransmissionInterface
+
+    class _Job:
+        def get_largest_m_dataset(self):
+            return "m"
+
+    interface = FFTTransmissionInterface(
+        fft_instance=object(),
+        fft_compute=object(),
+        job_result=_Job(),
+    )
+    html = interface._repr_html_()
+
+    assert "FFT transmission API help" in html
+    assert ".compute(" in html
+    assert ".plot_transmission(" in html
+    assert ".visualize_mode(" in html
+    assert "job[0].fft.transmission.compute()" in html
+
+
+def test_transmission_result_repr_includes_live_api_help() -> None:
+    from mmpp.fft.transmission.compute import TransmissionConfig, TransmissionResult
+
+    result = TransmissionResult(
+        frequencies=np.array([1.0, 2.0]),
+        x_positions=np.array([0.0, 1.0]),
+        transmission=np.ones((2, 2)),
+        power_map=np.ones((2, 2)),
+        reference_power=np.ones(2),
+        config=TransmissionConfig(),
+    )
+    html = result._repr_html_()
+
+    assert "TransmissionResult API help" in html
+    assert ".plot_transmission(" in html
+    assert ".plot_transmission_crosssection(" in html
+    assert ".visualize_mode(" in html
+    assert "transmission.plot_transmission()" in html
+
+
+def test_soliton_and_vortex_interfaces_include_live_api_help() -> None:
+    from mmpp.solitons.interface import SolitonInterface
+    from mmpp.solitons.vortex.interface import VortexInterface
+
+    class _Job:
+        def get_largest_m_dataset(self):
+            return "m"
+
+    soliton_html = SolitonInterface(_Job(), dataset_name="m")._repr_html_()
+    vortex_html = VortexInterface(_Job(), dataset_name="m")._repr_html_()
+
+    assert "Soliton API help" in soliton_html
+    assert "job[0].solitons.vortex" in soliton_html
+    assert ">Overview</button>" in soliton_html
+    assert ">API</button>" in soliton_html
+    assert "Vortex API help" in vortex_html
+    assert ".track(" in vortex_html
+    assert ".detect(" in vortex_html
+    assert "job[0].vortex.track()" in vortex_html
+    assert ">Overview</button>" in vortex_html
+    assert ">API</button>" in vortex_html
+
+
+def test_analyze_and_hysteresis_interfaces_use_tabbed_api_help() -> None:
+    from mmpp.analyze import AnalyzeInterface
+    from mmpp.analyze.hysteresis import HysteresisInterface
+
+    class _Job:
+        name = "run"
+        path = "/tmp/run.zarr"
+
+    analyze_html = AnalyzeInterface(_Job())._repr_html_()
+    hysteresis_html = HysteresisInterface(_Job())._repr_html_()
+    quick_plot_html = HysteresisInterface(_Job()).plot._repr_html_()
+
+    assert "Analyze API help" in analyze_html
+    assert "job[0].analyze.hysteresis" in analyze_html
+    assert ">Overview</button>" in analyze_html
+    assert ">API</button>" in analyze_html
+
+    assert "Hysteresis API help" in hysteresis_html
+    assert ".from_table(" in hysteresis_html
+    assert ".from_zarr_keys(" in hysteresis_html
+    assert "job[0].analyze.hysteresis.from_table()" in hysteresis_html
+    assert ">Overview</button>" in hysteresis_html
+    assert ">API</button>" in hysteresis_html
+
+    assert "Hysteresis quick plot API help" in quick_plot_html
+    assert ".interactive(**kwargs)" in quick_plot_html
+    assert "job[0].analyze.hysteresis.plot.loop()" in quick_plot_html
+    assert ">Overview</button>" in quick_plot_html
+    assert ">API</button>" in quick_plot_html
+
+
+def test_hysteresis_result_plot_accessor_uses_tabbed_api_help() -> None:
+    from mmpp.analyze.hysteresis.plot.accessor import HysteresisPlotAccessor
+
+    html = HysteresisPlotAccessor(object())._repr_html_()
+
+    assert "Hysteresis plot API help" in html
+    assert ".loop(**kwargs)" in html
+    assert ".animation(**kwargs)" in html
+    assert "result.plot.interactive()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+
+def test_vortex_modes_and_topology_repr_use_tabbed_api_help() -> None:
+    from mmpp.solitons.vortex.config import VortexConfig
+    from mmpp.solitons.vortex.modes.interface import VortexModesInterface
+    from mmpp.solitons.vortex.topology.interface import TopologyInterface
+
+    class _Core:
+        def track(self, **kwargs):
+            return _trajectory()
+
+    modes = VortexModesInterface(
+        job_result=object(),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_Core(),
+        spectrum_interface=object(),
+    )
+    modes_html = modes._repr_html_()
+    modes_plot_html = modes.plt._repr_html_()
+    topology_html = TopologyInterface(
+        job_result=object(),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+    )._repr_html_()
+
+    assert "Vortex modes API help" in modes_html
+    assert ".classify(" in modes_html
+    assert "vortex.modes.classify()" in modes_html
+    assert ">Overview</button>" in modes_html
+    assert ">API</button>" in modes_html
+
+    assert "Vortex modes plot API help" in modes_plot_html
+    assert ".mode_map(" in modes_plot_html
+    assert "vortex.modes.plt.mode_table()" in modes_plot_html
+    assert ">Overview</button>" in modes_plot_html
+    assert ">API</button>" in modes_plot_html
+
+    assert "Topology API help" in topology_html
+    assert ".detect(" in topology_html
+    assert ".topological_charge(" in topology_html
+    assert "vortex.topology.detect()" in topology_html
+    assert ">Overview</button>" in topology_html
+    assert ">API</button>" in topology_html
+
+
+def test_vortex_nonlinear_repr_uses_tabbed_api_help() -> None:
+    from mmpp.solitons.vortex.config import VortexConfig
+    from mmpp.solitons.vortex.nonlinear.interface import NonlinearInterface
+
+    class _Core:
+        def track(self, **kwargs):
+            return _trajectory()
+
+    nonlinear = NonlinearInterface(
+        job_result=object(),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_Core(),
+        trajectory_interface=object(),
+        spectrum_interface=object(),
+    )
+
+    html = nonlinear._repr_html_()
+    plot_html = nonlinear.plt._repr_html_()
+
+    assert "Nonlinear dynamics API help" in html
+    assert ".amplitude_equation(" in html
+    assert ".slavin_tiberkevich_batch(" in html
+    assert "vortex.nonlinear.force_balance()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+    assert "Nonlinear plot API help" in plot_html
+    assert ".power_vs_current(" in plot_html
+    assert ".linewidth_vs_current(" in plot_html
+    assert "vortex.nonlinear.plt.force_balance()" in plot_html
+    assert ">Overview</button>" in plot_html
+    assert ">API</button>" in plot_html
+
+
+def test_vortex_core_repr_uses_tabbed_api_help() -> None:
+    from mmpp.solitons.vortex.config import VortexConfig
+    from mmpp.solitons.vortex.numerical.core.interface import CoreInterface
+
+    core = CoreInterface(
+        job_result=object(),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+    )
+    html = core._repr_html_()
+
+    assert "Core tracking API help" in html
+    assert ".track(" in html
+    assert ".position(" in html
+    assert "vortex.core.track()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+
+
+def test_vortex_autofit_repr_uses_tabbed_api_help() -> None:
+    from mmpp.solitons.vortex.autofit.interface import AutofitInterface
+
+    autofit = AutofitInterface(object())
+    html = autofit._repr_html_()
+    thiele_html = autofit.thiele._repr_html_()
+
+    assert "Vortex Autofit Interface" in html
+    assert "Vortex autofit API help" in html
+    assert "vortex.autofit.thiele" in html
+    assert "tracking_source" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+    assert "Vortex autofit API help" in thiele_html
+    assert ">Overview</button>" in thiele_html
+    assert ">API</button>" in thiele_html
+
+
+def test_trajectory_interface_repr_includes_live_api_help() -> None:
+    from mmpp.solitons.vortex.config import VortexConfig
+    from mmpp.solitons.vortex.trajectory.interface import TrajectoryInterface
+
+    class _Core:
+        def track(self):
+            return object()
+
+    html = TrajectoryInterface(
+        job_result=object(),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_Core(),
+    )._repr_html_()
+
+    assert "Vortex trajectory API help" in html
+    assert ".filtered(" in html
+    assert ".steady_state(" in html
+    assert "vortex.trajectory.filtered()" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
 
 
 def test_canonical_nonlinear_thiele_module_alias() -> None:

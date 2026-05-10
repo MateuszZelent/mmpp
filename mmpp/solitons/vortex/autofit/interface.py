@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any
+
+from mmpp._repr_helpers import api_help_html, html_tabs
 
 from .config import AutofitConfig, ParameterSpec
 from .result import VortexAutofitResult
@@ -225,7 +228,9 @@ class AutofitInterface:
             "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);"
         )
         th_style = "padding:5px 8px;text-align:left;color:#e2e8f0;font-weight:600;"
-        td_mono = "padding:4px 8px;font-family:monospace;color:#93c5fd;font-size:0.85em;"
+        td_mono = (
+            "padding:4px 8px;font-family:monospace;color:#93c5fd;font-size:0.85em;"
+        )
         td_val = "padding:4px 8px;color:#a5b4fc;font-size:0.85em;text-align:center;"
         td_desc = "padding:4px 8px;color:#cbd5e1;font-size:0.85em;"
         code_style = (
@@ -237,9 +242,6 @@ class AutofitInterface:
             "background:rgba(96,165,250,0.2);color:#93c5fd;font-size:0.7em;"
             "padding:2px 6px;border-radius:4px;font-weight:600;margin-left:8px;"
         )
-
-        import uuid
-        uid = str(uuid.uuid4())[:8]
 
         # ── Title ──
         html = f"<div style='{card}'>"
@@ -255,21 +257,81 @@ class AutofitInterface:
 
         # ── 1. Method: .thiele() ──
         thiele_args = [
-            ("trajectory", '"steady_state"', "str", "Trajectory slice: 'steady_state', 'full', 'filtered'"),
-            ("tracking_source", '"auto"', "str", "Data source: 'auto', 'table', 'magnetization'"),
-            ("tracking_method", "None", "str|None", "Override tracking method (e.g. 'gaussian', 'table')"),
-            ("initial_condition", '"auto"', "str", "Analytical start: 'auto', 'script', 'raw', 'trajectory', 'perturbation'"),
-            ("model", '"auto"', "str", "Model type: 'auto', 'cpp' (⊥ polarised), 'cip' (in-plane)"),
-            ("params", '"auto"', "str|dict", "'auto' resolves from job metadata, or explicit dict"),
-            ("current", "None", "str|float|None", "Current density: attribute key or value [A/m²]"),
-            ("fit_params", "('omega0','N','chi_scale')", "tuple[str,...]", "Parameter names to optimise"),
-            ("param_specs", "None", "dict|None", "Custom ParameterSpec overrides per parameter"),
+            (
+                "trajectory",
+                '"steady_state"',
+                "str",
+                "Trajectory slice: 'steady_state', 'full', 'filtered'",
+            ),
+            (
+                "tracking_source",
+                '"auto"',
+                "str",
+                "Data source: 'auto', 'table', 'magnetization'",
+            ),
+            (
+                "tracking_method",
+                "None",
+                "str|None",
+                "Override tracking method (e.g. 'gaussian', 'table')",
+            ),
+            (
+                "initial_condition",
+                '"auto"',
+                "str",
+                "Analytical start: 'auto', 'script', 'raw', 'trajectory', 'perturbation'",
+            ),
+            (
+                "model",
+                '"auto"',
+                "str",
+                "Model type: 'auto', 'cpp' (⊥ polarised), 'cip' (in-plane)",
+            ),
+            (
+                "params",
+                '"auto"',
+                "str|dict",
+                "'auto' resolves from job metadata, or explicit dict",
+            ),
+            (
+                "current",
+                "None",
+                "str|float|None",
+                "Current density: attribute key or value [A/m²]",
+            ),
+            (
+                "fit_params",
+                "('omega0','N','chi_scale')",
+                "tuple[str,...]",
+                "Parameter names to optimise",
+            ),
+            (
+                "param_specs",
+                "None",
+                "dict|None",
+                "Custom ParameterSpec overrides per parameter",
+            ),
             ("objective", '"hybrid"', "str", "Loss mode: 'time', 'spectral', 'hybrid'"),
             ("weights", "None", "dict|None", "Override default loss component weights"),
-            ("global_search", "False", "bool", "Run global optimisation (differential evolution)"),
-            ("global_method", '"differential_evolution"', "str", "Global optimiser method"),
+            (
+                "global_search",
+                "False",
+                "bool",
+                "Run global optimisation (differential evolution)",
+            ),
+            (
+                "global_method",
+                '"differential_evolution"',
+                "str",
+                "Global optimiser method",
+            ),
             ("global_maxiter", "15", "int", "Max iterations for global search"),
-            ("global_popsize", "8", "int", "Population size for differential evolution"),
+            (
+                "global_popsize",
+                "8",
+                "int",
+                "Population size for differential evolution",
+            ),
             ("local_method", '"L-BFGS-B"', "str", "Local optimiser method"),
             ("local_maxiter", "100", "int", "Max iterations for local refinement"),
             ("max_eval", "500", "int", "Hard cap on total objective evaluations"),
@@ -277,10 +339,20 @@ class AutofitInterface:
             ("align_center", "True", "bool", "Align orbit center before comparison"),
             ("windowing", '"steady_state"', "str", "Time windowing strategy"),
             ("random_seed", "None", "int|None", "Seed for reproducibility"),
-            ("allow_oersted", "False", "bool", "Include Oersted field contribution in model"),
+            (
+                "allow_oersted",
+                "False",
+                "bool",
+                "Include Oersted field contribution in model",
+            ),
             ("verbose", "True", "bool", "Print progress messages during fit"),
             ("live_plot", "False", "bool", "Show live dashboard (Jupyter only)"),
-            ("live_plot_every", "5", "int", "Update live dashboard every N evaluations"),
+            (
+                "live_plot_every",
+                "5",
+                "int",
+                "Update live dashboard every N evaluations",
+            ),
         ]
 
         html += f"<div style='{section}'>"
@@ -332,7 +404,9 @@ class AutofitInterface:
             bounds_str = f"[{lo}, {hi}]"
             init_str = f"{spec.initial:.4g}" if spec.initial is not None else "—"
             if spec.prior_mean is not None and spec.prior_std is not None:
-                prior_str = f"{spec.prior_type} μ={spec.prior_mean:.3g} σ={spec.prior_std:.2g}"
+                prior_str = (
+                    f"{spec.prior_type} μ={spec.prior_mean:.3g} σ={spec.prior_std:.2g}"
+                )
             else:
                 prior_str = spec.prior_type
             frozen_icon = "❄️" if spec.frozen else "🔓"
@@ -411,13 +485,29 @@ class AutofitInterface:
             (".loss_breakdown", "dict[str, float]", "Per-component unweighted losses"),
             (".improvement_ratio", "float", "loss / baseline (< 1 = improvement)"),
             (".success", "bool", "Whether optimisation converged"),
-            (".comparison", "VortexAnalyticalComparison", "Num vs analytical trajectory pair"),
-            (".diagnostics", "AutofitDiagnostics", "Evaluation records, timing, uncertainties"),
-            (".warnings", "list[str]", "Fit warnings (boundary hits, poor identifiability)"),
+            (
+                ".comparison",
+                "VortexAnalyticalComparison",
+                "Num vs analytical trajectory pair",
+            ),
+            (
+                ".diagnostics",
+                "AutofitDiagnostics",
+                "Evaluation records, timing, uncertainties",
+            ),
+            (
+                ".warnings",
+                "list[str]",
+                "Fit warnings (boundary hits, poor identifiability)",
+            ),
             (".plt.convergence()", "Axes", "Loss vs evaluation (log scale)"),
             (".plt.parameter_comparison()", "Axes", "Initial vs fitted bar chart"),
             (".plt.loss_breakdown()", "Axes", "Horizontal bars of loss components"),
-            (".plt.dashboard()", "(Figure, Axes)", "2×2 dashboard: convergence + orbit + metrics"),
+            (
+                ".plt.dashboard()",
+                "(Figure, Axes)",
+                "2×2 dashboard: convergence + orbit + metrics",
+            ),
         ]
         html += (
             "<table style='width:100%;border-collapse:collapse;'>"
@@ -480,7 +570,30 @@ class AutofitInterface:
         html += "</div>"
 
         html += "</div>"
-        return html
+        api = api_help_html(
+            self,
+            title="Vortex autofit API help",
+            prefix="vortex.autofit",
+            properties=[
+                (
+                    "thiele",
+                    "Callable physics-informed autofit helper; use vortex.autofit.thiele(...)",
+                )
+            ],
+            subtitle="The thiele callable accepts the parameters listed in Overview.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);'>"
+            + html_tabs(
+                [("Overview", html), ("API", api)],
+                uid=f"mmpp-vortex-autofit-{uuid.uuid4().hex}",
+            )
+            + "</div>"
+        )
 
 
 __all__ = ["AutofitInterface"]

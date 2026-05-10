@@ -231,9 +231,8 @@ class DispersionPlotAccessor:
 
         if title is None:
             comp = getattr(result, "component", "")
-            title = (
-                f"Spin-Wave Dispersion S(k{result.axis}, f)"
-                + (f" - {comp} component" if comp else "")
+            title = f"Spin-Wave Dispersion S(k{result.axis}, f)" + (
+                f" - {comp} component" if comp else ""
             )
         ax.set_title(title)
 
@@ -424,15 +423,17 @@ class DispersionPlotAccessor:
         # Auto-extract params from zarr, then apply user overrides
         auto_params = extract_material_params(result)
         effective = {
-            "B":   B   if B   is not None else auto_params.get("B"),
-            "Ms":  Ms  if Ms  is not None else auto_params.get("Ms"),
+            "B": B if B is not None else auto_params.get("B"),
+            "Ms": Ms if Ms is not None else auto_params.get("Ms"),
             "Aex": Aex if Aex is not None else auto_params.get("Aex"),
-            "d":   d   if d   is not None else auto_params.get("d"),
-            "Ku":  Ku  if Ku  is not None else (auto_params.get("Ku") or 0.0),
+            "d": d if d is not None else auto_params.get("d"),
+            "Ku": Ku if Ku is not None else (auto_params.get("Ku") or 0.0),
             "Kc1": Kc1 if Kc1 is not None else (auto_params.get("Kc1") or 0.0),
             "Kc2": Kc2 if Kc2 is not None else (auto_params.get("Kc2") or 0.0),
-            "phi_ani": phi_ani if phi_ani is not None else (auto_params.get("phi_ani") or 0.0),
-            "g":   g,
+            "phi_ani": phi_ani
+            if phi_ani is not None
+            else (auto_params.get("phi_ani") or 0.0),
+            "g": g,
         }
 
         # Validate required params
@@ -521,30 +522,39 @@ class DispersionPlotAccessor:
         fig.savefig(path, dpi=150, bbox_inches="tight")
 
     def __repr__(self) -> str:
-        return (
-            "<DispersionPlotAccessor: .heatmap(...), .branch(branch, ...), .add_analytics(ax, ...)>"
-        )
+        return "<DispersionPlotAccessor: .heatmap(...), .branch(branch, ...), .add_analytics(ax, ...)>"
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
         from html import escape as _esc
 
         HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
 
         methods = [
-            (".heatmap(fmax=10, lognorm=True)",
-             "S(k,f) power heatmap",
-             "Main dispersion visualisation. Key params: fmax (GHz clip), lognorm (log color scale), "
-             "kscale ('rad_um'|'meter'), cmap, vmin/vmax, k_xlim, orth_index, overlay_points, save."),
-            (".heatmap(orth_index=0, lognorm=True)",
-             "Single y-slice heatmap",
-             "Select one orthogonal slice from S_local. Only available when result was computed with avg_over_orthogonal=False."),
-            (".add_analytics(ax, sw_config='DE')",
-             "Overlay analytical dispersion curve",
-             "Auto-detects B, Ms, Aex, d from zarr attrs. sw_config: 'DE' (k⊥M), 'BV' (k∥M), 'FV' (M⊥film). "
-             "model: 'kalinikos' (default), 'bottcher', 'kim', 'cortes_ortuno'. n_modes: PSSW mode count."),
-            (".branch(branch, kscale='rad_um')",
-             "Dispersion branch + v_g panel",
-             "Two-panel plot: f(k) on left, group velocity dω/dk [km/s] on right. Pass a DispersionBranch from track_branch()."),
+            (
+                ".heatmap(fmax=10, lognorm=True)",
+                "S(k,f) power heatmap",
+                "Main dispersion visualisation. Key params: fmax (GHz clip), lognorm (log color scale), "
+                "kscale ('rad_um'|'meter'), cmap, vmin/vmax, k_xlim, orth_index, overlay_points, save.",
+            ),
+            (
+                ".heatmap(orth_index=0, lognorm=True)",
+                "Single y-slice heatmap",
+                "Select one orthogonal slice from S_local. Only available when result was computed with avg_over_orthogonal=False.",
+            ),
+            (
+                ".add_analytics(ax, sw_config='DE')",
+                "Overlay analytical dispersion curve",
+                "Auto-detects B, Ms, Aex, d from zarr attrs. sw_config: 'DE' (k⊥M), 'BV' (k∥M), 'FV' (M⊥film). "
+                "model: 'kalinikos' (default), 'bottcher', 'kim', 'cortes_ortuno'. n_modes: PSSW mode count.",
+            ),
+            (
+                ".branch(branch, kscale='rad_um')",
+                "Dispersion branch + v_g panel",
+                "Two-panel plot: f(k) on left, group velocity dω/dk [km/s] on right. Pass a DispersionBranch from track_branch().",
+            ),
         ]
         rows = "".join(
             f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
@@ -553,7 +563,7 @@ class DispersionPlotAccessor:
             f"</tr>"
             for sig, desc, tip in methods
         )
-        return (
+        html = (
             "<div style='font-family:-apple-system,sans-serif;border:2px solid #1d4ed8;"
             "border-radius:10px;padding:12px;margin:6px 0;background:#0f172a;"
             "color:#e2e8f0;max-width:680px;'>"
@@ -567,4 +577,22 @@ class DispersionPlotAccessor:
             "and accept <code style='color:#bae6fd;'>save=</code> path."
             "</div></div>"
         )
-
+        api_card = api_help_html(
+            self,
+            title="Dispersion plot API help",
+            prefix="disp.plot",
+            methods=["heatmap", "branch", "add_analytics"],
+            subtitle="Live signatures for the plotting namespace returned by DispersionResult1D.plot.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"disp-plot-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import numpy as np
+
+from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
 
 from .._plotting import (
     apply_axes_style,
@@ -45,14 +48,20 @@ class VortexModesInterface:
             self._classifier = VortexModesClassifier(trajectory)
         return self._classifier
 
-    def classify(self, f: float | None = None, *, unit: str = "ghz") -> VortexModeResult:
+    def classify(
+        self, f: float | None = None, *, unit: str = "ghz"
+    ) -> VortexModeResult:
         """Classify mode nearest to target frequency or dominant mode when ``f`` is None."""
         classifier = self._get_classifier()
 
         if f is None:
-            modes = classifier.classify_all(spectrum_method=self._config.spectrum.method)
+            modes = classifier.classify_all(
+                spectrum_method=self._config.spectrum.method
+            )
             if not modes:
-                return VortexModeResult(m_index=0, n_index=0, mode_type="unknown", source="none")
+                return VortexModeResult(
+                    m_index=0, n_index=0, mode_type="unknown", source="none"
+                )
             return modes[0]
 
         unit_norm = unit.lower()
@@ -68,7 +77,9 @@ class VortexModesInterface:
             spectrum_method=self._config.spectrum.method,
         )
 
-    def classify_all(self, *, max_modes: int = 6, min_prominence: float = 0.05) -> list[VortexModeResult]:
+    def classify_all(
+        self, *, max_modes: int = 6, min_prominence: float = 0.05
+    ) -> list[VortexModeResult]:
         """Classify all dominant modes."""
         if max_modes == 6:
             max_modes = int(self._config.modes.max_modes)
@@ -108,7 +119,10 @@ class VortexModesInterface:
         from html import escape as _esc
 
         methods = [
-            (".classify(f=None, unit='ghz')", "Classify mode at frequency f (or dominant)"),
+            (
+                ".classify(f=None, unit='ghz')",
+                "Classify mode at frequency f (or dominant)",
+            ),
             (".classify_all(max_modes=6)", "Classify all dominant modes"),
             (".gyration", "Best gyration-like mode (or None)"),
             (".breathing", "Best breathing-like mode (or None)"),
@@ -136,11 +150,11 @@ class VortexModesInterface:
             "gyro = vortex.modes.gyration   # VortexModeResult or None\n"
             "breath = vortex.modes.breathing"
         )
-        return (
+        overview = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "Vortex Modes Interface</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
@@ -157,6 +171,30 @@ class VortexModesInterface:
             "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
             f"<code>{example}</code></pre></div>"
             "</div>"
+        )
+        api = api_help_html(
+            self,
+            title="Vortex modes API help",
+            prefix="vortex.modes",
+            properties=[
+                ("gyration", "Best gyration-like mode, or None"),
+                ("breathing", "Best breathing-like mode, or None"),
+                ("plt", "Plotting facade for classified modes"),
+            ],
+            methods=["classify", "classify_all"],
+            subtitle="Live public API for vortex mode classification.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-modes-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
 
@@ -223,12 +261,36 @@ class VortexModesPlotAccessor:
         return rows
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("VortexModesPlotAccessor", [
-            (".mode_map(f=None, unit='ghz')",
-             "Frequency-power bar chart of detected modes",
-             "f: optional target frequency marker. unit: 'ghz' or 'hz'."),
-            (".mode_table()",
-             "Returns list of dicts with mode details",
-             "rank, mode, m, n, f_ghz, power, confidence, source."),
-        ])
+        overview = plot_accessor_html(
+            "VortexModesPlotAccessor",
+            [
+                (
+                    ".mode_map(f=None, unit='ghz')",
+                    "Frequency-power bar chart of detected modes",
+                    "f: optional target frequency marker. unit: 'ghz' or 'hz'.",
+                ),
+                (
+                    ".mode_table()",
+                    "Returns list of dicts with mode details",
+                    "rank, mode, m, n, f_ghz, power, confidence, source.",
+                ),
+            ],
+        )
+        api = api_help_html(
+            self,
+            title="Vortex modes plot API help",
+            prefix="vortex.modes.plt",
+            methods=["mode_map", "mode_table"],
+            subtitle="Plot and table helpers for classified vortex modes.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:#0f172a;color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-modes-plot-{uuid.uuid4().hex}",
+            )
+            + "</div>"
+        )

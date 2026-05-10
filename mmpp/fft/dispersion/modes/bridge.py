@@ -162,7 +162,7 @@ class DispersionModesBridge:
             )
 
         k_target = k_rad_um * 1e6  # rad/m
-        f_target = f_ghz * 1e9     # Hz
+        f_target = f_ghz * 1e9  # Hz
 
         # Nearest k-bin
         k_axis = self._result.k_axis
@@ -213,26 +213,37 @@ class DispersionModesBridge:
         )
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
         from html import escape as _esc
 
         HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
 
         methods = [
-            (".interactive(lattice_constant_nm=470)",
-             "Open ipywidgets mode explorer",
-             "Launches interactive widget. Click on any point in S(k,f) to reconstruct the spatial "
-             "mode profile m(x,y) via inverse FFT. Requires Jupyter + ipywidgets."),
-            (".interactive(lattice_constant_nm=470, lognorm=True, fmax=10)",
-             "With log color scale and f-axis clip",
-             "lognorm=True uses LogNorm. fmax clips frequency display. "
-             "lattice_constant_nm sets initial BZ folding parameter."),
-            (".at(k_rad_um=2.3, f_ghz=5.0)",
-             "→ DispersionModeResult",
-             "Extract single mode image at the nearest (k, f) bin. "
-             "Requires S_complex to be stored (recompute with save_complex=True)."),
-            (".at(...).plot.imshow(mode_type='abs')",
-             "Mode spatial profile",
-             "mode_type: 'abs' (amplitude), 'real', 'imag', 'phase'. Returns (fig, ax)."),
+            (
+                ".interactive(lattice_constant_nm=470)",
+                "Open ipywidgets mode explorer",
+                "Launches interactive widget. Click on any point in S(k,f) to reconstruct the spatial "
+                "mode profile m(x,y) via inverse FFT. Requires Jupyter + ipywidgets.",
+            ),
+            (
+                ".interactive(lattice_constant_nm=470, lognorm=True, fmax=10)",
+                "With log color scale and f-axis clip",
+                "lognorm=True uses LogNorm. fmax clips frequency display. "
+                "lattice_constant_nm sets initial BZ folding parameter.",
+            ),
+            (
+                ".at(k_rad_um=2.3, f_ghz=5.0)",
+                "→ DispersionModeResult",
+                "Extract single mode image at the nearest (k, f) bin. "
+                "Requires S_complex to be stored (recompute with save_complex=True).",
+            ),
+            (
+                ".at(...).plot.imshow(mode_type='abs')",
+                "Mode spatial profile",
+                "mode_type: 'abs' (amplitude), 'real', 'imag', 'phase'. Returns (fig, ax).",
+            ),
         ]
         row_html = "".join(
             f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
@@ -241,7 +252,7 @@ class DispersionModesBridge:
             f"</tr>"
             for sig, desc, tip in methods
         )
-        return (
+        html = (
             "<div style='font-family:-apple-system,sans-serif;border:2px solid #78350f;"
             "border-radius:10px;padding:12px;margin:6px 0;"
             "background:#0f172a;color:#e2e8f0;max-width:680px;'>"
@@ -257,11 +268,34 @@ class DispersionModesBridge:
             "<code style='color:#fcd34d;'>.interactive()</code>."
             "</div></div>"
         )
+        api_card = api_help_html(
+            self,
+            title="Dispersion modes bridge API help",
+            prefix="disp_result.modes",
+            properties=[
+                ("plot", "Static plotting accessor for dispersion mode overview")
+            ],
+            methods=["interactive", "at"],
+            subtitle="Live signatures for the modes namespace on DispersionResult1D.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"disp-modes-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )
 
 
 # ---------------------------------------------------------------------------
 # DispersionModeResult  –  a single extracted mode image
 # ---------------------------------------------------------------------------
+
 
 class DispersionModeResult:
     """A single mode image extracted at a specific (k, f) point.
@@ -324,15 +358,21 @@ class DispersionModeResult:
         )
         HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
         plot_methods = [
-            (".plot.imshow(mode_type='abs')",
-             "Amplitude |\u03c8(x,y)|",
-             "mode_type options: 'abs' (amplitude), 'real', 'imag', 'phase'"),
-            (".plot.phase()",
-             "Phase \u2220\u03c8(x,y) with hsv colormap",
-             "Shortcut for .plot.imshow(mode_type='phase', cmap='hsv')"),
-            (".plot.interactive()",
-             "Interactive mode viewer",
-             "Not yet implemented — raises NotImplementedError."),
+            (
+                ".plot.imshow(mode_type='abs')",
+                "Amplitude |\u03c8(x,y)|",
+                "mode_type options: 'abs' (amplitude), 'real', 'imag', 'phase'",
+            ),
+            (
+                ".plot.phase()",
+                "Phase \u2220\u03c8(x,y) with hsv colormap",
+                "Shortcut for .plot.imshow(mode_type='phase', cmap='hsv')",
+            ),
+            (
+                ".plot.interactive()",
+                "Interactive mode viewer",
+                "Not yet implemented — raises NotImplementedError.",
+            ),
         ]
         plot_rows = "".join(
             f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
@@ -359,6 +399,7 @@ class DispersionModeResult:
 # ---------------------------------------------------------------------------
 # DispersionModePlotAccessor  –  plot a single DispersionModeResult
 # ---------------------------------------------------------------------------
+
 
 class DispersionModePlotAccessor:
     """Plotting namespace for :class:`DispersionModeResult`."""
@@ -434,20 +475,50 @@ class DispersionModePlotAccessor:
         return "<DispersionModePlotAccessor: .imshow(...), .phase(...), .interactive()>"
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("DispersionModePlotAccessor", [
-            (".imshow(mode_type='abs', cmap='RdBu_r')",
-             "Mode spatial profile |ψ(x,y)|",
-             "mode_type: 'abs', 'real', 'imag', 'phase'. cmap, figsize, title."),
-            (".phase(**kw)",
-             "Phase ∠ψ(x,y) with hsv colormap",
-             "Shortcut for .imshow(mode_type='phase', cmap='hsv')."),
-        ])
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
+
+        html = plot_accessor_html(
+            "DispersionModePlotAccessor",
+            [
+                (
+                    ".imshow(mode_type='abs', cmap='RdBu_r')",
+                    "Mode spatial profile |ψ(x,y)|",
+                    "mode_type: 'abs', 'real', 'imag', 'phase'. cmap, figsize, title.",
+                ),
+                (
+                    ".phase(**kw)",
+                    "Phase ∠ψ(x,y) with hsv colormap",
+                    "Shortcut for .imshow(mode_type='phase', cmap='hsv').",
+                ),
+            ],
+        )
+        api_card = api_help_html(
+            self,
+            title="Dispersion mode plot API help",
+            prefix="mode.plot",
+            methods=["imshow", "phase", "interactive"],
+            subtitle="Live signatures for plotting a single extracted dispersion mode.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"disp-mode-plot-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )
 
 
 # ---------------------------------------------------------------------------
 # DispersionModesPlotAccessor  –  overview plots for all modes
 # ---------------------------------------------------------------------------
+
 
 class DispersionModesPlotAccessor:
     """Static plotting for the full modes namespace (DispersionModesBridge.plot)."""
@@ -463,9 +534,36 @@ class DispersionModesPlotAccessor:
         return "<DispersionModesPlotAccessor: .animation(peaks=[0,1])>"
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("DispersionModesPlotAccessor", [
-            (".animation(peaks=[0,1])",
-             "Animate mode profiles across peaks",
-             "peaks: list of peak indices to animate."),
-        ])
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
+
+        html = plot_accessor_html(
+            "DispersionModesPlotAccessor",
+            [
+                (
+                    ".animation(peaks=[0,1])",
+                    "Animate mode profiles across peaks",
+                    "peaks: list of peak indices to animate.",
+                ),
+            ],
+        )
+        api_card = api_help_html(
+            self,
+            title="Dispersion modes plot API help",
+            prefix="disp_result.modes.plot",
+            methods=["animation"],
+            subtitle="Live signatures for overview plots on DispersionModesBridge.plot.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"disp-modes-plot-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )

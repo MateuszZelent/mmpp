@@ -167,6 +167,33 @@ class FFTHelpAccessor:
             "phase, plot_spectrum, plot_modes, interactive_spectrum>"
         )
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import api_help_html
+
+        return api_help_html(
+            self,
+            title="FFT helper API help",
+            prefix=f"{self._owner}.help",
+            properties=[
+                ("spectrum", "Callable helper for spectrum(...)"),
+                ("filters", "Callable helper for filters(...)"),
+                ("frequencies", "Callable helper for frequencies(...)"),
+                ("power", "Callable helper for power(...)"),
+                ("magnitude", "Callable helper for magnitude(...)"),
+                ("phase", "Callable helper for phase(...)"),
+                ("plot_spectrum", "Callable helper for legacy plot_spectrum(...)"),
+                ("plot_modes", "Callable helper for legacy plot_modes(...)"),
+                (
+                    "interactive_spectrum",
+                    "Callable helper for legacy interactive_spectrum(...)",
+                ),
+            ],
+            subtitle=(
+                "Each property returns a callable method helper with its own "
+                "signature and examples."
+            ),
+        )
+
 
 class FFT:
     """
@@ -967,158 +994,111 @@ class FFT:
             return ""
 
     def _html_fft_display(self) -> str:
-        from mmpp._repr_helpers import api_help_html
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
 
         job_result = self.job_result
         job_name = getattr(job_result, "name", "unknown")
         job_path = getattr(job_result, "path", "")
         cache_size = len(self._cache)
-        api_card = api_help_html(
+        modes_ok = MODES_AVAILABLE
+        dispersion_ok = DISPERSION_AVAILABLE
+        uid = str(_uuid.uuid4())[:8]
+
+        status = metrics_section_html([
+            ("job", job_name, None),
+            ("path", job_path, None),
+            ("cache entries", cache_size, None),
+            ("modes",
+             "available" if modes_ok else "unavailable",
+             "#22c55e" if modes_ok else "#ef4444"),
+            ("dispersion",
+             "available" if dispersion_ok else "unavailable",
+             "#22c55e" if dispersion_ok else "#ef4444"),
+        ])
+
+        accessors = accessors_section_html([
+            ("Compute:", [
+                (".spectrum()", NODE_COLOR_COMPUTE),
+                (".filters(**f).spectrum()", NODE_COLOR_COMPUTE),
+                (".power()", NODE_COLOR_COMPUTE),
+                (".frequencies()", NODE_COLOR_COMPUTE),
+                (".magnitude()", NODE_COLOR_COMPUTE),
+                (".phase()", NODE_COLOR_COMPUTE),
+            ]),
+            ("Analysis:", [
+                (".modes", NODE_COLOR_ANALYSIS),
+                (".dispersion", NODE_COLOR_ANALYSIS),
+                (".transmission", NODE_COLOR_ANALYSIS),
+            ]),
+            ("Plotting:", [
+                (".plot_spectrum()", NODE_COLOR_PLOT),
+                (".interactive_spectrum()", NODE_COLOR_PLOT),
+                (".plotter", NODE_COLOR_PLOT),
+            ]),
+            ("Utilities:", [
+                (".clear_cache()", NODE_COLOR_UTIL),
+                (".helpers", NODE_COLOR_UTIL),
+            ]),
+        ])
+
+        examples = examples_section_html("\n".join([
+            "# Preferred: access FFT through a dataset",
+            "data = job[0].m_layer13[:200, ...]",
+            "result = data.fft.spectrum()",
+            "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
+            "",
+            "# Job-level FFT (auto-selects largest m dataset)",
+            "result = job[0].fft.spectrum()",
+            "",
+            "# Fluent filter chain",
+            "job[0].fft.filters(remove_static=True).spectrum()",
+            "",
+            "# Frequency range & peak detection",
+            "result = job[0].fft.spectrum(fmin=1e9, fmax=20e9,",
+            "                            find_peaks={'min_prominence': 0.1})",
+            "",
+            "# Analysis sub-interfaces",
+            "job[0].fft.modes.interactive_spectrum(dpi=150)",
+            "job[0].fft.dispersion.plot_dispersion(axis='x')",
+        ]))
+
+        api = api_help_html(
             self,
             title="FFT API help",
             prefix="job[0].fft",
             subtitle="Live signatures generated from the FFT interface.",
             properties=[
-                (
-                    "spectrum",
-                    "Spectrum namespace with filters, computation and plotting helpers",
-                ),
+                ("spectrum", "Spectrum namespace with computation and plotting helpers"),
                 ("modes", "FMR mode analysis namespace"),
                 ("dispersion", "Dispersion relation analysis namespace"),
                 ("transmission", "Transmission / absorption analysis namespace"),
-                ("plt", "Plotting shortcut accessor when available"),
             ],
-            methods=[
-                "filters",
-                "power",
-                "frequencies",
-                "magnitude",
-                "phase",
-                "plot_spectrum",
-                "plot_modes",
-                "interactive_spectrum",
-                "clear_cache",
-            ],
+            methods=["filters", "power", "frequencies", "magnitude", "phase",
+                     "plot_spectrum", "plot_modes", "interactive_spectrum", "clear_cache"],
+            chrome=False,
         )
 
-        # ── method groups ───────────────────────────────────────
-        section_style = (
-            "padding:4px 8px; font-weight:600; color:#f1f5f9; "
-            "background:rgba(51,65,85,0.8); text-align:left;"
+        return node_card_html(
+            "FFT Analysis Interface",
+            icon="🔬",
+            subtitle="Job-level FFT namespace for spectra, filters, modes, dispersion and transmission.",
+            badge=("ready", "#22c55e"),
+            sections=[status, accessors, examples],
+            api=api,
+            uid=f"fft-job-{uid}",
         )
-        row_html = ""
-
-        groups: list[tuple[str, list[tuple[str, str]]]] = [
-            (
-                "Compute",
-                [
-                    ("spectrum()", "FFT spectrum → SpectrumResult"),
-                    ("filters(**f).spectrum()", "Fluent filter chain → SpectrumResult"),
-                    ("power()", "Power spectrum |FFT|²"),
-                    ("frequencies()", "Frequency axis (Hz)"),
-                    ("magnitude()", "Magnitude spectrum |FFT|"),
-                    ("phase()", "Phase spectrum (radians)"),
-                ],
-            ),
-            (
-                "Analysis",
-                [
-                    ("dispersion", "Dispersion relation analysis"),
-                    ("modes", "FMR mode analysis interface"),
-                    ("transmission", "Transmission / absorption analysis"),
-                ],
-            ),
-            (
-                "Plotting",
-                [
-                    ("plot_spectrum()", "Quick-look power spectrum plot"),
-                    ("interactive_spectrum()", "Interactive mode spectrum viewer"),
-                ],
-            ),
-            (
-                "Utilities",
-                [
-                    ("clear_cache()", "Clear in-memory FFT cache"),
-                    ("plotter", "Low-level FFTPlotter instance"),
-                ],
-            ),
-        ]
-
-        for group_name, methods in groups:
-            row_html += (
-                f"<tr><td colspan='2' style='{section_style}'>"
-                f"{_html_escape(group_name)}</td></tr>"
-            )
-            for name, desc in methods:
-                row_html += (
-                    "<tr>"
-                    f"<td style='padding:5px 8px 5px 16px; font-family:monospace; "
-                    f"color:#93c5fd; white-space:nowrap;'>{_html_escape(name)}</td>"
-                    f"<td style='padding:5px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
-                    "</tr>"
-                )
-
-        # ── examples ────────────────────────────────────────────
-        example_code = "\n".join(
-            [
-                "# Preferred: access FFT through a dataset",
-                "data = job[0].m_layer13[:200, ...]",
-                "result = data.fft.spectrum()",
-                "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
-                "",
-                "# Job-level FFT (auto-selects largest m dataset)",
-                "result = job[0].fft.spectrum()",
-                "",
-                "# Fluent filter chain",
-                "job[0].fft.filters(remove_static=True).spectrum()",
-                "",
-                "# Frequency range & peak detection",
-                "result = job[0].fft.spectrum(fmin=1e9, fmax=20e9,",
-                "                            find_peaks={'min_prominence': 0.1})",
-                "",
-                "# Analysis sub-interfaces",
-                "job[0].fft.modes.interactive_spectrum(dpi=150)",
-                "job[0].fft.dispersion.plot_dispersion(axis='x')",
-            ]
-        )
-
-        html = f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
-          <div style="margin-bottom: 12px;">
-            <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">FFT Analysis Interface</div>
-            <div style="color: #94a3b8; margin-top: 4px;">Job: {_html_escape(job_name)}</div>
-            <div style="color: #94a3b8; margin-top: 2px;">Path: <code style="color:#cbd5e1;">{_html_escape(job_path)}</code></div>
-          </div>
-
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
-            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
-              <div><span style="color:#94a3b8;">Cache entries:</span> <span style="color:#cbd5e1;">{cache_size}</span></div>
-              <div><span style="color:#94a3b8;">Modes:</span> <span style="color:#cbd5e1;">{_html_escape("available" if MODES_AVAILABLE else "unavailable")}</span></div>
-              <div><span style="color:#94a3b8;">Dispersion:</span> <span style="color:#cbd5e1;">{_html_escape("available" if DISPERSION_AVAILABLE else "unavailable")}</span></div>
-            </div>
-          </div>
-
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
-            <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
-              <thead>
-                <tr style="text-align:left; background: rgba(51,65,85,0.6);">
-                  <th style="padding:6px 8px; color:#e2e8f0;">Method</th>
-                  <th style="padding:6px 8px; color:#e2e8f0;">Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                {row_html}
-              </tbody>
-            </table>
-          </div>
-
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
-            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
-            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto; font-size:0.85em;"><code>{_html_escape(example_code)}</code></pre>
-          </div>
-        </div>
-        """
-        return html + api_card
 
     def _rich_fft_display(self) -> str:
         """Create rich documentation display with panels and proper styling."""

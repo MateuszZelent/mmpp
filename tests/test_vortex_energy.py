@@ -47,7 +47,17 @@ def test_energy_time_resolved_reads_table_channels(tmp_path):
     job = _create_energy_job(tmp_path, with_energy_columns=True)
     result = job.m.vortex.energy.time_resolved()
 
-    assert "Vortex Energy Interface" in job.m.vortex.energy._repr_html_()
+    energy_html = job.m.vortex.energy._repr_html_()
+    energy_plot_html = job.m.vortex.energy.plt._repr_html_()
+    assert "Vortex Energy Interface" in energy_html
+    assert "Vortex energy API help" in energy_html
+    assert ".time_resolved(" in energy_html
+    assert ">Overview</button>" in energy_html
+    assert ">API</button>" in energy_html
+    assert "Vortex energy plot API help" in energy_plot_html
+    assert ".pinning(" in energy_plot_html
+    assert ">Overview</button>" in energy_plot_html
+    assert ">API</button>" in energy_plot_html
     assert "EnergyTimeSeriesResult" in result._repr_html_()
     assert result.time.ndim == 1
     assert "E_ex" in result.channels

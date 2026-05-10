@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import importlib
+import uuid
 from html import escape as _esc
 from typing import Any
 
 import numpy as np
+
+from mmpp._repr_helpers import api_help_html, html_tabs
 
 from .config import HysteresisConfig
 from .result import Branch, HysteresisResult
@@ -97,11 +100,11 @@ class _HysteresisQuickPlot:
             f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(desc)}</td></tr>"
             for name, desc in methods
         )
-        return (
+        overview = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;\">"
+            'color:#e2e8f0;">'
             "<div style='font-size:1.03em;font-weight:600;color:#f1f5f9;'>"
             "Hysteresis Quick Plot</div>"
             "<table style='width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;'>"
@@ -109,6 +112,25 @@ class _HysteresisQuickPlot:
             "<th style='padding:6px 8px;color:#e2e8f0;'>Method</th>"
             "<th style='padding:6px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
             f"<tbody>{rows}</tbody></table></div>"
+        )
+        api = api_help_html(
+            self,
+            title="Hysteresis quick plot API help",
+            prefix="job[0].analyze.hysteresis.plot",
+            methods=["loop", "interactive", "animation"],
+            subtitle="Quick plot methods auto-resolve a hysteresis source before drawing.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-hysteresis-quick-plot-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
     def _repr_mimebundle_(self, include=None, exclude=None):
@@ -365,8 +387,7 @@ class HysteresisInterface:
             )
 
         raise ValueError(
-            f"Unknown source={source!r}. "
-            "Use source='table' or source='zarr_keys'."
+            f"Unknown source={source!r}. Use source='table' or source='zarr_keys'."
         )
 
     def _resolve_for_plot(
@@ -434,15 +455,28 @@ class HysteresisInterface:
         )
 
     def _repr_html_(self) -> str:
-        dataset = _esc(str(self._dataset_name)) if self._dataset_name is not None else "auto"
-        slice_label = _esc(str(self._slice_info)) if self._slice_info is not None else "full"
+        dataset = (
+            _esc(str(self._dataset_name)) if self._dataset_name is not None else "auto"
+        )
+        slice_label = (
+            _esc(str(self._slice_info)) if self._slice_info is not None else "full"
+        )
 
         methods = [
-            (".load(source='table', field=..., magnetization=...)", "Unified entry: read field & M from table/ columns"),
-            (".load(source='zarr_keys', key_prefix=..., component=...)", "Unified entry: field from key names, M averaged spatially"),
+            (
+                ".load(source='table', field=..., magnetization=...)",
+                "Unified entry: read field & M from table/ columns",
+            ),
+            (
+                ".load(source='zarr_keys', key_prefix=..., component=...)",
+                "Unified entry: field from key names, M averaged spatially",
+            ),
             (".from_table(...)", "Direct: read from table/ columns"),
             (".from_magnetization(...)", "Direct: build loop from averaged m dataset"),
-            (".from_zarr_keys(...)", "Direct: per-field zarr arrays (e.g. B-0.025000.6)"),
+            (
+                ".from_zarr_keys(...)",
+                "Direct: per-field zarr arrays (e.g. B-0.025000.6)",
+            ),
             (".from_arrays(...)", "Expert: explicit arrays"),
             (".plot.loop(...)", "Quick static plot"),
             (".plot.interactive(...)", "Quick interactive view"),
@@ -468,11 +502,11 @@ class HysteresisInterface:
             ]
         )
 
-        return (
+        overview = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:10px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 10px 22px rgba(0,0,0,0.28);\">"
+            'color:#e2e8f0;box-shadow:0 10px 22px rgba(0,0,0,0.28);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;'>Hysteresis Interface</div>"
             "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
             "margin-top:10px;border:1px solid rgba(148,163,184,0.2);'>"
@@ -493,6 +527,35 @@ class HysteresisInterface:
             "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;border-radius:6px;"
             f"color:#e2e8f0;overflow-x:auto;font-size:0.85em;'><code>{_esc(example)}</code></pre>"
             "</div></div>"
+        )
+        api = api_help_html(
+            self,
+            title="Hysteresis API help",
+            prefix="job[0].analyze.hysteresis",
+            properties=[
+                ("config", "Mutable configuration for this hysteresis namespace"),
+                ("plot", "Quick plotting helper with auto-source resolution"),
+            ],
+            methods=[
+                "load",
+                "from_arrays",
+                "from_table",
+                "from_magnetization",
+                "from_zarr_keys",
+            ],
+            subtitle="Live public API for loading hysteresis data and building result objects.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:10px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 10px 22px rgba(0,0,0,0.28);'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-hysteresis-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
     def _repr_mimebundle_(self, include=None, exclude=None):

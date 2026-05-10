@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import uuid
 import warnings
 from typing import Any
 
 import numpy as np
 
+from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
+from mmpp._shared.repr_html import make_simple_card
+
 from ...config import VortexConfig
 from ..._shared.models import TrajectoryResult
-from mmpp._shared.repr_html import make_simple_card
 from .magnetoresistance import compute_magnetoresistance
 from .models import MagnetoresistanceResult, SignalSpectrumResult, VoltageResult
 from .power_spectrum import compute_signal_power_spectrum
@@ -33,7 +36,9 @@ def _read_table_columns(job_result) -> dict[str, np.ndarray]:
     return out
 
 
-def _resolve_column_name(columns: dict[str, np.ndarray], aliases: tuple[str, ...]) -> str | None:
+def _resolve_column_name(
+    columns: dict[str, np.ndarray], aliases: tuple[str, ...]
+) -> str | None:
     if not columns:
         return None
     lut = {name.lower(): name for name in columns.keys()}
@@ -100,9 +105,21 @@ class SignalsInterface:
                 break
         assert n is not None
 
-        mx = np.asarray(columns[mx_key], dtype=float) if mx_key is not None else np.zeros(n, dtype=float)
-        my = np.asarray(columns[my_key], dtype=float) if my_key is not None else np.zeros(n, dtype=float)
-        mz = np.asarray(columns[mz_key], dtype=float) if mz_key is not None else np.zeros(n, dtype=float)
+        mx = (
+            np.asarray(columns[mx_key], dtype=float)
+            if mx_key is not None
+            else np.zeros(n, dtype=float)
+        )
+        my = (
+            np.asarray(columns[my_key], dtype=float)
+            if my_key is not None
+            else np.zeros(n, dtype=float)
+        )
+        mz = (
+            np.asarray(columns[mz_key], dtype=float)
+            if mz_key is not None
+            else np.zeros(n, dtype=float)
+        )
 
         time_key = _resolve_column_name(columns, ("t", "time", "Time"))
         if time_key is not None and int(columns[time_key].size) == n:
@@ -125,7 +142,9 @@ class SignalsInterface:
         px, py, pz = px / norm, py / norm, pz / norm
 
         projection = np.clip(px * mx + py * my + pz * mz, -1.0, 1.0)
-        resistance = float(resistance_parallel_ohm) + 0.5 * float(delta_resistance_ohm) * (1.0 - projection)
+        resistance = float(resistance_parallel_ohm) + 0.5 * float(
+            delta_resistance_ohm
+        ) * (1.0 - projection)
 
         return MagnetoresistanceResult(
             time=time,
@@ -250,8 +269,10 @@ class SignalsInterface:
         ):
             return self._last_voltage
 
-        mr = magnetoresistance if magnetoresistance is not None else self.magnetoresistance(
-            trajectory=trajectory
+        mr = (
+            magnetoresistance
+            if magnetoresistance is not None
+            else self.magnetoresistance(trajectory=trajectory)
         )
         current = self._resolve_current(current_a=current_a, n_samples=mr.time.size)
         result = compute_voltage(mr, current_a=current)
@@ -292,7 +313,9 @@ class SignalsInterface:
             time = source.time
             quantity = "resistance"
         else:
-            raise ValueError("signal must be one of {'voltage', 'v', 'resistance', 'mr', 'tmr'}")
+            raise ValueError(
+                "signal must be one of {'voltage', 'v', 'resistance', 'mr', 'tmr'}"
+            )
 
         method_eff = method or getattr(self._config.signals, "spectrum_method", "welch")
         result = compute_signal_power_spectrum(
@@ -312,17 +335,40 @@ class SignalsInterface:
 
     def _repr_html_(self) -> str:
         methods = [
-            (".magnetoresistance(...)", "MR/TMR proxy from trajectory or table fallback"),
+            (
+                ".magnetoresistance(...)",
+                "MR/TMR proxy from trajectory or table fallback",
+            ),
             (".voltage(current_a=...)", "Voltage trace V(t)=I(t)R(t)"),
             (".power_spectrum(signal='voltage')", "Signal PSD (Welch/periodogram)"),
             (".plt.magnetoresistance()", "Compute + plot resistance trace"),
             (".plt.voltage()", "Compute + plot voltage trace"),
             (".plt.power_spectrum()", "Compute + plot electrical PSD"),
         ]
-        return make_simple_card(
+        overview = make_simple_card(
             title="Vortex Signals Interface",
             subtitle="Electrical signal reconstruction: MR/TMR, voltage and PSD",
             rows=methods,
+        )
+        api = api_help_html(
+            self,
+            title="Vortex signals API help",
+            prefix="vortex.signals",
+            properties=[("plt", "Convenience plotting namespace")],
+            methods=["magnetoresistance", "voltage", "power_spectrum"],
+            subtitle="Live public API for magnetoresistance, voltage, and signal spectra.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-signals-{uuid.uuid4().hex}",
+            )
+            + "</div>"
         )
 
 
@@ -348,18 +394,44 @@ class SignalsPlotAccessor:
         return result.plt.power_spectrum(**kwargs)
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("SignalsPlotAccessor", [
-            (".magnetoresistance()",
-             "Compute + plot resistance R(t) trace",
-             "Delegates to MagnetoresistanceResult.plt.time_trace()."),
-            (".voltage()",
-             "Compute + plot voltage V(t) trace",
-             "Delegates to VoltageResult.plt.time_trace()."),
-            (".power_spectrum()",
-             "Compute + plot electrical signal PSD",
-             "Delegates to SignalSpectrumResult.plt.power_spectrum()."),
-        ])
+        overview = plot_accessor_html(
+            "SignalsPlotAccessor",
+            [
+                (
+                    ".magnetoresistance()",
+                    "Compute + plot resistance R(t) trace",
+                    "Delegates to MagnetoresistanceResult.plt.time_trace().",
+                ),
+                (
+                    ".voltage()",
+                    "Compute + plot voltage V(t) trace",
+                    "Delegates to VoltageResult.plt.time_trace().",
+                ),
+                (
+                    ".power_spectrum()",
+                    "Compute + plot electrical signal PSD",
+                    "Delegates to SignalSpectrumResult.plt.power_spectrum().",
+                ),
+            ],
+        )
+        api = api_help_html(
+            self,
+            title="Vortex signals plot API help",
+            prefix="vortex.signals.plt",
+            methods=["magnetoresistance", "voltage", "power_spectrum"],
+            subtitle="Plot helpers that compute the matching signal result when needed.",
+            chrome=False,
+        )
+        return (
+            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:#0f172a;color:#e2e8f0;'>"
+            + html_tabs(
+                [("Overview", overview), ("API", api)],
+                uid=f"mmpp-vortex-signals-plot-{uuid.uuid4().hex}",
+            )
+            + "</div>"
+        )
 
 
 __all__ = ["SignalsInterface"]

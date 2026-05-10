@@ -21,18 +21,23 @@ log = logging.getLogger("mmpp.fft.modes")
 # Cache schema version - bump when cached results are no longer compatible
 SPECTRUM_CACHE_SCHEMA_VERSION = 1
 
+
 # Lazy imports to avoid circular dependencies
 def _get_data_loader():
     from .data_loader import ModeDataLoader, ModeDataContext
+
     return ModeDataLoader, ModeDataContext
+
 
 def _get_interactive():
     from .interactive import InteractiveSpectrum
+
     return InteractiveSpectrum
 
 
 def _get_interactive_plot():
     from .interactive import plot as plot_spectrum
+
     return plot_spectrum
 
 
@@ -109,11 +114,13 @@ class ModeResult:
     def __repr__(self) -> str:
         shape = getattr(self.data, "shape", None)
         return (
-            f"ModeResult(f={self.frequency:.3f} GHz, z={self.z_layer}, "
-            f"shape={shape})"
+            f"ModeResult(f={self.frequency:.3f} GHz, z={self.z_layer}, shape={shape})"
         )
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
         from html import escape as _esc
 
         freq = self.frequency
@@ -147,7 +154,11 @@ class ModeResult:
         )
         imshow_params = [
             ("component", "'z'", "'x', 'y', 'z' or 0, 1, 2"),
-            ("value", "'magnitude'", "'magnitude', 'phase', 'real', 'imag', 'combined'"),
+            (
+                "value",
+                "'magnitude'",
+                "'magnitude', 'phase', 'real', 'imag', 'combined'",
+            ),
             ("cmap", "auto", "Colormap (auto: viridis/twilight/RdBu_r)"),
             ("colorbar", "False", "Show colorbar"),
             ("ax", "None", "Existing matplotlib Axes"),
@@ -171,11 +182,11 @@ class ModeResult:
             f"# Get raw data as numpy array\n"
             f"arr = mode.get_component('z', value='magnitude')"
         )
-        return (
+        html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             f"ModeResult</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
@@ -211,6 +222,31 @@ class ModeResult:
             "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
             f"<code>{example}</code></pre></div>"
             "</div>"
+        )
+        api_card = api_help_html(
+            self,
+            title="ModeResult API help",
+            prefix="mode",
+            properties=[
+                ("plot", "Plot helper namespace"),
+                ("plt", "Deprecated alias for plot"),
+                ("data", "Raw complex mode array"),
+                ("extent", "Spatial extent passed to imshow"),
+            ],
+            methods=["get_component"],
+            subtitle="Live signature for the single-mode result object.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"mode-result-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
         )
 
 
@@ -287,6 +323,9 @@ class ModePlotAccessor:
         )
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
         from html import escape as _esc
 
         freq = self._mode.frequency
@@ -294,7 +333,10 @@ class ModePlotAccessor:
 
         methods = [
             (".imshow(component, value, ...)", "Render mode as 2D matplotlib image"),
-            (".interactive(toolbar=True)", "Open interactive explorer at this frequency"),
+            (
+                ".interactive(toolbar=True)",
+                "Open interactive explorer at this frequency",
+            ),
         ]
         method_rows = "".join(
             f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
@@ -303,7 +345,11 @@ class ModePlotAccessor:
         )
         imshow_params = [
             ("component", "'z'", "'x', 'y', 'z' or 0, 1, 2"),
-            ("value", "'magnitude'", "'magnitude', 'phase', 'real', 'imag', 'combined'"),
+            (
+                "value",
+                "'magnitude'",
+                "'magnitude', 'phase', 'real', 'imag', 'combined'",
+            ),
             ("cmap", "auto", "Colormap (auto-selected by value type)"),
             ("colorbar", "False", "Show colorbar alongside plot"),
             ("ax", "None", "Existing matplotlib Axes to draw on"),
@@ -333,11 +379,11 @@ class ModePlotAccessor:
             f"# Open interactive explorer\n"
             f"mode.plot.interactive()"
         )
-        return (
+        html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "Mode Plot Accessor</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
@@ -368,26 +414,45 @@ class ModePlotAccessor:
             f"<code>{example}</code></pre></div>"
             "</div>"
         )
+        api_card = api_help_html(
+            self,
+            title="Mode plot API help",
+            prefix="mode.plot",
+            methods=["imshow", "interactive"],
+            subtitle="Live signatures for plotting helpers on a single ModeResult.",
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"mode-plot-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )
 
 
 class InteractiveSpectrumHelper:
     """Callable helper that shows documentation when accessed as property.
-    
+
     When accessed (job.fft.modes.interactive_spectrum), displays helpful usage.
     When called (job.fft.modes.interactive_spectrum(...)), runs the method.
     """
-    
+
     def __init__(self, modes_interface):
         self._modes = modes_interface
         self._method = modes_interface._interactive_spectrum_impl
-    
+
     def __call__(self, **kwargs):
         """Delegate to actual interactive_spectrum method."""
         return self._method(**kwargs)
-    
+
     def __repr__(self):
         return self._rich_display()
-    
+
     def _rich_display(self) -> str:
         """Generate rich help display for interactive_spectrum."""
         try:
@@ -397,19 +462,21 @@ class InteractiveSpectrumHelper:
             from rich.text import Text
             from rich.syntax import Syntax
             from io import StringIO
-            
+
             capture = StringIO()
             console = Console(file=capture, force_terminal=True, width=100)
-            
+
             # Title
             title = Text()
             title.append("🎯 Interactive Spectrum Visualization\n", style="bold cyan")
             title.append(f"📁 Dataset: {self._modes.dataset_name}\n", style="dim")
             if self._modes.component_label:
-                title.append(f"📊 Component: {self._modes.component_label}", style="green")
-            
+                title.append(
+                    f"📊 Component: {self._modes.component_label}", style="green"
+                )
+
             console.print(Panel(title, border_style="cyan"))
-            
+
             # Features
             features = Text()
             features.append("✨ Interactive Features:\n\n", style="bold yellow")
@@ -425,16 +492,16 @@ class InteractiveSpectrumHelper:
                 features.append(f"  • ", style="dim")
                 features.append(f"{key:15}", style="bold green")
                 features.append(f" {desc}\n", style="white")
-            
+
             console.print(features)
-            
+
             # Parameters table
             params = Table(show_header=True, header_style="bold magenta")
             params.add_column("Parameter", style="yellow")
             params.add_column("Type", style="cyan")
             params.add_column("Default", style="green")
             params.add_column("Description", style="white")
-            
+
             param_data = [
                 ("components", "list", "auto", "['x','y','z'] or [0,1,2]"),
                 ("z_layer", "int", "-1", "Z-layer for modes (top layer)"),
@@ -444,21 +511,36 @@ class InteractiveSpectrumHelper:
                 ("show", "bool", "True", "Display figure/widget immediately"),
                 ("log_scale", "bool", "False", "Logarithmic Y-scale"),
                 ("normalize", "bool", "True", "Normalize power to max"),
-                ("baseline_mode", "str", "'none'", "none/mean/median/linear baseline correction"),
+                (
+                    "baseline_mode",
+                    "str",
+                    "'none'",
+                    "none/mean/median/linear baseline correction",
+                ),
                 ("clip_percentile_low", "float", "0.0", "Low percentile clipping"),
                 ("clip_percentile_high", "float", "100.0", "High percentile clipping"),
-                ("soft_threshold_percentile", "float", "0.0", "Soft-threshold denoising"),
+                (
+                    "soft_threshold_percentile",
+                    "float",
+                    "0.0",
+                    "Soft-threshold denoising",
+                ),
                 ("show_peaks", "bool", "True", "Detect and mark peaks"),
-                ("toolbar=False", "bool", "legacy", "Fallback to legacy keyboard/mouse mode"),
+                (
+                    "toolbar=False",
+                    "bool",
+                    "legacy",
+                    "Fallback to legacy keyboard/mouse mode",
+                ),
             ]
             for p, t, d, desc in param_data:
                 params.add_row(p, t, d, desc)
-            
+
             console.print(params)
             console.print("")
-            
+
             # Examples
-            example = '''# Basic usage with component selection:
+            example = """# Basic usage with component selection:
 job[0].m[:200,...,1].fft.modes.interactive_spectrum(dpi=150)
 
 # Full control:
@@ -479,11 +561,13 @@ job[0].fft.modes.interactive_spectrum(
 )
 
 # Legacy fallback (double-click animations, key bindings):
-job[0].fft.modes.interactive_spectrum(toolbar=False, auto_animate=True)'''
-            
+job[0].fft.modes.interactive_spectrum(toolbar=False, auto_animate=True)"""
+
             syntax = Syntax(example, "python", theme="monokai", line_numbers=False)
-            console.print(Panel(syntax, title="[bold green]Examples", border_style="green"))
-            
+            console.print(
+                Panel(syntax, title="[bold green]Examples", border_style="green")
+            )
+
             return capture.getvalue()
         except ImportError:
             return "interactive_spectrum(...) - Interactive spectrum with mode visualization. Call with () to execute."
@@ -585,7 +669,9 @@ class FFTModesHelpAccessor:
         return self._method(
             "save_modes_animation",
             "Export temporal/frequency mode animation.",
-            ["job[0].fft.modes.help.save_modes_animation(frequency=9.5, save_path='mode.gif')"],
+            [
+                "job[0].fft.modes.help.save_modes_animation(frequency=9.5, save_path='mode.gif')"
+            ],
         )
 
     def __repr__(self) -> str:
@@ -598,10 +684,10 @@ class FFTModesHelpAccessor:
 
 class FFTModeInterfaceNew:
     """Enhanced FFT interface with mode visualization capabilities.
-    
+
     Supports slice propagation from DatasetAwareWrapper.
     Provides elegant syntax like: job[0].m[:200,...,1].fft.modes.interactive_spectrum()
-    
+
     Attributes
     ----------
     fft_result_index : int
@@ -613,10 +699,10 @@ class FFTModeInterfaceNew:
     _slice_context : tuple, optional
         Slice info from DatasetAwareWrapper
     """
-    
+
     def __init__(self, fft_result_index: int, parent_fft: Any):
         """Initialize mode interface.
-        
+
         Parameters
         ----------
         fft_result_index : int
@@ -626,29 +712,29 @@ class FFTModeInterfaceNew:
         """
         self.fft_result_index = fft_result_index
         self.parent_fft = parent_fft
-        
+
         # Context from DatasetSpecificFFT (set externally)
         self._dataset_context: Optional[str] = None
         self._slice_context: Optional[tuple] = None
-        
+
         # Lazy-loaded instances
         self._data_loader = None
         self._mode_analyzer = None
         self._interactive_filters: dict[str, Any] = {}
         self._auto_compute_checked = False
-        
+
         # Configuration (like dispersion module)
         self._tmax: Optional[int] = None
         self._filters_config: Optional[dict[str, Any]] = None
         self._cache_dir: Optional[str] = None
         self._memory_cache: dict[str, Any] = {}
         self._last_result: Optional[Any] = None
-    
+
     @property
     def zarr_path(self) -> str:
         """Get zarr path from parent FFT."""
         return self.parent_fft.job_result.path
-    
+
     @property
     def dataset_name(self) -> str:
         """Get dataset name (from context or auto-detect)."""
@@ -657,10 +743,11 @@ class FFTModeInterfaceNew:
         # Auto-detect
         try:
             from ...plotting import _find_largest_m_dataset
+
             return _find_largest_m_dataset(self.zarr_path)
         except Exception:
             return "m"  # Fallback
-    
+
     @property
     def component_index(self) -> Optional[int]:
         """Extract component index from slice_context."""
@@ -682,7 +769,7 @@ class FFTModeInterfaceNew:
                     if start == -1 and last.stop is None:
                         return 2
         return None
-    
+
     @property
     def component_label(self) -> Optional[str]:
         """Get label for selected component."""
@@ -691,7 +778,7 @@ class FFTModeInterfaceNew:
         if idx is not None:
             return labels[idx]
         return None
-    
+
     @property
     def last_result(self) -> Optional[Any]:
         """Get the result from the most recent computation."""
@@ -706,7 +793,7 @@ class FFTModeInterfaceNew:
     def help(self) -> FFTModesHelpAccessor:
         """Alias for :attr:`helpers`."""
         return self.helpers
-    
+
     def configure(
         self,
         *,
@@ -716,24 +803,24 @@ class FFTModeInterfaceNew:
     ) -> "FFTModeInterfaceNew":
         """
         Configure interface settings (fluent API).
-        
+
         Returns a new interface instance with updated configuration.
-        
+
         Parameters
         ----------
         tmax : int, optional
-            Maximum number of timesteps to use for FFT. 
+            Maximum number of timesteps to use for FFT.
             None means use all available timesteps.
         filters : dict, optional
             Filter configuration dict with stage keys (pre/post/live)
         cache_dir : str, optional
             External cache directory for results
-            
+
         Returns
         -------
         FFTModeInterfaceNew
             Configured interface (for method chaining)
-            
+
         Examples
         --------
         >>> job[0].fft.modes.configure(tmax=500).interactive_spectrum()
@@ -741,23 +828,25 @@ class FFTModeInterfaceNew:
         """
         # Clone to avoid mutating original
         clone = self._clone()
-        
+
         if tmax is not None:
             clone._tmax = tmax
         if filters is not None:
             clone._filters_config = copy.deepcopy(filters)
         if cache_dir is not None:
             clone._cache_dir = cache_dir
-            
+
         return clone
-    
+
     def _clone(self) -> "FFTModeInterfaceNew":
         """Create a shallow clone preserving runtime/configuration state."""
         clone = FFTModeInterfaceNew(self.fft_result_index, self.parent_fft)
         clone._dataset_context = self._dataset_context
         clone._slice_context = self._slice_context
         clone._tmax = self._tmax
-        clone._filters_config = copy.deepcopy(self._filters_config) if self._filters_config else None
+        clone._filters_config = (
+            copy.deepcopy(self._filters_config) if self._filters_config else None
+        )
         clone._cache_dir = self._cache_dir
         clone._memory_cache = self._memory_cache  # Share memory cache
         clone._last_result = self._last_result
@@ -766,16 +855,16 @@ class FFTModeInterfaceNew:
         clone._interactive_filters = dict(self._interactive_filters)
         clone._auto_compute_checked = self._auto_compute_checked
         return clone
-    
+
     def _determine_tmax(self, default: int = 100) -> Optional[int]:
         """
         Determine number of time steps to load (dispersion-style priority).
-        
+
         Priority order:
         1. Explicit slice from user (e.g., [:1000,...,2]) - ALWAYS respected
         2. Configured tmax via .configure(tmax=X)
         3. Default tmax=100 (only if no slice and no config)
-        
+
         Returns
         -------
         int or None
@@ -783,34 +872,34 @@ class FFTModeInterfaceNew:
         """
         # Check if user provided explicit time slice
         slice_length = self._infer_time_length_from_slice()
-        
+
         if slice_length is not None:
             log.debug("Using EXPLICIT time slice from user: %d timesteps", slice_length)
             return slice_length
-        
+
         # slice_length is None - could be:
         # A) User used [:] (slice with no stop) → wants ALL timesteps → return None
         # B) No slice at all → wants default optimization → use tmax
-        
+
         if self._slice_context is not None:
             # Case A: User DID provide a slice, but it's [:] (no stop)
             log.debug("User provided [:] slice - using ALL available timesteps")
             return None
-        
+
         # Case B: No slice at all - use configured tmax or default
         if self._tmax is not None:
             log.debug("No user slice - using configured tmax: %d timesteps", self._tmax)
             return int(self._tmax)
-        
+
         log.debug("No slice or config - using default tmax: %d timesteps", default)
         return default
-    
+
     def _infer_time_length_from_slice(self) -> Optional[int]:
         """
         Infer desired time window length from dataset slice info.
-        
+
         For 5D data (t,z,y,x,c): data[:1000,...,2] → returns 1000
-        
+
         Returns
         -------
         Optional[int]
@@ -831,11 +920,11 @@ class FFTModeInterfaceNew:
         if isinstance(candidate, slice):
             start = 0 if candidate.start is None else candidate.start
             stop = candidate.stop
-            
+
             # If stop is None → [:] or [start:] → user wants ALL timesteps
             if stop is None:
                 return None
-            
+
             step = 1 if candidate.step is None else candidate.step
             if step == 0:
                 return None
@@ -843,15 +932,15 @@ class FFTModeInterfaceNew:
             return max(0, length)
 
         return None
-    
+
     @property
     def spectrum_result(self):
         """Get spectrum using parent FFT with propagated slice context.
-        
+
         This ensures consistency with job[0].m[...].fft.spectrum() calls.
         The slice_context (time slicing, component selection) is passed to
         the FFT spectrum calculation.
-        
+
         Returns
         -------
         SpectrumResult
@@ -861,23 +950,23 @@ class FFTModeInterfaceNew:
             dset=self.dataset_name,
             slice_info=self._slice_context,
         )
-    
+
     @property
     def frequencies(self):
         """Get frequencies from spectrum result (in GHz)."""
         return self.spectrum_result.frequencies
-    
+
     @property
     def power_spectrum(self):
         """Get power spectrum (2D or 1D depending on component selection)."""
         return self.spectrum_result.power
-    
+
     @property
     def data_loader(self):
         """Get or create data loader (lazy init)."""
         if self._data_loader is None:
             ModeDataLoader, ModeDataContext = _get_data_loader()
-            
+
             context = ModeDataContext(
                 zarr_path=self.zarr_path,
                 dataset_name=self.dataset_name,
@@ -885,8 +974,10 @@ class FFTModeInterfaceNew:
                 component_index=self.component_index,
             )
             self._data_loader = ModeDataLoader(context)
-            log.debug(f"Created data loader with dataset={self.dataset_name}, component={self.component_index}")
-        
+            log.debug(
+                f"Created data loader with dataset={self.dataset_name}, component={self.component_index}"
+            )
+
         return self._data_loader
 
     def filters(
@@ -922,8 +1013,12 @@ class FFTModeInterfaceNew:
 
         fmin_val = freq_min if freq_min is not None else fmin
         fmax_val = freq_max if freq_max is not None else fmax
-        clip_low_val = clip_percentile_low if clip_percentile_low is not None else clip_low
-        clip_high_val = clip_percentile_high if clip_percentile_high is not None else clip_high
+        clip_low_val = (
+            clip_percentile_low if clip_percentile_low is not None else clip_low
+        )
+        clip_high_val = (
+            clip_percentile_high if clip_percentile_high is not None else clip_high
+        )
         soft_thr_val = (
             soft_threshold_percentile
             if soft_threshold_percentile is not None
@@ -967,7 +1062,7 @@ class FFTModeInterfaceNew:
         clone = self._clone()
         clone._interactive_filters = {}
         return clone
-    
+
     def _interactive_spectrum_impl(
         self,
         components: list = None,
@@ -998,15 +1093,15 @@ class FFTModeInterfaceNew:
         **kwargs,
     ):
         """Create interactive spectrum with mode visualization panels.
-        
+
         **Key feature:** Uses FFT.spectrum() for spectrum data, ensuring
         consistency with `job[0].m[:200,...,1].fft.spectrum()` calls.
         Slice context (time range, component) is automatically propagated.
-        
+
         Split layout:
         - Left: FFT power spectrum with clickable peaks
         - Right: 3x3 mode grid (magnitude, phase, combined) for each component
-        
+
         Parameters
         ----------
         components : list, optional
@@ -1032,20 +1127,20 @@ class FFTModeInterfaceNew:
             Start with this frequency selected
         **kwargs
             Additional arguments (find_peaks params, etc.)
-        
+
         Returns
         -------
         Figure
             Interactive matplotlib figure
-        
+
         Examples
         --------
         >>> # Full interactive view with mode panels
         >>> job[0].fft.modes.interactive_spectrum()
-        
+
         >>> # Single component (my) with slice propagation
         >>> job[0].m[:200,...,1].fft.modes.interactive_spectrum(dpi=150)
-        
+
         >>> # Start at specific frequency
         >>> job[0].fft.modes.interactive_spectrum(initial_frequency=9.5)
         """
@@ -1078,11 +1173,11 @@ class FFTModeInterfaceNew:
                 f"(dataset={self.dataset_name}, slice={self._slice_context}, "
                 f"component={self.component_index})"
             )
-        
+
         # Auto-select components based on slice context
         if components is None and self.component_index is not None:
             # User selected specific component via slicing
-            component_names = ['x', 'y', 'z']
+            component_names = ["x", "y", "z"]
             components = [component_names[self.component_index]]
             log.info(f"Auto-selected component: {components[0]} (from slice context)")
 
@@ -1111,7 +1206,7 @@ class FFTModeInterfaceNew:
         for key, value in explicit_overrides.items():
             if value is not None:
                 viewer_kwargs[key] = value
-        
+
         # Arguments still implemented only by the legacy analyzer view.
         legacy_only_keys = {"saveanim", "auto_save", "force", "use_fft_spectrum"}
         use_legacy_view = any(key in viewer_kwargs for key in legacy_only_keys)
@@ -1181,33 +1276,33 @@ class FFTModeInterfaceNew:
             use_holography=use_holography,
             **viewer_kwargs,
         )
-    
+
     @property
     def interactive_spectrum(self):
         """Interactive spectrum with mode visualization (access for help, call to run).
-        
+
         Access without () to see documentation. Call with () to execute.
-        
+
         Examples
         --------
         >>> job[0].fft.modes.interactive_spectrum  # Show help
         >>> job[0].fft.modes.interactive_spectrum(dpi=150)  # Run
         """
         return InteractiveSpectrumHelper(self)
-    
+
     # Alias for backward compatibility
     interactive_spectrum_old = interactive_spectrum
-    
+
     # =========================================================================
     # Methods delegating to legacy FMRModeAnalyzer for features not yet migrated
     # =========================================================================
-    
+
     @property
     def _legacy_analyzer(self):
         """Get legacy FMRModeAnalyzer for features not yet migrated."""
         if self._mode_analyzer is None:
             from . import FMRModeAnalyzer
-            
+
             dataset = self._dataset_context or self.dataset_name
             self._mode_analyzer = FMRModeAnalyzer(
                 zarr_path=self.zarr_path,
@@ -1247,7 +1342,9 @@ class FFTModeInterfaceNew:
             if hasattr(analyzer, "_load_data"):
                 analyzer._load_data()
             if not getattr(analyzer, "modes_available", False):
-                raise RuntimeError("Mode computation finished but modes are still unavailable")
+                raise RuntimeError(
+                    "Mode computation finished but modes are still unavailable"
+                )
             log.info("Auto mode computation completed for dataset '%s'.", dataset)
         except Exception as exc:
             raise RuntimeError(
@@ -1283,10 +1380,14 @@ class FFTModeInterfaceNew:
             except Exception:
                 pass
 
-        frequencies = np.asarray(getattr(spectrum_result, "frequencies", []), dtype=float)
+        frequencies = np.asarray(
+            getattr(spectrum_result, "frequencies", []), dtype=float
+        )
         power = np.asarray(getattr(spectrum_result, "power", []))
         if frequencies.size == 0:
-            raise ValueError("Cannot determine default frequency: no spectrum frequencies")
+            raise ValueError(
+                "Cannot determine default frequency: no spectrum frequencies"
+            )
 
         if power.ndim > 1:
             if power.shape[-1] <= 3:
@@ -1347,7 +1448,7 @@ class FFTModeInterfaceNew:
 
     # Alias matching explicit naming style.
     plot_spectrum = plot
-    
+
     def plot_modes(
         self,
         frequency: float,
@@ -1359,7 +1460,7 @@ class FFTModeInterfaceNew:
         **kwargs,
     ):
         """Plot mode visualization at specified frequency.
-        
+
         Parameters
         ----------
         frequency : float
@@ -1376,7 +1477,7 @@ class FFTModeInterfaceNew:
             Figure resolution
         **kwargs
             Additional arguments for plot
-        
+
         Returns
         -------
         Figure
@@ -1385,7 +1486,7 @@ class FFTModeInterfaceNew:
         # Use component from context if available
         if self.component_index is not None:
             component = ["mx", "my", "mz"][self.component_index]
-        
+
         return self._legacy_analyzer.plot_modes(
             frequency=frequency,
             z_layer=z_layer,
@@ -1394,7 +1495,7 @@ class FFTModeInterfaceNew:
             show_magnitude=show_magnitude,
             **kwargs,
         )
-    
+
     def characterize_mode(
         self,
         frequency: float,
@@ -1403,7 +1504,7 @@ class FFTModeInterfaceNew:
         **kwargs,
     ):
         """Characterize mode at frequency.
-        
+
         Parameters
         ----------
         frequency : float
@@ -1414,7 +1515,7 @@ class FFTModeInterfaceNew:
             Show detailed output
         **kwargs
             Additional arguments
-        
+
         Returns
         -------
         ModeCharacterizationResult
@@ -1426,7 +1527,7 @@ class FFTModeInterfaceNew:
             verbose=verbose,
             **kwargs,
         )
-    
+
     def save_modes_animation(
         self,
         frequency: float = None,
@@ -1437,7 +1538,7 @@ class FFTModeInterfaceNew:
         **kwargs,
     ):
         """Create and save mode animation.
-        
+
         Parameters
         ----------
         frequency : float, optional
@@ -1452,7 +1553,7 @@ class FFTModeInterfaceNew:
             Animation resolution
         **kwargs
             Additional arguments
-        
+
         Returns
         -------
         Animation or path
@@ -1465,10 +1566,10 @@ class FFTModeInterfaceNew:
             save_path=save_path,
             **kwargs,
         )
-    
+
     def compute_modes(self, dset: str = None, **kwargs):
         """Compute/recompute modes for dataset.
-        
+
         Parameters
         ----------
         dset : str, optional
@@ -1478,14 +1579,14 @@ class FFTModeInterfaceNew:
         """
         dataset = dset or self._dataset_context or self.dataset_name
         return self._legacy_analyzer.compute_modes(dset=dataset, **kwargs)
-    
+
     def __repr__(self) -> str:
         """Rich representation of modes interface."""
         try:
             return self._rich_display()
         except Exception:
             return self._basic_display()
-    
+
     def _rich_display(self) -> str:
         """Generate rich help display."""
         try:
@@ -1495,10 +1596,10 @@ class FFTModeInterfaceNew:
             from rich.text import Text
             from rich.syntax import Syntax
             from io import StringIO
-            
+
             capture = StringIO()
             console = Console(file=capture, force_terminal=True, width=100)
-            
+
             # Title
             title = Text()
             title.append("🎯 FFT Mode Analyzer\n", style="bold cyan")
@@ -1506,28 +1607,31 @@ class FFTModeInterfaceNew:
             if self.component_label:
                 title.append(f"📊 Component: {self.component_label}\n", style="green")
             title.append(f"📂 Path: {self.zarr_path}", style="dim")
-            
+
             console.print(Panel(title, border_style="cyan"))
-            
+
             # Methods table
             methods = Table(show_header=True, header_style="bold yellow")
             methods.add_column("Method", style="cyan")
             methods.add_column("Description", style="white")
-            
+
             methods.add_row("filters(...)", "Clone interface with FMR spectrum filters")
             methods.add_row("plot(...)", "Plot filtered FMR spectrum")
             methods.add_row("mode(f=...)", "Direct mode data access with .plot helpers")
-            methods.add_row("interactive_spectrum(dpi=100)", "Interactive toolbar spectrum+mode view")
+            methods.add_row(
+                "interactive_spectrum(dpi=100)",
+                "Interactive toolbar spectrum+mode view",
+            )
             methods.add_row("plot_modes(frequency)", "Visualize mode at frequency")
             methods.add_row("characterize_mode(frequency)", "Classify mode type")
             methods.add_row("save_modes_animation(...)", "Create mode animations")
             methods.add_row("compute_modes()", "Compute/recompute modes")
-            
+
             console.print(methods)
             console.print("")
-            
+
             # Examples
-            example = '''# With component selection (my) and DPI:
+            example = """# With component selection (my) and DPI:
 job[0].m[:200,...,1].fft.modes.interactive_spectrum(dpi=150)
 
 # All components:
@@ -1551,15 +1655,17 @@ mode.plot.interactive()
 job[0].fft.modes.plot_modes(frequency=9.5)
 
 # Mode animation:
-job[0].fft.modes.save_modes_animation(frequency=9.5, save_path="mode.mp4")'''
-            
+job[0].fft.modes.save_modes_animation(frequency=9.5, save_path="mode.mp4")"""
+
             syntax = Syntax(example, "python", theme="monokai", line_numbers=False)
-            console.print(Panel(syntax, title="[bold green]Examples", border_style="green"))
-            
+            console.print(
+                Panel(syntax, title="[bold green]Examples", border_style="green")
+            )
+
             return capture.getvalue()
         except ImportError:
             return self._basic_display()
-    
+
     def _basic_display(self) -> str:
         """Basic text display."""
         return (

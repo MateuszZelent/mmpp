@@ -48,19 +48,20 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 _CSS = """<style>
-/* ── Vortex Dashboard – clean light theme ───────────────────────── */
+/* ── Vortex Dashboard – modern sidebar theme ─────────────────────── */
 .vdash-header {
-    background: linear-gradient(90deg, #0550ae 0%, #0969da 100%);
+    background: linear-gradient(135deg, #0d1b2a 0%, #1a3a5c 60%, #0969da 100%);
     color: #ffffff;
-    padding: 10px 16px;
+    padding: 12px 18px;
     border-radius: 8px 8px 0 0;
     font-family: 'Segoe UI', system-ui, sans-serif;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.4px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    box-shadow: 0 2px 8px rgba(9,105,218,0.25);
 }
 .vdash-header span.sub {
     font-size: 10px;
@@ -68,52 +69,138 @@ _CSS = """<style>
     font-weight: 400;
     margin-left: auto;
     letter-spacing: 0.3px;
+    opacity: 0.85;
 }
 .vdash-jobinfo {
-    background: #f6f8fa;
+    background: #f0f6ff;
     color: #1f2328;
     padding: 5px 10px;
-    border-radius: 4px;
+    border-radius: 6px;
     font-family: 'Consolas', 'Courier New', monospace;
     font-size: 10px;
-    border: 1px solid #d0d7de;
+    border: 1px solid #c8daef;
     word-break: break-all;
     line-height: 1.5;
-    margin: 3px 0;
+    margin: 4px 0;
 }
 .vdash-section {
     color: #0550ae;
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 700;
-    padding: 5px 0 2px 0;
-    border-bottom: 1.5px solid #d0e8ff;
-    margin: 6px 0 3px 0;
+    padding: 6px 6px 3px 6px;
+    border-bottom: 2px solid #d0e8ff;
+    margin: 8px 0 4px 0;
     font-family: 'Segoe UI', sans-serif;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
+    letter-spacing: 0.8px;
+    background: linear-gradient(90deg, #f0f6ff 0%, transparent 100%);
+    border-radius: 4px 4px 0 0;
 }
 .vdash-module-label {
-    color: #656d76;
-    font-size: 10px;
-    font-weight: 600;
+    color: #0550ae;
+    font-size: 9px;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 6px 0 2px 0;
-    margin-top: 2px;
+    letter-spacing: 0.8px;
+    padding: 8px 2px 3px 2px;
+    margin-top: 4px;
+    border-bottom: 1px solid #e1eaf5;
 }
-.vdash-status-ok    { color: #116329; font-size: 11px; font-family: monospace; padding: 2px 8px;
-                       background: #d1f0da; border-radius: 3px; display: inline-block; }
-.vdash-status-warn  { color: #7d4e00; font-size: 11px; font-family: monospace; padding: 2px 8px;
-                       background: #fff8c5; border-radius: 3px; display: inline-block; }
-.vdash-status-error { color: #82071e; font-size: 11px; font-family: monospace; padding: 2px 8px;
-                       background: #ffebe9; border-radius: 3px; display: inline-block; }
-.vdash-status-info  { color: #0550ae; font-size: 11px; font-family: monospace; padding: 2px 8px;
-                       background: #ddf4ff; border-radius: 3px; display: inline-block; }
-/* ipywidgets label overrides – ensure readable text on any Jupyter theme */
-.widget-label, .widget-label-basic { color: #1f2328 !important; font-size: 11px !important; }
-.widget-checkbox > label { color: #1f2328 !important; }
-.widget-readout { color: #1f2328 !important; background: #f6f8fa !important; font-size: 11px !important; }
-.widget-dropdown select { color: #1f2328 !important; background: #ffffff !important; }
+.vdash-run-area {
+    border-top: 2px solid #d0e8ff;
+    padding: 8px 0 4px 0;
+    margin-top: 6px;
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+    border-radius: 0 0 6px 6px;
+}
+.vdash-status-ok    { color: #116329; font-size: 11px; font-family: monospace; padding: 3px 10px;
+                       background: #dcfce7; border-radius: 4px; display: inline-block;
+                       border: 1px solid #86efac; }
+.vdash-status-warn  { color: #7d4e00; font-size: 11px; font-family: monospace; padding: 3px 10px;
+                       background: #fef9c3; border-radius: 4px; display: inline-block;
+                       border: 1px solid #fde047; }
+.vdash-status-error { color: #82071e; font-size: 11px; font-family: monospace; padding: 3px 10px;
+                       background: #ffe4e6; border-radius: 4px; display: inline-block;
+                       border: 1px solid #fca5a5; }
+.vdash-status-info  { color: #0550ae; font-size: 11px; font-family: monospace; padding: 3px 10px;
+                       background: #dbeafe; border-radius: 4px; display: inline-block;
+                       border: 1px solid #93c5fd; }
+/* ipywidgets label overrides */
+.widget-label, .widget-label-basic { color: #1f2328 !important; font-size: 11px !important; font-weight: 500 !important; }
+.widget-checkbox > label { color: #1f2328 !important; font-size: 11px !important; }
+/* Slider readout (value display) */
+.widget-readout {
+    color: #0550ae !important;
+    background: #eff6ff !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    border: 1px solid #bfdbfe !important;
+    border-radius: 4px !important;
+    min-width: 62px !important;
+    text-align: center !important;
+}
+/* Slider track */
+.widget-slider .slider-container {
+    padding-top: 2px;
+}
+/* Dropdown */
+.widget-dropdown > select {
+    color: #1f2328 !important;
+    background: #ffffff !important;
+    border: 1px solid #c8daef !important;
+    border-radius: 5px !important;
+    font-size: 11px !important;
+    padding: 2px 4px !important;
+}
+/* Module selector */
+.widget-select > select {
+    font-size: 12px !important;
+    border: 1px solid #c8daef !important;
+    border-radius: 6px !important;
+    background: #f8fbff !important;
+    color: #1f2328 !important;
+    outline: none !important;
+    padding: 3px !important;
+}
+.widget-select > select option:checked {
+    background: #0969da !important;
+    color: #ffffff !important;
+}
+/* Buttons */
+.widget-button button.mod-success {
+    background: linear-gradient(135deg, #166534 0%, #16a34a 100%) !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.3px !important;
+    box-shadow: 0 1px 4px rgba(22,101,52,0.3) !important;
+    transition: all 0.15s ease !important;
+}
+.widget-button button.mod-success:hover {
+    background: linear-gradient(135deg, #14532d 0%, #166534 100%) !important;
+    box-shadow: 0 2px 8px rgba(22,101,52,0.4) !important;
+    transform: translateY(-1px) !important;
+}
+.widget-button button.mod-warning {
+    background: linear-gradient(135deg, #92400e 0%, #d97706 100%) !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    box-shadow: 0 1px 4px rgba(146,64,14,0.3) !important;
+}
+.widget-button button.mod-info {
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%) !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    box-shadow: 0 1px 4px rgba(30,64,175,0.25) !important;
+}
+/* Checkboxes */
+.widget-checkbox input[type=checkbox] {
+    width: 14px !important;
+    height: 14px !important;
+    accent-color: #0969da;
+}
 </style>
 """
 
@@ -148,7 +235,7 @@ def _slider(desc, val, lo, hi, step, **kw):
         step=step,
         continuous_update=False,
         style=style,
-        layout=_CTRL_LAYOUT,
+        layout=widgets.Layout(width="276px"),
         **kw,
     )
 
@@ -164,7 +251,7 @@ def _int_slider(desc, val, lo, hi, step=1, **kw):
         step=step,
         continuous_update=False,
         style=style,
-        layout=_CTRL_LAYOUT,
+        layout=widgets.Layout(width="276px"),
         **kw,
     )
 
@@ -187,7 +274,7 @@ def _dropdown(desc, options, value=None, **kw):
         options=options,
         value=resolved,
         style=style,
-        layout=_CTRL_LAYOUT,
+        layout=widgets.Layout(width="276px"),
         **kw,
     )
 
@@ -197,7 +284,7 @@ def _checkbox(desc, value=True, **kw):
         description=desc,
         value=value,
         indent=False,
-        layout=_CTRL_LAYOUT,
+        layout=widgets.Layout(width="276px"),
         **kw,
     )
 
@@ -207,7 +294,7 @@ def _btn(desc, style="primary", icon=""):
         description=desc,
         button_style=style,
         icon=icon,
-        layout=_BTN_LAYOUT,
+        layout=widgets.Layout(width="276px", height="32px", margin="2px 0px"),
     )
 
 
@@ -271,6 +358,8 @@ class VortexInteractiveDashboard:
         self._status: Any = None
         self._health_widget: Any = None  # HTML widget showing health status
         self._controls: dict[str, Any] = {}
+        self._module_run_buttons: dict[str, Any] = {}
+        self._run_btn_area: Any = None
         self._display_handle: Any = None
         self._css_displayed = False
         self._built = False
@@ -345,7 +434,7 @@ class VortexInteractiveDashboard:
         # user tries to interact with other widgets (kernel freeze).
         _scroll_layout = widgets.Layout(
             width="296px",
-            max_height="380px",
+            max_height="310px",
             overflow_y="auto",
             overflow_x="hidden",
         )
@@ -360,7 +449,20 @@ class VortexInteractiveDashboard:
         )
         self._module_selector.observe(self._on_module_select, names="value")
 
-        # ---- Left panel (info + selector + controls + presets) --------------
+        # ---- Run button area (always visible, outside scroll) ---------------
+        _first_btn = self._module_run_buttons.get(_module_names[0])
+        _run_children = [_first_btn] if _first_btn is not None else []
+        self._run_btn_area = widgets.VBox(
+            _run_children,
+            layout=widgets.Layout(
+                width="296px",
+                padding="6px 0 2px 0",
+                border_top="2px solid #d0e8ff",
+                margin_top="4px",
+            ),
+        )
+
+        # ---- Left panel (info + selector + controls + run btn + presets) ----
         job_info = self._build_job_info()
         preset_row = self._build_preset_row()
 
@@ -371,6 +473,7 @@ class VortexInteractiveDashboard:
                 module_label,
                 self._module_selector,
                 self._ctrl_area,
+                self._run_btn_area,
                 preset_row,
             ],
             layout=widgets.Layout(**_PANEL_LAYOUT),
@@ -431,7 +534,7 @@ class VortexInteractiveDashboard:
         )
         self._w_preset_load = widgets.Dropdown(
             options=["— load preset —"],
-            layout=_CTRL_LAYOUT,
+            layout=widgets.Layout(width="276px"),
         )
         self._w_preset_save.on_click(self._on_save_preset)
         self._w_preset_load.observe(self._on_load_preset, names="value")
@@ -449,10 +552,14 @@ class VortexInteractiveDashboard:
     # ------------------------------------------------------------------
 
     def _on_module_select(self, change):
-        """Switch the visible control panel by toggling CSS display."""
+        """Switch the visible control panel and run button by toggling CSS display."""
         selected = change["new"]
         for name, panel in self._module_panels.items():
             panel.layout.display = "" if name == selected else "none"
+        # Swap run button for selected module
+        if self._run_btn_area is not None:
+            btn = self._module_run_buttons.get(selected)
+            self._run_btn_area.children = [btn] if btn is not None else []
 
     # ------------------------------------------------------------------
     # ───────────────────────── TAB: CORE ──────────────────────────────
@@ -496,6 +603,7 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Run Core Tracking", "success", "play")
         btn.on_click(lambda _: self._run_core(c))
+        self._module_run_buttons["🎯 Core tracking"] = btn
 
         self._controls["core"] = c
         return widgets.VBox(
@@ -513,7 +621,6 @@ class VortexInteractiveDashboard:
                 c["show_orbit"],
                 c["show_geom"],
                 c["cmap"],
-                btn,
             ]
         )
 
@@ -538,6 +645,7 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Detect Topology", "success", "play")
         btn.on_click(lambda _: self._run_topology(c))
+        self._module_run_buttons["🌀 Topology"] = btn
 
         self._controls["topology"] = c
         return widgets.VBox(
@@ -550,7 +658,6 @@ class VortexInteractiveDashboard:
                 _section("✨ Display"),
                 c["cmap"],
                 c["show_charge"],
-                btn,
             ]
         )
 
@@ -580,6 +687,7 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Analyze Trajectory", "success", "play")
         btn.on_click(lambda _: self._run_trajectory(c))
+        self._module_run_buttons["📐 Trajectory"] = btn
 
         self._controls["trajectory"] = c
         return widgets.VBox(
@@ -593,7 +701,6 @@ class VortexInteractiveDashboard:
                 c["show_geom"],
                 c["color_by"],
                 c["cmap"],
-                btn,
             ]
         )
 
@@ -619,6 +726,7 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Compute Spectrum", "success", "play")
         btn.on_click(lambda _: self._run_spectrum(c))
+        self._module_run_buttons["📊 Spectrum"] = btn
 
         self._controls["spectrum"] = c
         return widgets.VBox(
@@ -633,7 +741,6 @@ class VortexInteractiveDashboard:
                 c["show_peaks"],
                 c["peak_prom"],
                 c["normalize"],
-                btn,
             ]
         )
 
@@ -657,6 +764,7 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Compute Spectrogram", "success", "play")
         btn.on_click(lambda _: self._run_spectrogram(c))
+        self._module_run_buttons["🌈 Spectrogram"] = btn
 
         self._controls["spectrogram"] = c
         return widgets.VBox(
@@ -670,7 +778,6 @@ class VortexInteractiveDashboard:
                 c["f_max_ghz"],
                 c["cmap"],
                 c["log_power"],
-                btn,
             ]
         )
 
@@ -692,6 +799,7 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Compute Modes", "success", "play")
         btn.on_click(lambda _: self._run_modes(c))
+        self._module_run_buttons["🎭 Modes"] = btn
 
         self._controls["modes"] = c
         return widgets.VBox(
@@ -705,7 +813,6 @@ class VortexInteractiveDashboard:
                 c["cmap_amp"],
                 c["normalize_modes"],
                 c["show_colorbar"],
-                btn,
             ]
         )
 
@@ -730,6 +837,7 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Detect Events", "success", "play")
         btn.on_click(lambda _: self._run_events(c))
+        self._module_run_buttons["⚡ Events"] = btn
 
         self._controls["events"] = c
         return widgets.VBox(
@@ -740,7 +848,6 @@ class VortexInteractiveDashboard:
                 c["min_duration"],
                 _section("✨ Display"),
                 c["show_on_trajectory"],
-                btn,
             ]
         )
 
@@ -762,6 +869,7 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Compute Signal", "success", "play")
         btn.on_click(lambda _: self._run_signals(c))
+        self._module_run_buttons["📡 Signals"] = btn
 
         self._controls["signals"] = c
         return widgets.VBox(
@@ -774,7 +882,6 @@ class VortexInteractiveDashboard:
                 c["show_psd"],
                 c["method"],
                 c["f_max_ghz"],
-                btn,
             ]
         )
 
@@ -799,7 +906,7 @@ class VortexInteractiveDashboard:
             step=0.01,
             continuous_update=False,
             style=_CTRL_STYLE,
-            layout=_CTRL_LAYOUT,
+            layout=widgets.Layout(width="276px"),
         )
         c["current_mA"] = _slider("Current I [mA]", 6.0, -30.0, 30.0, 0.1)
         c["polarization"] = _slider("Polarization P", 0.3, 0.0, 1.0, 0.01)
@@ -812,6 +919,10 @@ class VortexInteractiveDashboard:
 
         btn_quick = _btn("▶  Quick Trajectory Fit", "success", "play")
         btn_quick.on_click(lambda _: self._run_thiele_quick(c))
+        self._module_run_buttons["🔬 Thiele model"] = widgets.VBox(
+            [btn_quick, btn_thiele],
+            layout=widgets.Layout(width="276px"),
+        )
 
         self._controls["thiele"] = c
         return widgets.VBox(
@@ -829,8 +940,6 @@ class VortexInteractiveDashboard:
                 _section("🔧 Analysis"),
                 c["fit_to_data"],
                 c["show_psd"],
-                btn_quick,
-                btn_thiele,
             ]
         )
 
@@ -874,12 +983,15 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Plot", "success", "play")
         btn.on_click(lambda _: self._run_table(c))
+        self._module_run_buttons["📋 Table data"] = widgets.VBox(
+            [btn_refresh, btn],
+            layout=widgets.Layout(width="276px"),
+        )
 
         self._controls["table"] = c
         return widgets.VBox(
             [
                 _section("📋 Table columns"),
-                btn_refresh,
                 c["x_col"],
                 c["y_col"],
                 c["y2_col"],
@@ -890,7 +1002,6 @@ class VortexInteractiveDashboard:
                 c["normalise_x"],
                 c["normalise_y"],
                 c["show_grid"],
-                btn,
             ]
         )
 
