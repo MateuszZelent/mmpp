@@ -89,6 +89,7 @@ tests/**
 !tests/test_imports_hysteresis.py
 !tests/test_xy_convention_contract.py
 !tests/test_dataset_plotting_accessors.py
+!tests/test_mmpp_notebook_progress.py
 !tests/test_field_resolved_thiele.py
 !tests/test_solitons_report_recommendations.py
 

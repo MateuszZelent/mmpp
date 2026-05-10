@@ -1,9 +1,9 @@
 import logging
 import os
-import glob
 import json
 import pickle
 import re
+import sys
 import threading
 import warnings
 import uuid
@@ -26,6 +26,26 @@ if FFT_AVAILABLE:
     from ..fft import FFT
 
 log = get_mmpp_logger("mmpp")
+
+
+def _running_in_ipython_kernel() -> bool:
+    """Return True inside Jupyter/VSCode notebook kernels."""
+    try:
+        import builtins
+
+        get_ipython = getattr(builtins, "get_ipython", None)
+        if get_ipython is None:
+            return False
+        shell = get_ipython().__class__.__name__
+    except Exception:
+        return False
+    return shell == "ZMQInteractiveShell"
+
+
+def _should_render_rich_progress() -> bool:
+    """Use Rich live progress only where it can update a single terminal line."""
+    return bool(sys.stderr.isatty() and not _running_in_ipython_kernel())
+
 
 class MMPP:
     """
@@ -134,6 +154,15 @@ class MMPP:
             self.df = pd.DataFrame()
             self.zarr_results = []
 
+    @property
+    def dataframe(self) -> "pd.DataFrame":
+        """Alias for :attr:`df` — the main scan results DataFrame."""
+        return self.df
+
+    @dataframe.setter
+    def dataframe(self, value: "pd.DataFrame") -> None:
+        self.df = value
+
     def __len__(self):
         """Return number of zarr results available."""
         return len(self.zarr_results)
@@ -207,10 +236,10 @@ class MMPP:
         # Get parameter statistics
         param_stats = self._get_parameter_stats()
         
+        import uuid as _uuid_mod
+        unique_id = str(_uuid_mod.uuid4())[:8]
+        
         if param_stats:
-            import uuid
-            unique_id = str(uuid.uuid4())[:8]
-            
             html += '<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
             html += '<b style="color: #94a3b8;">📋 Parameters:</b> <small style="color: #64748b; margin-left: 8px;">(click to see values)</small><br>'
             html += '<table style="width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 0.9em;">'
@@ -276,6 +305,9 @@ class MMPP:
             
             html += '</div>'
         
+        # ---- Results list -------------------------------------------------------
+        html += self._repr_html_results_list(unique_id)
+        
         # Available methods
         html += '<div style="background: linear-gradient(135deg, rgba(51,65,85,0.4) 0%, rgba(30,41,59,0.4) 100%); padding: 12px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px);">'
         html += '<b style="color: #94a3b8;">🔧 Quick Start:</b><br>'
@@ -314,6 +346,126 @@ class MMPP:
         # Sort by number of unique values (descending) - varying parameters first
         return dict(sorted(stats.items(), key=lambda x: x[1]['unique'], reverse=True))
 
+    def _repr_html_results_list(self, uid: str) -> str:
+        """Build an expandable HTML block listing all scanned results with indices."""
+        results = self.zarr_results
+        if not results:
+            return ""
+
+        import html as _html
+
+        # Determine which parameters vary so we can highlight them in the list
+        param_stats = self._get_parameter_stats()
+        varying = [p for p, s in param_stats.items() if s["unique"] > 1][:6]  # at most 6 cols
+
+        # Section container – collapsed by default when there are many results
+        show_initially = len(results) <= 10
+        list_id = f"results-list-{uid}"
+        btn_id = f"results-btn-{uid}"
+        n = len(results)
+
+        # ---- header toggle button -------------------------------------------
+        toggle_js = (
+            f"var el=document.getElementById('{list_id}');"
+            f"var btn=document.getElementById('{btn_id}');"
+            f"if(el.style.display==='none'){{el.style.display='block';btn.textContent='▲ Hide {n} results';}}"
+            f"else{{el.style.display='none';btn.textContent='▼ Show {n} results';}}"
+        )
+        open_label = f"▲ Hide {n} results" if show_initially else f"▼ Show {n} results"
+        btn_html = (
+            f'<button id="{btn_id}" onclick="{toggle_js}" '
+            f'style="padding:4px 12px;background:linear-gradient(135deg,rgba(96,165,250,0.15),rgba(79,70,229,0.15));'
+            f'border:1px solid rgba(96,165,250,0.3);border-radius:5px;color:#93c5fd;cursor:pointer;'
+            f'font-size:0.8em;font-weight:600;float:right;">{open_label}</button>'
+        )
+
+        out = (
+            f'<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4),rgba(30,41,59,0.4));'
+            f'padding:12px;border-radius:8px;margin-bottom:10px;border:1px solid rgba(148,163,184,0.15);">'
+            f'<b style="color:#94a3b8;">📂 Scanned Results ({n}):</b>{btn_html}'
+            f'<div style="clear:both;"></div>'
+        )
+
+        display_style = "block" if show_initially else "none"
+        out += f'<div id="{list_id}" style="display:{display_style};margin-top:8px;overflow-x:auto;">'
+        out += '<table style="width:100%;border-collapse:collapse;font-size:0.82em;">'
+
+        # Table header
+        th_style = "padding:5px 8px;font-weight:600;color:#cbd5e1;border-bottom:2px solid rgba(148,163,184,0.25);text-align:left;white-space:nowrap;"
+        out += "<thead><tr>"
+        out += f'<th style="{th_style}">#</th>'
+        out += f'<th style="{th_style}">Path</th>'
+        for p in varying:
+            out += f'<th style="{th_style}">{_html.escape(p)}</th>'
+        out += "</tr></thead><tbody>"
+
+        # Rows – show first 30 directly, rest in a collapsible block
+        VISIBLE = 30
+        more_btn_id = f"results-more-btn-{uid}"
+
+        def _fmt_val(v) -> str:
+            if v is None:
+                return '<span style="color:#475569;">—</span>'
+            if isinstance(v, float):
+                return f'<span style="color:#a5b4fc;">{v:.4g}</span>'
+            return f'<span style="color:#a5b4fc;">{_html.escape(str(v))}</span>'
+
+        def _short_path(full_path: str) -> str:
+            """Return last 2 path components for display."""
+            parts = str(full_path).replace("\\", "/").rstrip("/").split("/")
+            short = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+            return _html.escape(short)
+
+        td_style = "padding:4px 8px;border-bottom:1px solid rgba(71,85,105,0.25);vertical-align:top;"
+        code_style = (
+            "background:rgba(15,23,42,0.7);padding:1px 6px;border-radius:4px;"
+            "color:#60a5fa;font-family:monospace;cursor:pointer;"
+            "border:1px solid rgba(71,85,105,0.4);"
+        )
+        path_style = (
+            "font-family:monospace;font-size:0.88em;color:#cbd5e1;"
+            "word-break:break-all;max-width:260px;"
+        )
+
+        for i, res in enumerate(results):
+            attrs = res.attributes if isinstance(res.attributes, dict) else {}
+            row_extra = "" if i < VISIBLE else f'class="results-more-{uid}" style="display:none;"'
+            out += f"<tr {row_extra}>"
+            # index cell with copyable job[i] snippet
+            out += (
+                f'<td style="{td_style}"><code style="{code_style}" '
+                f'title="{_html.escape(str(res.path))}">'
+                f"job[{i}]</code></td>"
+            )
+            # path cell
+            out += f'<td style="{td_style}"><span style="{path_style}" title="{_html.escape(str(res.path))}">{_short_path(str(res.path))}</span></td>'
+            # varying param values
+            for p in varying:
+                val = attrs.get(p)
+                out += f'<td style="{td_style}">{_fmt_val(val)}</td>'
+            out += "</tr>"
+
+        out += "</tbody></table>"
+
+        # "Show more" button if needed
+        if n > VISIBLE:
+            more_js = (
+                f"var rows=document.querySelectorAll('.results-more-{uid}');"
+                f"var btn=document.getElementById('{more_btn_id}');"
+                f"var hidden=rows[0].style.display==='none';"
+                f"rows.forEach(r=>r.style.display=hidden?'table-row':'none');"
+                f"btn.textContent=hidden?'▲ Show fewer':'▼ Show {n - VISIBLE} more results';"
+            )
+            out += (
+                f'<button id="{more_btn_id}" onclick="{more_js}" '
+                f'style="margin-top:6px;padding:5px 14px;background:rgba(96,165,250,0.1);'
+                f'border:1px solid rgba(96,165,250,0.25);border-radius:5px;color:#93c5fd;'
+                f'cursor:pointer;font-size:0.8em;font-weight:600;">▼ Show {n - VISIBLE} more results</button>'
+            )
+
+        out += "</div></div>"
+        return out
+
     @property
     def mpl(self) -> "MMPPlotter":
         """Get matplotlib plotter for all results."""
@@ -330,19 +482,28 @@ class MMPP:
 
     @property
     def fft(self) -> "FFT":
-        """Get FFT analyzer for all results."""
+        """Get FFT analyzer.
+
+        .. deprecated::
+            Accessing ``job.fft`` returns the FFT interface for the **first**
+            result only, which is misleading when multiple results are present.
+            Use ``job[0].fft`` for a single result or ``job[:].fft`` for batch
+            FFT across all results.
+        """
         if not FFT_AVAILABLE:
             raise ImportError(
                 "FFT functionality not available. Check fft module import."
             )
-        # For MMPP level, we pass the first job as primary but provide full list context if needed
-        # Actually FFT expects a single job usually, but let's see how it handles it.
-        # If FFT is designed for single job, this property might need adjustment or return a BatchFFT.
-        # For now, let's assume it takes the first job or we need a different approach.
-        # Looking at FFT init: def __init__(self, job_result, mmpp_instance=None):
         if not self.zarr_results:
              raise ValueError("No zarr results available for FFT analysis.")
         
+        if len(self.zarr_results) > 1:
+            import warnings
+            warnings.warn(
+                f"job.fft operates on the FIRST result only ({len(self.zarr_results)} results "
+                "available). Use job[0].fft for single-result FFT or job[:].fft for batch FFT.",
+                stacklevel=2,
+            )
         return FFT(self.zarr_results[0], self)
 
     @property
@@ -512,31 +673,37 @@ class MMPP:
                 for path in zarr_folders
             }
 
-            
-            # Use rich progress bar if available, otherwise simple loop
-            try:
-                from rich.progress import Progress
-                with Progress() as progress:
-                    task = progress.add_task("[cyan]Scanning zarr folders...", total=len(zarr_folders))
-                    
-                    for future in as_completed(future_to_path):
-                        path = future_to_path[future]
-                        try:
-                            result = future.result()
-                            results.append(result)
-                        except Exception as exc:
-                            log.error(f"{path} generated an exception: {exc}")
-                        finally:
-                            progress.advance(task)
-            except ImportError:
-                # Fallback without rich
-                for future in as_completed(future_to_path):
-                    path = future_to_path[future]
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as exc:
-                        log.error(f"{path} generated an exception: {exc}")
+            if _should_render_rich_progress():
+                # Rich live progress is terminal-only. In VSCode/Jupyter it can
+                # leave multiple stale render frames in the cell output.
+                try:
+                    from rich.progress import Progress
+
+                    with Progress() as progress:
+                        task = progress.add_task(
+                            "[cyan]Scanning zarr folders...", total=len(zarr_folders)
+                        )
+
+                        for future in as_completed(future_to_path):
+                            path = future_to_path[future]
+                            try:
+                                result = future.result()
+                                results.append(result)
+                            except Exception as exc:
+                                log.error(f"{path} generated an exception: {exc}")
+                            finally:
+                                progress.advance(task)
+                    return results
+                except ImportError:
+                    pass
+
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as exc:
+                    log.error(f"{path} generated an exception: {exc}")
 
         return results
 

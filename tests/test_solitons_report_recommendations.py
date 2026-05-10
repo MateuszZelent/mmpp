@@ -501,6 +501,47 @@ def test_vortex_dashboard_show_reuses_display_handle(monkeypatch) -> None:
     assert updates == [dashboard._root]
 
 
+def test_vortex_dashboard_show_figure_uses_output_widget_not_global_display(
+    monkeypatch,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    from mmpp.solitons.vortex.ui import interactive_dashboard as dashboard_module
+
+    class _Output:
+        def __init__(self):
+            self.clear_calls = 0
+            self.displayed: list[object] = []
+
+        def clear_output(self, wait=False):
+            self.clear_calls += 1
+
+        def append_display_data(self, value):
+            self.displayed.append(value)
+
+    global_display_calls: list[object] = []
+    monkeypatch.setattr(
+        dashboard_module,
+        "display",
+        lambda value, **kwargs: global_display_calls.append(value),
+    )
+
+    dashboard = dashboard_module.VortexInteractiveDashboard.__new__(
+        dashboard_module.VortexInteractiveDashboard
+    )
+    output = _Output()
+    dashboard._output = output
+    dashboard._fig = None
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    dashboard._show_figure(fig)
+
+    assert output.clear_calls == 1
+    assert len(output.displayed) == 1
+    assert global_display_calls == []
+
+
 def test_canonical_nonlinear_thiele_module_alias() -> None:
     from mmpp.solitons.vortex.nonlinear.nonlinear_thiele import ThieleAnalyzer
     from mmpp.solitons.vortex.nonlinear.nonliniearthiele import (

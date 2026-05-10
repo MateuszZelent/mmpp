@@ -122,6 +122,7 @@ class InteractiveDispersionModes:
         # Widget state
         self._widgets_created = False
         self._output: widgets.Output | None = None
+        self._display_handle = None
         self._fig: Figure | None = None
         self._ax_disp: Axes | None = None
         self._ax_mode: Axes | None = None
@@ -344,8 +345,11 @@ class InteractiveDispersionModes:
         # Create the main layout
         main_layout = self._create_layout()
 
-        # Display
-        display(main_layout)
+        # Display once and update the same output on repeated calls.
+        if self._display_handle is None:
+            self._display_handle = display(main_layout, display_id=True)
+        else:
+            self._display_handle.update(main_layout)
 
         # Initial plot
         self._initialize_figure()

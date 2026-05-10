@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from .constants import ArraySlice, FFT_AVAILABLE, RICH_AVAILABLE
 from .dataset_geometry import (
+    IndexPlan,
     compose_index_keys,
     has_only_simple_slices,
+    make_index_plan,
     normalize_index_key,
     resolve_dataset_geometry,
     shape_after_index,
@@ -32,10 +34,20 @@ from .dataset_plotting import DatasetPlotAccessor
 class DatasetSpecificFFT:
     """FFT wrapper with pre-set dataset"""
 
-    def __init__(self, job_result, dataset_name, mmpp_instance=None, slice_info=None):
+    def __init__(
+        self,
+        job_result,
+        dataset_name,
+        mmpp_instance=None,
+        slice_info=None,
+        materialized_data: Optional[np.ndarray] = None,
+        index_plan: Optional[IndexPlan] = None,
+    ):
         self.dataset_name = dataset_name
         self.slice_info = slice_info
         self._job_result = job_result  # Keep reference for path access
+        self._materialized_data = materialized_data
+        self._index_plan = index_plan
         # Create regular FFT instance
         if FFT_AVAILABLE:
             self._fft = FFT(job_result, mmpp_instance)
@@ -66,10 +78,11 @@ class DatasetSpecificFFT:
         if name == "spectrum" and attr is not None:
             # Wrap SpectrumHelper to inject dataset and slice_info
             class SpectrumHelperWrapper:
-                def __init__(self, spectrum_helper, dataset_name, slice_info):
+                def __init__(self, spectrum_helper, dataset_name, slice_info, materialized_data=None):
                     self._spectrum_helper = spectrum_helper
                     self._dataset_name = dataset_name
                     self._slice_info = slice_info
+                    self._materialized_data = materialized_data
                 
                 def __call__(self, *args, **kwargs):
                     # Inject dataset and slice_info into kwargs
@@ -77,6 +90,9 @@ class DatasetSpecificFFT:
                         kwargs["dset"] = self._dataset_name
                     if self._slice_info is not None and "slice_info" not in kwargs:
                         kwargs["slice_info"] = self._slice_info
+                    # Inject pre-materialized data so FFT doesn't reload from storage
+                    if self._materialized_data is not None and "preloaded_data" not in kwargs:
+                        kwargs["preloaded_data"] = self._materialized_data
                     return self._spectrum_helper(*args, **kwargs)
                 
                 @property
@@ -91,7 +107,7 @@ class DatasetSpecificFFT:
                 def _repr_html_(self):
                     return getattr(self._spectrum_helper, '_repr_html_', lambda: None)()
             
-            return SpectrumHelperWrapper(attr, self.dataset_name, self.slice_info)
+            return SpectrumHelperWrapper(attr, self.dataset_name, self.slice_info, self._materialized_data)
 
         if callable(attr) and hasattr(attr, "__code__"):
             sig = inspect.signature(attr)
@@ -400,6 +416,7 @@ class DatasetAwareWrapper:
         slice_info=None,
         materialized_data: Optional[np.ndarray] = None,
         geometry_override=None,
+        index_plan: Optional[IndexPlan] = None,
     ):
         self.job_result = job_result
         self.dataset_name = dataset_name
@@ -407,10 +424,15 @@ class DatasetAwareWrapper:
         self.slice_info = slice_info  # Store slicing information
         self._materialized_data = materialized_data
         self._geometry_override = geometry_override
+        self._index_plan: Optional[IndexPlan] = index_plan
         self._fft = None
         self._solitons = None
         self._analyze = None
         self._plot = None
+
+    # ------------------------------------------------------------------ #
+    # Shape helpers                                                        #
+    # ------------------------------------------------------------------ #
 
     def _base_shape(self) -> tuple[int, ...]:
         """Shape of the immediate backing store before ``slice_info``."""
@@ -448,12 +470,127 @@ class DatasetAwareWrapper:
             return self.zarr_array[self.slice_info]
         return self.zarr_array
 
+    # ------------------------------------------------------------------ #
+    # Public shape / data properties                                       #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def analysis_shape(self) -> tuple[int, ...]:
+        """Shape with all dimensions preserved (used by .fft, .solitons, etc.)."""
+        if self._index_plan is not None:
+            return self._index_plan.analysis_shape
+        return self._current_shape()
+
+    @property
+    def numpy_shape(self) -> tuple[int, ...]:
+        """NumPy-like shape after dropping integer-indexed axes."""
+        if self._index_plan is not None:
+            return self._index_plan.numpy_shape
+        return self._current_shape()
+
+    @property
+    def is_lazy(self) -> bool:
+        """True when data has not been materialized to memory."""
+        return self._materialized_data is None
+
+    @property
+    def is_materialized(self) -> bool:
+        """True when data has been materialized (fancy index, downsample, etc.)."""
+        return self._materialized_data is not None
+
+    @property
+    def estimated_nbytes(self) -> int:
+        """Estimated byte size of the current view (lazy estimate)."""
+        shape = self.analysis_shape
+        n_elements = 1
+        for s in shape:
+            n_elements *= s
+        dtype = getattr(self.zarr_array, "dtype", np.dtype("float32"))
+        return n_elements * dtype.itemsize
+
+    def numpy(
+        self,
+        *,
+        copy: bool = True,
+        dtype: Optional[Any] = None,
+        keepdims: bool = False,
+        squeeze: bool = False,
+    ) -> np.ndarray:
+        """Materialize data as a NumPy array.
+
+        Parameters
+        ----------
+        copy:
+            Return a copy of the data (default True).
+        dtype:
+            Cast to this dtype if provided.
+        keepdims:
+            If True, preserve all dimensions (analysis shape); integer-indexed
+            axes are *not* dropped.  Use this for analysis code that needs the
+            full dimensional layout.
+        squeeze:
+            If True, remove *all* length-1 axes (standard ``np.squeeze``).
+            Takes effect after ``keepdims`` processing.
+        """
+        # Warn on large materializations
+        _LARGE_BYTES = 1 << 30  # 1 GiB
+        if self.is_lazy and self.estimated_nbytes > _LARGE_BYTES:
+            warnings.warn(
+                f"Materializing ~{self.estimated_nbytes / (1 << 30):.1f} GiB. "
+                "Consider using chunks, downsample, or .sel() first.",
+                stacklevel=2,
+            )
+
+        arr = np.asarray(self._resolve_source())
+
+        if not keepdims and self._index_plan is not None:
+            dropped = self._index_plan.dropped_axes
+            if dropped:
+                # Remove only the axes selected by integer indexing
+                for axis in sorted(dropped, reverse=True):
+                    arr = np.squeeze(arr, axis=axis)
+
+        if squeeze:
+            arr = np.squeeze(arr)
+
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=False)
+
+        if copy and not arr.flags["OWNDATA"]:
+            arr = arr.copy()
+
+        return arr
+
+    @property
+    def values(self) -> np.ndarray:
+        """Materialize and return data without copying (NumPy-like shape)."""
+        return self.numpy(copy=False)
+
+    @property
+    def array(self) -> np.ndarray:
+        """Alias for :attr:`values`."""
+        return self.numpy(copy=False)
+
+    def __array__(self, dtype=None, copy=None):
+        arr = self.numpy(copy=False, dtype=dtype)
+        if copy:
+            arr = arr.copy()
+        return arr
+
     def __getattr__(self, name):
         """Delegate to zarr_array for most attributes (but not our own properties)"""
         # Don't delegate properties that are defined on this class
-        if name in ("dt", "fft", "analyze", "shape", "data", "plot", "geometry", "region", "cell"):
+        if name in ("dt", "fft", "analyze", "shape", "data", "plot", "geometry", "region", "cell",
+                    "analysis_shape", "numpy_shape", "is_lazy", "is_materialized", "values", "array"):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-        
+
+        # Never forward numpy array protocol attributes — numpy uses these before
+        # calling __array__, so forwarding them would bypass our squeezed shape.
+        if name in ("__array_interface__", "__array_struct__", "__array_priority__",
+                    "__array_finalize__", "__array_wrap__", "__array_ufunc__",
+                    "__array_function__"):
+            raise AttributeError(f"'{self.__class__.__name__}' does not expose {name!r}")
+
         if self._materialized_data is not None:
             source = self._resolve_source()
             return getattr(source, name)
@@ -488,25 +625,28 @@ class DatasetAwareWrapper:
     def __getitem__(self, key):
         """Return new DatasetAwareWrapper with slicing info preserved.
         
-        IMPORTANT: Integer indices are automatically converted to single-item
-        slices to preserve array dimensions. For example:
-        
-            arr[:, :, 0]  ->  arr[:, :, 0:1]
-        
-        This means the number of dimensions is always preserved after slicing.
-        Use .squeeze() or .numpy(squeeze=True) to remove singleton dimensions.
+        Integer indices are tracked via IndexPlan so ``.numpy()`` can drop
+        those axes (NumPy semantics) while ``.fft`` keeps full dimensionality.
         """
         source_shape = self._current_shape()
         ndim = len(source_shape)
+
+        # local_normalized_key is relative to the CURRENT view shape.
+        # It is used for (a) materialized-data slicing and (b) compose_index_keys
+        # with self.slice_info to build the new combined_slice.
+        local_key_tuple = key if isinstance(key, tuple) else (key,)
+        local_normalized_key = tuple(normalize_index_key(local_key_tuple, ndim, keep_dims=True))
         
-        # Normalize the slice to keep dimensions
-        normalized_key = self._normalize_slice_to_keep_dims(key, ndim)
+        # Build IndexPlan — when previous_plan exists its storage_key is already
+        # fully composed relative to the ORIGINAL source, so do NOT use it in
+        # compose_index_keys below (that would double-compose).
+        new_plan = make_index_plan(key, source_shape, previous_plan=self._index_plan)
         
         if self._materialized_data is not None:
-            sliced = np.asarray(self._materialized_data[normalized_key])
+            sliced = np.asarray(self._materialized_data[local_normalized_key])
             geometry_override = None
             try:
-                geometry_override = self.geometry.sliced(normalized_key)
+                geometry_override = self.geometry.sliced(local_normalized_key)
             except Exception:
                 geometry_override = self._geometry_override
             return DatasetAwareWrapper(
@@ -516,13 +656,14 @@ class DatasetAwareWrapper:
                 slice_info=None,
                 materialized_data=sliced,
                 geometry_override=geometry_override,
+                index_plan=new_plan,
             )
 
-        if not has_only_simple_slices(normalized_key, ndim):
-            sliced = np.asarray(self._resolve_source()[normalized_key])
+        if not has_only_simple_slices(local_normalized_key, ndim):
+            sliced = np.asarray(self._resolve_source()[local_normalized_key])
             geometry_override = None
             try:
-                geometry_override = self.geometry.sliced(normalized_key)
+                geometry_override = self.geometry.sliced(local_normalized_key)
             except Exception:
                 geometry_override = self._geometry_override
             return DatasetAwareWrapper(
@@ -532,10 +673,13 @@ class DatasetAwareWrapper:
                 slice_info=None,
                 materialized_data=sliced,
                 geometry_override=geometry_override,
+                index_plan=new_plan,
             )
 
         base_shape = self._base_shape()
-        combined_slice = compose_index_keys(self.slice_info, normalized_key, base_shape)
+        # Always compose local_normalized_key (relative to current view) with
+        # self.slice_info (relative to original source) to get the new combined_slice.
+        combined_slice = compose_index_keys(self.slice_info, local_normalized_key, base_shape)
 
         return DatasetAwareWrapper(
             self.job_result,
@@ -544,18 +688,26 @@ class DatasetAwareWrapper:
             slice_info=combined_slice,
             materialized_data=None,
             geometry_override=self._geometry_override,
+            index_plan=new_plan,
         )
 
     @property
     def fft(self):
-        """Return FFT with this dataset pre-selected"""
+        """Return FFT with this dataset pre-selected.
+
+        When the wrapper holds materialized data (e.g. after .downsample()),
+        the FFT interface will operate on that materialized view rather than
+        re-loading the full dataset from storage.
+        """
         if self._fft is None and FFT_AVAILABLE:
-            # Create DatasetSpecificFFT with slicing info
+            # Pass materialized data through so FFT doesn't ignore it
             self._fft = DatasetSpecificFFT(
                 self.job_result,
                 self.dataset_name,
                 getattr(self.job_result, "_mmpp_ref", None),
                 slice_info=self.slice_info,
+                materialized_data=self._materialized_data,
+                index_plan=self._index_plan,
             )
         return self._fft
 
@@ -695,18 +847,6 @@ class DatasetAwareWrapper:
     def data(self):
         """Return data as numpy array (loads into memory)."""
         return self.numpy(copy=False)
-
-    def numpy(self, *, copy: bool = True, dtype=None, squeeze: bool = False):
-        """Materialize the wrapped data as numpy array."""
-        data = self._resolve_source()
-        if isinstance(data, zarr.Array):
-            data = data[:]
-        array = np.array(data, copy=copy)
-        if dtype is not None:
-            array = array.astype(dtype, copy=copy)
-        if squeeze:
-            array = np.squeeze(array)
-        return array
 
     def to_numpy(self, **kwargs):
         """Alias for numpy() to match common API naming."""
@@ -1039,6 +1179,31 @@ class DatasetAwareWrapper:
 
     def __len__(self):
         return len(self.numpy(copy=False))
+
+    def _repr_html_(self) -> str:
+        """HTML card for Jupyter notebooks."""
+        job_name = getattr(self.job_result, "name", "?")
+        shape_str = " × ".join(str(s) for s in self.analysis_shape)
+        numpy_shape_str = " × ".join(str(s) for s in self.numpy_shape)
+        state = "materialized" if self.is_materialized else "lazy"
+        dtype = getattr(self.zarr_array, "dtype", "unknown")
+        slice_row = (
+            f"<tr><td><b>slice</b></td><td><code>{self.slice_info}</code></td></tr>"
+            if self.slice_info is not None
+            else ""
+        )
+        return (
+            "<div style='border:1px solid #ccc;padding:8px;border-radius:4px;"
+            "font-family:monospace;display:inline-block'>"
+            f"<b>DatasetAwareWrapper</b> — <i>{job_name}</i> / <code>{self.dataset_name}</code><br>"
+            "<table style='border-collapse:collapse;margin-top:4px'>"
+            f"<tr><td><b>analysis shape</b></td><td>{shape_str}</td></tr>"
+            f"<tr><td><b>numpy shape</b></td><td>{numpy_shape_str}</td></tr>"
+            f"<tr><td><b>dtype</b></td><td>{dtype}</td></tr>"
+            f"<tr><td><b>state</b></td><td>{state}</td></tr>"
+            f"{slice_row}"
+            "</table></div>"
+        )
 
     def __repr__(self):
         slice_str = f"[{self.slice_info}]" if self.slice_info else ""

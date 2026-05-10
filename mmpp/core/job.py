@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..pyzfn import Pyzfn
-from ..pyzfn.h5_backend import detect_h5_quantities
+from ..pyzfn.h5_backend import detect_h5_quantities, H5QuantityGroup
 from ..cli.logging_config import get_mmpp_logger
 from .constants import SPECIAL_ATTRS, ArraySlice, npf32, npc64, np1d, np2d, np3d, np4d, np5d, np4dc, RICH_AVAILABLE, FFT_AVAILABLE
 from .attributes import AttributesView
@@ -22,6 +22,20 @@ if RICH_AVAILABLE:
     from rich.syntax import Syntax
 
 log = get_mmpp_logger("mmpp")
+
+
+def _is_array_like_dataset(obj: Any) -> bool:
+    """Return True if *obj* quacks like a dataset array (zarr.Array or H5QuantityGroup).
+
+    Using structural duck-typing keeps this robust to future backends
+    (e.g. Dask, Zarr v4) without introducing hard dependencies.
+    """
+    return (
+        hasattr(obj, "shape")
+        and hasattr(obj, "dtype")
+        and hasattr(obj, "__getitem__")
+        and isinstance(getattr(obj, "shape", None), tuple)
+    )
 
 
 class _TreeDisplay:
@@ -293,7 +307,7 @@ class ZarrJobResult:
         self._ensure_zarr_loaded()
         try:
             member = self._get_zarr_member(item)
-            if isinstance(member, zarr.Array):
+            if isinstance(member, zarr.Array) or _is_array_like_dataset(member):
                 return DatasetAwareWrapper(self, item, member)
             return member
         except NameError:
@@ -340,7 +354,7 @@ class ZarrJobResult:
             zarr_item = None
 
         if zarr_item is not None:
-            if isinstance(zarr_item, zarr.Array):
+            if isinstance(zarr_item, zarr.Array) or _is_array_like_dataset(zarr_item):
                 return DatasetAwareWrapper(self, name, zarr_item)
             return zarr_item
 
@@ -517,9 +531,19 @@ class ZarrJobResult:
         Parameters:
         -----------
         dset : str
-            Name of dataset or group to remove
+            Name of dataset or group to remove (must not escape the job directory)
         """
-        shutil.rmtree(f"{self.path}/{dset}", ignore_errors=True)
+        from pathlib import Path
+        import shutil
+
+        base = Path(self.path).resolve()
+        target = (base / dset).resolve()
+        # Security: reject paths that would escape the job directory
+        if not str(target).startswith(str(base) + "/") and target != base:
+            raise ValueError(
+                f"Refusing to delete path outside job directory: {dset!r}"
+            )
+        shutil.rmtree(target, ignore_errors=True)
 
     def is_finished(self) -> bool:
         """Check if simulation is finished."""

@@ -861,8 +861,11 @@ def _make_progress_bar(total: int, verbose: bool):
     if not verbose:
         return None
     try:
-        # Try Jupyter/IPython widget first (renders as interactive bar in notebook)
-        from tqdm.auto import tqdm
+        from mmpp.core.mmpp import _running_in_ipython_kernel
+
+        if _running_in_ipython_kernel():
+            return None
+        from tqdm import tqdm
 
         return tqdm(
             total=total,

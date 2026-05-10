@@ -2206,14 +2206,18 @@ class BatchTransmission:
 
                 # Process completed tasks with progress bar
                 try:
+                    from mmpp.core.mmpp import _running_in_ipython_kernel
                     from tqdm import tqdm
 
-                    iterator = tqdm(
-                        as_completed(future_to_result),
-                        total=len(self.results),
-                        desc="Computing transmission",
-                        unit="result",
-                    )
+                    if _running_in_ipython_kernel():
+                        iterator = as_completed(future_to_result)
+                    else:
+                        iterator = tqdm(
+                            as_completed(future_to_result),
+                            total=len(self.results),
+                            desc="Computing transmission",
+                            unit="result",
+                        )
                 except ImportError:
                     iterator = as_completed(future_to_result)
 
@@ -2241,14 +2245,18 @@ class BatchTransmission:
             log.info("Using sequential execution")
 
             try:
+                from mmpp.core.mmpp import _running_in_ipython_kernel
                 from tqdm import tqdm
 
-                iterator = tqdm(
-                    enumerate(self.results),
-                    total=len(self.results),
-                    desc="Computing transmission",
-                    unit="result",
-                )
+                if _running_in_ipython_kernel():
+                    iterator = enumerate(self.results)
+                else:
+                    iterator = tqdm(
+                        enumerate(self.results),
+                        total=len(self.results),
+                        desc="Computing transmission",
+                        unit="result",
+                    )
             except ImportError:
                 iterator = enumerate(self.results)
 

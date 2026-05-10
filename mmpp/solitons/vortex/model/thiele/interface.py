@@ -10,7 +10,9 @@ from .field_resolved_cpp import field_resolved_cpp
 class ThieleModelNamespace:
     """Factory namespace for CIP/CPP Thiele adapters."""
 
-    def __init__(self, *, job_result=None, dataset_name: str | None = None, slice_info=None):
+    def __init__(
+        self, *, job_result=None, dataset_name: str | None = None, slice_info=None
+    ):
         self._job = job_result
         self._dataset_name = dataset_name
         self._slice_info = slice_info

@@ -101,9 +101,7 @@ def test_saturation_damping_increases_near_configured_orbit_limit():
 
 
 def test_oersted_stiffness_changes_sign_with_chirality_and_current():
-    cal = FieldResolvedCalibration(
-        oersted=OerstedCalibration(K2_per_J=1e-22)
-    )
+    cal = FieldResolvedCalibration(oersted=OerstedCalibration(K2_per_J=1e-22))
     model_cw = make_model(chirality=1, calibration=cal)
     model_ccw = make_model(chirality=-1, calibration=cal)
     x = np.zeros(2, dtype=float)

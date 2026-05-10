@@ -47,67 +47,93 @@ except ImportError:
 # CSS / HTML helpers
 # ---------------------------------------------------------------------------
 
-_CSS = """
-<style>
+_CSS = """<style>
+/* ── Vortex Dashboard – clean light theme ───────────────────────── */
 .vdash-header {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%);
-    color: #e94560;
-    padding: 12px 18px;
-    border-radius: 10px 10px 0 0;
-    font-family: 'Segoe UI', monospace;
-    font-size: 18px;
-    font-weight: bold;
-    letter-spacing: 1px;
-    border-bottom: 2px solid #e94560;
+    background: linear-gradient(90deg, #0550ae 0%, #0969da 100%);
+    color: #ffffff;
+    padding: 10px 16px;
+    border-radius: 8px 8px 0 0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 .vdash-header span.sub {
-    font-size: 11px;
-    color: #a8b2d8;
-    font-weight: normal;
-    margin-left: 12px;
-    letter-spacing: 0.5px;
+    font-size: 10px;
+    color: #cae8ff;
+    font-weight: 400;
+    margin-left: auto;
+    letter-spacing: 0.3px;
 }
 .vdash-jobinfo {
-    background: #0d1117;
-    color: #58a6ff;
-    padding: 6px 12px;
+    background: #f6f8fa;
+    color: #1f2328;
+    padding: 5px 10px;
     border-radius: 4px;
-    font-family: monospace;
-    font-size: 11px;
-    margin-bottom: 4px;
-    border: 1px solid #21262d;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 10px;
+    border: 1px solid #d0d7de;
+    word-break: break-all;
+    line-height: 1.5;
+    margin: 3px 0;
 }
 .vdash-section {
-    color: #e6edf3;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 0 2px 0;
-    border-bottom: 1px solid #21262d;
-    margin-bottom: 4px;
+    color: #0550ae;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 5px 0 2px 0;
+    border-bottom: 1.5px solid #d0e8ff;
+    margin: 6px 0 3px 0;
     font-family: 'Segoe UI', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
 }
-.vdash-status-ok    { color: #3fb950; font-size: 11px; font-family: monospace; padding: 3px 8px; }
-.vdash-status-warn  { color: #d29922; font-size: 11px; font-family: monospace; padding: 3px 8px; }
-.vdash-status-error { color: #f85149; font-size: 11px; font-family: monospace; padding: 3px 8px; }
-.vdash-status-info  { color: #79c0ff; font-size: 11px; font-family: monospace; padding: 3px 8px; }
+.vdash-module-label {
+    color: #656d76;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 0 2px 0;
+    margin-top: 2px;
+}
+.vdash-status-ok    { color: #116329; font-size: 11px; font-family: monospace; padding: 2px 8px;
+                       background: #d1f0da; border-radius: 3px; display: inline-block; }
+.vdash-status-warn  { color: #7d4e00; font-size: 11px; font-family: monospace; padding: 2px 8px;
+                       background: #fff8c5; border-radius: 3px; display: inline-block; }
+.vdash-status-error { color: #82071e; font-size: 11px; font-family: monospace; padding: 2px 8px;
+                       background: #ffebe9; border-radius: 3px; display: inline-block; }
+.vdash-status-info  { color: #0550ae; font-size: 11px; font-family: monospace; padding: 2px 8px;
+                       background: #ddf4ff; border-radius: 3px; display: inline-block; }
+/* ipywidgets label overrides – ensure readable text on any Jupyter theme */
+.widget-label, .widget-label-basic { color: #1f2328 !important; font-size: 11px !important; }
+.widget-checkbox > label { color: #1f2328 !important; }
+.widget-readout { color: #1f2328 !important; background: #f6f8fa !important; font-size: 11px !important; }
+.widget-dropdown select { color: #1f2328 !important; background: #ffffff !important; }
 </style>
 """
 
 _PANEL_LAYOUT = {
-    "width": "290px",
-    "min_width": "290px",
+    "width": "310px",
+    "min_width": "310px",
     "padding": "6px",
-    "border": "1px solid #21262d",
-    "background_color": "#0d1117",
+    "border": "1px solid #d0d7de",
+    "background_color": "#ffffff",
     "overflow_y": "auto",
+    "max_height": "98vh",
 }
 _CTRL_STYLE = {"description_width": "110px"}
-_CTRL_LAYOUT = widgets.Layout(width="270px") if _HAS_WIDGETS else None
-_BTN_LAYOUT = widgets.Layout(width="270px", margin="4px 0px") if _HAS_WIDGETS else None
+_CTRL_LAYOUT = widgets.Layout(width="276px") if _HAS_WIDGETS else None
+_BTN_LAYOUT = widgets.Layout(width="276px", height="30px", margin="4px 0px") if _HAS_WIDGETS else None
 _OUTPUT_LAYOUT = {
-    "min_width": "700px",
+    "min_width": "680px",
     "flex": "1",
-    "border": "1px solid #21262d",
+    "border": "1px solid #d0d7de",
+    "background_color": "#fafbfc",
 }
 
 
@@ -122,7 +148,7 @@ def _slider(desc, val, lo, hi, step, **kw):
         step=step,
         continuous_update=False,
         style=style,
-        layout=widgets.Layout(width="270px"),
+        layout=_CTRL_LAYOUT,
         **kw,
     )
 
@@ -138,7 +164,7 @@ def _int_slider(desc, val, lo, hi, step=1, **kw):
         step=step,
         continuous_update=False,
         style=style,
-        layout=widgets.Layout(width="270px"),
+        layout=_CTRL_LAYOUT,
         **kw,
     )
 
@@ -161,7 +187,7 @@ def _dropdown(desc, options, value=None, **kw):
         options=options,
         value=resolved,
         style=style,
-        layout=widgets.Layout(width="270px"),
+        layout=_CTRL_LAYOUT,
         **kw,
     )
 
@@ -171,7 +197,7 @@ def _checkbox(desc, value=True, **kw):
         description=desc,
         value=value,
         indent=False,
-        layout=widgets.Layout(width="270px"),
+        layout=_CTRL_LAYOUT,
         **kw,
     )
 
@@ -181,7 +207,7 @@ def _btn(desc, style="primary", icon=""):
         description=desc,
         button_style=style,
         icon=icon,
-        layout=widgets.Layout(width="270px", height="30px"),
+        layout=_BTN_LAYOUT,
     )
 
 
@@ -284,27 +310,57 @@ class VortexInteractiveDashboard:
         # Health status banner (updated on each computation)
         self._health_widget = widgets.HTML(value="")
 
-        # ---- Assemble tabs --------------------------------------------------
-        tab_items = [
-            ("🎯 Core", self._build_tab_core()),
-            ("🌀 Topology", self._build_tab_topology()),
-            ("📐 Trajectory", self._build_tab_trajectory()),
-            ("📊 Spectrum", self._build_tab_spectrum()),
-            ("🌈 Spectrogram", self._build_tab_spectrogram()),
-            ("🎭 Modes", self._build_tab_modes()),
-            ("⚡ Events", self._build_tab_events()),
-            ("📡 Signals", self._build_tab_signals()),
-            ("🔬 Thiele", self._build_tab_thiele()),
+        # ---- Build all module control panels --------------------------------
+        _module_defs = [
+            ("🎯 Core tracking",   self._build_tab_core),
+            ("🌀 Topology",        self._build_tab_topology),
+            ("📐 Trajectory",      self._build_tab_trajectory),
+            ("📊 Spectrum",        self._build_tab_spectrum),
+            ("🌈 Spectrogram",     self._build_tab_spectrogram),
+            ("🎭 Modes",           self._build_tab_modes),
+            ("⚡ Events",          self._build_tab_events),
+            ("📡 Signals",         self._build_tab_signals),
+            ("🔬 Thiele model",    self._build_tab_thiele),
+            ("📋 Table data",      self._build_tab_table),
         ]
+        self._module_panels: dict[str, Any] = {
+            name: builder() for name, builder in _module_defs
+        }
+        _module_names = [name for name, _ in _module_defs]
 
-        tab = widgets.Tab(
-            children=[item[1] for item in tab_items],
-            layout=widgets.Layout(width="290px"),
+        # ---- Module selector (vertical listbox) -----------------------------
+        self._module_selector = widgets.Select(
+            options=_module_names,
+            value=_module_names[0],
+            rows=len(_module_names),
+            layout=widgets.Layout(width="296px"),
         )
-        for i, (title, _) in enumerate(tab_items):
-            tab.set_title(i, title)
+        module_label = widgets.HTML(
+            "<div class='vdash-module-label'>▸ Analysis Module</div>"
+        )
 
-        # ---- Left panel (info + presets + tabs) -----------------------------
+        # ---- Scrollable controls area (CSS-toggle, no Output widget) --------
+        # Hiding/showing via layout.display avoids the ipywidgets deadlock that
+        # occurs when widgets are displayed inside an Output widget and then the
+        # user tries to interact with other widgets (kernel freeze).
+        _scroll_layout = widgets.Layout(
+            width="296px",
+            max_height="380px",
+            overflow_y="auto",
+            overflow_x="hidden",
+        )
+        for i, (name, panel) in enumerate(self._module_panels.items()):
+            panel.layout = widgets.Layout(
+                display="" if i == 0 else "none",
+                width="294px",
+            )
+        self._ctrl_area = widgets.VBox(
+            list(self._module_panels.values()),
+            layout=_scroll_layout,
+        )
+        self._module_selector.observe(self._on_module_select, names="value")
+
+        # ---- Left panel (info + selector + controls + presets) --------------
         job_info = self._build_job_info()
         preset_row = self._build_preset_row()
 
@@ -312,8 +368,10 @@ class VortexInteractiveDashboard:
             [
                 job_info,
                 self._health_widget,
+                module_label,
+                self._module_selector,
+                self._ctrl_area,
                 preset_row,
-                tab,
             ],
             layout=widgets.Layout(**_PANEL_LAYOUT),
         )
@@ -327,8 +385,8 @@ class VortexInteractiveDashboard:
         # ---- Header ---------------------------------------------------------
         header = widgets.HTML(
             "<div class='vdash-header'>"
-            "🌀 Vortex Dynamics <em>Interactive Dashboard</em>"
-            "<span class='sub'>All modules · mmpp</span>"
+            "🌀 Vortex Dynamics"
+            "<span class='sub'>Interactive Dashboard · mmpp</span>"
             "</div>"
         )
 
@@ -373,7 +431,7 @@ class VortexInteractiveDashboard:
         )
         self._w_preset_load = widgets.Dropdown(
             options=["— load preset —"],
-            layout=widgets.Layout(width="270px"),
+            layout=_CTRL_LAYOUT,
         )
         self._w_preset_save.on_click(self._on_save_preset)
         self._w_preset_load.observe(self._on_load_preset, names="value")
@@ -385,6 +443,16 @@ class VortexInteractiveDashboard:
         )
         self._refresh_preset_list()
         return row
+
+    # ------------------------------------------------------------------
+    # Module selector callback
+    # ------------------------------------------------------------------
+
+    def _on_module_select(self, change):
+        """Switch the visible control panel by toggling CSS display."""
+        selected = change["new"]
+        for name, panel in self._module_panels.items():
+            panel.layout.display = "" if name == selected else "none"
 
     # ------------------------------------------------------------------
     # ───────────────────────── TAB: CORE ──────────────────────────────
@@ -421,6 +489,7 @@ class VortexInteractiveDashboard:
         c["smooth"] = _checkbox("Smooth trajectory", True)
         c["smooth_window"] = _int_slider("Smooth window", 5, 1, 51, 2)
         c["show_orbit"] = _checkbox("Show orbit", True)
+        c["show_geom"] = _checkbox("Show disk outline", True)
         c["cmap"] = _dropdown(
             "Colormap", ["viridis", "plasma", "inferno", "cividis", "turbo"]
         )
@@ -442,6 +511,7 @@ class VortexInteractiveDashboard:
                 c["smooth"],
                 c["smooth_window"],
                 c["show_orbit"],
+                c["show_geom"],
                 c["cmap"],
                 btn,
             ]
@@ -494,6 +564,7 @@ class VortexInteractiveDashboard:
         c["detrend"] = _checkbox("Detrend (remove drift)", False)
         c["show_velocity"] = _checkbox("Show velocity", False)
         c["show_stats"] = _checkbox("Show statistics", True)
+        c["show_geom"] = _checkbox("Show disk outline", True)
         c["color_by"] = _dropdown(
             "Color by",
             [
@@ -519,6 +590,7 @@ class VortexInteractiveDashboard:
                 _section("✨ Visualization"),
                 c["show_velocity"],
                 c["show_stats"],
+                c["show_geom"],
                 c["color_by"],
                 c["cmap"],
                 btn,
@@ -727,7 +799,7 @@ class VortexInteractiveDashboard:
             step=0.01,
             continuous_update=False,
             style=_CTRL_STYLE,
-            layout=widgets.Layout(width="270px"),
+            layout=_CTRL_LAYOUT,
         )
         c["current_mA"] = _slider("Current I [mA]", 6.0, -30.0, 30.0, 0.1)
         c["polarization"] = _slider("Polarization P", 0.3, 0.0, 1.0, 0.01)
@@ -763,6 +835,66 @@ class VortexInteractiveDashboard:
         )
 
     # ------------------------------------------------------------------
+    # ─────────────────────── TAB: TABLE ───────────────────────────────
+    # ------------------------------------------------------------------
+
+    def _get_table_column_names(self) -> list[str]:
+        """Return column names available in the simulation table dataset."""
+        try:
+            job = self._vx._job
+            if "table" not in job:
+                return []
+            table = job["table"]
+            return [str(k) for k in table.keys()]
+        except Exception:
+            return []
+
+    def _build_tab_table(self):
+        c = {}
+        col_names = self._get_table_column_names()
+        placeholder = [("— select —", "")]
+        opts = placeholder + [(k, k) for k in col_names]
+        opts2 = [("— none —", "")] + [(k, k) for k in col_names]
+
+        c["x_col"] = _dropdown("X column", opts)
+        c["y_col"] = _dropdown("Y column", opts)
+        c["y2_col"] = _dropdown("Y2 column (opt)", opts2)
+        c["line_style"] = _dropdown(
+            "Line style",
+            [("Line", "-"), ("Points", "."), ("Line+pts", ".-")],
+        )
+        c["log_x"] = _checkbox("Log X axis", False)
+        c["log_y"] = _checkbox("Log Y axis", False)
+        c["show_grid"] = _checkbox("Grid", True)
+        c["normalise_x"] = _checkbox("Normalise X (0–1)", False)
+        c["normalise_y"] = _checkbox("Normalise Y (0–1)", False)
+
+        btn_refresh = _btn("🔄  Refresh columns", "info", "refresh")
+        btn_refresh.on_click(lambda _: self._refresh_table_cols(c))
+
+        btn = _btn("▶  Plot", "success", "play")
+        btn.on_click(lambda _: self._run_table(c))
+
+        self._controls["table"] = c
+        return widgets.VBox(
+            [
+                _section("📋 Table columns"),
+                btn_refresh,
+                c["x_col"],
+                c["y_col"],
+                c["y2_col"],
+                _section("✨ Display"),
+                c["line_style"],
+                c["log_x"],
+                c["log_y"],
+                c["normalise_x"],
+                c["normalise_y"],
+                c["show_grid"],
+                btn,
+            ]
+        )
+
+    # ------------------------------------------------------------------
     # ─────────────────── COMPUTE HANDLERS ─────────────────────────────
     # ------------------------------------------------------------------
 
@@ -774,9 +906,54 @@ class VortexInteractiveDashboard:
     def _fmt_status(msg: str, kind: str = "info") -> str:
         return f"<div class='vdash-status-{kind}'>● {msg}</div>"
 
+    def _draw_disk_nm(self, ax) -> None:
+        """Draw the nanodot boundary (gray dashed circle) on *ax* in nm units."""
+        try:
+            from mmpp.solitons.vortex.plotting import _infer_disk_radius
+            from matplotlib.patches import Circle
+
+            r_m = _infer_disk_radius(self._vx)
+            if r_m is None or not (r_m > 0):
+                return
+            r_nm = float(r_m) * 1e9
+            existing = {
+                getattr(p, "get_label", lambda: "")()
+                for p in getattr(ax, "patches", [])
+            }
+            label = "disk edge" if "disk edge" not in existing else "_nolegend_"
+            ax.add_patch(
+                Circle(
+                    (0.0, 0.0),
+                    radius=r_nm,
+                    fill=False,
+                    edgecolor="0.55",
+                    linestyle="--",
+                    linewidth=1.5,
+                    alpha=0.85,
+                    label=label,
+                    zorder=0,
+                )
+            )
+            ax.legend(fontsize=8)
+        except Exception:
+            pass
+
+    def _refresh_table_cols(self, c: dict) -> None:
+        """Reload table column names and update the dropdown widgets."""
+        cols = self._get_table_column_names()
+        opts = [("— select —", "")] + [(k, k) for k in cols]
+        opts2 = [("— none —", "")] + [(k, k) for k in cols]
+        try:
+            c["x_col"].options = opts
+            c["y_col"].options = opts
+            c["y2_col"].options = opts2
+        except Exception:
+            pass
+        self._set_status(f"Table: {len(cols)} columns available", "ok")
+
     def _clear_plot(self):
-        with self._output:
-            clear_output(wait=True)
+        if self._output is not None:
+            self._output.clear_output(wait=True)
 
     def _get_health(self, force: bool = False):
         """Return cached CoreHealthStatus, running the check on first call."""
@@ -850,9 +1027,12 @@ class VortexInteractiveDashboard:
             except Exception:
                 pass
             self._fig = None
-        with self._output:
-            clear_output(wait=True)
-            display(IPyImage(data=img_data, format="png"))
+        image = IPyImage(data=img_data, format="png")
+        if self._output is not None:
+            self._output.clear_output(wait=True)
+            self._output.append_display_data(image)
+        else:
+            display(image)
 
     # ---- CORE -------------------------------------------------------
 
@@ -896,6 +1076,9 @@ class VortexInteractiveDashboard:
             ax_xy.set_title("Core trajectory (xy)", fontsize=11)
             ax_xy.set_aspect("equal")
             ax_xy.grid(True, alpha=0.25)
+
+            if c.get("show_geom") is not None and c["show_geom"].value:
+                self._draw_disk_nm(ax_xy)
 
             if c["smooth"].value:
                 w = max(int(c["smooth_window"].value) | 1, 3)
@@ -1062,6 +1245,9 @@ class VortexInteractiveDashboard:
             ax_xy.set_ylabel("y [nm]")
             ax_xy.set_title("Core trajectory")
             ax_xy.grid(True, alpha=0.25)
+
+            if c.get("show_geom") is not None and c["show_geom"].value:
+                self._draw_disk_nm(ax_xy)
 
             r_nm = np.sqrt(x_nm**2 + y_nm**2)
             ax_r.plot(t_ns, r_nm, lw=1.2, color="#58a6ff", label="radius")
@@ -1538,13 +1724,90 @@ class VortexInteractiveDashboard:
             )
 
             db = ThieleInteractiveDashboard()
+            if self._output is not None:
+                self._output.clear_output(wait=True)
             with self._output:
-                clear_output(wait=True)
                 db.show()
             self._set_status("Thiele dashboard active", "ok")
         except Exception as exc:
             self._set_status(f"Thiele dashboard failed: {exc}", "error")
             log.exception("Thiele dashboard error")
+
+    # ---- TABLE PLOTTER ----------------------------------------------
+
+    def _run_table(self, c: dict):
+        self._set_status("Plotting table data…", "info")
+        try:
+            x_key = c["x_col"].value
+            y_key = c["y_col"].value
+            if not x_key or not y_key:
+                self._set_status("Select X and Y columns first", "warn")
+                return
+
+            job = self._vx._job
+            if "table" not in job:
+                self._set_status("No 'table' dataset found in this simulation", "error")
+                return
+            table = job["table"]
+
+            x = np.asarray(table[x_key][:], dtype=float).ravel()
+            y = np.asarray(table[y_key][:], dtype=float).ravel()
+            # Align lengths
+            n = min(len(x), len(y))
+            x, y = x[:n], y[:n]
+
+            y2_key = c["y2_col"].value
+            y2: np.ndarray | None = None
+            if y2_key:
+                try:
+                    y2 = np.asarray(table[y2_key][:], dtype=float).ravel()[:n]
+                except Exception:
+                    y2 = None
+
+            if c["normalise_x"].value and x.ptp() > 0:
+                x = (x - x.min()) / x.ptp()
+            if c["normalise_y"].value and y.ptp() > 0:
+                y = (y - y.min()) / y.ptp()
+                if y2 is not None and y2.ptp() > 0:
+                    y2 = (y2 - y2.min()) / y2.ptp()
+
+            ls = c["line_style"].value
+            n_panels = 2 if y2 is not None else 1
+            fig, axes = plt.subplots(1, n_panels, figsize=self.figsize, dpi=self.dpi)
+            if n_panels == 1:
+                axes = [axes]
+
+            axes[0].plot(x, y, ls, lw=1.2, color="#58a6ff")
+            axes[0].set_xlabel(x_key)
+            axes[0].set_ylabel(y_key)
+            axes[0].set_title(f"{y_key}  vs  {x_key}")
+            if c["log_x"].value:
+                axes[0].set_xscale("log")
+            if c["log_y"].value:
+                axes[0].set_yscale("log")
+            if c["show_grid"].value:
+                axes[0].grid(True, alpha=0.25)
+
+            if y2 is not None:
+                axes[1].plot(x, y2, ls, lw=1.2, color="#3fb950")
+                axes[1].set_xlabel(x_key)
+                axes[1].set_ylabel(y2_key)
+                axes[1].set_title(f"{y2_key}  vs  {x_key}")
+                if c["log_x"].value:
+                    axes[1].set_xscale("log")
+                if c["log_y"].value:
+                    axes[1].set_yscale("log")
+                if c["show_grid"].value:
+                    axes[1].grid(True, alpha=0.25)
+
+            fig.suptitle("📋 Table Data", fontsize=12, color="#e94560")
+            self._show_figure(fig)
+            self._set_status(
+                f"Plotted {n} points: {y_key} vs {x_key}", "ok"
+            )
+        except Exception as exc:
+            self._set_status(f"Table plot failed: {exc}", "error")
+            log.exception("Table plot error")
 
     # ------------------------------------------------------------------
     # Preset management

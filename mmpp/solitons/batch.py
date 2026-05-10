@@ -83,7 +83,11 @@ def _progress_iter(iterable, *, total: int, desc: str, enabled: bool):
     if not enabled or total <= 1:
         return iterable
     try:
-        from tqdm.auto import tqdm
+        from mmpp.core.mmpp import _running_in_ipython_kernel
+
+        if _running_in_ipython_kernel():
+            return iterable
+        from tqdm import tqdm
 
         return tqdm(iterable, total=total, desc=desc, unit="result")
     except ImportError:

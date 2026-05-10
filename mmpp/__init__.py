@@ -89,6 +89,24 @@ except ImportError as e:
             error_msg += "Or install specific package that is missing above."
             raise ImportError(error_msg)
 
+# Backward-compatible / convenience aliases
+MMPPAnalyzer = MMPP          # MMPP is the primary analysis entry-point
+SimulationResult = ZarrJobResult  # ZarrJobResult represents a single simulation result
+
+try:
+    from dataclasses import dataclass as _dataclass
+
+    @_dataclass
+    class MMPPConfig:
+        """Global MMPP configuration placeholder (reserved for future use)."""
+        verbose: bool = False
+        cache_enabled: bool = True
+
+    del _dataclass
+except Exception:
+    class MMPPConfig:  # type: ignore[no-redef]
+        pass
+
 
 # Try to import plotting classes
 try:
@@ -294,15 +312,8 @@ def open(base_path: str, **kwargs):
     # Extract force parameter for special handling
     force = kwargs.pop("force", False)
 
-    # Create MMPP instance
-    mmpp_instance = MMPP(base_path, **kwargs)
-
-    # If force is True, trigger a rescan
-    if force:
-        mmpp_instance.force_rescan()
-    elif mmpp_instance.dataframe is None:
-        # If no database exists, perform initial scan
-        mmpp_instance.scan()
+    # Create MMPP instance — constructor handles scanning unless force_rescan is set
+    mmpp_instance = MMPP(base_path, force_rescan=force, **kwargs)
 
     return mmpp_instance
 

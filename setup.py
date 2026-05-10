@@ -14,7 +14,7 @@ setup(
     description="A library for mmpp (Micro Magnetic Post Processing) simulation and analysis",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/mateuszzelent/mmpp",  # Dodaj URL do repo
+    url="https://github.com/mateuszzelent/mmpp",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -31,9 +31,10 @@ setup(
     python_requires=">=3.9",
     install_requires=[
         "numpy>=1.20.0",
-        "pandas>=1.3.0", 
+        "pandas>=1.3.0",
         "matplotlib>=3.5.0",
         "zarr>=3.0.0",
+        "h5py>=3.0.0",
         "rich",
         "tqdm",
         "PyYAML>=5.4.0",
@@ -55,9 +56,32 @@ setup(
             "itables",
             "IPython",
             "jupyter",
+            "ipywidgets",
+            "k3d",
+            "holoviews",
+            "pyvista",
         ],
         "plotting": [
             "cmocean",
+            "cmcrameri",
+            "k3d",
+            "holoviews",
+            "pyvista",
+        ],
+        "fft": [
+            "scipy",
+            "pyfftw",
+        ],
+        "wavelets": [
+            "PyWavelets",
+        ],
+        "image": [
+            "scikit-image",
+            "imageio",
+        ],
+        "ml": [
+            "scikit-learn",
+            "joblib",
         ],
         "tui": [
             "textual>=0.40.0",
@@ -65,9 +89,22 @@ setup(
         "full": [
             "textual>=0.40.0",
             "cmocean",
+            "cmcrameri",
+            "k3d",
+            "holoviews",
+            "pyvista",
             "itables",
             "IPython",
             "jupyter",
+            "ipywidgets",
+            "scipy",
+            "PyWavelets",
+            "scikit-image",
+            "imageio",
+            "scikit-learn",
+            "joblib",
+            "numba",
+            "psutil",
         ],
     },
     include_package_data=True,
@@ -82,7 +119,7 @@ setup(
     entry_points={
         "console_scripts": [
             "mmpp=mmpp.cli:main",
-            "mmpp-tui=mmpp.cli_new:main",
+            "mmpp-tui=mmpp.tui:main",
             "mmpp-classic=mmpp.cli.main:main",
         ],
     },

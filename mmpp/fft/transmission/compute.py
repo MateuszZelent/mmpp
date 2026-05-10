@@ -11,7 +11,15 @@ import os
 from pathlib import Path
 
 import numpy as np
-from tqdm.auto import tqdm
+from tqdm import tqdm
+
+from mmpp.core.mmpp import _running_in_ipython_kernel
+
+
+def _progress(iterable, **kwargs):
+    if _running_in_ipython_kernel():
+        return iterable
+    return tqdm(iterable, **kwargs)
 
 # Try to use scipy.fft (faster) with fallback to numpy.fft
 # Can be disabled via environment variable MMPP_USE_NUMPY_FFT=1
@@ -1590,7 +1598,7 @@ class TransmissionResult:
                     peak = float(np.max(np.abs(xy_vis0))) if xy_vis0.size > 0 else 0.0
                     iter_pairs = frame_pairs[1:]
                     if show_progress and len(frame_pairs) > 2:
-                        iter_pairs = tqdm(iter_pairs, desc="Computing animation color scale")
+                        iter_pairs = _progress(iter_pairs, desc="Computing animation color scale")
                     for k_idx, t_idx in iter_pairs:
                         _, frame_vis, _ = _frame_data(k_idx, t_idx)
                         if frame_vis.size > 0:
@@ -1813,7 +1821,7 @@ class TransmissionResult:
 
         iterator = selected_bins
         if show_progress and len(selected_bins) > 1:
-            iterator = tqdm(selected_bins, desc="Saving transmission mode visualizations")
+            iterator = _progress(selected_bins, desc="Saving transmission mode visualizations")
 
         saved_paths: list[Path] = []
         for k_idx in iterator:
@@ -2281,7 +2289,7 @@ class TransmissionModesResult:
 
         iterator = selected
         if show_progress and len(selected) > 1:
-            iterator = tqdm(selected, desc="Saving precomputed transmission mode visualizations")
+            iterator = _progress(selected, desc="Saving precomputed transmission mode visualizations")
 
         saved_paths: list[Path] = []
         for mode_idx in iterator:
@@ -3063,7 +3071,7 @@ class TransmissionCompute:
 
             else:
                 # 🔑 Process each window separately (serial)
-                for win_idx, start in tqdm(
+                for win_idx, start in _progress(
                     enumerate(window_starts),
                     total=n_windows,
                     desc="Computing FFT per window (pre_fft mode)",
@@ -3392,7 +3400,7 @@ class TransmissionCompute:
                     )
 
                 # Now loop with much smaller slicing operations
-                for win_idx, start in tqdm(
+                for win_idx, start in _progress(
                     enumerate(window_starts),
                     total=n_windows,
                     desc="Processing windows",
@@ -3579,7 +3587,7 @@ class TransmissionCompute:
                 )
                 t_process_start = time.time()
 
-                for win_idx, start in tqdm(
+                for win_idx, start in _progress(
                     enumerate(window_starts),
                     total=n_windows,
                     desc="Processing windows",

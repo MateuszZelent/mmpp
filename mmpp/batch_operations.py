@@ -410,14 +410,18 @@ class BatchModeAnalyzer:
 
                 # Process completed tasks with progress bar
                 try:
+                    from mmpp.core.mmpp import _running_in_ipython_kernel
                     from tqdm import tqdm
 
-                    iterator = tqdm(
-                        as_completed(future_to_result),
-                        total=len(self.results),
-                        desc="Computing modes",
-                        unit="result",
-                    )
+                    if _running_in_ipython_kernel():
+                        iterator = as_completed(future_to_result)
+                    else:
+                        iterator = tqdm(
+                            as_completed(future_to_result),
+                            total=len(self.results),
+                            desc="Computing modes",
+                            unit="result",
+                        )
                 except ImportError:
                     iterator = as_completed(future_to_result)
 
@@ -437,14 +441,18 @@ class BatchModeAnalyzer:
             log.info("Using sequential execution")
 
             try:
+                from mmpp.core.mmpp import _running_in_ipython_kernel
                 from tqdm import tqdm
 
-                iterator = tqdm(
-                    enumerate(self.results),
-                    total=len(self.results),
-                    desc="Computing modes",
-                    unit="result",
-                )
+                if _running_in_ipython_kernel():
+                    iterator = enumerate(self.results)
+                else:
+                    iterator = tqdm(
+                        enumerate(self.results),
+                        total=len(self.results),
+                        desc="Computing modes",
+                        unit="result",
+                    )
             except ImportError:
                 iterator = enumerate(self.results)
 
@@ -567,18 +575,42 @@ class BatchDatasetWrapper:
         self.mmpp_ref = mmpp_ref
         self.dataset_name = dataset_name
         self.slice_info = None
+        self._index_plan = None  # IndexPlan for proper slice composition
 
     def __getitem__(self, key):
-        """Capture slice information, returning a new wrapper (immutable pattern)."""
+        """Capture slice information using proper IndexPlan composition.
+
+        This ensures that chained indexing like ``m[0:100][::2]`` composes
+        correctly into ``m[0:100:2]`` rather than producing a multi-axis index.
+        """
+        from .core.dataset_geometry import IndexPlan, make_index_plan
+
         new = BatchDatasetWrapper(self.results, self.mmpp_ref, self.dataset_name)
-        # Compose with any previous slice to support chaining: m[0:100][::2]
-        if self.slice_info is not None:
-            if isinstance(self.slice_info, tuple):
-                new.slice_info = self.slice_info + (key,) if not isinstance(key, tuple) else self.slice_info + key
-            else:
-                new.slice_info = (self.slice_info, key)
+        new._index_plan = self._index_plan  # carry forward existing plan
+
+        # Determine current shape from first result so we can build IndexPlan
+        source_shape: tuple | None = None
+        if self.results:
+            try:
+                first = self.results[0]
+                first._ensure_zarr_loaded()
+                member = first._get_zarr_member(self.dataset_name)
+                base_shape = tuple(int(v) for v in getattr(member, "shape", ()))
+                if self._index_plan is not None:
+                    source_shape = self._index_plan.analysis_shape
+                else:
+                    source_shape = base_shape
+            except Exception:
+                source_shape = None
+
+        if source_shape is not None:
+            new_plan = make_index_plan(key, source_shape, previous_plan=self._index_plan)
+            new._index_plan = new_plan
+            new.slice_info = new_plan.storage_key
         else:
+            # Fallback: can't determine shape, use key as-is
             new.slice_info = key
+
         return new
 
     @property

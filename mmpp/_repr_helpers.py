@@ -11,10 +11,11 @@ Every ``PlotAccessor`` can produce a rich Jupyter card by calling::
 
 from __future__ import annotations
 
+import inspect
 from html import escape as _esc
 from typing import Sequence
 
-__all__ = ["plot_accessor_html"]
+__all__ = ["api_help_html", "plot_accessor_html"]
 
 
 def plot_accessor_html(
@@ -44,6 +45,141 @@ def plot_accessor_html(
     HV = (
         "onmouseover=\"this.style.background='#1e293b'\" "
         "onmouseout=\"this.style.background='transparent'\""
+    )
+
+
+def _public_callables(obj: object, names: Sequence[str] | None = None) -> list[tuple[str, object]]:
+    selected = names if names is not None else dir(obj)
+    out: list[tuple[str, object]] = []
+    for name in selected:
+        if name.startswith("_"):
+            continue
+        try:
+            value = getattr(obj, name)
+        except Exception:
+            continue
+        if callable(value):
+            out.append((name, value))
+    return out
+
+
+def _signature_text(func: object) -> str:
+    try:
+        sig = str(inspect.signature(func))
+    except Exception:
+        return "(...)"
+    if len(sig) > 90:
+        sig = sig[:87] + "..."
+    return sig
+
+
+def _summary_text(func: object) -> str:
+    doc = inspect.getdoc(func) or ""
+    if not doc:
+        return "No docstring summary available."
+    first = doc.strip().splitlines()[0].strip()
+    return first or "No docstring summary available."
+
+
+def _example_for(prefix: str, name: str, func: object) -> str:
+    sig = _signature_text(func)
+    call_args = ""
+    if sig.startswith("(") and sig.endswith(")"):
+        params = []
+        try:
+            signature = inspect.signature(func)
+            for param in signature.parameters.values():
+                if param.name in {"self", "cls"}:
+                    continue
+                if param.kind in {
+                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD,
+                }:
+                    continue
+                if param.default is inspect.Parameter.empty:
+                    params.append(f"{param.name}=...")
+            call_args = ", ".join(params[:3])
+        except Exception:
+            call_args = ""
+    return f"{prefix}.{name}({call_args})"
+
+
+def api_help_html(
+    obj: object,
+    *,
+    title: str | None = None,
+    prefix: str = "obj",
+    methods: Sequence[str] | None = None,
+    properties: Sequence[tuple[str, str]] | None = None,
+    max_methods: int | None = None,
+    subtitle: str | None = None,
+) -> str:
+    """Return an API card with methods, signatures, parameter details and examples.
+
+    The card is generated from the live object, so it stays aligned with method
+    signatures as the API evolves.
+    """
+    title = title or obj.__class__.__name__
+    callables = _public_callables(obj, methods)
+    if max_methods is not None:
+        callables = callables[: int(max_methods)]
+
+    prop_rows = ""
+    if properties:
+        prop_rows = "".join(
+            "<tr>"
+            f"<td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(name)}</td>"
+            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(desc)}</td>"
+            f"<td style='padding:4px 8px;font-family:monospace;color:#a7f3d0;'>{_esc(prefix + '.' + name)}</td>"
+            "</tr>"
+            for name, desc in properties
+        )
+
+    method_rows = "".join(
+        "<tr style='border-top:1px solid rgba(71,85,105,.35);'>"
+        f"<td style='padding:5px 8px;font-family:monospace;color:#93c5fd;white-space:nowrap;'>"
+        f"{_esc('.' + name + _signature_text(func))}</td>"
+        f"<td style='padding:5px 8px;color:#cbd5e1;'>{_esc(_summary_text(func))}</td>"
+        f"<td style='padding:5px 8px;font-family:monospace;color:#a7f3d0;'>{_esc(_example_for(prefix, name, func))}</td>"
+        "</tr>"
+        for name, func in callables
+    )
+    if not method_rows:
+        method_rows = (
+            "<tr><td colspan='3' style='padding:6px 8px;color:#94a3b8;'>"
+            "No public callable methods detected.</td></tr>"
+        )
+
+    props_block = ""
+    if prop_rows:
+        props_block = (
+            "<div style='font-weight:600;color:#f1f5f9;margin:10px 0 4px;'>Namespaces / properties</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:.88em;'>"
+            "<thead><tr style='text-align:left;color:#94a3b8;'>"
+            "<th style='padding:4px 8px;'>Accessor</th><th style='padding:4px 8px;'>Description</th>"
+            "<th style='padding:4px 8px;'>Example</th></tr></thead>"
+            f"<tbody>{prop_rows}</tbody></table>"
+        )
+
+    subtitle_html = (
+        f"<div style='color:#94a3b8;font-size:.85em;margin-top:3px;'>{_esc(subtitle)}</div>"
+        if subtitle
+        else ""
+    )
+    return (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+        "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+        "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+        "color:#e2e8f0;max-width:980px;\">"
+        f"<div style='font-size:1.04em;font-weight:700;color:#f1f5f9;'>{_esc(title)}</div>"
+        f"{subtitle_html}{props_block}"
+        "<div style='font-weight:600;color:#f1f5f9;margin:10px 0 4px;'>Methods</div>"
+        "<table style='width:100%;border-collapse:collapse;font-size:.86em;'>"
+        "<thead><tr style='text-align:left;color:#94a3b8;'>"
+        "<th style='padding:4px 8px;'>Signature</th><th style='padding:4px 8px;'>Description</th>"
+        "<th style='padding:4px 8px;'>Example</th></tr></thead>"
+        f"<tbody>{method_rows}</tbody></table>"
+        "</div>"
     )
 
     rows = "".join(

@@ -138,6 +138,7 @@ class InteractiveSpectrum:
         # Toolbar widgets/state
         self._toolbar_enabled = False
         self._widget_root: Any = None
+        self._display_handle: Any = None
         self._widget_output: Any = None
         self._controls: dict[str, Any] = {}
         self._status_history: list[str] = []
@@ -286,7 +287,10 @@ class InteractiveSpectrum:
             if auto_animate:
                 self._on_animate_clicked(None)
             if show:
-                display(self._widget_root)
+                if self._display_handle is None:
+                    self._display_handle = display(self._widget_root, display_id=True)
+                else:
+                    self._display_handle.update(self._widget_root)
                 return None  # Avoid double display in Jupyter (display + auto-return)
             return self._widget_root
 

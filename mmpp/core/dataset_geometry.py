@@ -2,10 +2,185 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class IndexPlan:
+    """Captures user indexing intent while preserving analysis metadata.
+
+    Attributes
+    ----------
+    user_key:
+        The exact tuple passed by the user to ``__getitem__``.
+    storage_key:
+        Dimension-preserving key (integers converted to 1-element slices).
+    dropped_axes:
+        Axes selected by an integer (these are squeezed in ``.numpy()``).
+    source_shape:
+        Shape of the backing store *before* this plan was applied.
+    analysis_shape:
+        Shape with all dimensions preserved (used by ``.fft``, ``.solitons``).
+    numpy_shape:
+        Shape after dropping ``dropped_axes`` (mirrors NumPy semantics).
+    """
+
+    user_key: tuple
+    storage_key: tuple
+    dropped_axes: tuple
+    source_shape: tuple
+    analysis_shape: tuple
+    numpy_shape: tuple
+
+
+def make_index_plan(
+    key: Any,
+    source_shape: tuple[int, ...],
+    previous_plan: Optional["IndexPlan"] = None,
+) -> "IndexPlan":
+    """Build an :class:`IndexPlan` from a raw user key.
+
+    If *previous_plan* is supplied the new key is composed on top of it so
+    that chained indexing ``view[a][b]`` stays fully lazy.
+    """
+    ndim = len(source_shape)
+    user_tuple = key if isinstance(key, tuple) else (key,)
+
+    # Expand Ellipsis
+    normalized_user: list[Any] = list(normalize_index_key(user_tuple, ndim, keep_dims=False))
+
+    # Compute which axes the user selects with an integer
+    dropped: list[int] = []
+    for axis, token in enumerate(normalized_user):
+        if isinstance(token, (int, np.integer)) and not isinstance(token, bool):
+            dropped.append(axis)
+
+    # Build storage_key (integers -> slices so dims are preserved)
+    storage_key = tuple(normalize_index_key(user_tuple, ndim, keep_dims=True))
+
+    # Compose with previous plan when chaining
+    if previous_plan is not None:
+        storage_key = compose_index_keys(previous_plan.storage_key, storage_key, previous_plan.source_shape)
+        # Remap dropped axes through the previous storage key (unchanged axes only)
+        dropped = [
+            previous_plan.dropped_axes[axis] if axis < len(previous_plan.dropped_axes) else axis
+            for axis in dropped
+        ]
+        # Merge dropped axes from previous plan
+        merged_dropped = sorted(set(list(previous_plan.dropped_axes) + dropped))
+        dropped = merged_dropped
+        source_shape = previous_plan.source_shape
+
+    analysis_shape = shape_after_index(source_shape, storage_key)
+
+    # numpy_shape: remove axes in dropped_axes from analysis_shape
+    numpy_shape = tuple(
+        s for i, s in enumerate(analysis_shape) if i not in dropped
+    )
+
+    return IndexPlan(
+        user_key=user_tuple,
+        storage_key=storage_key,
+        dropped_axes=tuple(sorted(set(dropped))),
+        source_shape=source_shape,
+        analysis_shape=analysis_shape,
+        numpy_shape=numpy_shape,
+    )
+
+
+@dataclass(frozen=True)
+class AxisLayout:
+    """Describes the logical meaning of each axis in a dataset.
+
+    Attributes
+    ----------
+    time_axis:
+        Index of the time axis (always 0 for standard mmpp data).
+    spatial_axes:
+        Tuple of axis indices corresponding to spatial dimensions (z, y, x).
+    component_axis:
+        Index of the vector-component axis, or ``None`` for scalar data.
+    ndim:
+        Total number of dimensions in the represented array.
+    """
+
+    time_axis: int
+    spatial_axes: tuple
+    component_axis: Optional[int]
+    ndim: int
+
+    @property
+    def n_components(self) -> Optional[int]:
+        """Number of components if layout has a component axis, else None."""
+        return None  # resolved at runtime from actual array
+
+    def is_scalar(self) -> bool:
+        return self.component_axis is None
+
+    def is_vector(self) -> bool:
+        return self.component_axis is not None
+
+
+def infer_axis_layout(shape: tuple[int, ...], attrs: Any = None) -> AxisLayout:
+    """Infer the axis layout from data shape and optional metadata attributes.
+
+    Standard mmpp layouts:
+
+    * 5D ``(t, z, y, x, c)`` → vector with explicit z
+    * 4D ``(t, z, y, x)``   → scalar with explicit z
+    * 4D ``(t, y, x, c)``   → vector without z  (detected via small last dim)
+    * 3D ``(t, y, x)``       → scalar without z
+    * 2D ``(t, x)``           → scalar 1D spatial
+    * 1D ``(t,)``             → pure time series
+    """
+    ndim = len(shape)
+
+    # Helper: last axis is likely a component if its size is small (≤ 4 for magnetization)
+    def _last_is_component() -> bool:
+        if ndim < 2:
+            return False
+        last = int(shape[-1])
+        # Strongly component-like: size in {1, 2, 3, 4}
+        if last <= 4:
+            # But only if other spatial dims are larger — avoids false positives on tiny grids
+            if any(int(shape[i]) > 4 for i in range(1, ndim - 1)):
+                return True
+        # Check metadata override
+        if attrs is not None and hasattr(attrs, "get"):
+            for key in ("valuedim", "value_dim", "n_comp", "component_count"):
+                val = attrs.get(key)
+                if val is not None:
+                    try:
+                        return int(val) == last
+                    except Exception:
+                        pass
+        return False
+
+    if ndim == 5:
+        # (t, z, y, x, c) — always vector with z
+        return AxisLayout(time_axis=0, spatial_axes=(1, 2, 3), component_axis=4, ndim=ndim)
+
+    if ndim == 4:
+        if _last_is_component():
+            # (t, y, x, c)
+            return AxisLayout(time_axis=0, spatial_axes=(1, 2), component_axis=3, ndim=ndim)
+        # (t, z, y, x)
+        return AxisLayout(time_axis=0, spatial_axes=(1, 2, 3), component_axis=None, ndim=ndim)
+
+    if ndim == 3:
+        # (t, y, x)
+        return AxisLayout(time_axis=0, spatial_axes=(1, 2), component_axis=None, ndim=ndim)
+
+    if ndim == 2:
+        # (t, x)
+        return AxisLayout(time_axis=0, spatial_axes=(1,), component_axis=None, ndim=ndim)
+
+    # ndim == 1 or unknown
+    return AxisLayout(time_axis=0, spatial_axes=(), component_axis=None, ndim=ndim)
+
 
 OVERRIDABLE_ATTRS = {
     "dx",
@@ -85,6 +260,9 @@ def _axis_length(size: int, token: Any) -> int:
         return len(range(start, stop, step))
     if isinstance(token, (int, np.integer)) and not isinstance(token, bool):
         return 1
+    # Fancy index (list / ndarray of integers)
+    if isinstance(token, (list, np.ndarray)):
+        return len(token)
     raise TypeError(f"Unsupported index token for shape resolution: {token!r}")
 
 
@@ -270,7 +448,9 @@ def _axis_selection_geometry(
         hi = max(indices)
         pmin = float(axis_min_m) + float(lo) * float(cell_m)
         pmax = float(axis_min_m) + float(hi + 1) * float(cell_m)
-        cell_eff = (pmax - pmin) / float(count_target)
+        # Physical cell size scales with the step — e.g. x[::2] doubles dx.
+        # This is the correct sampling-theoretic cell, not (pmax-pmin)/n.
+        cell_eff = float(cell_m) * abs(int(step))
         return pmin, pmax, float(cell_eff)
 
     pmin = float(axis_min_m)

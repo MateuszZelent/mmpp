@@ -59,9 +59,25 @@ interactive = [
 ]
 plotting = [
     "cmocean",
+    "cmcrameri",
     "k3d",
     "holoviews",
     "pyvista",
+]
+fft = [
+    "scipy",
+    "pyfftw",
+]
+wavelets = [
+    "PyWavelets",
+]
+image = [
+    "scikit-image",
+    "imageio",
+]
+ml = [
+    "scikit-learn",
+    "joblib",
 ]
 tui = [
     "textual>=0.40.0",
@@ -69,6 +85,7 @@ tui = [
 full = [
     "textual>=0.40.0",
     "cmocean",
+    "cmcrameri",
     "k3d",
     "holoviews",
     "pyvista",
@@ -76,6 +93,14 @@ full = [
     "IPython",
     "jupyter",
     "ipywidgets",
+    "scipy",
+    "PyWavelets",
+    "scikit-image",
+    "imageio",
+    "scikit-learn",
+    "joblib",
+    "numba",
+    "psutil",
 ]
 
 [project.urls]
@@ -155,4 +180,5 @@ minversion = "6.0"
 addopts = "-ra -q --strict-markers --strict-config"
 testpaths = [
     "tests",
+    "mmpp/tests",
 ]
