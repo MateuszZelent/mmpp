@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -36,7 +36,6 @@ except ImportError:
     widgets = None  # type: ignore
 
 try:
-    import matplotlib
     import matplotlib.pyplot as plt
     from matplotlib.figure import Figure
 
@@ -94,22 +93,22 @@ _CSS = """
 </style>
 """
 
-_PANEL_LAYOUT = dict(
-    width="290px",
-    min_width="290px",
-    padding="6px",
-    border="1px solid #21262d",
-    background_color="#0d1117",
-    overflow_y="auto",
-)
+_PANEL_LAYOUT = {
+    "width": "290px",
+    "min_width": "290px",
+    "padding": "6px",
+    "border": "1px solid #21262d",
+    "background_color": "#0d1117",
+    "overflow_y": "auto",
+}
 _CTRL_STYLE = {"description_width": "110px"}
 _CTRL_LAYOUT = widgets.Layout(width="270px") if _HAS_WIDGETS else None
 _BTN_LAYOUT = widgets.Layout(width="270px", margin="4px 0px") if _HAS_WIDGETS else None
-_OUTPUT_LAYOUT = dict(
-    min_width="700px",
-    flex="1",
-    border="1px solid #21262d",
-)
+_OUTPUT_LAYOUT = {
+    "min_width": "700px",
+    "flex": "1",
+    "border": "1px solid #21262d",
+}
 
 
 def _slider(desc, val, lo, hi, step, **kw):
@@ -241,7 +240,7 @@ class VortexInteractiveDashboard:
         self.figsize = figsize
         self.dpi = dpi
         self._state = _DashboardState()
-        self._fig: Optional[Figure] = None
+        self._fig: Figure | None = None
         self._output: Any = None
         self._status: Any = None
         self._health_widget: Any = None  # HTML widget showing health status
@@ -971,12 +970,12 @@ class VortexInteractiveDashboard:
                 fontsize=14,
                 family="monospace",
                 color="#e2e8f0",
-                bbox=dict(
-                    boxstyle="round,pad=1.0",
-                    facecolor="#1e293b",
-                    edgecolor="#334155",
-                    linewidth=2,
-                ),
+                bbox={
+                    "boxstyle": "round,pad=1.0",
+                    "facecolor": "#1e293b",
+                    "edgecolor": "#334155",
+                    "linewidth": 2,
+                },
             )
             ax.set_title(
                 f"🌀 Vortex Topology  ·  frame {t_idx}  ·  Q = {Q:.4f}",
