@@ -1,11 +1,7 @@
-"""Topology plotting scaffold (available once dedicated plots are added)."""
+"""Compatibility wrapper for public vortex topology plotting helpers."""
 
 from __future__ import annotations
 
-
-def plot_topological_density(*args, **kwargs):
-    """Placeholder for future dedicated topology plots."""
-    raise NotImplementedError("Topology plotting wrappers are planned for a later stage")
-
+from ...topology._plotting import plot_topological_density
 
 __all__ = ["plot_topological_density"]

@@ -1,9 +1,252 @@
-"""Compatibility wrapper for numerical topology detection."""
+"""Topology detection algorithms for vortex states."""
 
 from __future__ import annotations
 
-from ..numerical.topology.detection import detect_topology
+import numpy as np
 
-detect_topology.__module__ = __name__
+from ..._topology import berg_luscher_Q, normalize_magnetization, topological_density_fd
+from .._utils import XYConvention
+from .invariants import (
+    chirality_ring_with_confidence,
+    winding_number,
+)
+from .invariants import polarity as polarity_from_core
+from .models import TopologyResult
+
+
+def _resolve_convention(convention: XYConvention | None) -> XYConvention:
+    if convention is None:
+        return XYConvention(y_axis="down")
+    return convention
+
+
+def _select_snapshot(m: np.ndarray, frame: int = 0, z_layer: int = -1) -> np.ndarray:
+    """Normalize supported input shapes to a single (Ny, Nx, 3) snapshot."""
+    arr = np.asarray(m, dtype=float)
+
+    if arr.ndim == 3 and arr.shape[-1] == 3:
+        return arr
+
+    if arr.ndim == 4 and arr.shape[-1] == 3:
+        if frame < 0:
+            frame += arr.shape[0]
+        if frame < 0 or frame >= arr.shape[0]:
+            raise IndexError(f"frame index {frame} out of bounds for shape {arr.shape}")
+        return arr[frame]
+
+    if arr.ndim == 5 and arr.shape[-1] == 3:
+        if frame < 0:
+            frame += arr.shape[0]
+        if frame < 0 or frame >= arr.shape[0]:
+            raise IndexError(f"frame index {frame} out of bounds for shape {arr.shape}")
+
+        nz = arr.shape[1]
+        if z_layer < 0:
+            z_layer += nz
+        if z_layer < 0 or z_layer >= nz:
+            raise IndexError(
+                f"z_layer index {z_layer} out of bounds for shape {arr.shape}"
+            )
+        return arr[frame, z_layer]
+
+    raise ValueError(
+        "Unsupported magnetization shape. Expected (Ny,Nx,3), (Nt,Ny,Nx,3), "
+        "or (Nt,Nz,Ny,Nx,3)."
+    )
+
+
+def _pix_to_y(y_pix: float, ny: int, dy: float, convention: XYConvention) -> float:
+    if convention.y_axis == "up":
+        return (float(ny - 1) - float(y_pix)) * float(dy)
+    return float(y_pix) * float(dy)
+
+
+def _estimate_core_position(
+    m_snapshot: np.ndarray,
+    dx: float,
+    dy: float,
+    core_threshold: float,
+    convention: XYConvention,
+) -> tuple[float, float, float, int, int]:
+    """Estimate vortex core position from ``m_z`` extremum region."""
+    mz = m_snapshot[..., 2]
+    abs_mz = np.abs(mz)
+
+    if abs_mz.size == 0:
+        return 0.0, 0.0, 0.0, 0, 0
+
+    peak = float(np.max(abs_mz))
+    if peak <= 0.0:
+        return 0.0, 0.0, 0.0, 0, 0
+
+    mask = abs_mz >= core_threshold * peak
+    weights = np.where(mask, abs_mz**2, 0.0)
+    total = float(np.sum(weights))
+
+    if total <= 0.0:
+        yi, xi = np.unravel_index(int(np.argmax(abs_mz)), abs_mz.shape)
+        x_phys = float(xi) * float(dx)
+        y_down = float(yi) * float(dy)
+        y_phys = _pix_to_y(float(yi), abs_mz.shape[0], dy, convention)
+        return x_phys, y_phys, y_down, int(xi), int(yi)
+
+    ny, nx = abs_mz.shape
+    x_idx = np.arange(nx, dtype=float)
+    y_idx = np.arange(ny, dtype=float)
+    x_grid, y_grid = np.meshgrid(x_idx, y_idx)
+
+    x_pix = float(np.sum(weights * x_grid) / total)
+    y_pix = float(np.sum(weights * y_grid) / total)
+
+    xi = int(np.clip(round(x_pix), 0, nx - 1))
+    yi = int(np.clip(round(y_pix), 0, ny - 1))
+
+    x_phys = x_pix * float(dx)
+    y_down = y_pix * float(dy)
+    y_phys = _pix_to_y(y_pix, ny, dy, convention)
+    return x_phys, y_phys, y_down, xi, yi
+
+
+def _sample_ring_phases(
+    m_snapshot: np.ndarray,
+    cx_pix: float,
+    cy_pix: float,
+    radius_pixels: float,
+    n_samples: int = 180,
+) -> np.ndarray:
+    """Sample in-plane angle around a circular contour."""
+    ny, nx, _ = m_snapshot.shape
+    angles = np.linspace(0.0, 2.0 * np.pi, n_samples, endpoint=False)
+    phi_values = np.zeros(n_samples, dtype=float)
+
+    for i, theta in enumerate(angles):
+        x = int(np.clip(round(cx_pix + radius_pixels * np.cos(theta)), 0, nx - 1))
+        y = int(np.clip(round(cy_pix + radius_pixels * np.sin(theta)), 0, ny - 1))
+        vec = m_snapshot[y, x, :2]
+        phi_values[i] = np.arctan2(vec[1], vec[0])
+
+    return phi_values
+
+
+def _classify_state(vorticity: int, q_total: float) -> str:
+    """Classify coarse topological state from invariants."""
+    if vorticity > 0:
+        return "vortex"
+    if vorticity < 0:
+        return "antivortex"
+    if abs(q_total) >= 0.8:
+        return "skyrmion"
+    if abs(q_total) >= 0.2:
+        return "meron"
+    return "unknown"
+
+
+def _confidence(state: str, polarity: int, vorticity: int, q_total: float) -> float:
+    """Compute confidence score in range [0, 1]."""
+    if state in {"vortex", "antivortex"}:
+        expected = polarity * vorticity / 2.0
+        value = 1.0 - abs(q_total - expected) / 0.1
+        return float(np.clip(value, 0.0, 1.0))
+
+    if state == "skyrmion":
+        value = 1.0 - abs(abs(q_total) - 1.0) / 0.1
+        return float(np.clip(value, 0.0, 1.0))
+
+    return 0.5
+
+
+def detect_topology(
+    m: np.ndarray,
+    dx: float,
+    dy: float,
+    *,
+    method: str = "finite_diff",
+    frame: int = 0,
+    z_layer: int = -1,
+    core_threshold: float = 0.9,
+    polarity_threshold: float = 0.5,
+    chirality_ring_r: tuple[float, float] | None = None,
+    convention: XYConvention | None = None,
+) -> TopologyResult:
+    """Detect topological state from magnetization data."""
+    conv = _resolve_convention(convention)
+    snapshot = _select_snapshot(m, frame=frame, z_layer=z_layer)
+    snapshot = normalize_magnetization(snapshot)
+
+    core_x, core_y_phys, core_y_down, core_x_idx, core_y_idx = _estimate_core_position(
+        snapshot,
+        dx,
+        dy,
+        core_threshold,
+        conv,
+    )
+
+    mz_core = float(snapshot[core_y_idx, core_x_idx, 2])
+    polarity = int(polarity_from_core(mz_core, threshold=polarity_threshold))
+
+    if chirality_ring_r is None:
+        ring_inner = max(2.0 * max(dx, dy), 1e-15)
+        ring_outer = max(6.0 * max(dx, dy), ring_inner + max(dx, dy))
+        chirality_ring_r = (ring_inner, ring_outer)
+
+    ring_radius_pix = max(
+        1.0, float(np.mean(chirality_ring_r)) / max(0.5 * (dx + dy), 1e-15)
+    )
+    phi_ring = _sample_ring_phases(
+        snapshot,
+        core_x / max(dx, 1e-15),
+        core_y_down / max(dy, 1e-15),
+        ring_radius_pix,
+    )
+    w_raw = winding_number(phi_ring)
+    vorticity = int(np.sign(w_raw)) if abs(w_raw) >= 0.5 else 0
+
+    chirality, chirality_confidence = chirality_ring_with_confidence(
+        snapshot[..., :2],
+        (core_x, core_y_phys),
+        chirality_ring_r,
+        dx=dx,
+        dy=dy,
+        y_axis=conv.y_axis,
+    )
+
+    method_norm = method.lower()
+    if method_norm == "finite_diff":
+        topological_density, q_total = topological_density_fd(
+            snapshot,
+            dx,
+            dy,
+            convention=conv,
+        )
+    elif method_norm == "berg_luscher":
+        topological_density, q_total = berg_luscher_Q(
+            snapshot,
+            convention=conv,
+            return_density=True,
+            dx=dx,
+            dy=dy,
+        )
+    else:
+        raise ValueError(
+            "Unknown topology method. Use 'finite_diff' or 'berg_luscher'."
+        )
+
+    state = _classify_state(vorticity, q_total)
+    confidence = _confidence(state, polarity, vorticity, q_total)
+
+    return TopologyResult(
+        polarity=polarity,
+        vorticity=vorticity,
+        chirality=chirality,
+        Q=float(q_total),
+        core_position=(float(core_x), float(core_y_phys)),
+        topological_density=np.asarray(topological_density, dtype=float),
+        state=state,
+        method=method_norm,
+        confidence=confidence,
+        chirality_confidence=float(chirality_confidence),
+        convention=conv.y_axis,
+    )
+
 
 __all__ = ["detect_topology"]
