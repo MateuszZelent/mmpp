@@ -467,6 +467,40 @@ def test_batch_vortex_interactive_displays_single_selected_result() -> None:
     assert calls == [("low", (8, 5), 150)]
 
 
+def test_vortex_dashboard_show_reuses_display_handle(monkeypatch) -> None:
+    from mmpp.solitons.vortex.ui import interactive_dashboard as dashboard_module
+
+    updates: list[object] = []
+
+    class _Handle:
+        def update(self, value):
+            updates.append(value)
+
+    handle = _Handle()
+    display_calls: list[tuple[object, bool]] = []
+
+    def fake_display(value, display_id=False):
+        display_calls.append((value, bool(display_id)))
+        return handle
+
+    dashboard = dashboard_module.VortexInteractiveDashboard.__new__(
+        dashboard_module.VortexInteractiveDashboard
+    )
+    dashboard._build = lambda: None
+    dashboard._root = object()
+    dashboard._display_handle = None
+    dashboard._css_displayed = False
+
+    monkeypatch.setattr(dashboard_module, "display", fake_display)
+
+    assert dashboard.show() is dashboard
+    assert dashboard.show() is dashboard
+
+    assert len(display_calls) == 2
+    assert display_calls[1] == (dashboard._root, True)
+    assert updates == [dashboard._root]
+
+
 def test_canonical_nonlinear_thiele_module_alias() -> None:
     from mmpp.solitons.vortex.nonlinear.nonlinear_thiele import ThieleAnalyzer
     from mmpp.solitons.vortex.nonlinear.nonliniearthiele import (
