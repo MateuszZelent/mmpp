@@ -83,7 +83,7 @@ def metrics_section_html(
     Parameters
     ----------
     rows : [(label, value, color_or_None), ...]
-        *color_or_None* overrides the default value text colour (#cbd5e1).
+        *color_or_None* overrides the default value text colour (#f8f8f2).
         Pass ``None`` to use the default.  Values are HTML-escaped
         automatically.
     """
@@ -91,12 +91,12 @@ def metrics_section_html(
         return ""
     parts = []
     for label, value, color in rows:
-        vc = _esc(color) if color else "#cbd5e1"
+        vc = _esc(color) if color else "#f8f8f2"
         parts.append(
-            f"<b style='color:#94a3b8'>{_esc(str(label))}:</b> "
-            "<code style='background:rgba(15,23,42,0.6);padding:4px 10px;"
+            f"<b style='color:#bd93f9'>{_esc(str(label))}:</b> "
+            "<code style='background:rgba(40,42,54,0.72);padding:4px 10px;"
             f"border-radius:5px;font-size:0.9em;color:{vc};"
-            f"border:1px solid rgba(71,85,105,0.3);'>{_esc(str(value))}</code>"
+            f"border:1px solid rgba(98,114,164,0.35);'>{_esc(str(value))}</code>"
         )
     inner = "<br>".join(parts)
     return f"<div style='{_HELPER_SECTION_CHROME}'>{inner}</div>"
@@ -123,12 +123,12 @@ def accessors_section_html(
             for code, color in items
         )
         rows += (
-            f"<small style='color:#64748b;margin-right:6px;'>{_esc(label)}</small>"
+            f"<small style='color:#6272a4;margin-right:6px;'>{_esc(label)}</small>"
             f"{chips}<br>"
         )
     return (
         f"<div style='{_HELPER_SECTION_CHROME}'>"
-        "<b style='color:#94a3b8;'>ACCESSORS &amp; METHODS</b><br>"
+        "<b style='color:#bd93f9;'>ACCESSORS &amp; METHODS</b><br>"
         f"{rows}</div>"
     )
 
@@ -145,9 +145,9 @@ def examples_section_html(code: str, *, title: str = "Examples") -> str:
     """
     return (
         f"<div style='{_HELPER_SECTION_CHROME}'>"
-        f"<b style='color:#94a3b8;'>{_esc(title)}</b><br>"
-        "<pre style='margin:6px 0 0 0;background:rgba(15,23,42,0.85);"
-        "padding:10px;border-radius:6px;color:#e2e8f0;overflow-x:auto;"
+        f"<b style='color:#bd93f9;'>{_esc(title)}</b><br>"
+        "<pre style='margin:6px 0 0 0;background:rgba(40,42,54,0.92);"
+        "padding:10px;border-radius:6px;color:#f8f8f2;overflow-x:auto;"
         f"font-size:0.85em;'><code>{_esc(code)}</code></pre>"
         "</div>"
     )
@@ -215,21 +215,21 @@ def node_card_html(
     if badge:
         blabel, bcolor = badge
         badge_html = (
-            f"<span style='background:{_esc(bcolor)};color:#0f172a;"
+            f"<span style='background:{_esc(bcolor)};color:#282a36;"
             "padding:1px 6px;border-radius:10px;font-size:10px;"
             f"margin-left:8px;'>{_esc(blabel)}</span>"
         )
 
     # ── title / subtitle ───────────────────────────────────────────────────
     prefix = f"{icon} " if icon else ""
-    title_html = "<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 18px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 25px rgba(0,0,0,0.3), 0 0 0 1px rgba(148,163,184,0.1) inset;\">"
+    title_html = "<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #6272a4; border-radius: 12px; padding: 18px; margin: 10px 0; background: linear-gradient(135deg, #282a36 0%, #21222c 50%, #44475a 100%); color: #f8f8f2; box-shadow: 0 10px 25px rgba(0,0,0,0.45), 0 0 0 1px rgba(98,114,164,0.15) inset;\">"
     title_html += (
-        "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;"
+        "<div style='font-size:1.1em;font-weight:600;color:#f8f8f2;"
         "margin:0 0 6px 0;letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);'>"
         f"{prefix}{_esc(title)}{badge_html}</div>"
     )
     subtitle_html = (
-        f"<div style='font-size:0.85em;color:#94a3b8;margin-bottom:12px;'>"
+        f"<div style='font-size:0.85em;color:#6272a4;margin-bottom:12px;'>"
         f"{subtitle}</div>"  # subtitle is trusted caller HTML (already escaped/built)
         if subtitle
         else ""
@@ -267,8 +267,8 @@ def _html_id(value: str) -> str:
 def helper_badge_html(
     label: str,
     *,
-    color: str = "#38bdf8",
-    text_color: str = "#0f172a",
+    color: str = NODE_COLOR_COMPUTE,
+    text_color: str = "#282a36",
 ) -> str:
     """Return the compact status badge used by MMPP helper cards."""
     return (
@@ -284,7 +284,7 @@ def helper_table_html(rows: Sequence[tuple[str, object]]) -> str:
         return ""
     body = "".join(
         "<tr>"
-        f"<td style='color:#94a3b8;padding-right:14px'>{_esc(str(key))}</td>"
+            f"<td style='color:#bd93f9;padding-right:14px'>{_esc(str(key))}</td>"
         f"<td><code>{_esc(str(value))}</code></td>"
         "</tr>"
         for key, value in rows
@@ -309,12 +309,12 @@ def helper_code_grid_html(
     for heading, items in groups:
         item_html = "".join(
             f"<code title='{_esc(desc)}' style=\"{_HELPER_CODE_CHIP}"
-            f' color: {_esc(color or "#60a5fa")};">{_esc(code)}</code>'
+            f' color: {_esc(color or NODE_COLOR_COMPUTE)};">{_esc(code)}</code>'
             for code, desc, color in items
         )
         cards.append(
             "<div style='margin-bottom: 6px;'>"
-            f"<small style='color: #64748b; margin-right: 6px;'>{_esc(heading)}:</small>"
+            f"<small style='color: #6272a4; margin-right: 6px;'>{_esc(heading)}:</small>"
             f"{item_html}</div>"
         )
     return "".join(cards)
@@ -323,7 +323,7 @@ def helper_code_grid_html(
 def _helper_section_html(title: str, body: str) -> str:
     return (
         f"<div style='{_HELPER_SECTION_CHROME}'>"
-        f'<b style="color: #94a3b8;">{_esc(title)}</b><br>'
+        f'<b style="color: #bd93f9;">{_esc(title)}</b><br>'
         f"{body}"
         "</div>"
     )
@@ -335,16 +335,16 @@ def _helper_metrics_html(rows: Sequence[tuple[str, object]]) -> str:
     parts = []
     for key, value in rows:
         parts.append(
-            f'<b style="color: #94a3b8;">{_esc(str(key))}:</b> '
-            '<code style="background: rgba(15,23,42,0.6); padding: 4px 10px; '
+            f'<b style="color: #bd93f9;">{_esc(str(key))}:</b> '
+            '<code style="background: rgba(40,42,54,0.72); padding: 4px 10px; '
             "border-radius: 5px; font-family: 'Courier New', monospace; "
-            "font-size: 0.9em; color: #cbd5e1; "
-            f'border: 1px solid rgba(71,85,105,0.3);">{_esc(str(value))}</code>'
+            "font-size: 0.9em; color: #f8f8f2; "
+            f'border: 1px solid rgba(98,114,164,0.35);">{_esc(str(value))}</code>'
         )
     return "<br>".join(parts)
 
 
-def helper_code_chip_html(code: str, *, color: str = "#60a5fa") -> str:
+def helper_code_chip_html(code: str, *, color: str = NODE_COLOR_COMPUTE) -> str:
     """Return the exact inline code-chip style used by the top-level job helper."""
     return (
         f'<code style="{_HELPER_CODE_CHIP} color: {_esc(color)};">{_esc(code)}</code>'
@@ -363,7 +363,7 @@ def helper_card_html(
     | None = None,
     uid: str | None = None,
     max_width: str | None = None,
-    accent: str = "#334155",
+    accent: str = "#6272a4",
 ) -> str:
     """Return the canonical rich HTML template for MMPP notebook helpers.
 
@@ -377,7 +377,7 @@ def helper_card_html(
         badge = f"&nbsp;&nbsp;{helper_badge_html(label, color=color)}"
 
     subtitle_html = (
-        f'<div style="color: #94a3b8; margin-top: 4px;">{_esc(subtitle)}</div>'
+        f'<div style="color: #6272a4; margin-top: 4px;">{_esc(subtitle)}</div>'
         if subtitle
         else ""
     )
