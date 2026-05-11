@@ -4,10 +4,54 @@ from __future__ import annotations
 
 import uuid
 
-from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
+from mmpp._repr_helpers import (
+    NODE_COLOR_ADVANCED,
+    NODE_COLOR_ANALYSIS,
+    NODE_COLOR_COMPUTE,
+    NODE_COLOR_PLOT,
+    api_help_html,
+    examples_section_html,
+    metrics_section_html,
+    node_card_html,
+)
 
 
-def _tabbed_backend_help(obj, *, title: str, prefix: str, methods, overview: str) -> str:
+def _backend_methods_section(methods) -> str:
+    rows = "".join(
+        "<tr style='border-top:1px solid rgba(98,114,164,0.2);'>"
+        f"<td title='{tip}' style='padding:5px 8px;font-family:monospace;color:#8be9fd;"
+        f"font-size:0.9em;white-space:nowrap;vertical-align:top;'>{sig}</td>"
+        f"<td style='padding:5px 8px;color:#f8f8f2;font-size:0.88em;'>{desc}</td>"
+        "</tr>"
+        for sig, desc, tip in methods
+    )
+    return (
+        "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+        "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+        "<b style='color:#bd93f9;'>Backend methods</b><br>"
+        "<table style='width:100%;border-collapse:collapse;margin-top:6px;'>"
+        "<thead><tr style='text-align:left;background:rgba(68,71,90,0.4);'>"
+        "<th style='padding:4px 8px;color:#f8f8f2;'>Method</th>"
+        "<th style='padding:4px 8px;color:#f8f8f2;'>Description</th>"
+        "</tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+        "<div style='margin-top:8px;font-size:0.8em;color:#6272a4;'>"
+        "Hover the method signature cell for parameter hints."
+        "</div></div>"
+    )
+
+
+def _tabbed_backend_help(
+    obj,
+    *,
+    title: str,
+    prefix: str,
+    methods,
+    overview_methods,
+    summary: str,
+    badge: tuple[str, str] | None = ("ready", "#50fa7b"),
+    example_lines: list[str] | None = None,
+) -> str:
     api = api_help_html(
         obj,
         title=f"{title} API help",
@@ -16,15 +60,26 @@ def _tabbed_backend_help(obj, *, title: str, prefix: str, methods, overview: str
         subtitle="Live public plotting API with signatures and generated examples.",
         chrome=False,
     )
-    return (
-        "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;"
-        "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-        "background:#0f172a;color:#e2e8f0;'>"
-        + html_tabs(
-            [("Overview", overview), ("API", api)],
-            uid=f"mmpp-dataset-plot-{uuid.uuid4().hex}",
-        )
-        + "</div>"
+    sections = [
+        metrics_section_html(
+            [
+                ("prefix", prefix, NODE_COLOR_COMPUTE),
+                ("backend", title.split(" ", 1)[0], NODE_COLOR_ANALYSIS),
+                ("default", "__call__(**kwargs)", NODE_COLOR_PLOT),
+            ]
+        ),
+        _backend_methods_section(overview_methods),
+    ]
+    if example_lines:
+        sections.append(examples_section_html("\n".join(example_lines)))
+    return node_card_html(
+        title,
+        icon="🎨",
+        subtitle=summary,
+        badge=badge,
+        sections=sections,
+        api=api,
+        uid=f"mmpp-dataset-plot-{uuid.uuid4().hex}",
     )
 
 
@@ -77,46 +132,39 @@ class _DatasetMatplotlibPlotAccessor:
         return f"<DatasetMplPlotAccessor('{dset}')>"
 
     def _repr_html_(self) -> str:
-        overview = plot_accessor_html(
-            "Matplotlib Plot Backend",
-            [
-                (
-                    ".snapshot(z=0, t=-1, figsize=(8, 5), dpi=100)",
-                    "HSL colour-wheel snapshot (vector) or heatmap (scalar)",
-                    "z, t, repeat, zero, cmap, component, figsize, dpi.",
-                ),
-                (
-                    ".scalar(**kw)",
-                    "Scalar component heatmap",
-                    "component, cmap, vmin/vmax, colorbar.",
-                ),
-                (
-                    ".vector(**kw)",
-                    "Vector field quiver plot",
-                    "step, scale, color, alpha.",
-                ),
-                (
-                    ".magnetization(**kw)",
-                    "Micromagnetic 2-D view (scalar + quiver)",
-                    "scalar_component='mz', vector_vdims=('mx','my'), filter_field='norm', cell_grid.",
-                ),
-                (
-                    ".contour(**kw)",
-                    "Contour plot of scalar component",
-                    "component, levels, cmap, filled.",
-                ),
-                (
-                    ".lightness(**kw)",
-                    "Lightness-based mz visualisation",
-                    "Renders mz as lightness.",
-                ),
-                (
-                    ".heatmap(**kw)",
-                    "2-D component heatmap over time",
-                    "component, cmap, vmin/vmax, aspect.",
-                ),
-            ],
-        )
+        overview_methods = [
+            (
+                ".snapshot(z=0, t=-1, figsize=(8, 5), dpi=100)",
+                "HSL colour-wheel snapshot (vector) or heatmap (scalar)",
+                "z, t, repeat, zero, cmap, component, figsize, dpi.",
+            ),
+            (
+                ".scalar(**kw)",
+                "Scalar component heatmap",
+                "component, cmap, vmin/vmax, colorbar.",
+            ),
+            (".vector(**kw)", "Vector field quiver plot", "step, scale, color, alpha."),
+            (
+                ".magnetization(**kw)",
+                "Micromagnetic 2-D view (scalar + quiver)",
+                "scalar_component='mz', vector_vdims=('mx','my'), filter_field='norm', cell_grid.",
+            ),
+            (
+                ".contour(**kw)",
+                "Contour plot of scalar component",
+                "component, levels, cmap, filled.",
+            ),
+            (
+                ".lightness(**kw)",
+                "Lightness-based mz visualisation",
+                "Renders mz as lightness.",
+            ),
+            (
+                ".heatmap(**kw)",
+                "2-D component heatmap over time",
+                "component, cmap, vmin/vmax, aspect.",
+            ),
+        ]
         return _tabbed_backend_help(
             self,
             title="Matplotlib Plot Backend",
@@ -131,8 +179,15 @@ class _DatasetMatplotlibPlotAccessor:
                 "heatmap",
                 "heamtp",
             ],
-            overview=overview,
+            overview_methods=overview_methods,
+            summary="2-D plotting backend with publication-style Matplotlib defaults for snapshots, scalar maps, quivers and mixed magnetization views.",
+            example_lines=[
+                "mpl = job[0].m.plot.mpl",
+                "mpl.snapshot(z=0, t=-1)",
+                "mpl.magnetization(scalar_component='mz', step=3)",
+            ],
         )
+
 
 class _DatasetK3DPlotAccessor:
     """K3D backend namespace for dataset-aware plotting."""
@@ -179,37 +234,31 @@ class _DatasetK3DPlotAccessor:
         return f"<DatasetK3DPlotAccessor('{dset}')>"
 
     def _repr_html_(self) -> str:
-        overview = plot_accessor_html(
-            "K3D Plot Backend",
-            [
-                (
-                    ".scalar(**kw)",
-                    "3-D scalar voxel plot",
-                    "component, cmap, opacity, hide_zeros, grid_from_centers.",
-                ),
-                (".vector(**kw)", "3-D vector field (arrows)", "step, scale, color."),
-                (
-                    ".voxels_vectors(**kw)",
-                    "Voxels + arrows - combined 3-D view",
-                    "scalar_component, cmap, voxel_opacity, quiver_density, vector_scale.",
-                ),
-                (
-                    ".magnetization(**kw)",
-                    "Micromagnetic default 3-D view",
-                    "style='hsl'|'mz'|'norm', show_vectors, voxel_opacity, quiver_density, "
-                    "color_field/filter_field can be (wrapper, 'mz').",
-                ),
-                (
-                    ".stack(**kw)",
-                    "Overlay multiple physical slices on one scene",
-                    "axis, positions, mode='magnetization'|'vector'|'scalar', slice_kwargs.",
-                ),
-                (".nonzero(**kw)", "Plot non-zero voxels", "threshold, color."),
-                (".heatmap(**kw)", "3-D heatmap", "component, cmap."),
-            ],
-            accent="#059669",
-            title_color="#34d399",
-        )
+        overview_methods = [
+            (
+                ".scalar(**kw)",
+                "3-D scalar voxel plot",
+                "component, cmap, opacity, hide_zeros, grid_from_centers.",
+            ),
+            (".vector(**kw)", "3-D vector field (arrows)", "step, scale, color."),
+            (
+                ".voxels_vectors(**kw)",
+                "Voxels + arrows - combined 3-D view",
+                "scalar_component, cmap, voxel_opacity, quiver_density, vector_scale.",
+            ),
+            (
+                ".magnetization(**kw)",
+                "Micromagnetic default 3-D view",
+                "style='hsl'|'mz'|'norm', show_vectors, voxel_opacity, quiver_density, color_field/filter_field can be (wrapper, 'mz').",
+            ),
+            (
+                ".stack(**kw)",
+                "Overlay multiple physical slices on one scene",
+                "axis, positions, mode='magnetization'|'vector'|'scalar', slice_kwargs.",
+            ),
+            (".nonzero(**kw)", "Plot non-zero voxels", "threshold, color."),
+            (".heatmap(**kw)", "3-D heatmap", "component, cmap."),
+        ]
         return _tabbed_backend_help(
             self,
             title="K3D Plot Backend",
@@ -223,8 +272,16 @@ class _DatasetK3DPlotAccessor:
                 "magnetization",
                 "stack",
             ],
-            overview=overview,
+            overview_methods=overview_methods,
+            summary="Interactive 3-D backend for voxel, vector and magnetization rendering, including combined volume and arrow views.",
+            badge=("3D", NODE_COLOR_ANALYSIS),
+            example_lines=[
+                "k3d = job[0].m.plot.k3d",
+                "k3d.magnetization(style='hsl', show_vectors=True)",
+                "k3d.stack(axis='z', positions=[0.0, 10e-9])",
+            ],
         )
+
 
 class _DatasetHVPlotAccessor:
     """Holoviews backend namespace for dataset-aware plotting."""
@@ -249,23 +306,26 @@ class _DatasetHVPlotAccessor:
         return f"<DatasetHVPlotAccessor('{dset}')>"
 
     def _repr_html_(self) -> str:
-        overview = plot_accessor_html(
-            "Holoviews Plot Backend",
-            [
-                (".scalar(**kw)", "Interactive scalar heatmap", "component, cmap."),
-                (".vector(**kw)", "Interactive vector field", "step, scale."),
-                (".contour(**kw)", "Interactive contour plot", "component, levels."),
-            ],
-            accent="#7c3aed",
-            title_color="#a78bfa",
-        )
+        overview_methods = [
+            (".scalar(**kw)", "Interactive scalar heatmap", "component, cmap."),
+            (".vector(**kw)", "Interactive vector field", "step, scale."),
+            (".contour(**kw)", "Interactive contour plot", "component, levels."),
+        ]
         return _tabbed_backend_help(
             self,
             title="Holoviews Plot Backend",
             prefix="job[0].m.plt.hv",
             methods=["scalar", "vector", "contour"],
-            overview=overview,
+            overview_methods=overview_methods,
+            summary="Interactive backend for lightweight exploratory scalar, vector and contour views.",
+            badge=("interactive", NODE_COLOR_PLOT),
+            example_lines=[
+                "hv = job[0].m.plot.hv",
+                "hv.scalar(component='mz')",
+                "hv.vector(step=4)",
+            ],
         )
+
 
 class _DatasetPyVistaPlotAccessor:
     """PyVista backend namespace for dataset-aware plotting."""
@@ -290,24 +350,26 @@ class _DatasetPyVistaPlotAccessor:
         return f"<DatasetPyVistaPlotAccessor('{dset}')>"
 
     def _repr_html_(self) -> str:
-        overview = plot_accessor_html(
-            "PyVista Plot Backend",
-            [
-                (
-                    ".scalar(**kw)",
-                    "3-D scalar volume rendering",
-                    "component, cmap, opacity.",
-                ),
-                (".vector(**kw)", "3-D vector glyphs", "step, scale, color."),
-                (".nonzero(**kw)", "Plot non-zero cells", "threshold, color."),
-            ],
-            accent="#b91c1c",
-            title_color="#fca5a5",
-        )
+        overview_methods = [
+            (
+                ".scalar(**kw)",
+                "3-D scalar volume rendering",
+                "component, cmap, opacity.",
+            ),
+            (".vector(**kw)", "3-D vector glyphs", "step, scale, color."),
+            (".nonzero(**kw)", "Plot non-zero cells", "threshold, color."),
+        ]
         return _tabbed_backend_help(
             self,
             title="PyVista Plot Backend",
             prefix="job[0].m.plt.pyvista",
             methods=["scalar", "vector", "nonzero"],
-            overview=overview,
+            overview_methods=overview_methods,
+            summary="PyVista backend for 3-D scalar volumes, vector glyphs and sparse non-zero region inspection.",
+            badge=("3D", NODE_COLOR_ADVANCED),
+            example_lines=[
+                "pv = job[0].m.plot.pyvista",
+                "pv.scalar(component='mz', opacity=0.35)",
+                "pv.vector(step=3)",
+            ],
         )

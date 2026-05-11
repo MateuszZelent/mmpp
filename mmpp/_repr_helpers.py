@@ -41,58 +41,58 @@ _HELPER_CARD_FONT = (
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
 )
 _HELPER_CARD_CHROME = (
-    "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
-    "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-    "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
-    "0 0 0 1px rgba(148,163,184,0.1) inset;"
+    "border:2px solid #6272a4;border-radius:12px;padding:18px;margin:10px 0;"
+    "background:linear-gradient(135deg,#282a36 0%,#21222c 50%,#44475a 100%);"
+    "color:#f8f8f2;box-shadow:0 10px 25px rgba(0,0,0,0.45),"
+    "0 0 0 1px rgba(98,114,164,0.15) inset;"
 )
 _HELPER_SECTION_CHROME = (
-    "background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+    "background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
     "padding:12px;border-radius:8px;margin-bottom:12px;"
-    "border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);"
+    "border:1px solid rgba(98,114,164,0.35);backdrop-filter:blur(10px);"
 )
 _HELPER_CODE_CHIP = (
-    "background:rgba(15,23,42,0.8);padding:5px 10px;border-radius:5px;"
-    "display:inline-block;margin:4px;font-family:'Courier New',monospace;"
-    "font-size:0.85em;border:1px solid rgba(71,85,105,0.4);font-weight:500;"
+    "display:inline-block;margin:3px 10px 3px 0;font-family:'Courier New',monospace;"
+    "font-size:0.88em;font-weight:600;"
 )
 # Inner-panel style: same gradient as the card but no outer chrome.
 # Used for the Overview tab body inside node_card_html().
 _HELPER_CARD_INNER = (
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
-    "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-    "color:#e2e8f0;padding:4px 0 0 0;"
+    "background:linear-gradient(135deg,#282a36 0%,#21222c 50%,#44475a 100%);"
+    "color:#f8f8f2;padding:4px 0 0 0;"
 )
 
 # ── Node-card chip colour palette ──────────────────────────────────────────
 # Use these consistently across all analysis-namespace helpers so that
 # "Compute" is always blue, "Analysis" always green, etc.
-NODE_COLOR_COMPUTE = "#38bdf8"  # compute / primary actions
-NODE_COLOR_ANALYSIS = "#34d399"  # analysis sub-interfaces
-NODE_COLOR_PLOT = "#a78bfa"  # plotting
-NODE_COLOR_UTIL = "#fb923c"  # utilities / cache
-NODE_COLOR_ADVANCED = "#f472b6"  # experimental / advanced
+NODE_COLOR_COMPUTE = "#8be9fd"  # Dracula cyan - compute / primary actions
+NODE_COLOR_ANALYSIS = "#50fa7b"  # Dracula green - analysis sub-interfaces
+NODE_COLOR_PLOT = "#bd93f9"  # Dracula purple - plotting
+NODE_COLOR_UTIL = "#ffb86c"  # Dracula orange - utilities / cache
+NODE_COLOR_ADVANCED = "#ff79c6"  # Dracula pink - experimental / advanced
 
-_HELPER_TITLE_COLOR = "#f1f5f9"
-_HELPER_LABEL_COLOR = "#94a3b8"
-_HELPER_MUTED_COLOR = "#64748b"
-_HELPER_VALUE_COLOR = "#cbd5e1"
-_HELPER_ACTIVE_TEXT = "#dbeafe"
-_HELPER_ACTIVE_BG = "rgba(96,165,250,0.22)"
-_HELPER_IDLE_TEXT = "#93c5fd"
-_HELPER_IDLE_BG = "rgba(15,23,42,0.65)"
-_HELPER_TABLE_HEAD_BG = "rgba(51,65,85,0.6)"
-_HELPER_TABLE_ROW_BORDER = "rgba(71,85,105,0.35)"
+_HELPER_TITLE_COLOR = "#f8f8f2"
+_HELPER_LABEL_COLOR = "#bd93f9"
+_HELPER_MUTED_COLOR = "#6272a4"
+_HELPER_VALUE_COLOR = "#f8f8f2"
+_HELPER_ACTIVE_TEXT = "#282a36"
+_HELPER_ACTIVE_BG = "#8be9fd"
+_HELPER_IDLE_TEXT = "#8be9fd"
+_HELPER_IDLE_BG = "rgba(40,42,54,0.72)"
+_HELPER_TABLE_HEAD_BG = "rgba(68,71,90,0.65)"
+_HELPER_TABLE_ROW_BORDER = "rgba(98,114,164,0.35)"
 
 
 def _helper_metric_html(label: object, value: object, color: str | None = None) -> str:
     value_color = _esc(color) if color else _HELPER_VALUE_COLOR
     return (
-        f"<b style='color:{_HELPER_LABEL_COLOR}'>{_esc(str(label))}:</b> "
-        "<code style='background:rgba(15,23,42,0.6);padding:4px 10px;"
-        f"border-radius:5px;font-size:0.9em;color:{value_color};"
-        "border:1px solid rgba(71,85,105,0.3);'>"
-        f"{_esc(str(value))}</code>"
+        "<div style='display:grid;grid-template-columns:minmax(110px,0.32fr) 1fr;"
+        "gap:10px;align-items:baseline;margin:4px 0;'>"
+        f"<span style='color:{_HELPER_LABEL_COLOR};font-weight:650;'>{_esc(str(label))}</span>"
+        f'<span style=\'color:{value_color};font-family:"Courier New",monospace;'
+        f"font-size:0.92em;word-break:break-word;'>{_esc(str(value))}</span>"
+        "</div>"
     )
 
 
@@ -111,7 +111,7 @@ def _helper_header_html(
         else ""
     )
     return (
-        "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+        f"<div style='font-size:1.1em;font-weight:600;color:{_HELPER_TITLE_COLOR};margin-bottom:4px;'>"
         f"{prefix}{_esc(title)}{badge_html}</div>"
         f"{subtitle_html}"
     )
@@ -143,8 +143,9 @@ def _helper_outer_card_html(
 ) -> str:
     accent_style = f"border-color:{_esc(accent)};" if accent else ""
     max_width_style = f"max-width:{_esc(max_width)};" if max_width else ""
+    title_html = "<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #6272a4; border-radius: 12px; padding: 18px; margin: 10px 0; background: linear-gradient(135deg, #282a36 0%, #21222c 50%, #44475a 100%); color: #f8f8f2; box-shadow: 0 10px 25px rgba(0,0,0,0.45), 0 0 0 1px rgba(98,114,164,0.15) inset;\">"
     return (
-        f"<div style='{_HELPER_CARD_FONT}{_HELPER_CARD_CHROME}{accent_style}{max_width_style}'>"
+        f'{title_html[:-2]}{accent_style}{max_width_style}">'
         f"{html_tabs(tabs, uid=uid)}</div>"
     )
 
@@ -200,16 +201,20 @@ def accessors_section_html(
     """
     if not groups:
         return ""
-    chip_style = _HELPER_CODE_CHIP  # no extra colour — caller appends it
     rows = ""
     for label, items in groups:
-        chips = "".join(
-            f"<code style='{chip_style} color:{_esc(color)};'>{_esc(code)}</code>"
+        entries = "".join(
+            "<span style='display:inline-flex;align-items:center;margin:3px 12px 3px 0;'>"
+            f"<span style='color:{_esc(color)};font-size:0.95em;margin-right:5px;'>•</span>"
+            f"<code style='{_HELPER_CODE_CHIP}color:{_esc(color)};'>{_esc(code)}</code>"
+            "</span>"
             for code, color in items
         )
         rows += (
-            f"<small style='color:{_HELPER_MUTED_COLOR};margin-right:6px;'>{_esc(label)}</small>"
-            f"{chips}<br>"
+            "<div style='display:grid;grid-template-columns:minmax(88px,0.18fr) 1fr;"
+            "gap:10px;align-items:start;margin:5px 0;'>"
+            f"<small style='color:{_HELPER_MUTED_COLOR};font-weight:700;'>{_esc(label)}</small>"
+            f"<div>{entries}</div></div>"
         )
     return (
         f"<div style='{_HELPER_SECTION_CHROME}'>"
@@ -231,9 +236,9 @@ def examples_section_html(code: str, *, title: str = "Examples") -> str:
     return (
         f"<div style='{_HELPER_SECTION_CHROME}'>"
         f"<b style='color:{_HELPER_LABEL_COLOR};'>{_esc(title)}</b><br>"
-        "<pre style='margin:6px 0 0 0;background:rgba(15,23,42,0.85);"
-        "padding:10px;border-radius:6px;color:#e2e8f0;overflow-x:auto;"
-        f"font-size:0.85em;'><code>{_esc(code)}</code></pre>"
+        "<pre style='margin:8px 0 0 0;background:transparent;padding:2px 0 2px 12px;"
+        "border-left:2px solid rgba(189,147,249,0.55);color:#f8f8f2;overflow-x:auto;"
+        f"font-size:0.86em;line-height:1.45;'><code>{_esc(code)}</code></pre>"
         "</div>"
     )
 

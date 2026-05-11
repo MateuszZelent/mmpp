@@ -525,58 +525,18 @@ class DispersionPlotAccessor:
         return "<DispersionPlotAccessor: .heatmap(...), .branch(branch, ...), .add_analytics(ax, ...)>"
 
     def _repr_html_(self) -> str:
-        import uuid as _uuid
-
-        from mmpp._repr_helpers import api_help_html, html_tabs
-        from html import escape as _esc
-
-        HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
-
-        methods = [
-            (
-                ".heatmap(fmax=10, lognorm=True)",
-                "S(k,f) power heatmap",
-                "Main dispersion visualisation. Key params: fmax (GHz clip), lognorm (log color scale), "
-                "kscale ('rad_um'|'meter'), cmap, vmin/vmax, k_xlim, orth_index, overlay_points, save.",
-            ),
-            (
-                ".heatmap(orth_index=0, lognorm=True)",
-                "Single y-slice heatmap",
-                "Select one orthogonal slice from S_local. Only available when result was computed with avg_over_orthogonal=False.",
-            ),
-            (
-                ".add_analytics(ax, sw_config='DE')",
-                "Overlay analytical dispersion curve",
-                "Auto-detects B, Ms, Aex, d from zarr attrs. sw_config: 'DE' (k⊥M), 'BV' (k∥M), 'FV' (M⊥film). "
-                "model: 'kalinikos' (default), 'bottcher', 'kim', 'cortes_ortuno'. n_modes: PSSW mode count.",
-            ),
-            (
-                ".branch(branch, kscale='rad_um')",
-                "Dispersion branch + v_g panel",
-                "Two-panel plot: f(k) on left, group velocity dω/dk [km/s] on right. Pass a DispersionBranch from track_branch().",
-            ),
-        ]
-        rows = "".join(
-            f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
-            f"<td style='padding:4px 10px;font-family:monospace;color:#93c5fd;font-size:.88em;'>{_esc(sig)}</td>"
-            f"<td style='padding:4px 10px;color:#cbd5e1;font-size:.85em;'>{_esc(desc)}</td>"
-            f"</tr>"
-            for sig, desc, tip in methods
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            api_help_html,
+            accessors_section_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
         )
-        html = (
-            "<div style='font-family:-apple-system,sans-serif;border:2px solid #1d4ed8;"
-            "border-radius:10px;padding:12px;margin:6px 0;background:#0f172a;"
-            "color:#e2e8f0;max-width:680px;'>"
-            "<div style='font-weight:700;color:#60a5fa;margin-bottom:8px;'>"
-            "DispersionPlotAccessor"
-            "<span style='font-size:.75em;color:#475569;font-weight:400;margin-left:8px;'>"
-            "(hover rows for parameter details)</span></div>"
-            f"<table style='width:100%;border-collapse:collapse;'>{rows}</table>"
-            "<div style='margin-top:8px;font-size:.78em;color:#475569;'>"
-            "All methods return <code style='color:#bae6fd;'>(fig, ax)</code> "
-            "and accept <code style='color:#bae6fd;'>save=</code> path."
-            "</div></div>"
-        )
+
         api_card = api_help_html(
             self,
             title="Dispersion plot API help",
@@ -585,14 +545,44 @@ class DispersionPlotAccessor:
             subtitle="Live signatures for the plotting namespace returned by DispersionResult1D.plot.",
             chrome=False,
         )
-        return (
-            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            'color:#e2e8f0;">'
-            + html_tabs(
-                [("Overview", html), ("API", api_card)],
-                uid=f"disp-plot-{str(_uuid.uuid4())[:8]}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Dispersion Plot Accessor",
+            icon="📊",
+            subtitle="Heatmap, branch and analytical-overlay helpers for DispersionResult1D.plot.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("owner", "DispersionResult1D.plot", NODE_COLOR_COMPUTE),
+                        ("return", "(fig, ax)", NODE_COLOR_ANALYSIS),
+                        ("save", "all methods accept save=", NODE_COLOR_UTIL),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Plot:",
+                            [
+                                (".heatmap(fmax=10, lognorm=True)", NODE_COLOR_COMPUTE),
+                                (
+                                    ".heatmap(orth_index=0, lognorm=True)",
+                                    NODE_COLOR_ANALYSIS,
+                                ),
+                                (".branch(branch, kscale='rad_um')", NODE_COLOR_PLOT),
+                                (".add_analytics(ax, sw_config='DE')", NODE_COLOR_UTIL),
+                            ],
+                        )
+                    ]
+                ),
+                examples_section_html(
+                    "\n".join(
+                        [
+                            "disp.plot.heatmap(fmax=10, lognorm=True)",
+                            "disp.plot.add_analytics(ax, sw_config='DE')",
+                            "disp.plot.branch(branch, kscale='rad_um')",
+                        ]
+                    )
+                ),
+            ],
+            api=api_card,
+            uid="dispersion-plot",
         )

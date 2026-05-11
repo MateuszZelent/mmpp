@@ -10,6 +10,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from mmpp._repr_helpers import (
+    NODE_COLOR_ANALYSIS,
+    NODE_COLOR_COMPUTE,
+    NODE_COLOR_PLOT,
+    NODE_COLOR_UTIL,
+    accessors_section_html,
+    examples_section_html,
+    metrics_section_html,
+    node_card_html,
+)
+
 from .config import HysteresisConfig
 
 
@@ -165,24 +176,55 @@ class HysteresisResult:
         mr_mean = _fmt(getattr(mr, "mean", None))
         ms_mean = _fmt(getattr(ms, "ms_mean", None))
         n_major = sum(1 for b in self.branches if b.is_major)
-
-        return (
-            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;\">"
-            "<div style='font-size:1.05em;font-weight:600;color:#f1f5f9;'>"
-            "HysteresisResult</div>"
-            f"<div style='color:#94a3b8;font-size:0.85em;margin-top:4px;'>"
-            f"points: {self.field.size} · branches: {len(self.branches)} · major: {n_major}</div>"
-            "<table style='width:100%;margin-top:10px;border-collapse:collapse;font-size:0.9em;'>"
-            "<tr><td style='padding:4px 8px;color:#93c5fd;font-family:monospace;'>Hc mean</td>"
-            f"<td style='padding:4px 8px;color:#e2e8f0;'>{hc_mean}</td></tr>"
-            "<tr><td style='padding:4px 8px;color:#93c5fd;font-family:monospace;'>Mr mean</td>"
-            f"<td style='padding:4px 8px;color:#e2e8f0;'>{mr_mean}</td></tr>"
-            "<tr><td style='padding:4px 8px;color:#93c5fd;font-family:monospace;'>Ms mean</td>"
-            f"<td style='padding:4px 8px;color:#e2e8f0;'>{ms_mean}</td></tr>"
-            "</table></div>"
+        example = "\n".join(
+            [
+                "res.plot.loop(show_hc=True)",
+                "res.plot.interactive()",
+                "res.metrics.report()",
+                "res.compare.to(other_result).summary()",
+            ]
+        )
+        return node_card_html(
+            "HysteresisResult",
+            icon="🧲",
+            subtitle=f"{self.field.size} points across {len(self.branches)} branches ({n_major} major).",
+            badge=(str(self.metadata.get("source_type", "unknown")), NODE_COLOR_UTIL),
+            sections=[
+                metrics_section_html(
+                    [
+                        ("Hc mean", hc_mean, NODE_COLOR_COMPUTE),
+                        ("Mr mean", mr_mean, NODE_COLOR_ANALYSIS),
+                        ("Ms mean", ms_mean, NODE_COLOR_PLOT),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Accessors:",
+                            [
+                                (".plot", NODE_COLOR_COMPUTE),
+                                (".metrics", NODE_COLOR_ANALYSIS),
+                                (".compare", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                        (
+                            "Export:",
+                            [
+                                (".export(...)", NODE_COLOR_UTIL),
+                                (".to_dataframe()", NODE_COLOR_UTIL),
+                                (".cloneflip()", NODE_COLOR_UTIL),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(example),
+            ],
+            api="<div style='font-size:0.95em;color:#f8f8f2;'>"
+            "<div style='margin-bottom:10px;'>Use <code>res.plot</code> for visualization, "
+            "<code>res.metrics</code> for derived quantities and <code>res.compare</code> "
+            "for loop-to-loop comparisons.</div>"
+            "</div>",
+            uid="mmpp-hysteresis-result",
         )
 
     def _repr_mimebundle_(self, include=None, exclude=None):

@@ -27,7 +27,7 @@ log = logging.getLogger("mmpp.solitons.vortex.ui")
 
 try:
     import ipywidgets as widgets
-    from IPython.display import HTML, clear_output, display
+    from IPython.display import HTML, display
     from IPython.display import Image as IPyImage
 
     _HAS_WIDGETS = True
@@ -63,6 +63,23 @@ _CSS = """<style>
     gap: 10px;
     box-shadow: 0 2px 8px rgba(9,105,218,0.25);
 }
+.vdash-header span.brand {
+    white-space: nowrap;
+}
+.vdash-header span.log {
+    color: #cae8ff;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+    margin-left: 8px;
+    opacity: 0.95;
+    white-space: nowrap;
+}
+.vdash-header span.log.ok { color: #bbf7d0; }
+.vdash-header span.log.warn { color: #fde68a; }
+.vdash-header span.log.error { color: #fecdd3; }
+.vdash-header span.log.info { color: #cae8ff; }
 .vdash-header span.sub {
     font-size: 10px;
     color: #cae8ff;
@@ -312,6 +329,8 @@ class _DashboardState:
     """Cached computation results shared between tabs."""
 
     trajectory: Any = None
+    trajectory_source: str | None = None
+    trajectory_views: Any = None
     topology_result: Any = None
     orbit_fit: Any = None
     gyration_spectrum: Any = None
@@ -321,6 +340,25 @@ class _DashboardState:
     events_result: Any = None
     signals_result: Any = None
     nonlinear_result: Any = None
+
+
+@dataclass
+class _ResolvedTrajectoryView:
+    """Dashboard-level trajectory view with display-frame metadata."""
+
+    label: str
+    source: str
+    trajectory: Any
+    t_ns: np.ndarray
+    display_x_nm: np.ndarray
+    display_y_nm: np.ndarray
+    r_orbit_nm: np.ndarray
+    orbit_center_nm: tuple[float, float]
+    disk_center_nm: tuple[float, float] | None
+    display_center_nm: tuple[float, float]
+    center_mode_requested: str
+    center_mode_used: str
+    stats: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +381,15 @@ class VortexInteractiveDashboard:
         Plot resolution.
     """
 
-    def __init__(self, vortex_interface, figsize=(10, 7), dpi=100):
+    def __init__(
+        self,
+        vortex_interface,
+        figsize=(10, 7),
+        dpi=100,
+        *,
+        trajectory_source: str = "magnetization",
+        center_mode: str = "auto",
+    ):
         if not _HAS_WIDGETS:
             raise ImportError("ipywidgets is required: pip install ipywidgets")
         if not _HAS_MATPLOTLIB:
@@ -355,6 +401,9 @@ class VortexInteractiveDashboard:
         self._state = _DashboardState()
         self._fig: Figure | None = None
         self._output: Any = None
+        self._plot_area: Any = None
+        self._plot_image: Any = None
+        self._plot_placeholder: Any = None
         self._status: Any = None
         self._health_widget: Any = None  # HTML widget showing health status
         self._controls: dict[str, Any] = {}
@@ -363,6 +412,8 @@ class VortexInteractiveDashboard:
         self._display_handle: Any = None
         self._css_displayed = False
         self._built = False
+        self._default_trajectory_source = trajectory_source
+        self._default_center_mode = center_mode
 
     # ------------------------------------------------------------------
     # Public API
@@ -390,8 +441,24 @@ class VortexInteractiveDashboard:
             return
         self._built = True
 
-        # Global output widget (right panel)
-        self._output = widgets.Output(layout=widgets.Layout(**_OUTPUT_LAYOUT))
+        # Global output surface (right panel). Most module actions render PNG
+        # bytes straight into an Image widget; this avoids the Output widget
+        # clear/append comm path that can freeze ipympl notebooks after the
+        # first callback. The Output widget remains hidden for nested dashboards.
+        self._plot_placeholder = widgets.HTML(
+            "<div style='padding:18px;color:#6e7781;font-family:monospace;'>"
+            "Run an analysis module to render results here."
+            "</div>"
+        )
+        self._plot_image = widgets.Image(
+            format="png",
+            layout=widgets.Layout(width="100%", display="none"),
+        )
+        self._output = widgets.Output(layout=widgets.Layout(display="none"))
+        self._plot_area = widgets.VBox(
+            [self._plot_placeholder, self._plot_image, self._output],
+            layout=widgets.Layout(**_OUTPUT_LAYOUT),
+        )
         # Status bar
         self._status = widgets.HTML(
             value=self._fmt_status("Ready — select a module and click Run", "info")
@@ -438,7 +505,7 @@ class VortexInteractiveDashboard:
             overflow_y="auto",
             overflow_x="hidden",
         )
-        for i, (name, panel) in enumerate(self._module_panels.items()):
+        for i, (_name, panel) in enumerate(self._module_panels.items()):
             panel.layout = widgets.Layout(
                 display="" if i == 0 else "none",
                 width="294px",
@@ -481,20 +548,16 @@ class VortexInteractiveDashboard:
 
         # ---- Main HBox ------------------------------------------------------
         main_area = widgets.HBox(
-            [left_panel, self._output],
+            [left_panel, self._plot_area],
             layout=widgets.Layout(width="100%", align_items="stretch"),
         )
 
-        # ---- Header ---------------------------------------------------------
-        header = widgets.HTML(
-            "<div class='vdash-header'>"
-            "🌀 Vortex Dynamics"
-            "<span class='sub'>Interactive Dashboard · mmpp</span>"
-            "</div>"
-        )
+        # ---- Unified header with live status log ----------------------------
+        self._status.layout = widgets.Layout(width="100%")
+        header = self._status
 
         self._root = widgets.VBox(
-            [header, main_area, self._status],
+            [header, main_area],
             layout=widgets.Layout(width="100%"),
         )
 
@@ -567,6 +630,10 @@ class VortexInteractiveDashboard:
 
     def _build_tab_core(self):
         c = {}
+        frame_count = self._get_tracking_frame_count()
+        last_frame = max(frame_count - 1, 0) if frame_count else 5000
+        end_frame = frame_count if frame_count else 0
+        end_max = max(frame_count, 1) if frame_count else 5000
         c["threshold"] = _slider(
             "Threshold",
             0.5,
@@ -577,21 +644,40 @@ class VortexInteractiveDashboard:
         )
         c["method"] = _dropdown(
             "Method",
-            [("Center-of-mass", "com"), ("Peak", "peak"), ("Fit", "fit")],
-            ("Center-of-mass", "com"),
+            [
+                ("Gaussian fit", "gaussian"),
+                ("Centroid", "centroid"),
+                ("Maximum |mz|", "maximum"),
+                ("Table core position", "table"),
+            ],
+            ("Gaussian fit", "gaussian"),
+        )
+        c["center_mode"] = _dropdown(
+            "Center mode",
+            [
+                ("Auto", "auto"),
+                ("Orbit center", "orbit"),
+                ("Disk center", "disk"),
+                ("Raw coordinates", "raw"),
+            ],
+            getattr(self, "_default_center_mode", "auto"),
         )
         c["t_start"] = _int_slider(
             "t start [idx]",
             0,
             0,
-            5000,
+            last_frame,
             description_tooltip="First time step to include",
         )
         c["t_end"] = _int_slider(
-            "t end [idx]", 0, 0, 5000, description_tooltip="Last time step (0 = all)"
+            "t end [idx]",
+            end_frame,
+            0,
+            end_max,
+            description_tooltip="Last time step, exclusive (0 = all)",
         )
         c["component"] = _dropdown(
-            "Component", [("mz (default)", "z"), ("mx", "x"), ("my", "y")]
+            "Core signal", [("|mz|", "z")]
         )
         c["smooth"] = _checkbox("Smooth trajectory", True)
         c["smooth_window"] = _int_slider("Smooth window", 5, 1, 51, 2)
@@ -611,6 +697,7 @@ class VortexInteractiveDashboard:
                 _section("📌 Detection Parameters"),
                 c["threshold"],
                 c["method"],
+                c["center_mode"],
                 c["component"],
                 _section("🕐 Time Range"),
                 c["t_start"],
@@ -667,10 +754,30 @@ class VortexInteractiveDashboard:
 
     def _build_tab_trajectory(self):
         c = {}
+        c["source"] = _dropdown(
+            "Source",
+            [
+                ("Magnetization tracking", "magnetization"),
+                ("Table core position", "table"),
+                ("Compare sources", "compare"),
+            ],
+            getattr(self, "_default_trajectory_source", "magnetization"),
+        )
+        c["center_mode"] = _dropdown(
+            "Center mode",
+            [
+                ("Auto", "auto"),
+                ("Orbit center", "orbit"),
+                ("Disk center", "disk"),
+                ("Raw coordinates", "raw"),
+            ],
+            getattr(self, "_default_center_mode", "auto"),
+        )
         c["fit_orbit"] = _checkbox("Fit orbit (ellipse)", True)
         c["detrend"] = _checkbox("Detrend (remove drift)", False)
         c["show_velocity"] = _checkbox("Show velocity", False)
         c["show_stats"] = _checkbox("Show statistics", True)
+        c["show_centers"] = _checkbox("Show centers", True)
         c["show_geom"] = _checkbox("Show disk outline", True)
         c["color_by"] = _dropdown(
             "Color by",
@@ -693,11 +800,14 @@ class VortexInteractiveDashboard:
         return widgets.VBox(
             [
                 _section("📐 Analysis Options"),
+                c["source"],
+                c["center_mode"],
                 c["fit_orbit"],
                 c["detrend"],
                 _section("✨ Visualization"),
                 c["show_velocity"],
                 c["show_stats"],
+                c["show_centers"],
                 c["show_geom"],
                 c["color_by"],
                 c["cmap"],
@@ -958,6 +1068,40 @@ class VortexInteractiveDashboard:
         except Exception:
             return []
 
+    def _preferred_table_column(self, col_names: list[str], preferred: str) -> str:
+        """Return the preferred table column when it exists."""
+        return preferred if preferred in col_names else ""
+
+    def _get_tracking_frame_count(self) -> int:
+        """Best-effort number of frames available to core tracking."""
+        try:
+            traj = self._state.trajectory
+            if traj is not None:
+                return int(np.asarray(traj.time).size)
+        except Exception:
+            pass
+
+        try:
+            raw = self._vx._job.get_raw(self._vx.dataset_name)
+            shape = tuple(int(v) for v in getattr(raw, "shape", ()))
+            if len(shape) in {4, 5} and shape:
+                return max(int(shape[0]), 0)
+        except Exception:
+            pass
+
+        try:
+            job = self._vx._job
+            if "table" in job:
+                table = job["table"]
+                if "t" in table:
+                    return int(np.asarray(table["t"]).size)
+                for key in table.keys():
+                    return int(np.asarray(table[key]).size)
+        except Exception:
+            pass
+
+        return 0
+
     def _build_tab_table(self):
         c = {}
         col_names = self._get_table_column_names()
@@ -965,8 +1109,12 @@ class VortexInteractiveDashboard:
         opts = placeholder + [(k, k) for k in col_names]
         opts2 = [("— none —", "")] + [(k, k) for k in col_names]
 
-        c["x_col"] = _dropdown("X column", opts)
-        c["y_col"] = _dropdown("Y column", opts)
+        c["x_col"] = _dropdown(
+            "X column", opts, value=self._preferred_table_column(col_names, "t")
+        )
+        c["y_col"] = _dropdown(
+            "Y column", opts, value=self._preferred_table_column(col_names, "mx")
+        )
         c["y2_col"] = _dropdown("Y2 column (opt)", opts2)
         c["line_style"] = _dropdown(
             "Line style",
@@ -1015,13 +1163,26 @@ class VortexInteractiveDashboard:
 
     @staticmethod
     def _fmt_status(msg: str, kind: str = "info") -> str:
-        return f"<div class='vdash-status-{kind}'>● {msg}</div>"
+        from html import escape
 
-    def _draw_disk_nm(self, ax) -> None:
+        kind_norm = kind if kind in {"ok", "warn", "error", "info"} else "info"
+        safe_msg = escape(str(msg))
+        return (
+            "<div class='vdash-header'>"
+            "<span class='brand'>🌀 Vortex Dynamics</span>"
+            f"<span class='log {kind_norm}'>● {safe_msg}</span>"
+            "<span class='sub'>Interactive Dashboard · mmpp</span>"
+            "</div>"
+        )
+
+    def _draw_disk_nm(
+        self, ax, center_nm: tuple[float, float] = (0.0, 0.0)
+    ) -> None:
         """Draw the nanodot boundary (gray dashed circle) on *ax* in nm units."""
         try:
-            from mmpp.solitons.vortex.plotting import _infer_disk_radius
             from matplotlib.patches import Circle
+
+            from mmpp.solitons.vortex.plotting import _infer_disk_radius
 
             r_m = _infer_disk_radius(self._vx)
             if r_m is None or not (r_m > 0):
@@ -1034,7 +1195,7 @@ class VortexInteractiveDashboard:
             label = "disk edge" if "disk edge" not in existing else "_nolegend_"
             ax.add_patch(
                 Circle(
-                    (0.0, 0.0),
+                    (float(center_nm[0]), float(center_nm[1])),
                     radius=r_nm,
                     fill=False,
                     edgecolor="0.55",
@@ -1049,22 +1210,417 @@ class VortexInteractiveDashboard:
         except Exception:
             pass
 
+    def _infer_disk_radius_m(self) -> float | None:
+        """Infer disk radius in meters from the vortex interface metadata."""
+        try:
+            from mmpp.solitons.vortex.plotting import _infer_disk_radius
+
+            radius = _infer_disk_radius(self._vx)
+            if radius is None or not np.isfinite(float(radius)) or float(radius) <= 0:
+                return None
+            return float(radius)
+        except Exception:
+            return None
+
+    def _infer_disk_center_m(self) -> tuple[float, float] | None:
+        """Infer the physical grid center used by raw tracked coordinates."""
+        try:
+            raw = self._vx._job.get_raw(self._vx.dataset_name)
+            shape = tuple(int(v) for v in getattr(raw, "shape", ()))
+            if len(shape) == 5:
+                _, _, ny, nx, _ = shape
+            elif len(shape) == 4:
+                _, ny, nx, _ = shape
+            else:
+                return None
+            attrs = getattr(self._vx._job, "attrs", {}) or {}
+            dx = float(attrs.get("dx", attrs.get("cellsize_x", 1.0)))
+            dy = float(attrs.get("dy", attrs.get("cellsize_y", 1.0)))
+            return (0.5 * float(nx - 1) * dx, 0.5 * float(ny - 1) * dy)
+        except Exception:
+            return None
+
+    def _display_xy_nm(self, x_m, y_m) -> tuple[np.ndarray, np.ndarray, tuple[float, float]]:
+        """Return trajectory coordinates in the displayed disk-centered frame."""
+        x = np.asarray(x_m, dtype=float)
+        y = np.asarray(y_m, dtype=float)
+        center = self._infer_disk_center_m()
+        if center is None or x.size == 0:
+            return x * 1e9, y * 1e9, (0.0, 0.0)
+
+        cx, cy = center
+        x_centered = x - cx
+        y_centered = y - cy
+
+        try:
+            from mmpp.solitons.vortex.plotting import _infer_disk_radius
+
+            disk_radius = _infer_disk_radius(self._vx)
+        except Exception:
+            disk_radius = None
+
+        raw_r_max = float(np.max(np.hypot(x, y))) if x.size else 0.0
+        centered_r_max = float(np.max(np.hypot(x_centered, y_centered))) if x.size else 0.0
+        use_centered = centered_r_max < raw_r_max
+        if disk_radius is not None and np.isfinite(float(disk_radius)) and disk_radius > 0:
+            use_centered = use_centered and (
+                raw_r_max > float(disk_radius) * 1.05
+                or centered_r_max <= float(disk_radius) * 1.25
+            )
+
+        if use_centered:
+            return x_centered * 1e9, y_centered * 1e9, (cx * 1e9, cy * 1e9)
+        return x * 1e9, y * 1e9, (0.0, 0.0)
+
+    def _core_tracking_kwargs_from_controls(self, c: dict | None = None) -> dict:
+        """Resolve core tracking kwargs from core controls with safe fallbacks."""
+        c = c or self._controls.get("core", {}) or {}
+        method = getattr(c.get("method"), "value", "gaussian")
+        if method == "table":
+            return {"method": "table"}
+        kwargs = {"method": method}
+        if c.get("threshold") is not None:
+            kwargs["core_threshold"] = float(getattr(c["threshold"], "value", 0.5))
+        return kwargs
+
+    def _resolve_trajectory_views(
+        self,
+        source: str,
+        center_mode: str,
+        *,
+        tracking_method: str = "gaussian",
+        core_threshold: float = 0.5,
+    ) -> list[_ResolvedTrajectoryView]:
+        """Resolve dashboard trajectory views without forcing a shared timebase."""
+        source_norm = str(source or "magnetization").lower()
+        views: list[_ResolvedTrajectoryView] = []
+
+        if source_norm in {"magnetization", "compare"}:
+            traj = self._vx.core.track(
+                method=tracking_method,
+                core_threshold=float(core_threshold),
+            )
+            views.append(
+                self._resolve_trajectory_view(
+                    traj,
+                    label="magnetization tracking",
+                    source="magnetization",
+                    center_mode=center_mode,
+                )
+            )
+
+        if source_norm in {"table", "compare"}:
+            traj = self._vx.core.track(method="table")
+            views.append(
+                self._resolve_trajectory_view(
+                    traj,
+                    label="table core position",
+                    source="table",
+                    center_mode=center_mode,
+                )
+            )
+
+        if not views:
+            raise ValueError("source must be 'magnetization', 'table', or 'compare'")
+
+        self._state.trajectory_views = views
+        if source_norm != "compare":
+            self._state.trajectory = views[0].trajectory
+            self._state.trajectory_source = views[0].source
+        return views
+
+    def _resolve_trajectory_view(
+        self,
+        trajectory,
+        *,
+        label: str,
+        source: str,
+        center_mode: str,
+    ) -> _ResolvedTrajectoryView:
+        """Build a source-aware, centered trajectory view for dashboard plots."""
+        x = np.asarray(trajectory.x, dtype=float)
+        y = np.asarray(trajectory.y, dtype=float)
+        t = np.asarray(trajectory.time, dtype=float)
+
+        orbit_center_m = (
+            float(np.nanmean(x)) if x.size else 0.0,
+            float(np.nanmean(y)) if y.size else 0.0,
+        )
+        disk_center_m = self._infer_disk_center_m()
+        disk_radius_m = self._infer_disk_radius_m()
+
+        mode_req = str(center_mode or "auto").lower()
+        mode_used = mode_req
+        if mode_req == "raw":
+            center_m = (0.0, 0.0)
+        elif mode_req == "disk":
+            center_m = disk_center_m or orbit_center_m
+            mode_used = "disk" if disk_center_m is not None else "orbit"
+        elif mode_req == "orbit":
+            center_m = orbit_center_m
+        else:
+            mode_req = "auto"
+            center_m = orbit_center_m
+            mode_used = "orbit"
+            if disk_center_m is not None:
+                offset_m = float(
+                    np.hypot(
+                        orbit_center_m[0] - disk_center_m[0],
+                        orbit_center_m[1] - disk_center_m[1],
+                    )
+                )
+                threshold_m = max(1e-9, 0.02 * float(disk_radius_m or 0.0))
+                disk_r = np.hypot(x - disk_center_m[0], y - disk_center_m[1])
+                orbit_r = np.hypot(x - orbit_center_m[0], y - orbit_center_m[1])
+                disk_r_max = float(np.nanmax(disk_r)) if disk_r.size else 0.0
+                orbit_r_max = float(np.nanmax(orbit_r)) if orbit_r.size else 0.0
+                if (
+                    offset_m <= threshold_m
+                    and (
+                        disk_radius_m is None
+                        or disk_r_max <= float(disk_radius_m) * 1.05
+                    )
+                    and disk_r_max <= orbit_r_max * 1.25
+                ):
+                    center_m = disk_center_m
+                    mode_used = "disk"
+
+        display_x_nm = (x - center_m[0]) * 1e9
+        display_y_nm = (y - center_m[1]) * 1e9
+        r_orbit_nm = np.hypot(display_x_nm, display_y_nm)
+
+        disk_center_nm = (
+            (disk_center_m[0] * 1e9, disk_center_m[1] * 1e9)
+            if disk_center_m is not None
+            else None
+        )
+        orbit_center_nm = (orbit_center_m[0] * 1e9, orbit_center_m[1] * 1e9)
+        display_center_nm = (center_m[0] * 1e9, center_m[1] * 1e9)
+
+        stats = self._trajectory_view_stats(
+            trajectory,
+            display_x_nm,
+            display_y_nm,
+            r_orbit_nm,
+            orbit_center_m,
+            disk_center_m,
+            disk_radius_m,
+            mode_used,
+            source,
+        )
+        return _ResolvedTrajectoryView(
+            label=label,
+            source=source,
+            trajectory=trajectory,
+            t_ns=t * 1e9,
+            display_x_nm=display_x_nm,
+            display_y_nm=display_y_nm,
+            r_orbit_nm=r_orbit_nm,
+            orbit_center_nm=orbit_center_nm,
+            disk_center_nm=disk_center_nm,
+            display_center_nm=display_center_nm,
+            center_mode_requested=mode_req,
+            center_mode_used=mode_used,
+            stats=stats,
+        )
+
+    def _trajectory_view_stats(
+        self,
+        trajectory,
+        display_x_nm: np.ndarray,
+        display_y_nm: np.ndarray,
+        r_orbit_nm: np.ndarray,
+        orbit_center_m: tuple[float, float],
+        disk_center_m: tuple[float, float] | None,
+        disk_radius_m: float | None,
+        center_mode_used: str,
+        source: str,
+    ) -> dict[str, Any]:
+        """Compute trajectory statistics in the dashboard display semantics."""
+        t = np.asarray(trajectory.time, dtype=float)
+        x = np.asarray(trajectory.x, dtype=float)
+        y = np.asarray(trajectory.y, dtype=float)
+        n = int(t.size)
+        stats: dict[str, Any] = {
+            "source": source,
+            "n": n,
+            "center_mode": center_mode_used,
+            "t_start_ns": float(t[0] * 1e9) if n else float("nan"),
+            "t_end_ns": float(t[-1] * 1e9) if n else float("nan"),
+            "dt_ns": float(np.nanmedian(np.diff(t)) * 1e9) if n > 1 else float("nan"),
+            "orbit_center_nm": (orbit_center_m[0] * 1e9, orbit_center_m[1] * 1e9),
+            "disk_center_nm": (
+                (disk_center_m[0] * 1e9, disk_center_m[1] * 1e9)
+                if disk_center_m is not None
+                else None
+            ),
+            "r_mean_nm": float(np.nanmean(r_orbit_nm)) if n else float("nan"),
+            "r_min_nm": float(np.nanmin(r_orbit_nm)) if n else float("nan"),
+            "r_max_nm": float(np.nanmax(r_orbit_nm)) if n else float("nan"),
+            "r_std_nm": float(np.nanstd(r_orbit_nm)) if n else float("nan"),
+        }
+
+        if disk_center_m is not None:
+            center_offset_m = float(
+                np.hypot(
+                    orbit_center_m[0] - disk_center_m[0],
+                    orbit_center_m[1] - disk_center_m[1],
+                )
+            )
+            geometry_r_m = np.hypot(x - disk_center_m[0], y - disk_center_m[1])
+            stats["center_offset_nm"] = center_offset_m * 1e9
+            stats["geometry_r_max_nm"] = (
+                float(np.nanmax(geometry_r_m) * 1e9) if geometry_r_m.size else float("nan")
+            )
+        else:
+            stats["center_offset_nm"] = float("nan")
+            stats["geometry_r_max_nm"] = float("nan")
+
+        if disk_radius_m is not None and disk_radius_m > 0:
+            disk_radius_nm = float(disk_radius_m * 1e9)
+            stats["disk_radius_nm"] = disk_radius_nm
+            stats["r_max_over_disk_radius"] = stats["r_max_nm"] / disk_radius_nm
+            stats["geometry_r_max_over_disk_radius"] = (
+                stats["geometry_r_max_nm"] / disk_radius_nm
+            )
+        else:
+            stats["disk_radius_nm"] = float("nan")
+            stats["r_max_over_disk_radius"] = float("nan")
+            stats["geometry_r_max_over_disk_radius"] = float("nan")
+
+        if n > 1:
+            phase = np.unwrap(np.angle(display_x_nm + 1j * display_y_nm))
+            omega = np.gradient(phase, t)
+            mean_omega = float(np.nanmean(omega))
+            stats["mean_frequency_ghz"] = mean_omega / (2.0 * np.pi) / 1e9
+            stats["rotation_sense"] = "CCW" if mean_omega >= 0.0 else "CW"
+        else:
+            stats["mean_frequency_ghz"] = float("nan")
+            stats["rotation_sense"] = "unknown"
+
+        try:
+            from mmpp.solitons.vortex.trajectory.orbit import fit_orbit_ellipse
+
+            fit = fit_orbit_ellipse(trajectory)
+            stats["semi_major_nm"] = float(fit.semi_major * 1e9)
+            stats["semi_minor_nm"] = float(fit.semi_minor * 1e9)
+            stats["eccentricity"] = float(fit.eccentricity)
+            stats["fit_residual"] = float(fit.residual)
+        except Exception:
+            stats["semi_major_nm"] = float("nan")
+            stats["semi_minor_nm"] = float("nan")
+            stats["eccentricity"] = float("nan")
+            stats["fit_residual"] = float("nan")
+
+        status = "centered"
+        ratio = float(stats.get("geometry_r_max_over_disk_radius", float("nan")))
+        offset = float(stats.get("center_offset_nm", float("nan")))
+        disk_radius = float(stats.get("disk_radius_nm", float("nan")))
+        if np.isfinite(offset) and np.isfinite(disk_radius) and disk_radius > 0:
+            if offset > 0.05 * disk_radius:
+                status = "off-center"
+        if np.isfinite(ratio) and ratio > 0.85:
+            status = "near-edge" if status == "centered" else f"{status}, near-edge"
+        stats["status"] = status
+        return stats
+
+    @staticmethod
+    def _disk_center_in_display_nm(
+        view: _ResolvedTrajectoryView,
+    ) -> tuple[float, float]:
+        """Return disk center in the display coordinates of a resolved view."""
+        if view.disk_center_nm is None:
+            return (0.0, 0.0)
+        return (
+            float(view.disk_center_nm[0] - view.display_center_nm[0]),
+            float(view.disk_center_nm[1] - view.display_center_nm[1]),
+        )
+
+    @staticmethod
+    def _orbit_center_in_display_nm(
+        view: _ResolvedTrajectoryView,
+    ) -> tuple[float, float]:
+        """Return orbit center in the display coordinates of a resolved view."""
+        return (
+            float(view.orbit_center_nm[0] - view.display_center_nm[0]),
+            float(view.orbit_center_nm[1] - view.display_center_nm[1]),
+        )
+
     def _refresh_table_cols(self, c: dict) -> None:
         """Reload table column names and update the dropdown widgets."""
         cols = self._get_table_column_names()
         opts = [("— select —", "")] + [(k, k) for k in cols]
         opts2 = [("— none —", "")] + [(k, k) for k in cols]
         try:
+            x_current = c["x_col"].value
+            y_current = c["y_col"].value
+            y2_current = c["y2_col"].value
             c["x_col"].options = opts
             c["y_col"].options = opts
             c["y2_col"].options = opts2
+            c["x_col"].value = (
+                x_current
+                if x_current in cols
+                else self._preferred_table_column(cols, "t")
+            )
+            c["y_col"].value = (
+                y_current
+                if y_current in cols
+                else self._preferred_table_column(cols, "mx")
+            )
+            c["y2_col"].value = y2_current if y2_current in cols else ""
         except Exception:
             pass
         self._set_status(f"Table: {len(cols)} columns available", "ok")
 
     def _clear_plot(self):
+        if self._plot_image is not None:
+            self._plot_image.value = b""
+            self._plot_image.layout.display = "none"
+        if self._plot_placeholder is not None:
+            self._plot_placeholder.layout.display = ""
         if self._output is not None:
-            self._output.clear_output(wait=True)
+            self._output.layout.display = "none"
+            try:
+                self._output.outputs = ()
+            except Exception:
+                pass
+
+    def _sync_core_time_controls(self, c: dict, n_steps: int) -> None:
+        """Keep core time sliders inside the available trajectory range."""
+        if n_steps <= 0:
+            return
+        try:
+            start_max = max(int(n_steps) - 1, 0)
+            end_max = int(n_steps)
+            c["t_start"].value = min(max(int(c["t_start"].value), 0), start_max)
+            c["t_end"].value = min(max(int(c["t_end"].value), 0), end_max)
+            c["t_start"].max = start_max
+            c["t_end"].max = end_max
+        except Exception:
+            pass
+
+    def _time_slice_from_controls(
+        self, c: dict, n_steps: int
+    ) -> tuple[slice, bool]:
+        """Resolve a non-empty time slice from dashboard controls."""
+        if n_steps <= 0:
+            return slice(0, 0), False
+
+        raw_start = int(c["t_start"].value)
+        raw_end = int(c["t_end"].value)
+        if raw_start >= int(n_steps):
+            return slice(None), True
+        if raw_end > 0 and raw_end <= raw_start:
+            return slice(None), True
+
+        start = max(raw_start, 0)
+        end = int(n_steps) if raw_end <= 0 else min(max(raw_end, 0), int(n_steps))
+        start = min(start, int(n_steps) - 1)
+
+        if start >= end:
+            return slice(None), True
+        return slice(start, end), False
 
     def _get_health(self, force: bool = False):
         """Return cached CoreHealthStatus, running the check on first call."""
@@ -1138,37 +1694,66 @@ class VortexInteractiveDashboard:
             except Exception:
                 pass
             self._fig = None
-        image = IPyImage(data=img_data, format="png")
-        if self._output is not None:
-            self._output.clear_output(wait=True)
-            self._output.append_display_data(image)
+        if self._plot_image is not None:
+            if self._plot_placeholder is not None:
+                self._plot_placeholder.layout.display = "none"
+            if self._output is not None:
+                self._output.layout.display = "none"
+                try:
+                    self._output.outputs = ()
+                except Exception:
+                    pass
+            self._plot_image.value = img_data
+            self._plot_image.layout.display = ""
+        elif self._output is not None:
+            self._output.layout.display = ""
+            self._output.append_display_data(IPyImage(data=img_data, format="png"))
         else:
-            display(image)
+            display(IPyImage(data=img_data, format="png"))
 
     # ---- CORE -------------------------------------------------------
 
     def _run_core(self, c: dict):
         self._set_status("Computing core trajectory…", "info")
         try:
-            traj = self._vx.core.track()
+            track_kwargs = self._core_tracking_kwargs_from_controls(c)
+            traj = self._vx.core.track(**track_kwargs)
             self._state.trajectory = traj
+            self._state.trajectory_source = (
+                "table" if track_kwargs.get("method") == "table" else "magnetization"
+            )
+            n_total = int(np.asarray(traj.time).size)
 
             # Check simulation health (annihilation / boundary collision)
             health = self._get_health()
 
-            t_start_idx = int(c["t_start"].value) or None
-            t_end_idx = int(c["t_end"].value) or None
-            sl = (
-                slice(t_start_idx, t_end_idx)
-                if (t_start_idx or t_end_idx)
-                else slice(None)
-            )
+            sl, used_full_range = self._time_slice_from_controls(c, n_total)
+            self._sync_core_time_controls(c, n_total)
 
             fig, axes = plt.subplots(1, 2, figsize=self.figsize, dpi=self.dpi)
             ax_xy, ax_t = axes
 
-            x_nm = np.asarray(traj.x)[sl] * 1e9
-            y_nm = np.asarray(traj.y)[sl] * 1e9
+            from mmpp.solitons.vortex.core.models import TrajectoryResult
+
+            traj_sl = TrajectoryResult(
+                time=np.asarray(traj.time)[sl],
+                x=np.asarray(traj.x)[sl],
+                y=np.asarray(traj.y)[sl],
+                polarity=np.asarray(traj.polarity)[sl],
+                confidence=np.asarray(traj.confidence)[sl],
+                method=getattr(traj, "method", str(track_kwargs.get("method", ""))),
+                metadata=dict(getattr(traj, "metadata", {}) or {}),
+            )
+            center_mode = getattr(c.get("center_mode"), "value", "auto")
+            view = self._resolve_trajectory_view(
+                traj_sl,
+                label="core tracking",
+                source=self._state.trajectory_source or "magnetization",
+                center_mode=center_mode,
+            )
+            self._annotate_view_health(view, health)
+            x_nm = view.display_x_nm
+            y_nm = view.display_y_nm
             t_ns = np.asarray(traj.time)[sl] * 1e9
 
             cmap_name = c["cmap"].value
@@ -1189,7 +1774,8 @@ class VortexInteractiveDashboard:
             ax_xy.grid(True, alpha=0.25)
 
             if c.get("show_geom") is not None and c["show_geom"].value:
-                self._draw_disk_nm(ax_xy)
+                disk_center = self._disk_center_in_display_nm(view)
+                self._draw_disk_nm(ax_xy, disk_center)
 
             if c["smooth"].value:
                 w = max(int(c["smooth_window"].value) | 1, 3)
@@ -1211,7 +1797,7 @@ class VortexInteractiveDashboard:
                 except Exception:
                     pass
 
-            r_nm = np.sqrt(x_nm**2 + y_nm**2)
+            r_nm = view.r_orbit_nm
             ax_t.plot(t_ns, r_nm, lw=1.2, color="#58a6ff")
             ax_t.set_xlabel("t [ns]", fontsize=10)
             ax_t.set_ylabel("r [nm]", fontsize=10)
@@ -1220,9 +1806,17 @@ class VortexInteractiveDashboard:
 
             fig.suptitle("🎯 Core Tracking", fontsize=12, color="#e94560")
             self._show_figure(fig, health=health)
-            self._set_status(
-                f"Core tracked: {len(x_nm)} steps, ⟨r⟩ = {np.mean(r_nm):.1f} nm", "ok"
-            )
+            if used_full_range:
+                self._set_status(
+                    "Selected time range was empty; plotted full trajectory instead",
+                    "warn",
+                )
+            else:
+                self._set_status(
+                    f"Core tracked ({view.source}, center={view.center_mode_used}): "
+                    f"{len(x_nm)} / {n_total} steps, ⟨r⟩ = {np.mean(r_nm):.1f} nm",
+                    "ok",
+                )
         except Exception as exc:
             self._set_status(f"Core tracking failed: {exc}", "error")
             log.exception("Core tracking error")
@@ -1286,103 +1880,224 @@ class VortexInteractiveDashboard:
 
     # ---- TRAJECTORY -------------------------------------------------
 
+    def _plot_orbit_fit(self, ax, view: _ResolvedTrajectoryView) -> None:
+        """Overlay an ellipse fit in the same display frame as *view*."""
+        try:
+            from mmpp.solitons.vortex.trajectory.orbit import fit_orbit_ellipse
+
+            orbit = fit_orbit_ellipse(view.trajectory)
+            self._state.orbit_fit = orbit
+            theta = np.linspace(0, 2 * np.pi, 360)
+            cx = float(orbit.center[0]) * 1e9 - float(view.display_center_nm[0])
+            cy = float(orbit.center[1]) * 1e9 - float(view.display_center_nm[1])
+            a_nm = float(getattr(orbit, "semi_major", 0.0)) * 1e9
+            b_nm = float(getattr(orbit, "semi_minor", a_nm)) * 1e9
+            angle = float(getattr(orbit, "tilt_angle", 0.0))
+            xe = (
+                cx
+                + a_nm * np.cos(theta) * np.cos(angle)
+                - b_nm * np.sin(theta) * np.sin(angle)
+            )
+            ye = (
+                cy
+                + a_nm * np.cos(theta) * np.sin(angle)
+                + b_nm * np.sin(theta) * np.cos(angle)
+            )
+            ax.plot(xe, ye, "--", lw=1.6, color="#e94560", label="orbit fit")
+            ax.legend(fontsize=8)
+        except Exception:
+            pass
+
+    def _plot_view_centers(self, ax, view: _ResolvedTrajectoryView) -> None:
+        """Mark orbit and disk centers plus their offset vector."""
+        orbit_xy = self._orbit_center_in_display_nm(view)
+        ax.plot(
+            [orbit_xy[0]],
+            [orbit_xy[1]],
+            marker="+",
+            ms=10,
+            mew=1.6,
+            color="#e94560",
+            label="orbit center",
+        )
+        if view.disk_center_nm is not None:
+            disk_xy = self._disk_center_in_display_nm(view)
+            ax.plot(
+                [disk_xy[0]],
+                [disk_xy[1]],
+                marker="x",
+                ms=8,
+                mew=1.4,
+                color="0.25",
+                label="disk center",
+            )
+            ax.annotate(
+                "",
+                xy=orbit_xy,
+                xytext=disk_xy,
+                arrowprops={"arrowstyle": "->", "color": "0.35", "lw": 1.0},
+            )
+        ax.legend(fontsize=8)
+
+    @staticmethod
+    def _format_trajectory_stats(view: _ResolvedTrajectoryView) -> str:
+        """Compact multiline stats block for a resolved trajectory view."""
+        s = view.stats
+        return (
+            f"source: {view.source}\n"
+            f"N: {s['n']}   t: {s['t_start_ns']:.2f}..{s['t_end_ns']:.2f} ns\n"
+            f"dt: {s['dt_ns']:.4g} ns   center: {view.center_mode_used}\n"
+            f"r: mean {s['r_mean_nm']:.2f}, min {s['r_min_nm']:.2f}, "
+            f"max {s['r_max_nm']:.2f} nm\n"
+            f"offset: {s['center_offset_nm']:.2f} nm   "
+            f"r/R: {s['r_max_over_disk_radius']:.3f}\n"
+            f"f: {s['mean_frequency_ghz']:.3f} GHz   rot: {s['rotation_sense']}\n"
+            f"ellipse: a={s['semi_major_nm']:.2f}, b={s['semi_minor_nm']:.2f}, "
+            f"e={s['eccentricity']:.3f}\n"
+            f"status: {s['status']}"
+        )
+
+    def _annotate_view_health(self, view: _ResolvedTrajectoryView, health) -> None:
+        """Append health diagnostics to view stats when available."""
+        if health is None or getattr(health, "is_healthy", True):
+            return
+        warnings = list(getattr(health, "warnings", []) or [])
+        if not warnings:
+            return
+        warning_text = ", ".join(str(w) for w in warnings)
+        view.stats["health_warnings"] = warning_text
+        status = str(view.stats.get("status", ""))
+        if "health warning" not in status:
+            view.stats["status"] = (
+                f"{status}, health warning" if status else "health warning"
+            )
+
     def _run_trajectory(self, c: dict):
         self._set_status("Analyzing trajectory…", "info")
         try:
             health = self._get_health()
-            traj = self._state.trajectory
-            if traj is None:
-                traj = self._vx.core.track()
-                self._state.trajectory = traj
+            core_kwargs = self._core_tracking_kwargs_from_controls(
+                self._controls.get("core", {}) if hasattr(self, "_controls") else {}
+            )
+            tracking_method = str(core_kwargs.get("method", "gaussian"))
+            if tracking_method == "table":
+                tracking_method = "gaussian"
+            core_threshold = float(core_kwargs.get("core_threshold", 0.5))
 
-            x_nm = np.asarray(traj.x) * 1e9
-            y_nm = np.asarray(traj.y) * 1e9
-            t_ns = np.asarray(traj.time) * 1e9
+            source = getattr(c.get("source"), "value", "magnetization")
+            center_mode = getattr(c.get("center_mode"), "value", "auto")
+            views = self._resolve_trajectory_views(
+                source,
+                center_mode,
+                tracking_method=tracking_method,
+                core_threshold=core_threshold,
+            )
+            for view in views:
+                self._annotate_view_health(view, health)
 
             color_by = c["color_by"].value
             cmap = c["cmap"].value
+            nrows = len(views)
 
-            fig, axes = plt.subplots(1, 2, figsize=self.figsize, dpi=self.dpi)
-            ax_xy, ax_r = axes
+            fig, axes = plt.subplots(
+                nrows,
+                2,
+                figsize=(self.figsize[0], self.figsize[1] * max(1.0, 0.72 * nrows)),
+                dpi=self.dpi,
+                squeeze=False,
+            )
 
-            if color_by == "time":
-                clr = t_ns
-                clabel = "t [ns]"
-            elif color_by == "speed":
-                vx = np.gradient(x_nm, t_ns)
-                vy = np.gradient(y_nm, t_ns)
-                clr = np.sqrt(vx**2 + vy**2)
-                clabel = "speed [nm/ns]"
-            elif color_by == "radius":
-                clr = np.sqrt(x_nm**2 + y_nm**2)
-                clabel = "r [nm]"
-            else:
-                clr = None
-                clabel = ""
+            for row, view in enumerate(views):
+                ax_xy, ax_r = axes[row]
+                x_nm = view.display_x_nm
+                y_nm = view.display_y_nm
+                t_ns = view.t_ns
+                r_nm = view.r_orbit_nm
 
-            if clr is not None:
-                sc = ax_xy.scatter(x_nm, y_nm, c=clr, cmap=cmap, s=2, lw=0, alpha=0.8)
-                fig.colorbar(sc, ax=ax_xy, label=clabel, shrink=0.8)
-            else:
-                ax_xy.plot(x_nm, y_nm, ".", ms=1.5, alpha=0.5, color="#58a6ff")
+                if color_by == "time":
+                    clr = t_ns
+                    clabel = "t [ns]"
+                elif color_by == "speed" and t_ns.size > 1:
+                    vx = np.gradient(x_nm, t_ns)
+                    vy = np.gradient(y_nm, t_ns)
+                    clr = np.sqrt(vx**2 + vy**2)
+                    clabel = "speed [nm/ns]"
+                elif color_by == "radius":
+                    clr = r_nm
+                    clabel = "r_orbit [nm]"
+                else:
+                    clr = None
+                    clabel = ""
 
-            if c["fit_orbit"].value:
-                try:
-                    orbit = self._vx.trajectory.orbit.fit()
-                    self._state.orbit_fit = orbit
-                    theta = np.linspace(0, 2 * np.pi, 360)
-                    cx = float(orbit.center[0]) * 1e9
-                    cy = float(orbit.center[1]) * 1e9
-                    a_nm = float(getattr(orbit, "semi_major", 50.0)) * 1e9
-                    b_nm = float(getattr(orbit, "semi_minor", a_nm)) * 1e9
-                    angle = float(getattr(orbit, "tilt_angle", 0.0))
-                    xe = (
-                        cx
-                        + a_nm * np.cos(theta) * np.cos(angle)
-                        - b_nm * np.sin(theta) * np.sin(angle)
+                if clr is not None:
+                    sc = ax_xy.scatter(
+                        x_nm, y_nm, c=clr, cmap=cmap, s=2, lw=0, alpha=0.8
                     )
-                    ye = (
-                        cy
-                        + a_nm * np.cos(theta) * np.sin(angle)
-                        + b_nm * np.sin(theta) * np.cos(angle)
+                    fig.colorbar(sc, ax=ax_xy, label=clabel, shrink=0.8)
+                else:
+                    ax_xy.plot(x_nm, y_nm, ".", ms=1.5, alpha=0.5, color="#58a6ff")
+
+                if c["fit_orbit"].value:
+                    self._plot_orbit_fit(ax_xy, view)
+
+                if c.get("show_geom") is not None and c["show_geom"].value:
+                    self._draw_disk_nm(ax_xy, self._disk_center_in_display_nm(view))
+
+                if getattr(c.get("show_centers"), "value", False):
+                    self._plot_view_centers(ax_xy, view)
+
+                ax_xy.set_aspect("equal")
+                ax_xy.set_xlabel("x [nm]")
+                ax_xy.set_ylabel("y [nm]")
+                ax_xy.set_title(f"{view.label} · center={view.center_mode_used}")
+                ax_xy.grid(True, alpha=0.25)
+
+                ax_r.plot(t_ns, r_nm, lw=1.2, color="#58a6ff", label="r_orbit")
+                if c["show_velocity"].value and t_ns.size > 1:
+                    vr = np.abs(np.gradient(r_nm, t_ns))
+                    ax2 = ax_r.twinx()
+                    ax2.plot(t_ns, vr, lw=1.0, color="#e94560", alpha=0.7, label="vr")
+                    ax2.set_ylabel("|dr/dt| [nm/ns]", color="#e94560")
+                ax_r.set_xlabel("t [ns]")
+                ax_r.set_ylabel("r_orbit [nm]")
+                ax_r.set_title("Orbit radius")
+                ax_r.grid(True, alpha=0.25)
+
+                if c["show_stats"].value:
+                    ax_r.text(
+                        0.02,
+                        0.98,
+                        self._format_trajectory_stats(view),
+                        transform=ax_r.transAxes,
+                        va="top",
+                        ha="left",
+                        fontsize=8,
+                        family="monospace",
+                        bbox={
+                            "facecolor": "white",
+                            "edgecolor": "0.85",
+                            "alpha": 0.86,
+                            "boxstyle": "round,pad=0.35",
+                        },
                     )
-                    ax_xy.plot(xe, ye, "--", lw=2, color="#e94560", label="orbit fit")
-                    ax_xy.legend(fontsize=8)
-                except Exception:
-                    pass
-
-            ax_xy.set_aspect("equal")
-            ax_xy.set_xlabel("x [nm]")
-            ax_xy.set_ylabel("y [nm]")
-            ax_xy.set_title("Core trajectory")
-            ax_xy.grid(True, alpha=0.25)
-
-            if c.get("show_geom") is not None and c["show_geom"].value:
-                self._draw_disk_nm(ax_xy)
-
-            r_nm = np.sqrt(x_nm**2 + y_nm**2)
-            ax_r.plot(t_ns, r_nm, lw=1.2, color="#58a6ff", label="radius")
-            if c["show_velocity"].value:
-                vr = np.abs(np.gradient(r_nm, t_ns))
-                ax2 = ax_r.twinx()
-                ax2.plot(t_ns, vr, lw=1.0, color="#e94560", alpha=0.7, label="vr")
-                ax2.set_ylabel("|dr/dt| [nm/ns]", color="#e94560")
-            ax_r.set_xlabel("t [ns]")
-            ax_r.set_ylabel("r [nm]")
-            ax_r.set_title("Orbit radius")
-            ax_r.grid(True, alpha=0.25)
 
             if c["show_stats"].value:
+                lead = views[0].stats
                 stats = (
-                    f"N = {len(x_nm)}  |  "
-                    f"⟨r⟩ = {np.mean(r_nm):.1f} nm  |  "
-                    f"max(r) = {np.max(r_nm):.1f} nm"
+                    f"{source}  ·  N={lead['n']}  ·  "
+                    f"t={lead['t_start_ns']:.2f}..{lead['t_end_ns']:.2f} ns  ·  "
+                    f"⟨r⟩={lead['r_mean_nm']:.1f} nm"
                 )
                 fig.suptitle(f"📐 Trajectory  ·  {stats}", fontsize=10, color="#a8b2d8")
 
             self._show_figure(fig, health=health)
+            summary = "; ".join(
+                f"{v.source}: t={v.stats['t_start_ns']:.1f}..{v.stats['t_end_ns']:.1f} ns, "
+                f"⟨r⟩={v.stats['r_mean_nm']:.1f} nm, status={v.stats['status']}"
+                for v in views
+            )
             self._set_status(
-                f"Trajectory done | ⟨r⟩={np.mean(r_nm):.1f} nm, max={np.max(r_nm):.1f} nm",
+                f"Trajectory done | {summary}",
                 "ok",
             )
         except Exception as exc:
@@ -1836,8 +2551,18 @@ class VortexInteractiveDashboard:
 
             db = ThieleInteractiveDashboard()
             if self._output is not None:
-                self._output.clear_output(wait=True)
-            with self._output:
+                if self._plot_placeholder is not None:
+                    self._plot_placeholder.layout.display = "none"
+                if self._plot_image is not None:
+                    self._plot_image.layout.display = "none"
+                self._output.layout.display = ""
+                try:
+                    self._output.outputs = ()
+                except Exception:
+                    pass
+                with self._output:
+                    db.show()
+            else:
                 db.show()
             self._set_status("Thiele dashboard active", "ok")
         except Exception as exc:
