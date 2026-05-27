@@ -7,8 +7,6 @@ from typing import Any
 
 import numpy as np
 
-from mmpp._shared.repr_html import make_simple_card
-
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -40,14 +38,87 @@ class OrbitFitResult:
         return self.eccentricity < 0.1
 
     def _repr_html_(self) -> str:
-        return make_simple_card(
-            title=self.__class__.__name__,
-            subtitle="fitted vortex orbit",
-            rows=[
-                ("radius", f"{self.radius:.6g}"),
-                ("eccentricity", f"{float(self.eccentricity):.6g}"),
-                ("residual", f"{float(self.residual):.6g}"),
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Orbit Fit Result",
+            icon="⭕",
+            subtitle="Geometric ellipse fit of the tracked vortex orbit.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("radius", f"{self.radius:.6g}", NODE_COLOR_PLOT),
+                        (
+                            "semi_major",
+                            f"{float(self.semi_major):.6g}",
+                            NODE_COLOR_COMPUTE,
+                        ),
+                        (
+                            "semi_minor",
+                            f"{float(self.semi_minor):.6g}",
+                            NODE_COLOR_COMPUTE,
+                        ),
+                        (
+                            "eccentricity",
+                            f"{float(self.eccentricity):.6g}",
+                            NODE_COLOR_ANALYSIS,
+                        ),
+                        (
+                            "residual",
+                            f"{float(self.residual):.6g}",
+                            NODE_COLOR_ANALYSIS,
+                        ),
+                        ("is_circular", self.is_circular, None),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Geometry:",
+                            [
+                                (".center", NODE_COLOR_COMPUTE),
+                                (".tilt_angle", NODE_COLOR_COMPUTE),
+                                (".radius", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "fit = jobs[-1].solitons.vortex.trajectory.orbit.fit()\n"
+                    "fit.radius\n"
+                    "fit.eccentricity",
+                    title="Fit Usage",
+                ),
             ],
+            api=api_help_html(
+                self,
+                title="Orbit fit result API help",
+                prefix="jobs[-1].solitons.vortex.trajectory.orbit.fit()",
+                properties=[
+                    ("center", "Ellipse center (x, y)"),
+                    ("semi_major", "Semi-major axis"),
+                    ("semi_minor", "Semi-minor axis"),
+                    ("eccentricity", "Orbit eccentricity"),
+                    ("tilt_angle", "Ellipse tilt angle"),
+                    ("residual", "Fit residual"),
+                    ("radius", "Geometric-mean orbit radius"),
+                    ("is_circular", "Heuristic circularity flag"),
+                ],
+                subtitle="Live attributes of the fitted vortex orbit.",
+                chrome=False,
+            ),
+            uid=f"orbit-fit-result-{str(_uuid.uuid4())[:8]}",
         )
 
 

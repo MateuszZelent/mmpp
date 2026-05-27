@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import numpy as np
-
-from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
 
 from .._plotting import (
     apply_axes_style,
@@ -116,66 +113,116 @@ class VortexModesInterface:
         return VortexModesPlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
         from html import escape as _esc
 
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+            plot_accessor_html,
+        )
+
+        context_rows = [
+            ("dataset", self._dataset_name or "auto-detect", NODE_COLOR_COMPUTE),
+            (
+                "slice",
+                "custom" if self._slice_info is not None else "full geometry",
+                None,
+            ),
+            (
+                "tracking method",
+                self._config.modes.tracking_method,
+                NODE_COLOR_ANALYSIS,
+            ),
+            ("max modes", self._config.modes.max_modes, None),
+            ("min prominence", self._config.modes.min_prominence, NODE_COLOR_ANALYSIS),
+        ]
+        accessors = [
+            (
+                "Classify:",
+                [
+                    (".classify(f=None, unit='ghz')", NODE_COLOR_COMPUTE),
+                    (".classify_all(max_modes=6, ...)", NODE_COLOR_COMPUTE),
+                ],
+            ),
+            (
+                "Quick Picks:",
+                [
+                    (".gyration", NODE_COLOR_ANALYSIS),
+                    (".breathing", NODE_COLOR_ANALYSIS),
+                ],
+            ),
+            (
+                "Plotting:",
+                [
+                    (".plt.mode_map(...)", NODE_COLOR_PLOT),
+                    (".plt.mode_table()", NODE_COLOR_PLOT),
+                ],
+            ),
+        ]
         methods = [
             (
-                ".classify(f=None, unit='ghz')",
-                "Classify mode at frequency f (or dominant)",
+                "classify(f=None, unit='ghz')",
+                "Returns the dominant mode when f is omitted, or the closest classified mode around the requested target frequency.",
             ),
-            (".classify_all(max_modes=6)", "Classify all dominant modes"),
-            (".gyration", "Best gyration-like mode (or None)"),
-            (".breathing", "Best breathing-like mode (or None)"),
-            (".plt.mode_map()", "Plot modes as frequency-power bars"),
-            (".plt.mode_table()", "Return mode table as list of dicts"),
+            (
+                "classify_all(max_modes=6)",
+                "Extracts several dominant peaks and labels them as gyration, breathing, or higher-order dynamical modes.",
+            ),
+            (
+                "gyration",
+                "Convenience property returning the best gyration-like classified mode, or None.",
+            ),
+            (
+                "breathing",
+                "Convenience property returning the best breathing-like classified mode, or None.",
+            ),
+            (
+                "plt",
+                "Plot/table helper facade for visual inspection and tabular summaries.",
+            ),
         ]
         method_rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            "<tr>"
+            f"<td style='padding:6px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};vertical-align:top;'>{_esc(m)}</td>"
+            f"<td style='padding:6px 8px;color:#f8f8f2;'>{_esc(d)}</td>"
+            "</tr>"
             for m, d in methods
         )
         example = (
             "# Classify dominant mode\n"
-            "mode = vortex.modes.classify()\n"
+            "mode = jobs[-1].solitons.vortex.modes.classify()\n"
             "print(f'{mode.mode_type} at {mode.frequency_ghz:.2f} GHz')\n"
             "\n"
             "# Classify specific frequency\n"
-            "mode = vortex.modes.classify(f=0.5, unit='ghz')\n"
+            "mode = jobs[-1].solitons.vortex.modes.classify(f=0.5, unit='ghz')\n"
             "\n"
             "# All modes\n"
-            "modes = vortex.modes.classify_all()\n"
-            "vortex.modes.plt.mode_map()\n"
+            "modes = jobs[-1].solitons.vortex.modes.classify_all()\n"
+            "jobs[-1].solitons.vortex.modes.plt.mode_map()\n"
             "\n"
             "# Quick access\n"
-            "gyro = vortex.modes.gyration   # VortexModeResult or None\n"
-            "breath = vortex.modes.breathing"
+            "gyro = jobs[-1].solitons.vortex.modes.gyration\n"
+            "breath = jobs[-1].solitons.vortex.modes.breathing"
         )
-        overview = (
-            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
-            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
-            "Vortex Modes Interface</div>"
-            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
-            "Mode classification (gyration, breathing, higher-order)</div>"
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods &amp; Properties</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+        methods_html = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Mode Classification Methods</b>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;margin-top:8px;'>"
             f"{method_rows}</table></div>"
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
-            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
-            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
-            f"<code>{example}</code></pre></div>"
-            "</div>"
         )
         api = api_help_html(
             self,
             title="Vortex modes API help",
-            prefix="vortex.modes",
+            prefix="jobs[-1].solitons.vortex.modes",
             properties=[
                 ("gyration", "Best gyration-like mode, or None"),
                 ("breathing", "Best breathing-like mode, or None"),
@@ -185,16 +232,18 @@ class VortexModesInterface:
             subtitle="Live public API for vortex mode classification.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-modes-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Modes Interface",
+            icon="🎼",
+            subtitle="Mode classification for gyration, breathing, and higher-order vortex dynamics.",
+            sections=[
+                metrics_section_html(context_rows),
+                accessors_section_html(accessors),
+                methods_html,
+                examples_section_html(example, title="Modes Workflows"),
+            ],
+            api=api,
+            uid=f"mmpp-vortex-modes-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -261,6 +310,10 @@ class VortexModesPlotAccessor:
         return rows
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, node_card_html, plot_accessor_html
+
         overview = plot_accessor_html(
             "VortexModesPlotAccessor",
             [
@@ -279,18 +332,16 @@ class VortexModesPlotAccessor:
         api = api_help_html(
             self,
             title="Vortex modes plot API help",
-            prefix="vortex.modes.plt",
+            prefix="jobs[-1].solitons.vortex.modes.plt",
             methods=["mode_map", "mode_table"],
             subtitle="Plot and table helpers for classified vortex modes.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:#0f172a;color:#e2e8f0;'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-modes-plot-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Modes Plot Accessor",
+            icon="🎨",
+            subtitle="Plot and table shortcuts for classified vortex modes.",
+            sections=[overview],
+            api=api,
+            uid=f"mmpp-vortex-modes-plot-{str(_uuid.uuid4())[:8]}",
         )

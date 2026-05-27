@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import uuid
 import warnings
 from typing import Any
-
-from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
-from mmpp._shared.repr_html import make_simple_card
 
 from ...config import VortexConfig
 from ..._shared.models import TrajectoryResult
@@ -189,6 +185,19 @@ class EnergyInterface:
         return EnergyPlotFacade(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+            plot_accessor_html,
+        )
+
         methods = [
             (".time_resolved(...)", "Load table energy channels E(t)"),
             (".potential(method='auto')", "Reconstruct effective W(r)"),
@@ -197,30 +206,67 @@ class EnergyInterface:
             (".plt.potential()", "Plot effective potential"),
             (".plt.pinning()", "Plot potential with pinning sites"),
         ]
-        overview = make_simple_card(
-            title="Vortex Energy Interface",
-            subtitle="Energy channels, effective potential and pinning analysis",
-            rows=methods,
-        )
+        sections = [
+            metrics_section_html(
+                [
+                    (
+                        "dataset",
+                        self._dataset_name or "auto-detect",
+                        NODE_COLOR_COMPUTE,
+                    ),
+                    (
+                        "slice",
+                        "custom" if self._slice_info is not None else "full geometry",
+                        None,
+                    ),
+                    ("strict missing", self._config.energy.strict_missing, None),
+                    ("prefixes", ", ".join(self._config.energy.column_prefixes), None),
+                ]
+            ),
+            accessors_section_html(
+                [
+                    (
+                        "Energy:",
+                        [
+                            (".time_resolved(...)", NODE_COLOR_COMPUTE),
+                            (".potential(method='auto')", NODE_COLOR_COMPUTE),
+                            (".pinning(...)", NODE_COLOR_COMPUTE),
+                        ],
+                    ),
+                    (
+                        "Plotting:",
+                        [
+                            (".plt.time_resolved()", NODE_COLOR_PLOT),
+                            (".plt.potential()", NODE_COLOR_PLOT),
+                            (".plt.pinning()", NODE_COLOR_PLOT),
+                        ],
+                    ),
+                ]
+            ),
+            examples_section_html(
+                "etrace = jobs[-1].solitons.vortex.energy.time_resolved()\n"
+                "pot = jobs[-1].solitons.vortex.energy.potential(method='auto')\n"
+                "pin = jobs[-1].solitons.vortex.energy.pinning()\n"
+                "jobs[-1].solitons.vortex.energy.plt.potential()",
+                title="Energy Workflows",
+            ),
+        ]
         api = api_help_html(
             self,
             title="Vortex energy API help",
-            prefix="vortex.energy",
+            prefix="jobs[-1].solitons.vortex.energy",
             properties=[("plt", "Convenience plotting namespace")],
             methods=["time_resolved", "potential", "pinning"],
             subtitle="Live public API for energy time series, effective potential, and pinning.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-energy-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Energy Interface",
+            icon="🪫",
+            subtitle="Energy channels, effective radial potential, and pinning-site analysis.",
+            sections=sections,
+            api=api,
+            uid=f"mmpp-vortex-energy-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -246,6 +292,10 @@ class EnergyPlotFacade:
         return result.plt.potential_with_sites(**kwargs)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, node_card_html, plot_accessor_html
+
         overview = plot_accessor_html(
             "EnergyPlotFacade",
             [
@@ -269,20 +319,18 @@ class EnergyPlotFacade:
         api = api_help_html(
             self,
             title="Vortex energy plot API help",
-            prefix="vortex.energy.plt",
+            prefix="jobs[-1].solitons.vortex.energy.plt",
             methods=["time_resolved", "potential", "pinning"],
             subtitle="Plot helpers that compute the matching energy result when needed.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:#0f172a;color:#e2e8f0;'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-energy-plot-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Energy Plot Accessor",
+            icon="🎨",
+            subtitle="Plot shortcuts for energy channels, effective potentials, and pinning maps.",
+            sections=[overview],
+            api=api,
+            uid=f"mmpp-vortex-energy-plot-{str(_uuid.uuid4())[:8]}",
         )
 
 

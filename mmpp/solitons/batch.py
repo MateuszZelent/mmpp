@@ -1049,8 +1049,10 @@ class BatchVortexSpectrumMapPlotAccessor:
     def __init__(self, result: BatchVortexSpectrumMapResult):
         self._result = result
 
-    def heatmap(self, *, ax=None, as_ghz: bool = True, db_scale: bool = True, **kwargs):
-        """Plot batch spectrum heatmap."""
+    def heatmap(
+        self, *, ax=None, as_ghz: bool = True, db_scale: bool = True, **kwargs
+    ) -> Any:
+        """Plot batch spectrum heatmap and return the matplotlib axis."""
         mesh_kwargs = dict(kwargs)
         style_kwargs = pop_axes_style_kwargs(mesh_kwargs)
         figure_kwargs = pop_figure_kwargs(mesh_kwargs)

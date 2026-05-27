@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
-
-from mmpp._repr_helpers import api_help_html, html_tabs
-from mmpp._shared.repr_html import make_simple_card
 
 
 class VortexModelInterface:
@@ -38,34 +34,68 @@ class VortexModelInterface:
         return self._thiele
 
     def _repr_html_(self) -> str:
-        rows = [
-            (".thiele", "Thiele-equation model namespace"),
-            (".thiele.cpp(...)", "Build CPP Thiele adapter"),
-            (".thiele.cip(...)", "Build CIP Thiele adapter"),
-        ]
-        overview = make_simple_card(
-            title="Vortex Model Interface",
-            subtitle="Dataset-aware analytical models for vortex dynamics",
-            rows=rows,
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
         )
+
         api = api_help_html(
             self,
             title="Vortex model API help",
-            prefix="vortex.model",
+            prefix="jobs[-1].solitons.vortex.model",
             properties=[("thiele", "Thiele-equation model namespace")],
             subtitle="Live public API for dataset-aware analytical model namespaces.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-model-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Model Interface",
+            icon="📐",
+            subtitle="Dataset-aware analytical model entrypoint for reduced vortex dynamics and parameter extraction.",
+            sections=[
+                metrics_section_html(
+                    [
+                        (
+                            "dataset",
+                            self._dataset_name or "auto-detect",
+                            NODE_COLOR_COMPUTE,
+                        ),
+                        (
+                            "slice",
+                            "custom"
+                            if self._slice_info is not None
+                            else "full geometry",
+                            None,
+                        ),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Models:",
+                            [
+                                (".thiele", NODE_COLOR_ANALYSIS),
+                                (".thiele.cpp(...)", NODE_COLOR_COMPUTE),
+                                (".thiele.cip(...)", NODE_COLOR_COMPUTE),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "thiele = jobs[-1].solitons.vortex.model.thiele\n"
+                    "thiele.cpp()\n"
+                    "thiele.cip()",
+                    title="Model Workflows",
+                ),
+            ],
+            api=api,
+            uid=f"mmpp-vortex-model-{str(_uuid.uuid4())[:8]}",
         )
 
 

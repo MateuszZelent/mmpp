@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import uuid
 import warnings
 from typing import Any
 
 import numpy as np
-
-from mmpp._repr_helpers import api_help_html, html_tabs, plot_accessor_html
-from mmpp._shared.repr_html import make_simple_card
 
 from ...config import VortexConfig
 from ..._shared.models import TrajectoryResult
@@ -334,6 +330,19 @@ class SignalsInterface:
         return SignalsPlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+            plot_accessor_html,
+        )
+
         methods = [
             (
                 ".magnetoresistance(...)",
@@ -345,30 +354,75 @@ class SignalsInterface:
             (".plt.voltage()", "Compute + plot voltage trace"),
             (".plt.power_spectrum()", "Compute + plot electrical PSD"),
         ]
-        overview = make_simple_card(
-            title="Vortex Signals Interface",
-            subtitle="Electrical signal reconstruction: MR/TMR, voltage and PSD",
-            rows=methods,
-        )
+        sections = [
+            metrics_section_html(
+                [
+                    (
+                        "dataset",
+                        self._dataset_name or "auto-detect",
+                        NODE_COLOR_COMPUTE,
+                    ),
+                    (
+                        "slice",
+                        "custom" if self._slice_info is not None else "full geometry",
+                        None,
+                    ),
+                    (
+                        "tracking method",
+                        getattr(self._config.signals, "tracking_method", "centroid"),
+                        None,
+                    ),
+                    (
+                        "spectrum method",
+                        getattr(self._config.signals, "spectrum_method", "welch"),
+                        None,
+                    ),
+                ]
+            ),
+            accessors_section_html(
+                [
+                    (
+                        "Signals:",
+                        [
+                            (".magnetoresistance(...)", NODE_COLOR_COMPUTE),
+                            (".voltage(current_a=...)", NODE_COLOR_COMPUTE),
+                            (".power_spectrum(signal='voltage')", NODE_COLOR_COMPUTE),
+                        ],
+                    ),
+                    (
+                        "Plotting:",
+                        [
+                            (".plt.magnetoresistance()", NODE_COLOR_PLOT),
+                            (".plt.voltage()", NODE_COLOR_PLOT),
+                            (".plt.power_spectrum()", NODE_COLOR_PLOT),
+                        ],
+                    ),
+                ]
+            ),
+            examples_section_html(
+                "mr = jobs[-1].solitons.vortex.signals.magnetoresistance()\n"
+                "v = jobs[-1].solitons.vortex.signals.voltage(current_a=1e-3)\n"
+                "psd = jobs[-1].solitons.vortex.signals.power_spectrum(signal='voltage')\n"
+                "jobs[-1].solitons.vortex.signals.plt.power_spectrum()",
+                title="Signals Workflows",
+            ),
+        ]
         api = api_help_html(
             self,
             title="Vortex signals API help",
-            prefix="vortex.signals",
+            prefix="jobs[-1].solitons.vortex.signals",
             properties=[("plt", "Convenience plotting namespace")],
             methods=["magnetoresistance", "voltage", "power_spectrum"],
             subtitle="Live public API for magnetoresistance, voltage, and signal spectra.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-signals-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Signals Interface",
+            icon="📡",
+            subtitle="Electrical signal reconstruction: magnetoresistance, voltage, and power spectra.",
+            sections=sections,
+            api=api,
+            uid=f"mmpp-vortex-signals-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -394,6 +448,10 @@ class SignalsPlotAccessor:
         return result.plt.power_spectrum(**kwargs)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, node_card_html, plot_accessor_html
+
         overview = plot_accessor_html(
             "SignalsPlotAccessor",
             [
@@ -417,20 +475,18 @@ class SignalsPlotAccessor:
         api = api_help_html(
             self,
             title="Vortex signals plot API help",
-            prefix="vortex.signals.plt",
+            prefix="jobs[-1].solitons.vortex.signals.plt",
             methods=["magnetoresistance", "voltage", "power_spectrum"],
             subtitle="Plot helpers that compute the matching signal result when needed.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:#0f172a;color:#e2e8f0;'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-signals-plot-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Signals Plot Accessor",
+            icon="🎨",
+            subtitle="Plot shortcuts for reconstructed electrical traces and their spectra.",
+            sections=[overview],
+            api=api,
+            uid=f"mmpp-vortex-signals-plot-{str(_uuid.uuid4())[:8]}",
         )
 
 

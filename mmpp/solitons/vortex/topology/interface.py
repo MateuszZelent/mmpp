@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import numpy as np
-
-from mmpp._repr_helpers import api_help_html, html_tabs
-from mmpp._shared.repr_html import make_simple_card
 
 from .._cache import InMemoryResultCache, build_cache_key
 from ..config import VortexConfig
@@ -144,22 +140,89 @@ class TopologyInterface:
         return float(self.detect(**kwargs).Q)
 
     def _repr_html_(self) -> str:
-        methods = [
-            (".detect(t=0, method='finite_diff')", "Detect full topology for frame"),
-            (".polarity(...)", "Return p in {-1, +1}"),
-            (".chirality(...)", "Return chirality C in {-1, 0, +1}"),
-            (".winding_number(...)", "Return vorticity sign"),
-            (".topological_charge(...)", "Return skyrmion number Q"),
+        import uuid as _uuid
+
+        from html import escape as _esc
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        dataset_name = self.dataset_name or "auto-detect"
+        context_rows = [
+            ("dataset", dataset_name, NODE_COLOR_COMPUTE),
+            (
+                "slice",
+                "custom" if self._slice_info is not None else "full geometry",
+                None,
+            ),
+            ("method", self._config.topology.method, NODE_COLOR_ANALYSIS),
+            ("z_layer", self._config.topology.z_layer, None),
         ]
-        overview = make_simple_card(
-            title="Topology Interface",
-            subtitle=f"Snapshot topology analysis for dataset '{self.dataset_name}'",
-            rows=methods,
+        accessors = [
+            (
+                "Detect:",
+                [
+                    (".detect(t=0, method='finite_diff')", NODE_COLOR_COMPUTE),
+                    (".detect(frame=10, z_layer=0)", NODE_COLOR_COMPUTE),
+                ],
+            ),
+            (
+                "Scalars:",
+                [
+                    (".polarity(...)", NODE_COLOR_ANALYSIS),
+                    (".chirality(...)", NODE_COLOR_ANALYSIS),
+                    (".winding_number(...)", NODE_COLOR_ANALYSIS),
+                    (".topological_charge(...)", NODE_COLOR_ANALYSIS),
+                ],
+            ),
+        ]
+        method_rows = [
+            (
+                "detect(...)",
+                "Returns TopologyResult for one frame. Main entrypoint when you want all invariants and confidence together.",
+            ),
+            (
+                "polarity(...)",
+                "Shortcut to p in {-1, +1} without manually unpacking the full result object.",
+            ),
+            (
+                "chirality(...)",
+                "Shortcut to in-plane curling sign C, useful for state maps and batch summaries.",
+            ),
+            (
+                "winding_number(...)",
+                "Shortcut to vorticity sign for vortex/antivortex discrimination.",
+            ),
+            (
+                "topological_charge(...)",
+                "Shortcut to skyrmion number Q for topology sanity checks.",
+            ),
+        ]
+        method_body = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};vertical-align:top;'>{_esc(name)}</td>"
+            f"<td style='padding:6px 8px;color:#f8f8f2;'>{_esc(desc)}</td>"
+            "</tr>"
+            for name, desc in method_rows
+        )
+        method_html = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Topology Methods</b>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;margin-top:8px;'>"
+            f"{method_body}</table></div>"
         )
         api = api_help_html(
             self,
             title="Topology API help",
-            prefix="vortex.topology",
+            prefix="jobs[-1].solitons.vortex.topology",
             properties=[("dataset_name", "Resolved magnetization dataset name")],
             methods=[
                 "detect",
@@ -171,16 +234,24 @@ class TopologyInterface:
             subtitle="Live public API for snapshot topology analysis.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-topology-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Topology Interface",
+            icon="🌀",
+            subtitle="Frame-wise topology detection for polarity, chirality, vorticity, and topological charge.",
+            sections=[
+                metrics_section_html(context_rows),
+                accessors_section_html(accessors),
+                method_html,
+                examples_section_html(
+                    "top = jobs[-1].solitons.vortex.topology.detect(t=0)\n"
+                    "top.state, top.Q, top.core_position\n"
+                    "jobs[-1].solitons.vortex.topology.polarity(t=0)\n"
+                    "jobs[-1].solitons.vortex.topology.topological_charge(t=0)",
+                    title="Topology Workflows",
+                ),
+            ],
+            api=api,
+            uid=f"mmpp-vortex-topology-{str(_uuid.uuid4())[:8]}",
         )
 
 

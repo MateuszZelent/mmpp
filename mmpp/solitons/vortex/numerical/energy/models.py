@@ -13,7 +13,6 @@ from ..._plotting import (
     pop_axes_style_kwargs,
     pop_figure_kwargs,
 )
-from mmpp._shared.repr_html import make_simple_card
 
 
 @dataclass
@@ -36,7 +35,9 @@ class EnergyTimeSeriesResult:
             return np.asarray(self.channels["E_total"], dtype=float)
         if not self.channels:
             return np.array([], dtype=float)
-        stacked = np.column_stack([np.asarray(v, dtype=float) for v in self.channels.values()])
+        stacked = np.column_stack(
+            [np.asarray(v, dtype=float) for v in self.channels.values()]
+        )
         return np.asarray(np.sum(stacked, axis=1), dtype=float)
 
     @property
@@ -45,16 +46,54 @@ class EnergyTimeSeriesResult:
         return EnergyPlotAccessor(self)
 
     def _repr_html_(self) -> str:
-        rows = [
-            ("samples", str(int(np.asarray(self.time).size))),
-            ("n_channels", str(len(self.channels))),
-            ("channels", ", ".join(self.available_channels) if self.channels else "(none)"),
-            (".plt.time_resolved()", "Plot selected channels vs time"),
-        ]
-        return make_simple_card(
-            title="EnergyTimeSeriesResult",
-            subtitle="Time-resolved energy channels extracted from table",
-            rows=rows,
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Energy Time Series Result",
+            icon="📉",
+            subtitle="Time-resolved energy channels extracted from the simulation table.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("samples", int(np.asarray(self.time).size), None),
+                        ("n_channels", len(self.channels), None),
+                        (
+                            "channels",
+                            ", ".join(self.available_channels)
+                            if self.channels
+                            else "(none)",
+                            None,
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "etrace = jobs[-1].solitons.vortex.energy.time_resolved()\n"
+                    "etrace.plt.time_resolved()",
+                    title="Result Usage",
+                ),
+            ],
+            api=api_help_html(
+                self,
+                title="Energy time-series API help",
+                prefix="jobs[-1].solitons.vortex.energy.time_resolved()",
+                properties=[
+                    ("time", "Time axis"),
+                    ("channels", "Energy channels dictionary"),
+                    ("available_channels", "Sorted list of channels"),
+                    ("total_energy", "Total energy channel"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the energy time-series result.",
+                chrome=False,
+            ),
+            uid=f"energy-time-series-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -74,21 +113,58 @@ class EffectivePotentialResult:
         return EffectivePotentialPlotAccessor(self)
 
     def _repr_html_(self) -> str:
-        rows = [
-            ("samples", str(int(np.asarray(self.radius_m).size))),
-            ("method", str(self.method)),
-            ("radius_max_nm", f"{(np.max(self.radius_m) * 1e9 if self.radius_m.size else float('nan')):.6g}"),
-            (
-                "potential_max_j",
-                f"{(np.max(self.potential_j) if self.potential_j.size else float('nan')):.6g}",
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Effective Potential Result",
+            icon="🧭",
+            subtitle="Effective radial potential reconstructed from vortex trajectory statistics.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("samples", int(np.asarray(self.radius_m).size), None),
+                        ("method", self.method, None),
+                        (
+                            "radius_max_nm",
+                            f"{(np.max(self.radius_m) * 1e9 if self.radius_m.size else float('nan')):.6g}",
+                            None,
+                        ),
+                        (
+                            "potential_max_j",
+                            f"{(np.max(self.potential_j) if self.potential_j.size else float('nan')):.6g}",
+                            None,
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "pot = jobs[-1].solitons.vortex.energy.potential()\n"
+                    "pot.plt.potential()\n"
+                    "pot.plt.probability()",
+                    title="Result Usage",
+                ),
+            ],
+            api=api_help_html(
+                self,
+                title="Effective potential API help",
+                prefix="jobs[-1].solitons.vortex.energy.potential()",
+                properties=[
+                    ("radius_m", "Radial coordinate"),
+                    ("potential_j", "Potential profile"),
+                    ("probability", "Radial occupancy"),
+                    ("method", "Reconstruction method"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the effective potential result.",
+                chrome=False,
             ),
-            (".plt.potential()", "Plot W(r)"),
-            (".plt.probability()", "Plot radial occupancy P(r)"),
-        ]
-        return make_simple_card(
-            title="EffectivePotentialResult",
-            subtitle="Effective radial potential reconstructed from trajectory",
-            rows=rows,
+            uid=f"effective-potential-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -121,16 +197,46 @@ class PinningResult:
             conf_mean = float(np.mean([site.confidence for site in self.sites]))
         else:
             conf_mean = float("nan")
-        rows = [
-            ("n_sites", str(len(self.sites))),
-            ("confidence_mean", f"{conf_mean:.6g}"),
-            ("potential_method", str(self.potential.method)),
-            (".plt.potential_with_sites()", "Plot W(r) with detected minima"),
-        ]
-        return make_simple_card(
-            title="PinningResult",
-            subtitle="Detected pinning sites from effective potential",
-            rows=rows,
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Pinning Result",
+            icon="📍",
+            subtitle="Detected pinning sites from the reconstructed effective potential.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("n_sites", len(self.sites), None),
+                        ("confidence_mean", f"{conf_mean:.6g}", None),
+                        ("potential_method", self.potential.method, None),
+                    ]
+                ),
+                examples_section_html(
+                    "pin = jobs[-1].solitons.vortex.energy.pinning()\n"
+                    "pin.plt.potential_with_sites()",
+                    title="Result Usage",
+                ),
+            ],
+            api=api_help_html(
+                self,
+                title="Pinning-result API help",
+                prefix="jobs[-1].solitons.vortex.energy.pinning()",
+                properties=[
+                    ("potential", "Underlying effective potential"),
+                    ("sites", "Detected pinning sites"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the detected pinning-site result.",
+                chrome=False,
+            ),
+            uid=f"pinning-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -153,7 +259,9 @@ class EnergyPlotAccessor:
         figure_kwargs = pop_figure_kwargs(plot_kwargs)
         ax = ensure_axis(ax, figure_kwargs=figure_kwargs)
 
-        selected = list(channels) if channels is not None else self._result.available_channels
+        selected = (
+            list(channels) if channels is not None else self._result.available_channels
+        )
         if not selected:
             ax.set_title("No energy channels available")
             ax.set_xlabel("Time [s]")
@@ -164,7 +272,12 @@ class EnergyPlotAccessor:
         for name in selected:
             if name not in self._result.channels:
                 continue
-            ax.plot(self._result.time, self._result.channels[name], label=name, **plot_kwargs)
+            ax.plot(
+                self._result.time,
+                self._result.channels[name],
+                label=name,
+                **plot_kwargs,
+            )
 
         if selected:
             ax.legend()
@@ -176,11 +289,17 @@ class EnergyPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("EnergyPlotAccessor", [
-            (".time_resolved(channels=['E_total','E_exch'])",
-             "Energy channels vs time",
-             "channels: list of channel names (None = all). Accepts matplotlib kwargs."),
-        ])
+
+        return plot_accessor_html(
+            "EnergyPlotAccessor",
+            [
+                (
+                    ".time_resolved(channels=['E_total','E_exch'])",
+                    "Energy channels vs time",
+                    "channels: list of channel names (None = all). Accepts matplotlib kwargs.",
+                ),
+            ],
+        )
 
 
 class EffectivePotentialPlotAccessor:
@@ -228,14 +347,22 @@ class EffectivePotentialPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("EffectivePotentialPlotAccessor", [
-            (".potential(as_nev=False)",
-             "Effective potential U(r) vs radius",
-             "as_nev: convert energy to neV."),
-            (".probability()",
-             "Radial probability density p(r)",
-             "Used for Boltzmann inversion."),
-        ])
+
+        return plot_accessor_html(
+            "EffectivePotentialPlotAccessor",
+            [
+                (
+                    ".potential(as_nev=False)",
+                    "Effective potential U(r) vs radius",
+                    "as_nev: convert energy to neV.",
+                ),
+                (
+                    ".probability()",
+                    "Radial probability density p(r)",
+                    "Used for Boltzmann inversion.",
+                ),
+            ],
+        )
 
 
 class PinningPlotAccessor:
@@ -260,11 +387,17 @@ class PinningPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("PinningPlotAccessor", [
-            (".potential_with_sites(as_nev=False)",
-             "Effective potential with pinning site markers",
-             "as_nev: convert to neV. Marks local minima as pinning sites."),
-        ])
+
+        return plot_accessor_html(
+            "PinningPlotAccessor",
+            [
+                (
+                    ".potential_with_sites(as_nev=False)",
+                    "Effective potential with pinning site markers",
+                    "as_nev: convert to neV. Marks local minima as pinning sites.",
+                ),
+            ],
+        )
 
 
 __all__ = [

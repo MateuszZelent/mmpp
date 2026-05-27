@@ -23,6 +23,7 @@ from mmpp.solitons.vortex.nonlinear.models import (
 )
 from mmpp.solitons.vortex.spectrum.interface import VortexSpectrumInterface
 from mmpp.solitons.vortex.spectrum.models import VortexSpectrumResult
+from mmpp.solitons.vortex.topology.models import TopologyResult
 from mmpp.solitons.vortex.trajectory.models import OrbitFitResult
 
 
@@ -255,6 +256,377 @@ def test_autofit_features_use_shared_spectral_helper(monkeypatch) -> None:
     assert calls == ["periodogram", "periodogram"]
     np.testing.assert_allclose(freqs, [1.0])
     np.testing.assert_allclose(power, [40.0])
+
+
+def test_vortex_spectrum_and_trajectory_helpers_use_unified_template() -> None:
+    core = _CountingCore()
+    spectrum = VortexSpectrumInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(spectrum=SpectrumConfig()),
+        core_interface=core,
+    )
+    spectrum_html = spectrum._repr_html_()
+    assert "Overview" in spectrum_html
+    assert "API" in spectrum_html
+    assert "jobs[-1].solitons.vortex.spectrum.gyration" in spectrum_html
+    assert "Important Arguments" in spectrum_html
+    assert "<h3" not in spectrum_html
+
+    trajectory = __import__(
+        "mmpp.solitons.vortex.trajectory.interface",
+        fromlist=["TrajectoryInterface"],
+    ).TrajectoryInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=core,
+    )
+    trajectory_html = trajectory._repr_html_()
+    assert "Overview" in trajectory_html
+    assert "API" in trajectory_html
+    assert "jobs[-1].solitons.vortex.trajectory.raw" in trajectory_html
+    assert "Namespace Catalog" in trajectory_html
+    assert "<h3" not in trajectory_html
+
+
+def test_vortex_result_helpers_use_unified_template() -> None:
+    spectrum_result = VortexSpectrumResult(
+        frequencies=np.array([0.0, 1.0e9, 2.0e9]),
+        power=np.array([0.0, 4.0, 1.0]),
+        method="welch",
+    )
+    spectrum_html = spectrum_result._repr_html_()
+    assert "Vortex Spectrum Result" in spectrum_html
+    assert "jobs[-1].solitons.vortex.spectrum.gyration()" in spectrum_html
+    assert "Result Usage" in spectrum_html
+
+    orbit_html = OrbitFitResult(
+        center=(0.0, 0.0),
+        semi_major=8.0,
+        semi_minor=6.0,
+        eccentricity=0.2,
+        tilt_angle=0.1,
+        residual=0.01,
+    )._repr_html_()
+    assert "Orbit Fit Result" in orbit_html
+    assert "jobs[-1].solitons.vortex.trajectory.orbit.fit()" in orbit_html
+    assert "Fit Usage" in orbit_html
+
+
+def test_vortex_topology_model_and_bridge_helpers_use_unified_template() -> None:
+    topology_interface = __import__(
+        "mmpp.solitons.vortex.topology.interface",
+        fromlist=["TopologyInterface"],
+    ).TopologyInterface(
+        job_result=SimpleNamespace(
+            attrs={},
+            get_largest_m_dataset=lambda: "m",
+            _ensure_zarr_loaded=lambda: None,
+            _z={"m": object()},
+        ),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+    )
+    topology_html = topology_interface._repr_html_()
+    assert "jobs[-1].solitons.vortex.topology.detect" in topology_html
+    assert "Topology Workflows" in topology_html
+    assert "<h3" not in topology_html
+
+    topology_result_html = TopologyResult(
+        polarity=1,
+        vorticity=1,
+        chirality=1,
+        Q=0.5,
+        core_position=(0.0, 0.0),
+        topological_density=np.zeros((4, 4)),
+        state="vortex",
+        method="finite_diff",
+        confidence=0.95,
+    )._repr_html_()
+    assert "Topology Result" in topology_result_html
+    assert "jobs[-1].solitons.vortex.topology.detect()" in topology_result_html
+
+    model_interface = __import__(
+        "mmpp.solitons.vortex.model.interface",
+        fromlist=["VortexModelInterface"],
+    ).VortexModelInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+    )
+    model_html = model_interface._repr_html_()
+    assert "jobs[-1].solitons.vortex.model" in model_html
+    assert "Model Workflows" in model_html
+
+    bridge_interface = __import__(
+        "mmpp.solitons.vortex.bridge.interface",
+        fromlist=["BridgeInterface"],
+    ).BridgeInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+    )
+    bridge_html = bridge_interface._repr_html_()
+    assert "jobs[-1].solitons.vortex.bridge.fit.thiele_from_trajectory" in bridge_html
+    assert "Bridge Workflows" in bridge_html
+
+
+def test_vortex_events_helpers_use_unified_template() -> None:
+    from mmpp.solitons.vortex.events.interface import EventsInterface
+    from mmpp.solitons.vortex.events.models import (
+        CoreExpulsionEvent,
+        DwellTimeResult,
+        PolaritySwitchEvent,
+        StateSwitchEvent,
+    )
+    from mmpp.solitons.vortex.trajectory.interface import TrajectoryInterface
+
+    core = _CountingCore()
+    trajectory = TrajectoryInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=core,
+    )
+    interface = EventsInterface(
+        job_result=SimpleNamespace(path="run.zarr", attrs={}),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=core,
+        trajectory_interface=trajectory,
+    )
+    html = interface._repr_html_()
+    assert "jobs[-1].solitons.vortex.events.polarity_switches" in html
+    assert "Event Workflows" in html
+    assert "<h3" not in html
+
+    plot_html = interface.plt._repr_html_()
+    assert "jobs[-1].solitons.vortex.events.plt" in plot_html
+
+    polarity_html = PolaritySwitchEvent(1e-9, 5, 1, -1, 0.9)._repr_html_()
+    assert "Polarity Switch Event" in polarity_html
+    assert "jobs[-1].solitons.vortex.events.polarity_switches()[0]" in polarity_html
+
+    state_html = StateSwitchEvent(2e-9, 8, "G-state", "C-state", 0.8)._repr_html_()
+    assert "State Switch Event" in state_html
+
+    expulsion_html = CoreExpulsionEvent(3e-9, 10, 40e-9, 45e-9, 0.7, 1e-9)._repr_html_()
+    assert "Core Expulsion Event" in expulsion_html
+
+    dwell_html = DwellTimeResult(
+        state="G-state",
+        dwell_times=np.array([1e-9, 2e-9, 1.5e-9]),
+    )._repr_html_()
+    assert "Dwell Time Result" in dwell_html
+    assert "jobs[-1].solitons.vortex.events.dwell_times()" in dwell_html
+
+
+def test_vortex_modes_helpers_use_unified_template() -> None:
+    from mmpp.solitons.vortex.modes.interface import VortexModesInterface
+    from mmpp.solitons.vortex.modes.models import VortexModeResult
+
+    interface = VortexModesInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_CountingCore(),
+        spectrum_interface=SimpleNamespace(),
+    )
+    html = interface._repr_html_()
+    assert "jobs[-1].solitons.vortex.modes.classify" in html
+    assert "Modes Workflows" in html
+    assert "<h3" not in html
+
+    plot_html = interface.plt._repr_html_()
+    assert "jobs[-1].solitons.vortex.modes.plt" in plot_html
+
+    result_html = VortexModeResult(
+        m_index=1,
+        n_index=0,
+        mode_type="gyration",
+        rotation_sense="ccw",
+        confidence=0.9,
+        frequency_hz=1.2e9,
+        power=3.5,
+    )._repr_html_()
+    assert "Vortex Mode Result" in result_html
+    assert "jobs[-1].solitons.vortex.modes.classify()" in result_html
+
+
+def test_vortex_nonlinear_helpers_use_unified_template() -> None:
+    from mmpp.solitons.vortex.nonlinear.interface import NonlinearInterface
+    from mmpp.solitons.vortex.nonlinear.models import (
+        AmplitudeEquationResult,
+        STBatchResult,
+        STParametersResult,
+        ThieleForceBalanceResult,
+    )
+
+    interface = NonlinearInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_CountingCore(),
+        trajectory_interface=SimpleNamespace(),
+        spectrum_interface=SimpleNamespace(),
+    )
+    html = interface._repr_html_()
+    assert "jobs[-1].solitons.vortex.nonlinear.slavin_tiberkevich" in html
+    assert "Nonlinear Examples" in html
+    assert "<h3" not in html
+
+    plot_html = interface.plt._repr_html_()
+    assert "jobs[-1].solitons.vortex.nonlinear.plt" in plot_html
+
+    amp_html = AmplitudeEquationResult(
+        time=np.array([0.0, 1.0]),
+        complex_amplitude=np.array([1 + 0j, 0.5 + 0.5j]),
+        power=np.array([1.0, 0.5]),
+        phase=np.array([0.0, 0.1]),
+        omega=np.array([1.0, 1.1]),
+        method="hilbert",
+        reference_radius=5e-9,
+    )._repr_html_()
+    assert "Amplitude Equation Result" in amp_html
+
+    st_html = STParametersResult(
+        omega_0=1.0,
+        f_0_ghz=0.5,
+        N=2.0,
+        Gamma_G=0.1,
+        Q=0.2,
+        sigma=1.0,
+        I_threshold=1e-3,
+        generation_power=0.3,
+        linewidth_hz=1e6,
+        quality_factor=100.0,
+        linewidth_resolution_limited=False,
+    )._repr_html_()
+    assert "ST Parameters Result" in st_html
+
+    batch_html = STBatchResult(
+        currents=np.array([1e-3, 2e-3]),
+        powers=np.array([0.2, 0.3]),
+        linewidths=np.array([1e6, 0.8e6]),
+        frequencies_hz=np.array([1e9, 1.1e9]),
+        N=2.0,
+    )._repr_html_()
+    assert "ST Batch Result" in batch_html
+
+    fb_html = ThieleForceBalanceResult(
+        time=np.array([0.0, 1.0]),
+        x=np.array([0.0, 1.0]),
+        y=np.array([0.0, 1.0]),
+        vx=np.array([0.0, 1.0]),
+        vy=np.array([0.0, 1.0]),
+        gyro_force=np.ones((2, 2)),
+        conservative_force=np.ones((2, 2)),
+        dissipative_force=np.ones((2, 2)),
+        stt_force=np.ones((2, 2)),
+        oersted_force=np.ones((2, 2)),
+        residual_force=np.ones((2, 2)),
+        G=1.0,
+        D=1.0,
+        kappa=1.0,
+        polarity=1,
+        vorticity=1,
+    )._repr_html_()
+    assert "Thiele Force Balance Result" in fb_html
+
+
+def test_vortex_signals_and_energy_helpers_use_unified_template() -> None:
+    from mmpp.solitons.vortex.numerical.energy.interface import EnergyInterface
+    from mmpp.solitons.vortex.numerical.energy.models import (
+        EffectivePotentialResult,
+        EnergyTimeSeriesResult,
+        PinningResult,
+        PinningSite,
+    )
+    from mmpp.solitons.vortex.numerical.signals.interface import SignalsInterface
+    from mmpp.solitons.vortex.numerical.signals.models import (
+        MagnetoresistanceResult,
+        SignalSpectrumResult,
+        VoltageResult,
+    )
+
+    signals = SignalsInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_CountingCore(),
+    )
+    signals_html = signals._repr_html_()
+    assert "jobs[-1].solitons.vortex.signals.magnetoresistance" in signals_html
+    assert "Signals Workflows" in signals_html
+    assert "<h3" not in signals_html
+    assert "jobs[-1].solitons.vortex.signals.plt" in signals.plt._repr_html_()
+
+    mr_html = MagnetoresistanceResult(
+        time=np.array([0.0, 1.0]),
+        resistance_ohm=np.array([100.0, 101.0]),
+        projection=np.array([0.1, 0.2]),
+        method="proxy",
+    )._repr_html_()
+    assert "Magnetoresistance Result" in mr_html
+
+    v_html = VoltageResult(
+        time=np.array([0.0, 1.0]),
+        voltage_v=np.array([1e-3, 2e-3]),
+        current_a=np.array([1e-3, 1e-3]),
+        resistance_ohm=np.array([1.0, 2.0]),
+    )._repr_html_()
+    assert "Voltage Result" in v_html
+
+    sig_html = SignalSpectrumResult(
+        frequencies_hz=np.array([0.0, 1e9]),
+        power=np.array([0.0, 1.0]),
+        quantity="voltage",
+        metadata={"method": "welch"},
+    )._repr_html_()
+    assert "Signal Spectrum Result" in sig_html
+
+    energy = EnergyInterface(
+        job_result=SimpleNamespace(path="run.zarr"),
+        dataset_name="m",
+        slice_info=None,
+        config=VortexConfig(),
+        core_interface=_CountingCore(),
+    )
+    energy_html = energy._repr_html_()
+    assert "jobs[-1].solitons.vortex.energy.time_resolved" in energy_html
+    assert "Energy Workflows" in energy_html
+    assert "jobs[-1].solitons.vortex.energy.plt" in energy.plt._repr_html_()
+
+    etrace_html = EnergyTimeSeriesResult(
+        time=np.array([0.0, 1.0]),
+        channels={"E_total": np.array([1.0, 2.0])},
+    )._repr_html_()
+    assert "Energy Time Series Result" in etrace_html
+
+    pot = EffectivePotentialResult(
+        radius_m=np.array([0.0, 1e-9]),
+        potential_j=np.array([0.0, 1.0]),
+        probability=np.array([0.5, 0.5]),
+        method="boltzmann",
+    )
+    assert "Effective Potential Result" in pot._repr_html_()
+
+    pin_html = PinningResult(
+        potential=pot,
+        sites=[
+            PinningSite(radius_m=1e-9, potential_j=0.0, depth_j=1.0, confidence=0.9)
+        ],
+    )._repr_html_()
+    assert "Pinning Result" in pin_html
 
 
 def test_vortex_spectrogram_uses_shared_spectral_helper(monkeypatch) -> None:
@@ -1886,6 +2258,31 @@ def test_batch_vortex_spectrum_map_can_use_table_magnetization_component() -> No
     assert spectrum_map.frequencies.size > 0
 
 
+def test_batch_vortex_table_spectrum_heatmap_returns_axis() -> None:
+    from matplotlib.axes import Axes
+
+    time = np.linspace(0.0, 20e-9, 256)
+    results = [
+        _FakeBatchResultWithTable(
+            0,
+            {"t": time, "mx": np.sin(2.0 * np.pi * 1.0e9 * time)},
+        )
+    ]
+    interface = BatchVortexInterface(results)
+
+    ax = interface.spectrum_map(
+        sort_by="i_pillar_ma",
+        source="table",
+        component="mx",
+        show_progress=False,
+        cache=False,
+    ).plt.heatmap()
+
+    assert isinstance(ax, Axes)
+    ax.set_ylim(0.0, 3.0)
+    assert ax.get_ylim() == (0.0, 3.0)
+
+
 def test_batch_vortex_spectrum_map_can_use_raw_magnetization_component() -> None:
     time = np.linspace(0.0, 20e-9, 256)
     data = np.zeros((time.size, 1, 2, 2, 3), dtype=float)
@@ -1908,7 +2305,9 @@ def test_batch_vortex_spectrum_map_can_use_raw_magnetization_component() -> None
     assert spectrum_map.power.shape[0] == 1
 
 
-def test_batch_vortex_spectrum_map_auto_component_splits_processed_and_magnetization() -> None:
+def test_batch_vortex_spectrum_map_auto_component_splits_processed_and_magnetization() -> (
+    None
+):
     trajectory_result = BatchVortexInterface([_FakeBatchResult(0)]).spectrum_map(
         component="gyration",
         show_progress=False,
@@ -2092,7 +2491,9 @@ def test_batch_vortex_analyze_phase_diagram_api_and_alias() -> None:
     assert alias.axes == result.axes
 
 
-def test_batch_vortex_phase_diagram_accepts_attrs_axes_and_aggregates_duplicates() -> None:
+def test_batch_vortex_phase_diagram_accepts_attrs_axes_and_aggregates_duplicates() -> (
+    None
+):
     results = [_FakeBatchResult(0), _FakeBatchResult(1), _FakeBatchResult(2)]
     results[0].attrs.update({"epsilonprime": 0.1, "i_pillar_ma": 1.0})
     results[1].attrs.update({"epsilonprime": 0.1, "i_pillar_ma": 1.0})

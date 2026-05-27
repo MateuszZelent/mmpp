@@ -7,8 +7,6 @@ from typing import Any
 
 import numpy as np
 
-from mmpp._shared.repr_html import make_simple_card
-
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -51,14 +49,74 @@ class VortexSpectrumResult:
         return VortexSpectrumPlotAccessor(self)
 
     def _repr_html_(self) -> str:
-        return make_simple_card(
-            title=self.__class__.__name__,
-            subtitle=f"{self.component} spectrum",
-            rows=[
-                ("method", str(self.method)),
-                ("n_freq", str(int(np.asarray(self.frequencies).size))),
-                ("peak_ghz", f"{self.peak_frequency_ghz:.6g}"),
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Vortex Spectrum Result",
+            icon="📊",
+            subtitle=f"{self.component} spectrum with dominant peak and plotting helpers.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("component", self.component, NODE_COLOR_ANALYSIS),
+                        ("method", self.method, NODE_COLOR_COMPUTE),
+                        ("n_freq", int(np.asarray(self.frequencies).size), None),
+                        ("peak_ghz", f"{self.peak_frequency_ghz:.6g}", NODE_COLOR_PLOT),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Data:",
+                            [
+                                (".frequencies", NODE_COLOR_COMPUTE),
+                                (".power", NODE_COLOR_COMPUTE),
+                                (".amplitude", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                        (
+                            "Plotting:",
+                            [
+                                (".plt.power_spectrum(...)", NODE_COLOR_PLOT),
+                                (".peak_frequency_ghz", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "spec = jobs[-1].solitons.vortex.spectrum.gyration()\n"
+                    "spec.peak_frequency_ghz\n"
+                    "spec.plt.power_spectrum(log_scale=True)",
+                    title="Result Usage",
+                ),
             ],
+            api=api_help_html(
+                self,
+                title="Vortex spectrum result API help",
+                prefix="jobs[-1].solitons.vortex.spectrum.gyration()",
+                properties=[
+                    ("frequencies", "Frequency axis in Hz"),
+                    ("power", "Power spectral density samples"),
+                    ("amplitude", "Square-root amplitude spectrum"),
+                    ("peak_frequency_hz", "Dominant peak frequency in Hz"),
+                    ("peak_frequency_ghz", "Dominant peak frequency in GHz"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes for a computed vortex spectrum result.",
+                chrome=False,
+            ),
+            uid=f"vortex-spectrum-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -79,14 +137,74 @@ class VortexSpectrogramResult:
         return VortexSpectrogramPlotAccessor(self)
 
     def _repr_html_(self) -> str:
-        return make_simple_card(
-            title=self.__class__.__name__,
-            subtitle=f"{self.component} spectrogram",
-            rows=[
-                ("method", str(self.method)),
-                ("n_times", str(int(np.asarray(self.times).size))),
-                ("n_freq", str(int(np.asarray(self.frequencies).size))),
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Vortex Spectrogram Result",
+            icon="🌊",
+            subtitle=f"{self.component} time-frequency map with immediate plotting support.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("component", self.component, NODE_COLOR_ANALYSIS),
+                        ("method", self.method, NODE_COLOR_COMPUTE),
+                        ("n_times", int(np.asarray(self.times).size), None),
+                        (
+                            "n_freq",
+                            int(np.asarray(self.frequencies).size),
+                            NODE_COLOR_PLOT,
+                        ),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Data:",
+                            [
+                                (".times", NODE_COLOR_COMPUTE),
+                                (".frequencies", NODE_COLOR_COMPUTE),
+                                (".power", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                        (
+                            "Plotting:",
+                            [
+                                (".plt.spectrogram(...)", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "sgram = jobs[-1].solitons.vortex.spectrum.spectrogram()\n"
+                    "sgram.plt.spectrogram(as_ghz=True, db_scale=True)",
+                    title="Result Usage",
+                ),
             ],
+            api=api_help_html(
+                self,
+                title="Vortex spectrogram result API help",
+                prefix="jobs[-1].solitons.vortex.spectrum.spectrogram()",
+                properties=[
+                    ("times", "Time axis in seconds"),
+                    ("frequencies", "Frequency axis in Hz"),
+                    ("power", "Time-frequency power map"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes for a computed vortex spectrogram result.",
+                chrome=False,
+            ),
+            uid=f"vortex-spectrogram-result-{str(_uuid.uuid4())[:8]}",
         )
 
 

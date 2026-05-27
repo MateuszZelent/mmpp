@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
-
-from mmpp._repr_helpers import api_help_html, html_tabs
-from mmpp._shared.repr_html import make_simple_card
-
 from .compare import compare_trajectories
 from .extract import extract_model_defaults
 from .fit import fit_thiele_from_trajectory
@@ -56,26 +51,52 @@ class BridgeInterface:
         self.extract = _BridgeExtractAccessor(self)
 
     def _repr_html_(self) -> str:
-        rows = [
-            (".compare.with_(lhs, rhs)", "Overlay/metric comparison of trajectories"),
+        import uuid as _uuid
+
+        from html import escape as _esc
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        workflow_rows = [
             (
-                ".fit.thiele_from_trajectory(traj)",
-                "Fit Thiele-like proxy from trajectory",
+                "compare.with_(lhs, rhs)",
+                "Overlay numerical and analytical trajectories, or compare two reduced-order outputs on the same axes/metrics path.",
             ),
             (
-                ".extract.model_defaults(...)",
-                "Resolve analytical parameters from attrs/.mx3/manual overrides",
+                "fit.thiele_from_trajectory(traj, ...)",
+                "Fit effective Thiele-like parameters directly from a tracked trajectory result.",
+            ),
+            (
+                "extract.model_defaults(...)",
+                "Resolve analytical defaults from attrs, .mx3 metadata, or explicit overrides before building a reduced model.",
             ),
         ]
-        overview = make_simple_card(
-            title="Vortex Bridge Interface",
-            subtitle="Numerical <-> analytical glue utilities",
-            rows=rows,
+        workflow_body = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};vertical-align:top;'>{_esc(name)}</td>"
+            f"<td style='padding:6px 8px;color:#f8f8f2;'>{_esc(desc)}</td>"
+            "</tr>"
+            for name, desc in workflow_rows
+        )
+        workflow_html = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Bridge Workflows</b>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;margin-top:8px;'>"
+            f"{workflow_body}</table></div>"
         )
         api = api_help_html(
             self,
             title="Vortex bridge API help",
-            prefix="vortex.bridge",
+            prefix="jobs[-1].solitons.vortex.bridge",
             properties=[
                 ("compare", "Trajectory comparison accessor"),
                 ("fit", "Analytical fitting accessor"),
@@ -84,16 +105,53 @@ class BridgeInterface:
             subtitle="Live public API for numerical-to-analytical bridge helpers.",
             chrome=False,
         )
-        return (
-            '<div style=\'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;'>"
-            + html_tabs(
-                [("Overview", overview), ("API", api)],
-                uid=f"mmpp-vortex-bridge-{uuid.uuid4().hex}",
-            )
-            + "</div>"
+        return node_card_html(
+            "Vortex Bridge Interface",
+            icon="🔗",
+            subtitle="Glue layer between tracked numerical trajectories and reduced analytical vortex models.",
+            sections=[
+                metrics_section_html(
+                    [
+                        (
+                            "dataset",
+                            self._dataset_name or "auto-detect",
+                            NODE_COLOR_COMPUTE,
+                        ),
+                        (
+                            "slice",
+                            "custom"
+                            if self._slice_info is not None
+                            else "full geometry",
+                            None,
+                        ),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Bridge:",
+                            [
+                                (".compare.with_(lhs, rhs)", NODE_COLOR_ANALYSIS),
+                                (
+                                    ".fit.thiele_from_trajectory(traj)",
+                                    NODE_COLOR_COMPUTE,
+                                ),
+                                (".extract.model_defaults(...)", NODE_COLOR_COMPUTE),
+                            ],
+                        ),
+                    ]
+                ),
+                workflow_html,
+                examples_section_html(
+                    "traj = jobs[-1].solitons.vortex.trajectory.raw\n"
+                    "params = jobs[-1].solitons.vortex.bridge.extract.model_defaults()\n"
+                    "fit = jobs[-1].solitons.vortex.bridge.fit.thiele_from_trajectory(traj)\n"
+                    "jobs[-1].solitons.vortex.bridge.compare.with_(traj, fit)",
+                    title="Bridge Workflows",
+                ),
+            ],
+            api=api,
+            uid=f"mmpp-vortex-bridge-{str(_uuid.uuid4())[:8]}",
         )
 
 
