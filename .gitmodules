@@ -1,4 +1,4 @@
-[submodule "external_libaries/discretisedfield"]
+[submodule "external_libraries/discretisedfield"]
 	path = external_libraries/discretisedfield
 	url = https://github.com/ubermag/discretisedfield
 [submodule "external_libraries/spinwavetoolkit"]

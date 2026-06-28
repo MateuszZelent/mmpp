@@ -712,6 +712,8 @@ class DispersionAnalyzeAccessor:
         fmin_hz: float | str | None = "auto",
         k_min_rad_um: float = 0.0,
         k_max_rad_um: Optional[float] = None,
+        analysis_source: str = "raw",
+        positive_frequencies: bool = True,
     ) -> "BranchesResult":
         """Detect multiple dispersion branches via Hungarian peak linking.
 
@@ -743,6 +745,12 @@ class DispersionAnalyzeAccessor:
             Lower frequency cutoff.
         k_min_rad_um, k_max_rad_um : float
             k-window [rad/μm].
+        analysis_source : ``"raw"`` | ``"display"``
+            Spectrum source used for branch extraction. Defaults to raw data so
+            display filters do not change quantitative analysis unless asked.
+        positive_frequencies : bool
+            Restrict branch extraction to f >= 0. Set False for signed-frequency
+            analysis when that is physically intended.
 
         Returns
         -------
@@ -772,6 +780,8 @@ class DispersionAnalyzeAccessor:
             fmin_hz=fmin_hz,
             k_min_rad_um=k_min_rad_um,
             k_max_rad_um=k_max_rad_um,
+            analysis_source=analysis_source,
+            positive_frequencies=positive_frequencies,
         )
 
     def scan(

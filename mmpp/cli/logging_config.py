@@ -5,27 +5,43 @@ Central logging configuration for MMPP using rich formatting optimized for dark 
 import logging
 from typing import Optional
 
-from rich.console import Console
-from rich.logging import RichHandler
-from rich.theme import Theme
+try:
+    from rich.console import Console
+    from rich.logging import RichHandler
+    from rich.theme import Theme
+
+    _RICH_AVAILABLE = True
+except ImportError:
+    Console = None  # type: ignore[assignment]
+    RichHandler = None  # type: ignore[assignment]
+    Theme = None  # type: ignore[assignment]
+    _RICH_AVAILABLE = False
 
 # Create a custom theme optimized for dark backgrounds
-dark_theme = Theme(
-    {
-        "info": "bright_cyan",  # Jasny cyan dla INFO - bardzo widoczny
-        "warning": "bright_yellow",  # Jasny żółty dla WARNING - bardzo widoczny
-        "error": "bright_red",  # Jasny czerwony dla ERROR - bardzo widoczny
-        "critical": "bold bright_red",  # Pogrubiony jasny czerwony dla CRITICAL - bardzo widoczny
-        "debug": "bright_magenta",  # Jasny magenta dla DEBUG - lepiej widoczny niż bright_black
-        "time": "bright_white",  # Jasny biały dla czasu - bardzo widoczny
-        "name": "bright_green",  # Jasny zielony dla nazwy modułu - bardzo widoczny
-        "level": "bright_blue",  # Jasny niebieski dla poziomu - bardzo widoczny
-        "path": "dim bright_white",  # Przygaszony biały dla ścieżki
-    }
+dark_theme = (
+    Theme(
+        {
+            "info": "bright_cyan",  # Jasny cyan dla INFO - bardzo widoczny
+            "warning": "bright_yellow",  # Jasny żółty dla WARNING - bardzo widoczny
+            "error": "bright_red",  # Jasny czerwony dla ERROR - bardzo widoczny
+            "critical": "bold bright_red",  # Pogrubiony jasny czerwony dla CRITICAL - bardzo widoczny
+            "debug": "bright_magenta",  # Jasny magenta dla DEBUG - lepiej widoczny niż bright_black
+            "time": "bright_white",  # Jasny biały dla czasu - bardzo widoczny
+            "name": "bright_green",  # Jasny zielony dla nazwy modułu - bardzo widoczny
+            "level": "bright_blue",  # Jasny niebieski dla poziomu - bardzo widoczny
+            "path": "dim bright_white",  # Przygaszony biały dla ścieżki
+        }
+    )
+    if _RICH_AVAILABLE
+    else None
 )
 
 # Create a shared console instance with dark theme
-console = Console(theme=dark_theme, force_terminal=True)
+console = (
+    Console(theme=dark_theme, force_terminal=True)
+    if _RICH_AVAILABLE
+    else None
+)
 
 # Global flag to prevent multiple handler setups
 _logging_configured = False
@@ -71,26 +87,29 @@ def setup_mmpp_logging(
             # Default to WARNING so non-debug runs stay silent unless requested
             root_mmpp.setLevel(logging.WARNING)
 
-        # Choose console based on theme preference
-        selected_console = console if use_dark_theme else Console()
+        if _RICH_AVAILABLE:
+            # Choose console based on theme preference
+            selected_console = console if use_dark_theme else Console()
 
-        # Create rich handler with dark theme optimization
-        rich_handler = RichHandler(
-            console=selected_console,
-            show_time=True,
-            show_level=True,
-            show_path=False,
-            rich_tracebacks=True,
-            markup=True,
-            keywords=[],  # Disable keyword highlighting to avoid color conflicts
-            highlighter=None,  # Disable syntax highlighting
-        )
+            # Create rich handler with dark theme optimization
+            rich_handler = RichHandler(
+                console=selected_console,
+                show_time=True,
+                show_level=True,
+                show_path=False,
+                rich_tracebacks=True,
+                markup=True,
+                keywords=[],  # Disable keyword highlighting to avoid color conflicts
+                highlighter=None,  # Disable syntax highlighting
+            )
+        else:
+            rich_handler = logging.StreamHandler()
 
         # Custom formatter that applies colors based on log level
         class DarkThemeFormatter(logging.Formatter):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, **kwargs)
-                self.use_dark_theme = use_dark_theme
+                self.use_dark_theme = use_dark_theme and _RICH_AVAILABLE
 
             def format(self, record):
                 # First format the record with the base formatter

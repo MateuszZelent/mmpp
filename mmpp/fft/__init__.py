@@ -5,76 +5,57 @@ Provides comprehensive FFT analysis capabilities similar to numpy.fft.
 Main entry point through the FFT class.
 """
 
-from .compute_fft import FFTCompute, FFTComputeResult
-from .core import FFT
-from .filters import FilterConfig, FilterPipeline, PostprocessConfig, PreprocessConfig
-from .spectrum import MultiSpectrumResult, SpectrumFilterChain, SpectrumResult
-from .transmission import (
-    TransmissionConfig,
-    TransmissionResult,
-    TransmissionPlotConfig,
-    TransmissionPlotter,
-)
-from .transmission.interface import FFTTransmissionInterface
+from __future__ import annotations
 
-# Import mode visualization with error handling
-try:
-    from .modes import FFTModeInterface, FMRModeAnalyzer, ModeVisualizationConfig
-    from .mode_characterization import (
-        ModeCharacterAnalyzer,
-        ModeCharacteristicConfig,
-        ModeCharacterizationResult,
-    )
-    # Import dispersion analysis
-    from .dispersion import (
-        SpinWaveAnalyzer,
-        DispersionResult1D,
-        DispersionResult2D,
-        DispersionBranch,
-        DispersionConfig
-    )
+from importlib import import_module
+from typing import Any
 
-    __all__ = [
-        "FFT",
-        "FFTCompute",
-        "FFTComputeResult",
-        "SpectrumResult",
-        "MultiSpectrumResult",
-        "SpectrumFilterChain",
-        "FilterConfig",
-        "PreprocessConfig",
-        "PostprocessConfig",
-        "FilterPipeline",
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "FFT": (".core", "FFT"),
+    "FFTCompute": (".compute_fft", "FFTCompute"),
+    "FFTComputeResult": (".compute_fft", "FFTComputeResult"),
+    "FilterConfig": (".filters", "FilterConfig"),
+    "FilterPipeline": (".filters", "FilterPipeline"),
+    "PostprocessConfig": (".filters", "PostprocessConfig"),
+    "PreprocessConfig": (".filters", "PreprocessConfig"),
+    "MultiSpectrumResult": (".spectrum", "MultiSpectrumResult"),
+    "SpectrumFilterChain": (".spectrum", "SpectrumFilterChain"),
+    "SpectrumResult": (".spectrum", "SpectrumResult"),
+    "TransmissionConfig": (".transmission", "TransmissionConfig"),
+    "TransmissionPlotConfig": (".transmission", "TransmissionPlotConfig"),
+    "TransmissionPlotter": (".transmission", "TransmissionPlotter"),
+    "TransmissionResult": (".transmission", "TransmissionResult"),
+    "FFTTransmissionInterface": (
+        ".transmission.interface",
         "FFTTransmissionInterface",
-        "FMRModeAnalyzer",
-        "FFTModeInterface",
-        "ModeVisualizationConfig",
-        "ModeCharacterAnalyzer",
+    ),
+    "FFTModeInterface": (".modes", "FFTModeInterface"),
+    "FMRModeAnalyzer": (".modes", "FMRModeAnalyzer"),
+    "ModeVisualizationConfig": (".modes", "ModeVisualizationConfig"),
+    "ModeCharacterAnalyzer": (".mode_characterization", "ModeCharacterAnalyzer"),
+    "ModeCharacteristicConfig": (
+        ".mode_characterization",
         "ModeCharacteristicConfig",
+    ),
+    "ModeCharacterizationResult": (
+        ".mode_characterization",
         "ModeCharacterizationResult",
-        "SpinWaveAnalyzer",
-        "DispersionResult1D",
-        "DispersionResult2D",
-        "DispersionBranch",
-        "DispersionConfig",
-        "TransmissionConfig",
-        "TransmissionResult",
-        "TransmissionPlotConfig",
-        "TransmissionPlotter",
-    ]
-except ImportError:
-    __all__ = [
-        "FFT",
-        "FFTCompute",
-        "FFTComputeResult",
-        "SpectrumFilterChain",
-        "FilterConfig",
-        "PreprocessConfig",
-        "PostprocessConfig",
-        "FilterPipeline",
-        "FFTTransmissionInterface",
-        "TransmissionConfig",
-        "TransmissionResult",
-        "TransmissionPlotConfig",
-        "TransmissionPlotter",
-    ]
+    ),
+    "SpinWaveAnalyzer": (".dispersion", "SpinWaveAnalyzer"),
+    "DispersionResult1D": (".dispersion", "DispersionResult1D"),
+    "DispersionResult2D": (".dispersion", "DispersionResult2D"),
+    "DispersionBranch": (".dispersion", "DispersionBranch"),
+    "DispersionConfig": (".dispersion", "DispersionConfig"),
+}
+
+__all__ = sorted(_LAZY_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    """Load public FFT exports only when they are accessed."""
+    if name in _LAZY_EXPORTS:
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        value = getattr(import_module(module_name, __name__), attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

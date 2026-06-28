@@ -5,6 +5,9 @@ A Python library for simulation and analysis with advanced post-processing capab
 """
 
 import warnings
+from importlib import import_module
+from importlib.util import find_spec
+from typing import Optional
 
 __version__ = "0.5.3"
 __author__ = "Mateusz Zelent"
@@ -44,10 +47,6 @@ def _patch_matplotlib_tight_layout_warning() -> None:
     Figure.tight_layout = _tight_layout_without_warning
 
 
-_patch_matplotlib_tight_layout_warning()
-
-# Import analytical module (no external dependencies required)
-from . import analytical
 from . import analyze
 
 
@@ -57,37 +56,43 @@ try:
 
     _CORE_AVAILABLE = True
     _CORE_IMPORT_ERROR = None
-except ImportError as e:
+except Exception as e:
     _CORE_AVAILABLE = False
-    _CORE_IMPORT_ERROR = str(e)
+    _CORE_IMPORT_ERROR = f"{type(e).__name__}: {e}"
+
+    def _core_repair_hint() -> str:
+        if "numpy.dtype size changed" in _CORE_IMPORT_ERROR:
+            return (
+                "Detected a binary incompatibility between NumPy and a compiled "
+                "dependency such as pandas. Restart the notebook kernel after "
+                "activating an environment with consistent numpy/pandas/zarr/"
+                "numcodecs/h5py builds. If user-site packages are leaking into "
+                "the kernel, start Jupyter with PYTHONNOUSERSITE=1."
+            )
+        return (
+            "Install with: pip install mmpp[dev]\n"
+            "Or repair the package reported above."
+        )
+
+    def _format_core_import_error() -> str:
+        error_msg = "Core dependencies not available. "
+        if _CORE_IMPORT_ERROR:
+            error_msg += f"\nImport error: {_CORE_IMPORT_ERROR}\n"
+        error_msg += _core_repair_hint()
+        return error_msg
 
     # Create dummy classes for graceful degradation
     class MMPP:
         def __init__(self, *args, **kwargs):
-            error_msg = "Core dependencies not available. "
-            if _CORE_IMPORT_ERROR:
-                error_msg += f"\nMissing dependency: {_CORE_IMPORT_ERROR}\n"
-            error_msg += "Install with: pip install mmpp[dev]\n"
-            error_msg += "Or install specific package that is missing above."
-            raise ImportError(error_msg)
+            raise ImportError(_format_core_import_error())
 
     class ScanResult:
         def __init__(self, *args, **kwargs):
-            error_msg = "Core dependencies not available. "
-            if _CORE_IMPORT_ERROR:
-                error_msg += f"\nMissing dependency: {_CORE_IMPORT_ERROR}\n"
-            error_msg += "Install with: pip install mmpp[dev]\n"
-            error_msg += "Or install specific package that is missing above."
-            raise ImportError(error_msg)
+            raise ImportError(_format_core_import_error())
 
     class ZarrJobResult:
         def __init__(self, *args, **kwargs):
-            error_msg = "Core dependencies not available. "
-            if _CORE_IMPORT_ERROR:
-                error_msg += f"\nMissing dependency: {_CORE_IMPORT_ERROR}\n"
-            error_msg += "Install with: pip install mmpp[dev]\n"
-            error_msg += "Or install specific package that is missing above."
-            raise ImportError(error_msg)
+            raise ImportError(_format_core_import_error())
 
 # Backward-compatible / convenience aliases
 MMPPAnalyzer = MMPP          # MMPP is the primary analysis entry-point
@@ -108,69 +113,15 @@ except Exception:
         pass
 
 
-# Try to import plotting classes
-try:
-    from .plotting import MMPPlotter, PlotConfig, PlotterProxy, fonts, check_fonts
-
-    _PLOTTING_AVAILABLE = True
-    _PLOTTING_IMPORT_ERROR = None
-except ImportError as e:
-    _PLOTTING_AVAILABLE = False
-    _PLOTTING_IMPORT_ERROR = str(e)
-
-    # Create dummy classes for graceful degradation
-    class MMPPlotter:
-        def __init__(self, *args, **kwargs):
-            error_msg = "Plotting dependencies not available. "
-            if _PLOTTING_IMPORT_ERROR:
-                error_msg += f"\nMissing dependency: {_PLOTTING_IMPORT_ERROR}\n"
-            error_msg += "Install with: pip install mmpp[plotting]\n"
-            error_msg += "Or install specific package that is missing above."
-            raise ImportError(error_msg)
-
-    class PlotConfig:
-        def __init__(self, *args, **kwargs):
-            error_msg = "Plotting dependencies not available. "
-            if _PLOTTING_IMPORT_ERROR:
-                error_msg += f"\nMissing dependency: {_PLOTTING_IMPORT_ERROR}\n"
-            error_msg += "Install with: pip install mmpp[plotting]\n"
-            error_msg += "Or install specific package that is missing above."
-            raise ImportError(error_msg)
-
-    class PlotterProxy:
-        def __init__(self, *args, **kwargs):
-            error_msg = "Plotting dependencies not available. "
-            if _PLOTTING_IMPORT_ERROR:
-                error_msg += f"\nMissing dependency: {_PLOTTING_IMPORT_ERROR}\n"
-            error_msg += "Install with: pip install mmpp[plotting]\n"
-            error_msg += "Or install specific package that is missing above."
-            raise ImportError(error_msg)
-
-    # Create dummy font manager
-    class DummyFontManager:
-        def __init__(self):
-            pass
-
-        @property
-        def paths(self):
-            return []
-
-        @property
-        def available(self):
-            return []
-
-        def add_path(self, path):
-            print("Font management not available - install matplotlib")
-            return False
-
-        def set_default_font(self, font):
-            print("Font management not available - install matplotlib")
-            return False
-
-        def __repr__(self):
-            return "FontManager: Not available (matplotlib not installed)"
-
-    fonts = DummyFontManager()
+_PLOTTING_AVAILABLE = False
+_PLOTTING_IMPORT_ERROR = None
+_PLOTTING_EXPORTS = {
+    "MMPPlotter",
+    "PlotConfig",
+    "PlotterProxy",
+    "fonts",
+    "check_fonts",
+}
 
 
 try:
@@ -202,7 +153,34 @@ except ImportError as e:
             raise ImportError(error_msg)
 
 
-def check_dependencies():
+def _module_available(module_name: str) -> tuple[bool, Optional[str]]:
+    """Return whether *module_name* can be found without importing it."""
+    try:
+        return find_spec(module_name) is not None, None
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _dependency_group_available(packages: list[str]) -> tuple[bool, Optional[str]]:
+    missing = []
+    errors = []
+    for package in packages:
+        available, error = _module_available(package)
+        if not available:
+            missing.append(package)
+            if error:
+                errors.append(f"{package}: {error}")
+
+    if not missing:
+        return True, None
+
+    detail = ", ".join(missing)
+    if errors:
+        detail += f" ({'; '.join(errors)})"
+    return False, detail
+
+
+def check_dependencies(verbose: bool = True):
     """
     Check which mmpp dependencies are available and which are missing.
     
@@ -220,6 +198,17 @@ def check_dependencies():
     >>> status = mmpp.check_dependencies()
     >>> print(status)
     """
+    fft_available, fft_error = _dependency_group_available(["numpy"])
+    dispersion_available, dispersion_error = _dependency_group_available(
+        ["numpy", "zarr"]
+    )
+    interactive_available, interactive_error = _dependency_group_available(
+        ["IPython", "ipywidgets"]
+    )
+    plotting_available, plotting_error = _dependency_group_available(["matplotlib"])
+    scipy_available, scipy_error = _dependency_group_available(["scipy"])
+    pyfftw_available, pyfftw_error = _dependency_group_available(["pyfftw"])
+
     status = {
         'core': {
             'available': _CORE_AVAILABLE,
@@ -227,16 +216,44 @@ def check_dependencies():
             'required_packages': ['numpy', 'pandas', 'zarr', 'rich'],
         },
         'plotting': {
-            'available': _PLOTTING_AVAILABLE,
-            'error': _PLOTTING_IMPORT_ERROR,
+            'available': plotting_available,
+            'error': plotting_error,
             'required_packages': ['matplotlib'],
         },
         'simulation': {
             'available': _SIMULATION_AVAILABLE,
             'error': _SIMULATION_IMPORT_ERROR,
             'required_packages': ['PyYAML'],
-        }
+        },
+        'fft': {
+            'available': fft_available,
+            'error': fft_error,
+            'required_packages': ['numpy'],
+        },
+        'dispersion': {
+            'available': dispersion_available,
+            'error': dispersion_error,
+            'required_packages': ['numpy', 'zarr'],
+        },
+        'interactive': {
+            'available': interactive_available,
+            'error': interactive_error,
+            'required_packages': ['IPython', 'ipywidgets'],
+        },
+        'scipy': {
+            'available': scipy_available,
+            'error': scipy_error,
+            'required_packages': ['scipy'],
+        },
+        'pyfftw': {
+            'available': pyfftw_available,
+            'error': pyfftw_error,
+            'required_packages': ['pyfftw'],
+        },
     }
+
+    if not verbose:
+        return status
     
     # Print formatted report
     print("=" * 60)
@@ -268,6 +285,34 @@ def check_dependencies():
     print("=" * 60)
     
     return status
+
+
+def __getattr__(name: str):
+    """Lazily expose heavyweight optional namespaces."""
+    if name == "analytical":
+        module = import_module(".analytical", __name__)
+        globals()[name] = module
+        return module
+    if name in _PLOTTING_EXPORTS:
+        global _PLOTTING_AVAILABLE, _PLOTTING_IMPORT_ERROR
+        try:
+            _patch_matplotlib_tight_layout_warning()
+            plotting = import_module(".plotting", __name__)
+            value = getattr(plotting, name)
+            _PLOTTING_AVAILABLE = bool(
+                getattr(plotting, "MATPLOTLIB_AVAILABLE", True)
+            )
+            _PLOTTING_IMPORT_ERROR = None if _PLOTTING_AVAILABLE else "matplotlib"
+        except ImportError as exc:
+            _PLOTTING_AVAILABLE = False
+            _PLOTTING_IMPORT_ERROR = str(exc)
+            raise ImportError(
+                f"{name} requires plotting dependencies. "
+                "Install with: pip install mmpp[plotting]"
+            ) from exc
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def open(base_path: str, **kwargs):
@@ -305,9 +350,14 @@ def open(base_path: str, **kwargs):
     >>> results.mpl.plot("time", "my")  # Short alias
     """
     if not _CORE_AVAILABLE:
-        raise ImportError(
-            "Core MMPP functionality not available. Install with: pip install mmpp[dev]"
-        )
+        error_msg = "Core MMPP functionality not available."
+        if _CORE_IMPORT_ERROR:
+            error_msg += f"\nImport error: {_CORE_IMPORT_ERROR}"
+        try:
+            error_msg += f"\n{_core_repair_hint()}"
+        except NameError:
+            error_msg += "\nInstall with: pip install mmpp[dev]"
+        raise ImportError(error_msg)
 
     # Extract force parameter for special handling
     force = kwargs.pop("force", False)
@@ -449,13 +499,16 @@ def _configure_system_path(ffmpeg_path: str, verbose: bool = True) -> None:
 # ─────────────────────────────────────────────────────────────────────
 try:
     from .solitons.vortex.nonlinear.interactive import build_thiele_dashboard
-except ImportError:
+except Exception as e:
+    _SOLITONS_IMPORT_ERROR = f"{type(e).__name__}: {e}"
+
     # Fallback if solitons module not available
     def build_thiele_dashboard(*args, **kwargs):
         """Thiele interactive dashboard (solitons module required)."""
         raise ImportError(
             "build_thiele_dashboard requires solitons module. "
-            "Install with: pip install mmpp[solitons]"
+            "Install with: pip install mmpp[solitons]\n"
+            f"Import error: {_SOLITONS_IMPORT_ERROR}"
         )
 
 
@@ -484,13 +537,3 @@ __features__ = {
     "simulation": _SIMULATION_AVAILABLE,
     "mmpp": _CORE_AVAILABLE,
 }
-
-# Auto-load paper style if available
-if _PLOTTING_AVAILABLE:
-    try:
-        from .plotting import load_paper_style
-
-        load_paper_style(verbose=False)
-    except Exception:
-        # Silently fail if style loading fails
-        pass

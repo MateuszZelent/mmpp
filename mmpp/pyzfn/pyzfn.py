@@ -34,10 +34,6 @@ except (ImportError, AttributeError):
     sync = None
     StoreLike = None
 
-from .calc_modes import inner_calc_modes
-from .ispec import inner_ispec
-from .snapshot import inner_snapshot
-
 warnings.filterwarnings(
     "ignore",
     message="Object at .* is not recognized as a component of a Zarr hierarchy.",
@@ -47,6 +43,27 @@ warnings.filterwarnings(
 T = TypeVar("T", bound=np.generic)
 IndexLike = int | slice | Sequence[int] | NDArray[np.int_]
 SliceTuple = tuple[IndexLike, ...]
+
+
+def inner_calc_modes(self: "Pyzfn", *args, **kwargs):
+    """Lazy wrapper for mode extraction helpers."""
+    from .calc_modes import inner_calc_modes as _inner_calc_modes
+
+    return _inner_calc_modes(self, *args, **kwargs)
+
+
+def inner_ispec(self: "Pyzfn", *args, **kwargs):
+    """Lazy wrapper for interactive spectrum plotting helpers."""
+    from .ispec import inner_ispec as _inner_ispec
+
+    return _inner_ispec(self, *args, **kwargs)
+
+
+def inner_snapshot(self: "Pyzfn", *args, **kwargs):
+    """Lazy wrapper for snapshot plotting helpers."""
+    from .snapshot import inner_snapshot as _inner_snapshot
+
+    return _inner_snapshot(self, *args, **kwargs)
 
 
 class Pyzfn:

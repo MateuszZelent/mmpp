@@ -37,6 +37,21 @@ class DispersionPlotAccessor:
     def __init__(self, result: "DispersionResult1D") -> None:
         self._result = result
 
+    def interactive(self, *, show: bool = True, **kwargs: Any) -> Any:
+        """Return an interactive dispersion viewer controller.
+
+        ``show=False`` is intentionally headless and does not import notebook UI
+        dependencies. The returned object is stable enough for tests, presets,
+        and future richer widget rendering.
+        """
+        from .._interactive_viewer import DispersionInteractiveViewer
+
+        return DispersionInteractiveViewer.from_result(
+            self._result,
+            show=show,
+            **kwargs,
+        )
+
     # ------------------------------------------------------------------
     # primary plot: S(k,f) heatmap
     # ------------------------------------------------------------------
@@ -59,6 +74,7 @@ class DispersionPlotAccessor:
         title: Optional[str] = None,
         live_filters: Optional[dict[str, Any]] = None,
         trim_0f: Optional[int] = None,
+        positive_frequencies: bool = True,
         save: Union[str, "Path", bool, None] = None,
         overlay_points: Optional[dict[str, Any]] = None,
     ) -> tuple["Figure", "Axes"]:
@@ -92,6 +108,9 @@ class DispersionPlotAccessor:
             Post-processing filter dict applied at plot time to the cached S.
         trim_0f : int, optional
             Drop this many lowest-frequency bins (useful to hide DC artefacts).
+        positive_frequencies : bool
+            Keep only f >= 0 by default. Set False to display signed-frequency
+            spectra.
         save : path-like or bool, optional
             Save figure to path or auto-generate filename.
         overlay_points : dict, optional
@@ -119,7 +138,7 @@ class DispersionPlotAccessor:
 
         k_axis = result.k_axis.copy()
         f_axis = result.f_axis.copy()
-        spectrum = result.S.copy()
+        spectrum = result.spectrum_for("display").copy()
 
         # Orthogonal slice selection
         if orth_index is not None:
@@ -149,11 +168,11 @@ class DispersionPlotAccessor:
             except Exception:
                 pass  # degrade gracefully
 
-        # Remove negative frequencies
-        pos_mask = f_axis >= 0
-        if pos_mask.sum() < f_axis.size:
-            spectrum = spectrum[:, pos_mask]
-            f_axis = f_axis[pos_mask]
+        if positive_frequencies:
+            pos_mask = f_axis >= 0
+            if pos_mask.sum() < f_axis.size:
+                spectrum = spectrum[:, pos_mask]
+                f_axis = f_axis[pos_mask]
 
         # Trim lowest bins
         if trim_0f and trim_0f > 0:
@@ -541,7 +560,7 @@ class DispersionPlotAccessor:
             self,
             title="Dispersion plot API help",
             prefix="disp.plot",
-            methods=["heatmap", "branch", "add_analytics"],
+            methods=["interactive", "heatmap", "branch", "add_analytics"],
             subtitle="Live signatures for the plotting namespace returned by DispersionResult1D.plot.",
             chrome=False,
         )
@@ -562,6 +581,7 @@ class DispersionPlotAccessor:
                         (
                             "Plot:",
                             [
+                                (".interactive(show=False)", NODE_COLOR_COMPUTE),
                                 (".heatmap(fmax=10, lognorm=True)", NODE_COLOR_COMPUTE),
                                 (
                                     ".heatmap(orth_index=0, lognorm=True)",
@@ -576,6 +596,7 @@ class DispersionPlotAccessor:
                 examples_section_html(
                     "\n".join(
                         [
+                            "viewer = disp.plot.interactive(show=False)",
                             "disp.plot.heatmap(fmax=10, lognorm=True)",
                             "disp.plot.add_analytics(ax, sw_config='DE')",
                             "disp.plot.branch(branch, kscale='rad_um')",

@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Physics",
 ]
@@ -48,6 +49,7 @@ dev = [
     "sphinx-rtd-theme",
     "sphinx-autodoc-typehints",
     "myst-parser",
+    "linkify-it-py",
 ]
 interactive = [
     "itables",
@@ -95,6 +97,7 @@ full = [
     "jupyter",
     "ipywidgets",
     "scipy",
+    "pyfftw",
     "PyWavelets",
     "scikit-image",
     "imageio",

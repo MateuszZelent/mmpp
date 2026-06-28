@@ -14,16 +14,12 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..cli.logging_config import get_mmpp_logger
 from .job import ScanResult, ZarrJobResult
-from .constants import PLOTTING_AVAILABLE, FFT_AVAILABLE
+from .constants import FFT_AVAILABLE
 
 if TYPE_CHECKING:
     from ..batch_operations import BatchOperations
-
-if PLOTTING_AVAILABLE:
-    from ..plotting import MMPPlotter
-
-if FFT_AVAILABLE:
     from ..fft import FFT
+    from ..plotting import MMPPlotter
 
 log = get_mmpp_logger("mmpp")
 
@@ -529,10 +525,12 @@ class MMPP:
     @property
     def mpl(self) -> "MMPPlotter":
         """Get matplotlib plotter for all results."""
-        if not PLOTTING_AVAILABLE:
+        try:
+            from ..plotting import MMPPlotter
+        except ImportError as exc:
             raise ImportError(
                 "Plotting functionality not available. Install matplotlib."
-            )
+            ) from exc
         return MMPPlotter(self.zarr_results, self)
 
     @property
@@ -565,6 +563,12 @@ class MMPP:
                 "available). Use job[0].fft for single-result FFT or job[:].fft for batch FFT.",
                 stacklevel=2,
             )
+        try:
+            from ..fft import FFT
+        except ImportError as exc:
+            raise ImportError(
+                "FFT functionality not available. Check fft module import."
+            ) from exc
         return FFT(self.zarr_results[0], self)
 
     @property

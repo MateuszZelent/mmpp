@@ -25,6 +25,7 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Physics",
     ],
@@ -52,6 +53,7 @@ setup(
             "sphinx-rtd-theme",
             "sphinx-autodoc-typehints",
             "myst-parser",
+            "linkify-it-py",
         ],
         "interactive": [
             "itables",
@@ -99,6 +101,7 @@ setup(
             "jupyter",
             "ipywidgets",
             "scipy",
+            "pyfftw",
             "PyWavelets",
             "scikit-image",
             "imageio",

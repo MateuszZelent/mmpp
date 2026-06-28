@@ -21,8 +21,6 @@ from .dataset_geometry import (
 if TYPE_CHECKING:
     from .job import ZarrJobResult
     from .mmpp import MMPP
-
-if FFT_AVAILABLE:
     from ..fft import FFT
 
 if RICH_AVAILABLE:
@@ -52,9 +50,11 @@ class DatasetSpecificFFT:
         self._materialized_data = materialized_data
         self._index_plan = index_plan
         # Create regular FFT instance
-        if FFT_AVAILABLE:
+        try:
+            from ..fft import FFT
+
             self._fft = FFT(job_result, mmpp_instance)
-        else:
+        except ImportError:
             self._fft = None
 
     def __getattr__(self, name):

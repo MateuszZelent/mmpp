@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
+import numpy as np
+
+from .._json import json_safe
+
 if TYPE_CHECKING:
     from ..models import DispersionResult1D
 
@@ -94,37 +98,63 @@ class DispersionModesBridge:
         -------
         InteractiveDispersionModes widget.
         """
-        try:
-            from ..interface import FFTDispersionInterface
-        except ImportError:
-            raise RuntimeError(
-                "Cannot import FFTDispersionInterface – check the mmpp.fft.dispersion package."
-            )
+        show = bool(kwargs.pop("show", True))
 
-        # Rebuild an interface instance bound to the result's source data
-        # via the stored context (if available).
-        if hasattr(self._result, "_interface"):
-            iface: FFTDispersionInterface = self._result._interface  # type: ignore[attr-defined]
-        else:
-            raise AttributeError(
-                "DispersionResult1D has no _interface back-reference. "
-                "Use .dispersion_modes() on the original filter chain instead."
-            )
+        from .._interactive_viewer import DispersionInteractiveViewer
 
-        return iface.dispersion_modes(
-            component=component,
-            avg_over_orthogonal=avg_over_orthogonal,
-            orthogonal_avg_mode=orthogonal_avg_mode,
-            save=save,
-            force=force,
-            lattice_constant_nm=lattice_constant_nm,
-            figsize=figsize,
-            kscale=kscale,
-            f_units=f_units,
-            fmax=fmax,
-            lognorm=lognorm,
+        viewer_kwargs = {
+            "lattice_constant_nm": lattice_constant_nm,
+            "figsize": figsize,
+            "kscale": kscale,
+            "f_units": f_units,
+            "fmax": fmax,
+            "lognorm": lognorm,
+            "component": component,
+            "avg_over_orthogonal": avg_over_orthogonal,
+            "orthogonal_avg_mode": orthogonal_avg_mode,
+            "save": save,
+            "force": force,
             **kwargs,
-        )
+        }
+
+        if hasattr(self._result, "_interface"):
+            iface = self._result._interface  # type: ignore[attr-defined]
+            if not show:
+                return DispersionInteractiveViewer.from_result(
+                    self._result,
+                    show=False,
+                    can_reconstruct_modes=self._result.S_complex is not None,
+                    **viewer_kwargs,
+                )
+
+            modes = iface.dispersion_modes(
+                result=self._result,
+                lattice_constant_nm=lattice_constant_nm,
+                save=save,
+                force=force,
+            )
+            modes.plot_interactive(
+                result=self._result,
+                figsize=figsize,
+                lattice_constant_nm=lattice_constant_nm,
+                fmax=fmax,
+                f_units=f_units,
+                lognorm=lognorm,
+                **kwargs,
+            )
+            return modes
+
+        else:
+            return DispersionInteractiveViewer.from_result(
+                self._result,
+                show=show,
+                can_reconstruct_modes=False,
+                mode_unavailable_reason=(
+                    "Mode reconstruction requires S_complex and source FFT context. "
+                    "Use .dispersion_modes() on the original filter chain for full mode reconstruction."
+                ),
+                **viewer_kwargs,
+            )
 
     # ------------------------------------------------------------------
     # single-mode extraction
@@ -158,7 +188,7 @@ class DispersionModesBridge:
         if self._result.S_complex is None:
             raise ValueError(
                 "No complex spectrum stored – recompute dispersion with "
-                "``save_complex=True`` (or equivalent option)."
+                "``store_complex=True``."
             )
 
         k_target = k_rad_um * 1e6  # rad/m
@@ -172,7 +202,8 @@ class DispersionModesBridge:
         f_axis = self._result.f_axis
         pos_f = f_axis >= 0
         f_axis_pos = f_axis[pos_f]
-        idx_f = int(abs(f_axis_pos - f_target).argmin())
+        idx_f_rel = int(abs(f_axis_pos - f_target).argmin())
+        idx_f = int(np.flatnonzero(pos_f)[idx_f_rel])
 
         # Reconstruct mode image from complex spectrum
         S_c = self._result.S_complex
@@ -185,7 +216,7 @@ class DispersionModesBridge:
         return DispersionModeResult(
             mode_data=mode_data,
             k_rad_um=float(k_axis[idx_k]) / 1e6,
-            f_ghz=float(f_axis_pos[idx_f]) / 1e9,
+            f_ghz=float(f_axis[idx_f]) / 1e9,
             z_layer=z_layer,
             component=component or self._result.component,
             result=self._result,
@@ -237,7 +268,7 @@ class DispersionModesBridge:
                 ".at(k_rad_um=2.3, f_ghz=5.0)",
                 "→ DispersionModeResult",
                 "Extract single mode image at the nearest (k, f) bin. "
-                "Requires S_complex to be stored (recompute with save_complex=True).",
+                "Requires S_complex to be stored (recompute with store_complex=True).",
             ),
             (
                 ".at(...).plot.imshow(mode_type='abs')",
@@ -369,9 +400,9 @@ class DispersionModeResult:
                 "Shortcut for .plot.imshow(mode_type='phase', cmap='hsv')",
             ),
             (
-                ".plot.interactive()",
-                "Interactive mode viewer",
-                "Not yet implemented — raises NotImplementedError.",
+                ".plot.interactive(show=False)",
+                "Headless single-mode viewer",
+                "Returns a lightweight controller with .state, .show(), .close(), and _repr_html_().",
             ),
         ]
         plot_rows = "".join(
@@ -464,12 +495,23 @@ class DispersionModePlotAccessor:
         """Plot mode phase profile."""
         return self.imshow(mode_type="phase", cmap="hsv", **kwargs)
 
-    def interactive(self) -> None:
-        """Interactive mode viewer (placeholder)."""
-        raise NotImplementedError(
-            "Interactive single-mode viewer not yet implemented. "
-            "Use .modes.interactive() for the full interactive widget."
+    def interactive(
+        self,
+        *,
+        show: bool = True,
+        mode_type: str = "abs",
+        **kwargs: Any,
+    ) -> "DispersionSingleModeInteractiveViewer":
+        """Return a lightweight interactive controller for this single mode."""
+        viewer = DispersionSingleModeInteractiveViewer(
+            self._mode,
+            show_requested=bool(show),
+            mode_type=mode_type,
+            options=dict(kwargs),
         )
+        if show:
+            viewer.show()
+        return viewer
 
     def __repr__(self) -> str:
         return "<DispersionModePlotAccessor: .imshow(...), .phase(...), .interactive()>"
@@ -486,6 +528,11 @@ class DispersionModePlotAccessor:
                     ".imshow(mode_type='abs', cmap='RdBu_r')",
                     "Mode spatial profile |ψ(x,y)|",
                     "mode_type: 'abs', 'real', 'imag', 'phase'. cmap, figsize, title.",
+                ),
+                (
+                    ".interactive(show=False, mode_type='abs')",
+                    "Headless single-mode viewer",
+                    "Returns a lightweight controller for notebook display, presets, and tests.",
                 ),
                 (
                     ".phase(**kw)",
@@ -515,6 +562,168 @@ class DispersionModePlotAccessor:
         )
 
 
+class DispersionSingleModeInteractiveViewer:
+    """Lightweight notebook controller for one extracted dispersion mode."""
+
+    def __init__(
+        self,
+        mode: DispersionModeResult,
+        *,
+        show_requested: bool = True,
+        mode_type: str = "abs",
+        options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        self.mode = mode
+        self.show_requested = bool(show_requested)
+        self.mode_type = str(mode_type or "abs")
+        self.options = dict(options or {})
+        self._display_handle: Any = None
+
+    def show(self) -> "DispersionSingleModeInteractiveViewer":
+        """Display the lightweight notebook representation when IPython exists."""
+        self.show_requested = True
+        try:
+            from IPython.display import display
+        except ImportError:
+            return self
+        self._display_handle = display(self, display_id=True)
+        return self
+
+    def close(self) -> None:
+        """Best-effort display cleanup hook."""
+        if self._display_handle is not None and hasattr(self._display_handle, "update"):
+            self._display_handle.update(None)
+        self._display_handle = None
+        self.show_requested = False
+
+    @property
+    def state(self) -> dict[str, Any]:
+        """Serializable state for tests and notebooks."""
+        data = self.mode.mode_data
+        return {
+            "show": self.show_requested,
+            "mode_type": self.mode_type,
+            "k_rad_um": float(self.mode.k_rad_um),
+            "f_ghz": float(self.mode.f_ghz),
+            "component": self.mode.component,
+            "z_layer": int(self.mode.z_layer),
+            "mode_shape": list(np.shape(data)),
+            "mode_dtype": str(getattr(data, "dtype", type(data).__name__)),
+            "options": json_safe(self.options),
+        }
+
+    def export_selection(self, **selection: Any) -> dict[str, Any]:
+        """Return a JSON-serializable snapshot of viewer state and selection."""
+        return {"viewer": self.state, "selection": json_safe(selection)}
+
+    def _repr_html_(self) -> str:
+        from html import escape as _esc
+
+        state = self.state
+        rows = [
+            ("mode_type", state["mode_type"]),
+            ("k", f"{state['k_rad_um']:.3f} rad/μm"),
+            ("f", f"{state['f_ghz']:.3f} GHz"),
+            ("component", state["component"]),
+            ("shape", state["mode_shape"]),
+        ]
+        rows_html = "".join(
+            "<tr>"
+            f"<td style='padding:2px 8px;color:#94a3b8;font-size:.85em;'>{_esc(str(key))}</td>"
+            f"<td style='padding:2px 8px;color:#c4b5fd;font-family:monospace;'>{_esc(str(value))}</td>"
+            "</tr>"
+            for key, value in rows
+        )
+        return (
+            "<div style='font-family:-apple-system,sans-serif;border:1px solid #6d28d9;"
+            "border-radius:8px;padding:10px;background:#0f172a;color:#e2e8f0;'>"
+            "<div style='font-weight:700;color:#c4b5fd;margin-bottom:6px;'>"
+            "DispersionSingleModeInteractiveViewer</div>"
+            f"<table style='border-collapse:collapse;'>{rows_html}</table>"
+            "</div>"
+        )
+
+
+class DispersionModesAnimationViewer:
+    """Lightweight controller for overview mode-animation requests."""
+
+    def __init__(
+        self,
+        bridge: DispersionModesBridge,
+        *,
+        peaks: Optional[list[Any]] = None,
+        show_requested: bool = True,
+        options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        self.bridge = bridge
+        self.result = bridge._result
+        self.peaks = list(peaks or [])
+        self.show_requested = bool(show_requested)
+        self.options = dict(options or {})
+        self._display_handle: Any = None
+
+    def show(self) -> "DispersionModesAnimationViewer":
+        """Display a lightweight notebook representation when IPython exists."""
+        self.show_requested = True
+        try:
+            from IPython.display import display
+        except ImportError:
+            return self
+        self._display_handle = display(self, display_id=True)
+        return self
+
+    def close(self) -> None:
+        """Best-effort display cleanup hook."""
+        if self._display_handle is not None and hasattr(self._display_handle, "update"):
+            self._display_handle.update(None)
+        self._display_handle = None
+        self.show_requested = False
+
+    @property
+    def state(self) -> dict[str, Any]:
+        """Serializable animation request state."""
+        return {
+            "show": self.show_requested,
+            "peaks": json_safe(self.peaks),
+            "axis": self.result.axis,
+            "component": self.result.component,
+            "result_shape": list(self.result.S.shape),
+            "has_complex": self.result.S_complex is not None,
+            "has_local": self.result.S_local is not None,
+            "options": json_safe(self.options),
+        }
+
+    def export_selection(self, **selection: Any) -> dict[str, Any]:
+        """Return a JSON-serializable snapshot of viewer state and selection."""
+        return {"viewer": self.state, "selection": json_safe(selection)}
+
+    def _repr_html_(self) -> str:
+        from html import escape as _esc
+
+        state = self.state
+        rows = [
+            ("peaks", state["peaks"]),
+            ("shape", state["result_shape"]),
+            ("complex", state["has_complex"]),
+            ("local", state["has_local"]),
+        ]
+        rows_html = "".join(
+            "<tr>"
+            f"<td style='padding:2px 8px;color:#94a3b8;font-size:.85em;'>{_esc(str(key))}</td>"
+            f"<td style='padding:2px 8px;color:#fbbf24;font-family:monospace;'>{_esc(str(value))}</td>"
+            "</tr>"
+            for key, value in rows
+        )
+        return (
+            "<div style='font-family:-apple-system,sans-serif;border:1px solid #92400e;"
+            "border-radius:8px;padding:10px;background:#0f172a;color:#e2e8f0;'>"
+            "<div style='font-weight:700;color:#fbbf24;margin-bottom:6px;'>"
+            "DispersionModesAnimationViewer</div>"
+            f"<table style='border-collapse:collapse;'>{rows_html}</table>"
+            "</div>"
+        )
+
+
 # ---------------------------------------------------------------------------
 # DispersionModesPlotAccessor  –  overview plots for all modes
 # ---------------------------------------------------------------------------
@@ -526,9 +735,23 @@ class DispersionModesPlotAccessor:
     def __init__(self, bridge: DispersionModesBridge) -> None:
         self._bridge = bridge
 
-    def animation(self, peaks: Optional[list] = None, **kwargs) -> None:
-        """Animate mode profiles (placeholder)."""
-        raise NotImplementedError("Animation not yet implemented.")
+    def animation(
+        self,
+        peaks: Optional[list[Any]] = None,
+        *,
+        show: bool = True,
+        **kwargs: Any,
+    ) -> DispersionModesAnimationViewer:
+        """Return a lightweight animation-request controller."""
+        viewer = DispersionModesAnimationViewer(
+            self._bridge,
+            peaks=peaks,
+            show_requested=bool(show),
+            options=dict(kwargs),
+        )
+        if show:
+            viewer.show()
+        return viewer
 
     def __repr__(self) -> str:
         return "<DispersionModesPlotAccessor: .animation(peaks=[0,1])>"
@@ -542,9 +765,9 @@ class DispersionModesPlotAccessor:
             "DispersionModesPlotAccessor",
             [
                 (
-                    ".animation(peaks=[0,1])",
-                    "Animate mode profiles across peaks",
-                    "peaks: list of peak indices to animate.",
+                    ".animation(peaks=[0,1], show=False)",
+                    "Headless animation-request controller",
+                    "peaks: list of peak indices to animate. Returns a lightweight controller.",
                 ),
             ],
         )

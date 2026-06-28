@@ -203,21 +203,45 @@ def _greedy_assign(cost: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 # Branch quality scoring
 # ──────────────────────────────────────────────────────────────────────
 
-def _branch_quality(k_arr: np.ndarray, f_arr: np.ndarray, amp_arr: np.ndarray) -> float:
-    """Score a branch: higher = better. Used for final filtering.
+def _branch_quality_metrics(
+    k_arr: np.ndarray,
+    f_arr: np.ndarray,
+    amp_arr: np.ndarray,
+    *,
+    reference_k_axis: Optional[np.ndarray] = None,
+    noise_floor: float = 0.0,
+    gap_count: int = 0,
+) -> dict[str, float]:
+    """Return normalized branch quality metrics.
 
     Components (all normalised to ~[0, 1]):
     - coverage: fraction of k-range covered (long branches score higher)
     - smoothness: 1 / (1 + relative variance of df/dk)
     - amplitude: mean amplitude relative to max
+    - snr: bounded log-scaled peak/noise ratio
+    - gaps: number of missing k-columns during linking
+    - confidence: weighted aggregate used for ranking/filtering
     """
     n = len(k_arr)
     if n < 3:
-        return 0.0
+        return {
+            "coverage": 0.0,
+            "smoothness": 0.0,
+            "amplitude": 0.0,
+            "length": 0.0,
+            "snr": 0.0,
+            "gaps": float(gap_count),
+            "confidence": 0.0,
+        }
 
-    # Coverage: length in k-axis relative to total range
-    dk_total = float(k_arr.max() - k_arr.min())
-    coverage = dk_total / (dk_total + 1e-30)  # Always ~1 for long branches
+    # Coverage: branch span relative to the searched k-window.
+    dk_branch = float(k_arr.max() - k_arr.min())
+    if reference_k_axis is not None and len(reference_k_axis) >= 2:
+        ref = np.asarray(reference_k_axis, dtype=float)
+        dk_total = float(np.nanmax(ref) - np.nanmin(ref))
+    else:
+        dk_total = dk_branch
+    coverage = 1.0 if dk_total <= 0 else float(np.clip(dk_branch / dk_total, 0.0, 1.0))
 
     # Smoothness: penalise strong jumps in f(k)
     df = np.diff(f_arr)
@@ -232,7 +256,47 @@ def _branch_quality(k_arr: np.ndarray, f_arr: np.ndarray, amp_arr: np.ndarray) -
     # Length bonus: log(n) to reward longer branches
     length_score = math.log10(max(n, 1)) / 3.0  # log10(1000)/3 = 1.0
 
-    return float(0.3 * length_score + 0.3 * smoothness + 0.2 * amp_score + 0.2 * coverage)
+    if noise_floor > 0:
+        snr_linear = float(amp_arr.mean()) / float(noise_floor)
+        snr_score = float(np.clip(math.log10(max(snr_linear, 1.0)) / 3.0, 0.0, 1.0))
+    else:
+        snr_score = 1.0 if float(amp_arr.max()) > 0 else 0.0
+
+    gap_penalty = 1.0 / (1.0 + max(0, gap_count))
+    confidence = float(
+        0.25 * length_score
+        + 0.25 * smoothness
+        + 0.15 * amp_score
+        + 0.20 * coverage
+        + 0.15 * snr_score
+    )
+    confidence *= gap_penalty
+
+    return {
+        "coverage": float(coverage),
+        "smoothness": float(smoothness),
+        "amplitude": float(amp_score),
+        "length": float(length_score),
+        "snr": float(snr_score),
+        "gaps": float(gap_count),
+        "confidence": confidence,
+    }
+
+
+def _branch_quality(
+    k_arr: np.ndarray,
+    f_arr: np.ndarray,
+    amp_arr: np.ndarray,
+    *,
+    reference_k_axis: Optional[np.ndarray] = None,
+) -> float:
+    """Score a branch: higher = better. Used for final filtering."""
+    return _branch_quality_metrics(
+        k_arr,
+        f_arr,
+        amp_arr,
+        reference_k_axis=reference_k_axis,
+    )["confidence"]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -249,6 +313,7 @@ class TrackedBranch:
     amplitude: np.ndarray
     branch_id: int = 0
     quality: float = 0.0
+    quality_metrics: dict[str, float] = field(default_factory=dict)
 
     @property
     def f_ghz(self) -> np.ndarray:
@@ -276,6 +341,7 @@ class BranchesResult:
 
     branches: List[TrackedBranch]
     result: "DispersionResult1D"
+    rejected: List[dict[str, Any]] = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.branches)
@@ -364,6 +430,8 @@ def find_branches(
     fmin_hz: Union[float, str, None] = "auto",
     k_min_rad_um: float = 0.0,
     k_max_rad_um: Optional[float] = None,
+    analysis_source: str = "raw",
+    positive_frequencies: bool = True,
 ) -> BranchesResult:
     """Detect multiple dispersion branches via Hungarian peak linking.
 
@@ -411,27 +479,46 @@ def find_branches(
         Min frequency cutoff.
     k_min_rad_um, k_max_rad_um : float
         k search window [rad/μm].
+    positive_frequencies : bool
+        Restrict branch tracking to f >= 0 by default. Set False with an
+        explicit ``fmin_hz`` policy to analyze full signed-frequency spectra.
 
     Returns
     -------
     BranchesResult
     """
-    S = result.S
-    k_axis = result.k_axis
-    f_axis = result.f_axis
+    if hasattr(result, "frequency_view"):
+        S, k_axis, f_axis = result.frequency_view(
+            positive_frequencies=positive_frequencies,
+            analysis_source=analysis_source,
+        )
+    elif hasattr(result, "spectrum_for"):
+        S = result.spectrum_for(analysis_source)
+        k_axis = result.k_axis
+        f_axis = result.f_axis
+        if positive_frequencies:
+            pos_f = f_axis >= 0
+            S = S[:, pos_f]
+            f_axis = f_axis[pos_f]
+    else:
+        S = result.S
+        k_axis = result.k_axis
+        f_axis = result.f_axis
+        if positive_frequencies:
+            pos_f = f_axis >= 0
+            S = S[:, pos_f]
+            f_axis = f_axis[pos_f]
 
-    # Positive freq only
-    pos_f = f_axis >= 0
-    f_pos = f_axis[pos_f]
-    S_pos = S[:, pos_f]
+    f_search = f_axis
+    S_search = S
 
     # fmin cutoff
     if fmin_hz == "auto":
-        fmin_cutoff = 0.05 * float(f_pos.max())
+        fmin_cutoff = 0.05 * float(f_search.max()) if positive_frequencies else float(f_search.min())
     elif fmin_hz is not None and fmin_hz > 0:
         fmin_cutoff = float(fmin_hz)
     else:
-        fmin_cutoff = 0.0
+        fmin_cutoff = 0.0 if positive_frequencies else float(f_search.min())
 
     # k-side mask
     k_min_rm = k_min_rad_um * 1e6
@@ -454,10 +541,11 @@ def find_branches(
     max_df_hz = max_df_ghz * 1e9
 
     # ── Noise floor from percentile ──
-    fmin_mask = f_pos >= fmin_cutoff
-    S_for_snr = S_pos[:, fmin_mask]
-    if S_for_snr.size > 0:
-        noise_floor = float(np.percentile(S_for_snr[S_for_snr > 0], noise_floor_percentile))
+    fmin_mask = f_search >= fmin_cutoff
+    S_for_snr = S_search[:, fmin_mask]
+    positive_snr = S_for_snr[S_for_snr > 0]
+    if positive_snr.size > 0:
+        noise_floor = float(np.percentile(positive_snr, noise_floor_percentile))
     else:
         noise_floor = 0.0
 
@@ -477,8 +565,8 @@ def find_branches(
             peaks_per_col.append((np.array([]), np.array([])))
             continue
         fp, amp = _find_peaks_column(
-            S_pos[ik],
-            f_pos,
+            S_search[ik],
+            f_search,
             n_peaks=n_branches,
             min_prominence_log=min_prominence_log,
             min_distance_bins=min_peak_distance,
@@ -501,6 +589,7 @@ def find_branches(
             # SNR-gated or no peaks: increment gap on all active branches
             for bid in active:
                 active[bid]["gap"] += 1
+                active[bid]["gap_count"] += 1
             # Terminate branches with too many gaps
             to_remove = [bid for bid, br in active.items() if br["gap"] > MAX_GAP]
             for bid in to_remove:
@@ -510,8 +599,14 @@ def find_branches(
         if len(active) == 0:
             for j in range(len(curr_f)):
                 active[next_id] = {
-                    "k": [k_val], "f": [curr_f[j]], "amp": [curr_amp[j]],
-                    "last_f": curr_f[j], "last_amp": curr_amp[j], "gap": 0,
+                    "source_id": next_id,
+                    "k": [k_val],
+                    "f": [curr_f[j]],
+                    "amp": [curr_amp[j]],
+                    "last_f": curr_f[j],
+                    "last_amp": curr_amp[j],
+                    "gap": 0,
+                    "gap_count": 0,
                 }
                 next_id += 1
             continue
@@ -539,6 +634,7 @@ def find_branches(
             bid = active_ids[pi]
             if bid not in matched_ids:
                 active[bid]["gap"] += 1
+                active[bid]["gap_count"] += 1
 
         to_remove = [bid for bid, br in active.items() if br["gap"] > MAX_GAP]
         for bid in to_remove:
@@ -546,8 +642,14 @@ def find_branches(
 
         for ci in unmatched_curr:
             active[next_id] = {
-                "k": [k_val], "f": [curr_f[ci]], "amp": [curr_amp[ci]],
-                "last_f": curr_f[ci], "last_amp": curr_amp[ci], "gap": 0,
+                "source_id": next_id,
+                "k": [k_val],
+                "f": [curr_f[ci]],
+                "amp": [curr_amp[ci]],
+                "last_f": curr_f[ci],
+                "last_amp": curr_amp[ci],
+                "gap": 0,
+                "gap_count": 0,
             }
             next_id += 1
 
@@ -556,17 +658,40 @@ def find_branches(
 
     # ── Phase 3: build, score, filter ──
     tracked: List[TrackedBranch] = []
+    rejected: List[dict[str, Any]] = []
     for br_data in finished:
         n_pts = len(br_data["k"])
         if n_pts < min_branch_length:
+            rejected.append({
+                "source_id": br_data.get("source_id"),
+                "reason": "min_branch_length",
+                "points": n_pts,
+                "threshold": min_branch_length,
+            })
             continue
 
         k_arr = np.array(br_data["k"])
         f_arr = np.array(br_data["f"])
         amp_arr = np.array(br_data["amp"])
 
-        quality = _branch_quality(k_arr, f_arr, amp_arr)
+        metrics = _branch_quality_metrics(
+            k_arr,
+            f_arr,
+            amp_arr,
+            reference_k_axis=k_axis[k_idx],
+            noise_floor=noise_floor,
+            gap_count=int(br_data.get("gap_count", 0)),
+        )
+        quality = metrics["confidence"]
         if quality < min_quality:
+            rejected.append({
+                "source_id": br_data.get("source_id"),
+                "reason": "min_quality",
+                "points": n_pts,
+                "quality": quality,
+                "threshold": min_quality,
+                "metrics": metrics,
+            })
             continue
 
         # Optional smoothing
@@ -582,6 +707,7 @@ def find_branches(
         tracked.append(TrackedBranch(
             k=k_arr, f_hz=f_arr, amplitude=amp_arr,
             branch_id=len(tracked), quality=quality,
+            quality_metrics=metrics,
         ))
 
     # Sort by quality (best first)
@@ -594,7 +720,7 @@ def find_branches(
         len(tracked), len(finished), min_branch_length, min_quality,
     )
 
-    return BranchesResult(branches=tracked, result=result)
+    return BranchesResult(branches=tracked, result=result, rejected=rejected)
 
 
 # ──────────────────────────────────────────────────────────────────────

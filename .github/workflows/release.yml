@@ -45,6 +45,17 @@ jobs:
       - name: Pytest
         run: python -m pytest tests/ -q
 
+      - name: Build documentation
+        run: |
+          cd docs
+          mkdir -p _build
+          sphinx-build -b html . _build --keep-going
+
+      - name: Benchmark profile preflight
+        run: |
+          python scripts/analysis/benchmark_fft_dispersion.py --profile medium-dev --preflight-only --max-peak-memory-mb 1024 --output /tmp/mmpp-dispersion-medium-dev-preflight.json
+          python scripts/analysis/benchmark_fft_dispersion.py --profile research-reference --preflight-only --max-peak-memory-mb 4096 --output /tmp/mmpp-dispersion-research-reference-preflight.json
+
   build:
     needs: verify
     runs-on: ubuntu-latest
@@ -69,14 +80,82 @@ jobs:
       - name: Validate package
         run: python -m twine check dist/*
 
+      - name: Smoke installed wheel
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python scripts/analysis/verify_fft_dispersion_release_gate.py --import-mode installed --max-elapsed-s 60 --max-peak-memory-mb 256 --output /tmp/mmpp-fft-dispersion-wheel-smoke.json
+
+      - name: Smoke installed sdist
+        run: |
+          python -m pip uninstall -y mmpp
+          python -m pip wheel --wheel-dir /tmp/mmpp-sdist-wheel dist/*.tar.gz
+          python -m pip install --force-reinstall /tmp/mmpp-sdist-wheel/*.whl
+          python scripts/analysis/verify_fft_dispersion_release_gate.py --import-mode installed --max-elapsed-s 60 --max-peak-memory-mb 256 --output /tmp/mmpp-fft-dispersion-sdist-smoke.json
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
 
-  publish-pypi:
+  extras-smoke:
     needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        extra: ["fft", "interactive", "plotting", "full"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install built wheel extra
+        run: |
+          python -m pip install --upgrade pip
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          wheel = next(Path("dist").glob("mmpp-*.whl"))
+          subprocess.check_call([
+              sys.executable,
+              "-m",
+              "pip",
+              "install",
+              "--force-reinstall",
+              f"{wheel}[${{ matrix.extra }}]",
+          ])
+          PY
+
+      - name: Import smoke
+        run: |
+          python scripts/analysis/verify_fft_dispersion_release_gate.py --import-mode installed --max-elapsed-s 60 --max-peak-memory-mb 256 --output /tmp/mmpp-fft-dispersion-${{ matrix.extra }}-smoke.json
+
+      - name: Required pyFFTW backend smoke
+        if: matrix.extra == 'fft' || matrix.extra == 'full'
+        run: |
+          python scripts/analysis/verify_fft_dispersion_release_gate.py --import-mode installed --benchmark-backend pyfftw --max-elapsed-s 60 --max-peak-memory-mb 256 --output /tmp/mmpp-fft-dispersion-${{ matrix.extra }}-pyfftw-smoke.json
+
+      - name: Required widget smoke
+        if: matrix.extra == 'interactive' || matrix.extra == 'full'
+        run: |
+          python scripts/analysis/verify_fft_dispersion_release_gate.py --import-mode installed --require-widget-smoke --max-elapsed-s 60 --max-peak-memory-mb 256 --output /tmp/mmpp-fft-dispersion-${{ matrix.extra }}-widget-smoke.json
+
+  publish-pypi:
+    needs: [build, extras-smoke]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: pypi
@@ -94,7 +173,7 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
 
   publish-testpypi:
-    needs: build
+    needs: [build, extras-smoke]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_pypi == 'true'
     runs-on: ubuntu-latest
     environment: testpypi

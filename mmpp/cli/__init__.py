@@ -11,15 +11,15 @@ The system automatically selects the best available interface or allows manual s
 # The main CLI interface is now handled by the parent cli.py module
 # This avoids circular imports and simplifies the architecture
 
-# Import traditional CLI as fallback
-from .auth import handle_auth_command, login_to_server, logout_from_server, show_auth_status
-from .jobs import handle_jobs_command
-from .main import main as cli_main
-
-# Import handle_swap_command from swap.py file
-from .swap import handle_swap_command as _handle_swap_command_from_file
-
-handle_swap_command = _handle_swap_command_from_file
+_LAZY_EXPORTS = {
+    "handle_auth_command": (".auth", "handle_auth_command"),
+    "login_to_server": (".auth", "login_to_server"),
+    "logout_from_server": (".auth", "logout_from_server"),
+    "show_auth_status": (".auth", "show_auth_status"),
+    "handle_jobs_command": (".jobs", "handle_jobs_command"),
+    "handle_swap_command": (".swap", "handle_swap_command"),
+    "cli_main": (".main", "main"),
+}
 
 
 def main() -> None:
@@ -56,3 +56,15 @@ __all__ = [
     "show_auth_status",
     "cli_main",  # Traditional CLI
 ]
+
+
+def __getattr__(name: str):
+    """Load CLI handlers only when the user accesses the CLI API."""
+    if name in _LAZY_EXPORTS:
+        from importlib import import_module
+
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        value = getattr(import_module(module_name, __name__), attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

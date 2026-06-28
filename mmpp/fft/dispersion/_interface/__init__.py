@@ -1,15 +1,9 @@
-"""
-Internal submodules for FFTDispersionInterface.
+"""Internal, experimental helpers for :mod:`mmpp.fft.dispersion`.
 
-This package contains separated concerns for better code organization:
-- k0_filtering: k≈0 dynamic filtering
+The stable public cache and plotting API lives on
+``FFTDispersionInterface``/``DispersionResult1D``.  Modules in this package are
+kept importable for development and migration work, but they are intentionally
+not re-exported as public symbols.
 """
-
-try:
-    from .k0_filtering import K0Filter
-except Exception:  # noqa: BLE001 - optional internal helper
-    K0Filter = None  # type: ignore[assignment]
 
 __all__: list[str] = []
-if K0Filter is not None:
-    __all__.append("K0Filter")

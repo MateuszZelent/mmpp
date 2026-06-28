@@ -273,6 +273,9 @@ class InteractiveDispersionModes:
         figsize: tuple[float, float] = (10, 10),
         dpi: int = 150,
         lattice_constant_nm: float | None = None,
+        fmax: float | None = None,
+        f_units: str = "GHz",
+        lognorm: bool | None = None,
         add_contour: np.ndarray | None = None,
         **compute_kwargs,
     ):
@@ -289,6 +292,13 @@ class InteractiveDispersionModes:
             Figure DPI (default 150)
         lattice_constant_nm : float, optional
             Initial lattice constant in nm. If None, uses default from dispersion_modes().
+        fmax : float, optional
+            Initial maximum displayed frequency. Interpreted according to *f_units*.
+        f_units : {"GHz", "Hz"}
+            Units for *fmax*.
+        lognorm : bool, optional
+            Compatibility option from dispersion heatmaps. Enables the widget's
+            non-destructive log display filter when True.
         add_contour : np.ndarray, optional
             2D geometry array (0/1) to overlay as contour on mode visualization.
             This is useful for showing material boundaries (e.g., oscillators, antidots).
@@ -325,6 +335,20 @@ class InteractiveDispersionModes:
         # Set initial parameters from result
         f_max_ghz = self.result.f_axis.max() / 1e9
         self._default_params["f_max_ghz"] = min(f_max_ghz, 20.0)
+        if fmax is not None:
+            units = f_units.lower()
+            if units == "ghz":
+                fmax_ghz = float(fmax)
+            elif units == "hz":
+                fmax_ghz = float(fmax) / 1e9
+            else:
+                raise ValueError("f_units must be 'GHz' or 'Hz'")
+            if fmax_ghz <= 0.0:
+                raise ValueError("fmax must be positive")
+            self._default_params["f_max_ghz"] = fmax_ghz
+        if lognorm is not None:
+            self._default_params["live_log_enabled"] = bool(lognorm)
+            self._default_params.setdefault("live_log_method", "log1p")
 
         # Store geometry contour for mode overlay
         if add_contour is not None:
@@ -354,6 +378,32 @@ class InteractiveDispersionModes:
         # Initial plot
         self._initialize_figure()
         self._update_dispersion_plot()
+
+    def close(self) -> None:
+        """Best-effort cleanup for notebook display, animation, and figure state."""
+        self._ensure_runtime_state()
+
+        animation = getattr(self, "_animation", None)
+        event_source = getattr(animation, "event_source", None)
+        if event_source is not None and hasattr(event_source, "stop"):
+            event_source.stop()
+        self._animation = None
+        self._is_animating = False
+
+        if self._display_handle is not None and hasattr(self._display_handle, "update"):
+            self._display_handle.update(None)
+        self._display_handle = None
+
+        fig = getattr(self, "_fig", None)
+        plt_module = globals().get("plt")
+        if fig is not None and plt_module is not None and hasattr(plt_module, "close"):
+            plt_module.close(fig)
+        self._fig = None
+        self._ax_disp = None
+        self._ax_mode = None
+        self._colorbar_disp = None
+        self._colorbar_mode = None
+        self._mask_markers = []
 
     def _create_widgets(self):
         """Create all interactive widgets."""

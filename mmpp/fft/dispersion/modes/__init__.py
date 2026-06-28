@@ -1,65 +1,46 @@
 """
 Interactive Dispersion Modes Analysis Module.
 
-Provides tools for Brillouin zone folding, automatic parameter detection,
-and interactive visualization of spin-wave dispersion modes in magnonic crystals.
-
-Main Features:
-- BZ folding with band structure visualization
-- Automatic detection of lattice constants
-- Interactive Jupyter widgets for exploration
-- Mode tracking and characterization
-- Spin wave animation with proper complex amplitude handling
-
-Usage:
-------
->>> job[0].fft.dispersion.dispersion_modes.plot_interactive()
->>> job[0].fft.dispersion.dispersion_modes.fold(lattice_constant=470e-9)
->>> job[0].fft.dispersion.dispersion_modes.animate_mode(k=1e6, f=5e9)
+Exports are loaded lazily so headless dispersion paths can use
+``result.modes`` without importing ipywidgets or Matplotlib.
 """
 
-from .models import (
-    BrillouinZoneConfig,
-    DispersionMode,
-    FoldedDispersionResult,
-)
-from .folding import BrillouinZoneFolding
-from .detection import BrillouinZoneDetector
-from .interactive import InteractiveDispersionModes
-from .mode_profile import ModeProfile
-from .animation import (
-    extract_amplitude_phase,
-    compute_spinwave_field,
-    generate_animation_frames,
-    SpinWaveModeAnimator,
-    animate_mode_from_folding,
-)
-from .bridge import (
-    DispersionModesBridge,
-    DispersionModeResult,
-    DispersionModePlotAccessor,
-    DispersionModesPlotAccessor,
-)
+from __future__ import annotations
 
-__all__ = [
+from importlib import import_module
+from typing import Any
+
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     # Models
-    "BrillouinZoneConfig",
-    "DispersionMode",
-    "FoldedDispersionResult",
-    "ModeProfile",
+    "BrillouinZoneConfig": (".models", "BrillouinZoneConfig"),
+    "DispersionMode": (".models", "DispersionMode"),
+    "FoldedDispersionResult": (".models", "FoldedDispersionResult"),
+    "ModeProfile": (".mode_profile", "ModeProfile"),
     # Core
-    "BrillouinZoneFolding",
-    "BrillouinZoneDetector",
-    "InteractiveDispersionModes",
+    "BrillouinZoneFolding": (".folding", "BrillouinZoneFolding"),
+    "BrillouinZoneDetector": (".detection", "BrillouinZoneDetector"),
+    "InteractiveDispersionModes": (".interactive", "InteractiveDispersionModes"),
     # Animation
-    "extract_amplitude_phase",
-    "compute_spinwave_field",
-    "generate_animation_frames",
-    "SpinWaveModeAnimator",
-    "animate_mode_from_folding",
+    "extract_amplitude_phase": (".animation", "extract_amplitude_phase"),
+    "compute_spinwave_field": (".animation", "compute_spinwave_field"),
+    "generate_animation_frames": (".animation", "generate_animation_frames"),
+    "SpinWaveModeAnimator": (".animation", "SpinWaveModeAnimator"),
+    "animate_mode_from_folding": (".animation", "animate_mode_from_folding"),
     # Bridge (new fluent API)
-    "DispersionModesBridge",
-    "DispersionModeResult",
-    "DispersionModePlotAccessor",
-    "DispersionModesPlotAccessor",
-]
+    "DispersionModesBridge": (".bridge", "DispersionModesBridge"),
+    "DispersionModeResult": (".bridge", "DispersionModeResult"),
+    "DispersionModePlotAccessor": (".bridge", "DispersionModePlotAccessor"),
+    "DispersionModesPlotAccessor": (".bridge", "DispersionModesPlotAccessor"),
+}
+
+__all__ = sorted(_LAZY_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    """Load mode exports only when accessed."""
+    if name in _LAZY_EXPORTS:
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        value = getattr(import_module(module_name, __name__), attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

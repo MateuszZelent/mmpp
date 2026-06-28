@@ -26,6 +26,7 @@ from .utils import (
     split_filter_stages,
     apply_dispersion_post_filters,
     compute_welch_power_spectrum,
+    hann_window,
     k_axis_from_grid,
     fold_spectrum_1d,
     find_peaks_1d,
@@ -34,6 +35,143 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _dispersion_window_stats(n: int, window: Optional[str]) -> tuple[float, float]:
+    """Return coherent sum and power sum for a supported 1D window."""
+    if window is None:
+        return float(n), float(n)
+    window_key = str(window).lower()
+    if window_key == "hann":
+        w = hann_window(n)
+        return float(np.sum(w)), float(np.sum(w * w))
+    raise ValueError(f"Unknown window '{window}'")
+
+
+def _normalize_dispersion_scaling(
+    scaling: Optional[str],
+) -> str:
+    scaling_key = str(scaling or "raw_power").lower()
+    aliases = {
+        "power": "raw_power",
+        "raw": "raw_power",
+        "amplitude": "amplitude_squared",
+        "amp2": "amplitude_squared",
+    }
+    scaling_key = aliases.get(scaling_key, scaling_key)
+    valid = {"raw_power", "amplitude_squared", "psd"}
+    if scaling_key not in valid:
+        raise ValueError(
+            f"Unknown dispersion scaling '{scaling}'. Supported: {', '.join(sorted(valid))}"
+        )
+    return scaling_key
+
+
+def _mirror_k_indices(k_axis: np.ndarray) -> np.ndarray:
+    """Return indices that sample the spectrum at ``-k`` for each sorted k bin."""
+    k_values = np.asarray(k_axis, dtype=float)
+    return np.array(
+        [int(np.argmin(np.abs(k_values + k_value))) for k_value in k_values],
+        dtype=int,
+    )
+
+
+def _uniform_time_spacing(time_values: Any, source: str) -> Optional[float]:
+    """Return dt from a uniformly sampled time axis, or raise on invalid axes."""
+    axis = np.asarray(time_values, dtype=float).reshape(-1)
+    if axis.size < 2:
+        return None
+    if not np.all(np.isfinite(axis)):
+        raise ValueError(f"Time axis '{source}' contains non-finite values")
+
+    deltas = np.diff(axis)
+    if np.any(deltas <= 0):
+        raise ValueError(f"Time axis '{source}' must be strictly increasing")
+
+    spacing = float(deltas[0])
+    tolerance = max(abs(spacing) * 1e-6, np.finfo(float).eps * 10)
+    max_delta = float(np.max(np.abs(deltas - spacing)))
+    if max_delta > tolerance:
+        raise ValueError(
+            f"Non-uniform time axis '{source}' is not supported for FFT dispersion "
+            f"(max dt deviation {max_delta:g} s, tolerance {tolerance:g} s)"
+        )
+    return spacing
+
+
+def _uniform_spatial_spacing(axis_values: Any, source: str) -> Optional[float]:
+    """Return positive spacing from a monotonic, uniformly sampled spatial axis."""
+    axis = np.asarray(axis_values, dtype=float).reshape(-1)
+    if axis.size < 2:
+        return None
+    if not np.all(np.isfinite(axis)):
+        raise ValueError(f"Spatial axis '{source}' contains non-finite values")
+
+    deltas = np.diff(axis)
+    increasing = np.all(deltas > 0)
+    decreasing = np.all(deltas < 0)
+    if not (increasing or decreasing):
+        raise ValueError(f"Spatial axis '{source}' must be strictly monotonic")
+
+    spacing = float(abs(deltas[0]))
+    tolerance = max(spacing * 1e-6, np.finfo(float).eps * 10)
+    max_delta = float(np.max(np.abs(np.abs(deltas) - spacing)))
+    if max_delta > tolerance:
+        raise ValueError(
+            f"Non-uniform spatial axis '{source}' is not supported for FFT dispersion "
+            f"(max spacing deviation {max_delta:g} m, tolerance {tolerance:g} m)"
+        )
+    return spacing
+
+
+def _sampling_quality_notes(
+    *,
+    n_time: int,
+    n_space: int,
+    dt: float,
+    dx: float,
+    dk_max: Optional[float],
+) -> list[str]:
+    """Return non-fatal notes for sampling setups likely to limit FFT quality."""
+    notes: list[str] = []
+    if n_time <= 0 or n_space <= 0 or dt <= 0 or dx <= 0:
+        return notes
+
+    f_nyquist = 0.5 / dt
+    k_nyquist = np.pi / dx
+    df = 1.0 / (n_time * dt) if n_time > 0 else float("inf")
+    dk = (2.0 * np.pi) / (n_space * dx) if n_space > 0 else float("inf")
+
+    if n_time < 8:
+        notes.append(
+            f"Sampling warning: only {n_time} time samples; frequency axis is weakly resolved"
+        )
+    elif n_time < 32:
+        notes.append(
+            f"Sampling warning: coarse frequency resolution df={df:.3g} Hz with {n_time} time samples"
+        )
+
+    if n_space < 8:
+        notes.append(
+            f"Sampling warning: only {n_space} spatial samples; k-axis is weakly resolved"
+        )
+    elif n_space < 32:
+        notes.append(
+            f"Sampling warning: coarse k resolution dk={dk:.3g} rad/m with {n_space} spatial samples"
+        )
+
+    if np.isfinite(f_nyquist) and np.isfinite(k_nyquist):
+        notes.append(
+            f"Nyquist limits: |f|<={f_nyquist:.3g} Hz, |k|<={k_nyquist:.3g} rad/m"
+        )
+
+    if dk_max is not None and np.isfinite(k_nyquist) and abs(float(dk_max)) > k_nyquist:
+        notes.append(
+            "Sampling warning: config.dk_max exceeds spatial Nyquist limit; "
+            "branch tracking may connect aliased k bins"
+        )
+
+    return notes
 
 
 class SpinWaveAnalyzer:
@@ -323,6 +461,48 @@ class SpinWaveAnalyzer:
         indexer[self._time_axis_pos] = limited_slice
         return tuple(indexer)
 
+    def _slice_stride_for_source_axis(self, source_axis: int) -> int:
+        """Return absolute slice stride for an original data axis."""
+        if self._base_indexer is None or self._M_ref is None:
+            return 1
+
+        shape = tuple(getattr(self._M_ref, "shape", ()))
+        dim_idx = 0
+        for entry in self._base_indexer:
+            if entry is None:
+                continue
+            if dim_idx == source_axis:
+                if isinstance(entry, slice) and source_axis < len(shape):
+                    _, _, step = entry.indices(shape[source_axis])
+                    return max(abs(int(step)), 1)
+                return 1
+            dim_idx += 1
+        return 1
+
+    def _apply_effective_slice_spacings(self) -> None:
+        """Scale dt/dx/dy/dz by slicing stride before FFT axes are built."""
+        if self.slice_info is None:
+            return
+
+        time_stride = self._slice_stride_for_source_axis(0)
+        if time_stride > 1 and self.dt > 0:
+            self.dt *= time_stride
+            logger.info("Effective dt after time slicing stride %d: %s", time_stride, self.dt)
+
+        axis_to_source = {"dz": 1, "dy": 2, "dx": 3}
+        for axis, source_axis in axis_to_source.items():
+            if axis not in self.grid_spacings:
+                continue
+            stride = self._slice_stride_for_source_axis(source_axis)
+            if stride > 1:
+                self.grid_spacings[axis] *= stride
+                logger.info(
+                    "Effective %s after spatial slicing stride %d: %s",
+                    axis,
+                    stride,
+                    self.grid_spacings[axis],
+                )
+
     def _load_reference_data(self, tmax: Optional[int]) -> np.ndarray:
         if self._M_ref is None:
             raise ValueError("No magnetization reference available")
@@ -467,6 +647,30 @@ class SpinWaveAnalyzer:
             
         attrs = dict(self.zarr_file.attrs)
         logger.info(f"Available zarr attributes: {list(attrs.keys())}")
+
+        time_axis_dt: Optional[float] = None
+        time_axis_source: Optional[str] = None
+        if hasattr(self, '_M_path') and self._M_path:
+            try:
+                dataset = self.zarr_file[self._M_path]
+                if hasattr(dataset, 'attrs') and 't' in dataset.attrs:
+                    t_attr = dataset.attrs['t']
+                    time_axis_dt = _uniform_time_spacing(
+                        t_attr,
+                        f"{self._M_path}.attrs['t']",
+                    )
+                    if time_axis_dt is not None:
+                        self.time_axis = np.asarray(t_attr, dtype=float).reshape(-1)
+                        time_axis_source = f"{self._M_path}.attrs['t']"
+            except (KeyError, AttributeError, IndexError, TypeError) as e:
+                logger.debug(f"Could not extract dt from dataset attrs: {e}")
+
+        if time_axis_dt is None and 't' in self.zarr_file:
+            t = np.array(self.zarr_file['t'])
+            time_axis_dt = _uniform_time_spacing(t, "t")
+            if time_axis_dt is not None:
+                self.time_axis = np.asarray(t, dtype=float).reshape(-1)
+                time_axis_source = "t"
         
         # Time step - Check in order of specificity:
         # 1. Global t_sampl attribute
@@ -481,25 +685,13 @@ class SpinWaveAnalyzer:
                     logger.info(f"Extracted dt = {self.dt} s from global '{key}'")
                     break
         else:
-            # Check dataset-specific attrs['t'] (e.g., m_layer13.attrs['t'])
-            if hasattr(self, '_M_path') and self._M_path:
-                try:
-                    dataset = self.zarr_file[self._M_path]
-                    if hasattr(dataset, 'attrs') and 't' in dataset.attrs:
-                        t_attr = dataset.attrs['t']
-                        if hasattr(t_attr, '__len__') and len(t_attr) >= 2:
-                            self.dt = float(t_attr[1] - t_attr[0])
-                            logger.info(f"Extracted dt = {self.dt} s from dataset '{self._M_path}' attrs['t']")
-                except (KeyError, AttributeError, IndexError, TypeError) as e:
-                    logger.debug(f"Could not extract dt from dataset attrs: {e}")
-            
-            # Try to infer from time array datasets if still not found
-            if self.dt <= 0:
-                if 't' in self.zarr_file:
-                    t = np.array(self.zarr_file['t'])
-                    if len(t) > 1:
-                        self.dt = float(t[1] - t[0])
-                        logger.info(f"Inferred dt = {self.dt} s from time axis 't'")
+            if time_axis_dt is not None:
+                self.dt = time_axis_dt
+                logger.info(
+                    "Extracted dt = %s s from uniform time axis '%s'",
+                    self.dt,
+                    time_axis_source,
+                )
             
         if self.dt <= 0:
             logger.warning("Could not determine time step dt, using config value")
@@ -526,13 +718,31 @@ class SpinWaveAnalyzer:
                 if config_val is not None:
                     self.grid_spacings[axis] = config_val
                     logger.warning(f"Using config value for {axis} = {config_val} m")
-                    
-        # Update config with extracted values
-        if hasattr(self.config, 'dt'):
-            self.config.dt = self.dt
-        for axis, spacing in self.grid_spacings.items():
-            if hasattr(self.config, axis):
-                setattr(self.config, axis, spacing)
+
+        coordinate_keys = {
+            "dx": ("x", "x_axis", "x_coords"),
+            "dy": ("y", "y_axis", "y_coords"),
+            "dz": ("z", "z_axis", "z_coords"),
+        }
+        for spacing_name, axis_keys in coordinate_keys.items():
+            for axis_key in axis_keys:
+                if axis_key not in self.zarr_file:
+                    continue
+                spacing = _uniform_spatial_spacing(
+                    np.array(self.zarr_file[axis_key]),
+                    axis_key,
+                )
+                if spacing is None:
+                    continue
+                if spacing_name not in self.grid_spacings:
+                    self.grid_spacings[spacing_name] = spacing
+                    logger.info(
+                        "Inferred %s = %s m from spatial axis '%s'",
+                        spacing_name,
+                        spacing,
+                        axis_key,
+                    )
+                break
 
         # Use config values as fallback
         if 'dx' not in self.grid_spacings and self.config.dx:
@@ -541,6 +751,15 @@ class SpinWaveAnalyzer:
             self.grid_spacings['dy'] = self.config.dy
         if 'dz' not in self.grid_spacings and self.config.dz:
             self.grid_spacings['dz'] = self.config.dz
+
+        self._apply_effective_slice_spacings()
+
+        # Update config with effective extracted values
+        if hasattr(self.config, 'dt'):
+            self.config.dt = self.dt
+        for axis, spacing in self.grid_spacings.items():
+            if hasattr(self.config, axis):
+                setattr(self.config, axis, spacing)
             
         logger.info(f"Grid parameters: dt={self.dt}, spacings={self.grid_spacings}")
         
@@ -589,6 +808,7 @@ class SpinWaveAnalyzer:
         filters: Optional[dict[str, Any]] = None,
         flipx: bool = True,
         store_complex: bool = True,
+        scaling: Optional[str] = None,
     ) -> DispersionResult1D:
         """
         Compute 1D spin-wave dispersion S(k,f) along specified axis.
@@ -637,6 +857,11 @@ class SpinWaveAnalyzer:
         store_complex : bool, default=True
             Store the phase-preserving complex spectrum in ``result.S_complex``.
             Disable to reduce peak and retained memory when only ``S(k,f)`` is needed.
+        scaling : {'raw_power', 'amplitude_squared', 'psd'}, optional
+            Spectral scaling for ``S(k,f)``. ``raw_power`` preserves legacy
+            unnormalized ``|FFT|^2``; ``amplitude_squared`` corrects coherent FFT
+            and window gain; ``psd`` applies a simple density normalization using
+            time/spatial window energy.
             
         Returns
         -------
@@ -678,6 +903,9 @@ class SpinWaveAnalyzer:
         fold_period = fold_period if fold_period is not None else self.config.fold_period
         fold_agg = fold_agg or self.config.fold_agg
         store_complex = bool(store_complex)
+        scaling = _normalize_dispersion_scaling(
+            scaling if scaling is not None else getattr(self.config, "scaling", "raw_power")
+        )
         
         if self.M_data is None:
             raise ValueError("No magnetization data loaded")
@@ -842,6 +1070,28 @@ class SpinWaveAnalyzer:
 
         power = np.moveaxis(power, 0, -1)  # -> (..., Nf)
 
+        time_coherent, time_energy = _dispersion_window_stats(T_len, time_window)
+        space_coherent, space_energy = _dispersion_window_stats(N_space, space_window)
+        coherent_gain = max(time_coherent * space_coherent, 1e-30)
+        window_energy = max(time_energy * space_energy, 1e-30)
+        scaling_factors: dict[str, float] = {
+            "time_coherent_gain": float(time_coherent),
+            "space_coherent_gain": float(space_coherent),
+            "coherent_gain": float(coherent_gain),
+            "time_window_energy": float(time_energy),
+            "space_window_energy": float(space_energy),
+            "window_energy": float(window_energy),
+        }
+        if scaling == "amplitude_squared":
+            power = power / np.float32(coherent_gain * coherent_gain)
+            scaling_factors["scale"] = float(1.0 / (coherent_gain * coherent_gain))
+        elif scaling == "psd":
+            scale = float(self.dt * dx / window_energy)
+            power = power * np.float32(scale)
+            scaling_factors["scale"] = scale
+        else:
+            scaling_factors["scale"] = 1.0
+
         if not keep_orthogonal_dimension:
             S = power.astype(np.float32, copy=False)
             S_complex = (
@@ -870,19 +1120,24 @@ class SpinWaveAnalyzer:
         # Apply flipx to correct NumPy FFT convention (swap +/- wave vectors).
         #
         # IMPORTANT: keep k_axis monotonic (it is already fftshifted ascending),
-        # and mirror the k-dependent arrays instead. This preserves the invariant
-        # that S[k_i] corresponds to k_axis[k_i] while mapping k -> -k.
+        # and mirror the k-dependent arrays by matching bins to -k. A simple
+        # ``[::-1]`` is wrong for even fftshifted axes because the Nyquist bin
+        # makes +m and -m land off by one.
         #
         # This must be done AFTER all FFT operations and averaging.
         if flipx:
-            S = S[::-1, :]
+            mirror_idx = _mirror_k_indices(k_axis)
+            S = S[mirror_idx, :]
             if S_local is not None:
-                S_local = S_local[:, ::-1, :]
+                S_local = S_local[:, mirror_idx, :]
             if S_complex is not None:
                 if S_complex.ndim == 3:  # (N_orth, Nk, Nf)
-                    S_complex = S_complex[:, ::-1, :]
+                    S_complex = S_complex[:, mirror_idx, :]
                 else:  # (Nk, Nf)
-                    S_complex = S_complex[::-1, :]
+                    S_complex = S_complex[mirror_idx, :]
+
+        S_raw = S.copy()
+        S_local_raw = S_local
 
         # Apply post-FFT filters for visualization-friendly S(k,f).
         if post_filters or live_filters:
@@ -941,6 +1196,18 @@ class SpinWaveAnalyzer:
             notes.append(f"Live-capable filters configured: {', '.join(active_live)}")
         if not store_complex:
             notes.append("Complex spectrum disabled (store_complex=False)")
+        notes.append(f"Spectral scaling: {scaling}")
+        sampling_notes = _sampling_quality_notes(
+            n_time=T_len,
+            n_space=N_space,
+            dt=self.dt,
+            dx=dx,
+            dk_max=getattr(self.config, "dk_max", None),
+        )
+        for note in sampling_notes:
+            if note.startswith("Sampling warning:"):
+                logger.warning(note)
+            notes.append(note)
 
         # Create result object
         result = DispersionResult1D(
@@ -955,7 +1222,13 @@ class SpinWaveAnalyzer:
             flipx=flipx,
             notes=notes,
             S_local=S_local,
+            S_local_raw=S_local_raw,
+            S_local_display=S_local,
             S_complex=S_complex,
+            S_raw=S_raw,
+            S_display=S,
+            scaling=scaling,
+            scaling_factors=scaling_factors,
             orth_axis=orth_axis_values,
             orth_axis_label=orth_axis_label,
         )
@@ -1080,7 +1353,11 @@ class SpinWaveAnalyzer:
             dt=self.dt,
             dx=dx,
             dy=dy,
-            notes=["2D dispersion S(kx,ky,f)"]
+            notes=[
+                "2D dispersion S(kx,ky,f)",
+                "Experimental API: compute_2d does not yet provide the full 1D "
+                "raw/display/cache contract",
+            ]
         )
         
     def track_branch(

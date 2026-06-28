@@ -6,8 +6,13 @@ Defines result structures and configuration classes for dispersion calculations.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, List, Tuple
+from typing import TYPE_CHECKING, Dict, Any, Optional, List, Tuple
 import numpy as np
+
+if TYPE_CHECKING:
+    from ._plotting.accessor import DispersionPlotAccessor
+    from .analyze import DispersionAnalyzeAccessor
+    from .modes.bridge import DispersionModesBridge
 
 
 @dataclass
@@ -33,6 +38,9 @@ class DispersionConfig:
     # Brillouin zone folding
     fold_period: Optional[float] = None  # Real-space period [m] for BZ folding
     fold_agg: str = "sum"  # Aggregation method: 'sum' or 'max'
+
+    # Spectral scaling
+    scaling: str = "raw_power"  # 'raw_power', 'amplitude_squared', or 'psd'
     
     # Branch tracking
     dk_max: float = 1e5  # Max k-deviation for sampling [rad/m]
@@ -60,12 +68,21 @@ class DispersionResult1D:
     fold_period: Optional[float] = None  # Folding period
 
     # Optional local spectra when orthogonal averaging is disabled
+    # ``S_local`` remains the backward-compatible display alias for local spectra.
     S_local: Optional[np.ndarray] = None  # (N_orthogonal, Nk, Nf)
+    S_local_raw: Optional[np.ndarray] = None
+    S_local_display: Optional[np.ndarray] = None
     orth_axis: Optional[np.ndarray] = None  # Coordinate values along orthogonal axis
     orth_axis_label: Optional[str] = None  # Name of orthogonal axis ('x' or 'y')
     
     # Complex FFT data for mode reconstruction (avoids re-computing FFT)
     S_complex: Optional[np.ndarray] = None  # Complex spectrum (Nk, Nf) or (N_orth, Nk, Nf)
+
+    # Raw/display separation. ``S`` remains the backward-compatible display alias.
+    S_raw: Optional[np.ndarray] = None
+    S_display: Optional[np.ndarray] = None
+    scaling: str = "raw_power"
+    scaling_factors: Optional[Dict[str, float]] = None
     
     # Metadata
     dt: float = 0.0
@@ -74,6 +91,21 @@ class DispersionResult1D:
     notes: Optional[List[str]] = None
     
     def __post_init__(self):
+        if self.S_display is None:
+            self.S_display = self.S
+        else:
+            self.S = self.S_display
+        if self.S_raw is None:
+            self.S_raw = self.S_display
+        if self.S_local_display is None:
+            self.S_local_display = self.S_local
+        else:
+            self.S_local = self.S_local_display
+        if self.S_local_raw is None:
+            self.S_local_raw = self.S_local_display
+        self.scaling = str(self.scaling or "raw_power")
+        if self.scaling_factors is None:
+            self.scaling_factors = {}
         if self.notes is None:
             self.notes = []
     
@@ -96,19 +128,58 @@ class DispersionResult1D:
     def is_folded(self) -> bool:
         """Whether BZ folding was applied."""
         return self.S_folded is not None
+
+    def spectrum_for(self, source: str = "display") -> np.ndarray:
+        """Return spectrum data for a named source: ``raw`` or ``display``."""
+        source_key = str(source or "display").lower()
+        if source_key in {"display", "s", "active"}:
+            return self.S_display if self.S_display is not None else self.S
+        if source_key == "raw":
+            return self.S_raw if self.S_raw is not None else self.S
+        raise ValueError("source must be 'raw' or 'display'")
         
-    def get_active_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def get_active_data(
+        self,
+        analysis_source: str = "display",
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Get currently active S, k, f data (folded if available)."""
-        if self.is_folded and self.S_folded is not None and self.k_folded is not None:
+        source_key = str(analysis_source or "display").lower()
+        if (
+            source_key in {"display", "s", "active"}
+            and self.is_folded
+            and self.S_folded is not None
+            and self.k_folded is not None
+        ):
             return self.S_folded, self.k_folded, self.f_axis
-        return self.S, self.k_axis, self.f_axis
+        return self.spectrum_for(source_key), self.k_axis, self.f_axis
+
+    def frequency_view(
+        self,
+        *,
+        positive_frequencies: bool = True,
+        analysis_source: str = "display",
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return ``(S, k_axis, f_axis)`` with optional positive-frequency trim."""
+        S, k_axis, f_axis = self.get_active_data(analysis_source=analysis_source)
+        if not positive_frequencies:
+            return S, k_axis, f_axis
+        mask = f_axis >= 0
+        if mask.sum() == f_axis.size:
+            return S, k_axis, f_axis
+        return S[:, mask], k_axis, f_axis[mask]
     
-    def sample_at_k(self, k_query: float, dk_max: Optional[float] = None) -> Tuple[float, float]:
+    def sample_at_k(
+        self,
+        k_query: float,
+        dk_max: Optional[float] = None,
+        *,
+        analysis_source: str = "raw",
+    ) -> Tuple[float, float]:
         """Sample dispersion at given k, return (k_eff, f_peak)."""
         if dk_max is None:
             dk_max = self.config.dk_max
             
-        S, k_axis, f_axis = self.get_active_data()
+        S, k_axis, f_axis = self.get_active_data(analysis_source=analysis_source)
         
         mask = np.abs(k_axis - k_query) <= dk_max
         if not np.any(mask):
@@ -135,8 +206,15 @@ class DispersionResult1D:
         if self.S_complex is not None and self.S_complex.ndim == 3:
             slice_S_complex = self.S_complex[index]  # (Nk, Nf)
 
+        local_display = (
+            self.S_local_display
+            if self.S_local_display is not None
+            else self.S_local
+        )
+        local_raw = self.S_local_raw if self.S_local_raw is not None else local_display
+
         slice_result = DispersionResult1D(
-            S=self.S_local[index],
+            S=local_display[index],
             k_axis=self.k_axis,
             f_axis=self.f_axis,
             axis=self.axis,
@@ -146,10 +224,14 @@ class DispersionResult1D:
             k_folded=self.k_folded,
             fold_period=self.fold_period,
             S_complex=slice_S_complex,
+            S_raw=local_raw[index] if local_raw is not None else None,
+            S_display=local_display[index] if local_display is not None else None,
             orth_axis_label=self.orth_axis_label,
             dt=self.dt,
             dx=self.dx,
             flipx=self.flipx,
+            scaling=self.scaling,
+            scaling_factors=dict(self.scaling_factors or {}),
             notes=slice_notes,
         )
         return slice_result
@@ -198,7 +280,8 @@ class DispersionResult1D:
         if live is None and not kwargs:
             return self
 
-        S_new = self.S.copy()
+        S_base = self.S_display if self.S_display is not None else self.S
+        S_new = S_base.copy()
 
         if live:
             try:
@@ -208,7 +291,7 @@ class DispersionResult1D:
                     S_new,
                     k_axis=self.k_axis,
                     f_axis=self.f_axis,
-                    filters=live,
+                    filters={"live": live},
                     include_live=True,
                 )
             except Exception:
@@ -216,6 +299,8 @@ class DispersionResult1D:
 
         new_result = copy.copy(self)
         object.__setattr__(new_result, "S", S_new)
+        object.__setattr__(new_result, "S_display", S_new)
+        object.__setattr__(new_result, "S_raw", self.S_raw)
         return new_result
 
     # ------------------------------------------------------------------
@@ -469,6 +554,8 @@ class DispersionResult2D:
             config=self.config,
             dt=self.dt,
             dx=dx,
+            scaling=getattr(self, "scaling", "raw_power"),
+            scaling_factors=dict(getattr(self, "scaling_factors", {}) or {}),
             notes=(self.notes or []) + [f"1D slice from 2D at {direction}={k_value}"]
         )
 

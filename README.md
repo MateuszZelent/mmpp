@@ -106,24 +106,43 @@ disp.configure(
 res1d = disp.compute_1d(
     axis="x",
     avg_over_orthogonal=False,
+    scaling="amplitude_squared",  # or "raw_power" for legacy |FFT|^2, "psd" for density
     save=True,
 )
 
-# Plot using the same cached result path
-fig, ax = disp.plot_dispersion(
+# Lightweight interactive explorer (does not store S_complex by default)
+viewer = disp.plot.interactive(
     axis="x",
-    kscale="rad_um",
-    f_units="GHz",
+    component="perp",
     fmax=25,
+    cache="/tmp/mmpp-dispersion",
+    show=False,
 )
 
-# Brillouin-zone folding + interactive mode extraction
+# Static plot using the same cached result path
+fig, ax = res1d.plot.heatmap(kscale="rad_um", f_units="GHz", fmax=25)
+
+# Brillouin-zone folding + interactive mode extraction (legacy-compatible path)
 modes = disp.dispersion_modes(result=res1d, lattice_constant_nm=470)
 modes.plot_interactive()
 
 mode = modes.mode(k=2.3, f=1.1)
 mode.plot(mode_type="abs")
 ```
+
+Benchmark the same compute path with synthetic data:
+
+```bash
+python scripts/analysis/benchmark_fft_dispersion.py \
+  --profile small-ci \
+  --backend scipy \
+  --workers 1 \
+  --output /tmp/mmpp-dispersion-benchmark.json
+```
+
+Available profiles are `small-ci`, `medium-dev`, and `research-reference`.
+The JSON report includes elapsed time, peak memory, result array sizes, and a
+preflight memory breakdown for the FFT pipeline.
 
 ## Transmission
 

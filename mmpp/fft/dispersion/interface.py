@@ -5,6 +5,8 @@ Provides user-friendly interface for dispersion analysis integrated with MMPP jo
 Similar to FFTModeInterface but focused on spin-wave dispersion relations.
 """
 
+from __future__ import annotations
+
 import asyncio
 import copy
 import hashlib
@@ -21,18 +23,8 @@ from html import escape as _html_escape
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, TYPE_CHECKING, Union, cast
 
-import matplotlib.pyplot as plt
 import numpy as np
 import zarr
-from matplotlib.colors import (
-    CenteredNorm,
-    FuncNorm,
-    LogNorm,
-    Normalize,
-    PowerNorm,
-    SymLogNorm,
-    TwoSlopeNorm,
-)
 
 try:
     from scipy.signal import savgol_filter
@@ -42,7 +34,7 @@ try:
 except ImportError:
     _SCIPY_AVAILABLE = False
 
-from .core import SpinWaveAnalyzer, DispersionConfig
+from .core import SpinWaveAnalyzer, DispersionConfig, _normalize_dispersion_scaling
 from ..method_helpers import CallableMethodHelper
 from .models import DispersionResult1D, DispersionResult2D, DispersionBranch
 from .utils import (
@@ -53,13 +45,33 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
+
     from .modes import InteractiveDispersionModes
 
 logger = logging.getLogger(__name__)
 
 # Bump this when cached dispersion results are no longer compatible due to
 # algorithmic/axis-convention changes. Included in the cache context hash.
-DISPERSION_CACHE_SCHEMA_VERSION = 2
+DISPERSION_CACHE_SCHEMA_VERSION = 4
+
+
+_INTERACTIVE_VIEWER_KEYS = {
+    "show",
+    "figsize",
+    "kscale",
+    "f_units",
+    "fmax",
+    "lognorm",
+    "components",
+    "mode_components",
+    "spectrum_components",
+    "animate",
+    "auto_animate",
+    "lattice_constant_nm",
+    "positive_frequencies",
+}
 
 
 def _format_slice_for_display(slice_info: Optional[Any]) -> str:
@@ -214,6 +226,43 @@ class FFTDispersionHelpAccessor:
         )
 
 
+class _DispersionPlotAccessor:
+    """Quick plotting namespace for compute-then-viewer dispersion workflows."""
+
+    def __init__(self, interface: "FFTDispersionInterface") -> None:
+        self._interface = interface
+
+    def interactive(self, **kwargs: Any) -> Any:
+        """Compute 1D dispersion and return a lightweight interactive viewer."""
+        viewer_kwargs: dict[str, Any] = {}
+        compute_kwargs: dict[str, Any] = {}
+        tmax = kwargs.pop("tmax", None)
+        cache = kwargs.pop("cache", None)
+        for key, value in kwargs.items():
+            if key in _INTERACTIVE_VIEWER_KEYS:
+                viewer_kwargs[key] = value
+            else:
+                compute_kwargs[key] = value
+        compute_kwargs.setdefault("store_complex", False)
+
+        old_tmax = self._interface._tmax
+        old_cache_dir = self._interface._cache_dir
+        try:
+            if tmax is not None:
+                self._interface._tmax = int(tmax)
+            if cache is not None:
+                self._interface._cache_dir = str(cache)
+                compute_kwargs.setdefault("disk_cache", True)
+            result = self._interface.compute_1d(**compute_kwargs)
+        finally:
+            self._interface._tmax = old_tmax
+            self._interface._cache_dir = old_cache_dir
+        return result.plot.interactive(**viewer_kwargs)
+
+    def __repr__(self) -> str:
+        return "<FFTDispersionInterface.plot: interactive>"
+
+
 class FFTDispersionInterface:
     """
     Enhanced FFT interface with dispersion analysis capabilities.
@@ -304,6 +353,11 @@ class FFTDispersionInterface:
     def help(self) -> FFTDispersionHelpAccessor:
         """Alias for :attr:`helpers`."""
         return self.helpers
+
+    @property
+    def plot(self) -> _DispersionPlotAccessor:
+        """Compute-then-plot accessor, e.g. ``.plot.interactive(show=False)``."""
+        return _DispersionPlotAccessor(self)
 
     @property
     def analyzer(self) -> SpinWaveAnalyzer:
@@ -634,10 +688,19 @@ class FFTDispersionInterface:
         if isinstance(value, (list, tuple, set)):
             return [self._serialize_for_json(v) for v in value]
         if isinstance(value, np.ndarray):
+            array = np.asarray(value)
+            if array.dtype.hasobject:
+                value_digest = hashlib.sha1(
+                    repr(array.tolist()).encode("utf-8")
+                ).hexdigest()
+            else:
+                contiguous = np.ascontiguousarray(array)
+                value_digest = hashlib.sha1(contiguous.tobytes(order="C")).hexdigest()
             return {
                 "type": "ndarray",
-                "shape": list(value.shape),
-                "dtype": str(value.dtype),
+                "shape": list(array.shape),
+                "dtype": str(array.dtype),
+                "value_sha1": value_digest,
             }
         try:
             return self._serialize_for_json(asdict(value))  # type: ignore[arg-type]
@@ -978,6 +1041,19 @@ class FFTDispersionInterface:
         axis = self._ensure_text(entry.attrs.get("axis")) or "x"
         component = self._ensure_text(entry.attrs.get("component")) or "perp"
         orth_axis_label = self._ensure_text(entry.attrs.get("orth_axis_label"))
+        scaling = self._ensure_text(entry.attrs.get("scaling")) or "raw_power"
+        scaling_factors: dict[str, float] = {}
+        try:
+            scaling_factors_json = entry.attrs.get("scaling_factors_json")
+            if scaling_factors_json:
+                loaded_factors = json.loads(scaling_factors_json)
+                if isinstance(loaded_factors, dict):
+                    scaling_factors = {
+                        str(key): float(value)
+                        for key, value in loaded_factors.items()
+                    }
+        except Exception:
+            logger.debug("Ignoring invalid dispersion scaling factors in cache", exc_info=True)
 
         S = self._load_group_array(entry, "S")
         k_axis = self._load_group_array(entry, "k_axis")
@@ -1005,12 +1081,18 @@ class FFTDispersionInterface:
             k_folded=self._load_group_array(entry, "k_folded"),
             fold_period=float(fold_period) if fold_period is not None else None,
             S_local=self._load_group_array(entry, "S_local"),
+            S_local_raw=self._load_group_array(entry, "S_local_raw"),
+            S_local_display=self._load_group_array(entry, "S_local_display"),
             S_complex=self._load_group_array(entry, "S_complex"),
+            S_raw=self._load_group_array(entry, "S_raw"),
+            S_display=self._load_group_array(entry, "S_display"),
             orth_axis=self._load_group_array(entry, "orth_axis"),
             orth_axis_label=orth_axis_label,
             dt=self._ensure_float(entry.attrs.get("dt")) or 0.0,
             dx=self._ensure_float(entry.attrs.get("dx")) or 0.0,
             flipx=flipx_flag,
+            scaling=scaling,
+            scaling_factors=scaling_factors,
             notes=notes,
         )
         return result
@@ -1035,10 +1117,22 @@ class FFTDispersionInterface:
 
         S_trim = result.S[mask, :]
         k_trim = result.k_axis[mask]
+        S_raw_trim = None
+        if result.S_raw is not None:
+            S_raw_trim = result.S_raw[mask, :]
+        S_display_trim = None
+        if result.S_display is not None:
+            S_display_trim = result.S_display[mask, :]
 
         S_local_trim = None
         if result.S_local is not None:
             S_local_trim = result.S_local[:, mask, :]
+        S_local_raw_trim = None
+        if result.S_local_raw is not None:
+            S_local_raw_trim = result.S_local_raw[:, mask, :]
+        S_local_display_trim = None
+        if result.S_local_display is not None:
+            S_local_display_trim = result.S_local_display[:, mask, :]
 
         S_complex_trim = None
         if result.S_complex is not None:
@@ -1072,12 +1166,18 @@ class FFTDispersionInterface:
             k_folded=k_folded_trim,
             fold_period=result.fold_period,
             S_local=S_local_trim,
+            S_local_raw=S_local_raw_trim,
+            S_local_display=S_local_display_trim,
             S_complex=S_complex_trim,
+            S_raw=S_raw_trim,
+            S_display=S_display_trim,
             orth_axis=result.orth_axis,
             orth_axis_label=result.orth_axis_label,
             dt=result.dt,
             dx=result.dx,
             flipx=result.flipx,
+            scaling=result.scaling,
+            scaling_factors=dict(result.scaling_factors or {}),
             notes=notes,
         )
 
@@ -1124,8 +1224,16 @@ class FFTDispersionInterface:
 
         if result.S_local is not None:
             self._create_dataset(entry, "S_local", result.S_local)
+        if result.S_local_raw is not None:
+            self._create_dataset(entry, "S_local_raw", result.S_local_raw)
+        if result.S_local_display is not None:
+            self._create_dataset(entry, "S_local_display", result.S_local_display)
         if result.S_complex is not None:
             self._create_dataset(entry, "S_complex", result.S_complex)
+        if result.S_raw is not None:
+            self._create_dataset(entry, "S_raw", result.S_raw)
+        if result.S_display is not None:
+            self._create_dataset(entry, "S_display", result.S_display)
         if result.orth_axis is not None:
             self._create_dataset(entry, "orth_axis", result.orth_axis)
         if result.S_folded is not None:
@@ -1138,6 +1246,8 @@ class FFTDispersionInterface:
         entry.attrs["dt"] = float(result.dt)
         entry.attrs["dx"] = float(result.dx)
         entry.attrs["flipx"] = bool(result.flipx)
+        entry.attrs["scaling"] = str(result.scaling)
+        entry.attrs["scaling_factors_json"] = json.dumps(result.scaling_factors or {})
         if result.fold_period is not None:
             entry.attrs["fold_period"] = float(result.fold_period)
         entry.attrs["orth_axis_label"] = result.orth_axis_label or ""
@@ -1503,6 +1613,12 @@ class FFTDispersionInterface:
 
         # Extract flipx from kwargs (default True)
         flipx = compute_kwargs.pop("flipx", True)
+        store_complex = bool(compute_kwargs.pop("store_complex", True))
+        compute_kwargs["store_complex"] = store_complex
+        scaling = _normalize_dispersion_scaling(
+            compute_kwargs.pop("scaling", getattr(effective_config, "scaling", "raw_power"))
+        )
+        compute_kwargs["scaling"] = scaling
 
         save_result_flag = compute_kwargs.pop("save_result", None)
         save_alias = compute_kwargs.pop("save", None)
@@ -1521,6 +1637,13 @@ class FFTDispersionInterface:
 
         context_payload = dict(compute_kwargs)
         context_payload["flipx"] = bool(flipx)
+        from ._fft_backend import get_info as _get_fft_backend_info
+
+        backend_info = _get_fft_backend_info()
+        context_payload["fft_backend"] = {
+            "backend": backend_info.get("backend"),
+            "workers": backend_info.get("workers"),
+        }
         if filters_config is not None:
             context_payload["filters"] = filters_config
         context = self._build_cache_context(
@@ -1667,12 +1790,14 @@ class FFTDispersionInterface:
             include_live=True,
         )
 
-        filtered_local = result.S_local
-        if apply_to_local and result.S_local is not None:
-            local_out = np.empty_like(result.S_local, dtype=float)
-            for idx in range(result.S_local.shape[0]):
+        filtered_local = result.S_local_display
+        if filtered_local is None:
+            filtered_local = result.S_local
+        if apply_to_local and filtered_local is not None:
+            local_out = np.empty_like(filtered_local, dtype=float)
+            for idx in range(filtered_local.shape[0]):
                 local_out[idx] = apply_dispersion_post_filters(
-                    result.S_local[idx],
+                    filtered_local[idx],
                     k_axis=result.k_axis,
                     f_axis=result.f_axis,
                     filters=merged,
@@ -1698,12 +1823,18 @@ class FFTDispersionInterface:
             k_folded=result.k_folded,
             fold_period=result.fold_period,
             S_local=filtered_local,
+            S_local_raw=result.S_local_raw,
+            S_local_display=filtered_local,
             orth_axis=result.orth_axis,
             orth_axis_label=result.orth_axis_label,
             S_complex=result.S_complex,
+            S_raw=result.S_raw,
+            S_display=filtered_S,
             dt=result.dt,
             dx=result.dx,
             flipx=result.flipx,
+            scaling=result.scaling,
+            scaling_factors=dict(result.scaling_factors or {}),
             notes=notes,
         )
 
@@ -1784,6 +1915,8 @@ class FFTDispersionInterface:
         context: str,
     ) -> Optional[Normalize]:
         """Return a matplotlib Normalize instance based on user settings."""
+        from matplotlib.colors import Normalize
+
         kwargs = dict(colornorm_kwargs or {})
 
         if isinstance(colornorm, Normalize):
@@ -1849,6 +1982,8 @@ class FFTDispersionInterface:
         context: str,
     ) -> Optional[Normalize]:
         """Construct a standard Normalize."""
+        from matplotlib.colors import Normalize
+
         norm_vmin = kwargs.pop("vmin", None)
         norm_vmax = kwargs.pop("vmax", None)
         if vmin is not None:
@@ -1898,6 +2033,8 @@ class FFTDispersionInterface:
         context: str,
     ) -> Optional[Normalize]:
         """Construct a LogNorm based on spectrum values."""
+        from matplotlib.colors import LogNorm
+
         norm_vmin = kwargs.pop("vmin", None)
         norm_vmax = kwargs.pop("vmax", None)
         if vmin is not None:
@@ -1952,6 +2089,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Optional[Normalize]:
+        from matplotlib.colors import PowerNorm
+
         gamma = kwargs.pop("gamma", kwargs.pop("power", 0.5))
         if gamma is None:
             gamma = 0.5
@@ -1989,6 +2128,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Optional[Normalize]:
+        from matplotlib.colors import SymLogNorm
+
         norm_vmin = kwargs.pop("vmin", None)
         norm_vmax = kwargs.pop("vmax", None)
         if vmin is not None:
@@ -2023,6 +2164,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Normalize:
+        from matplotlib.colors import CenteredNorm
+
         vcenter = kwargs.pop("vcenter", 0.0)
         logger.info(
             "%s: Applying centered normalization (vcenter=%s, extra=%s)",
@@ -2040,6 +2183,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Normalize:
+        from matplotlib.colors import TwoSlopeNorm
+
         vcenter = kwargs.pop("vcenter", 0.0)
         norm_vmin = kwargs.pop("vmin", None)
         norm_vmax = kwargs.pop("vmax", None)
@@ -2071,6 +2216,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Normalize:
+        from matplotlib.colors import FuncNorm
+
         functions = kwargs.pop("functions", None)
         if functions is None:
             raise ValueError(
@@ -2470,6 +2617,8 @@ class FFTDispersionInterface:
             (figure, axis) matplotlib objects. The dispersion result is stored
             in self._last_plot_result for programmatic access if needed.
         """
+        import matplotlib.pyplot as plt
+
         # Extract figure-related kwargs if provided dynamically
         if "figsize" in kwargs:
             figsize_override = kwargs.pop("figsize")
@@ -2810,6 +2959,8 @@ class FFTDispersionInterface:
         tuple
             (figure, (ax1, ax2)) with dispersion and group velocity plots
         """
+        import matplotlib.pyplot as plt
+
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True)
 
         # Prepare data
@@ -2980,6 +3131,7 @@ class FFTDispersionInterface:
         """
         # This method uses the same plotting logic as plot_dispersion but skips compute_1d
         # We'll extract and reuse the plotting code from plot_dispersion
+        import matplotlib.pyplot as plt
 
         comsol_style = comsol_style or {}
         colornorm_kwargs = dict(colornorm_kwargs or {})
@@ -3232,16 +3384,9 @@ class FFTDispersionInterface:
 
         return fig, ax
 
-    def interactive_analysis(self):
-        """
-        Launch interactive dispersion analysis (future implementation).
-
-        Similar to interactive_spectrum() for modes.
-        """
-        raise NotImplementedError(
-            "Interactive dispersion analysis not yet implemented. "
-            "Use plot_dispersion() for now."
-        )
+    def interactive_analysis(self, **kwargs: Any) -> Any:
+        """Backward-compatible alias for ``.plot.interactive(...)``."""
+        return self.plot.interactive(**kwargs)
 
     def __repr__(self) -> str:
         """Rich documentation display for dispersion interface."""
