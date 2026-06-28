@@ -190,6 +190,11 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         if (button_cls := getattr(widgets, "Button", None)) is not None
         else widgets.HTML(value="")
     )
+    controls["mode_show_dispersion"] = (
+        button_cls(description="Show dispersion", **_maybe_layout(widgets, width="100%"))
+        if button_cls is not None
+        else widgets.HTML(value="")
+    )
     controls["mode_info"] = widgets.HTML(
         value="<small>Select a point on S(k, f), then extract a mode.</small>"
     )
@@ -270,6 +275,14 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         controls["preset_load"].on_click(lambda _btn: _load_selected_preset(explorer))
     if hasattr(controls["mode_extract"], "on_click"):
         controls["mode_extract"].on_click(lambda _btn: on_mode_extract(explorer))
+    if hasattr(controls["mode_show_dispersion"], "on_click"):
+        controls["mode_show_dispersion"].on_click(
+            lambda _btn: (
+                draw_dispersion_panel(explorer),
+                refresh_output_widget(explorer),
+                set_status(explorer, "Dispersion heatmap shown", color="#0F766E"),
+            )
+        )
 
     display_tab = widgets.VBox(
         [
@@ -314,6 +327,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
             controls["mode_z_layer"],
             controls["mode_type"],
             controls["mode_extract"],
+            controls["mode_show_dispersion"],
             controls["mode_info"],
         ],
         **_maybe_layout(widgets, width="100%"),

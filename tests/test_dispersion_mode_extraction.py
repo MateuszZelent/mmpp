@@ -3945,7 +3945,86 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
     assert explorer.controls["analytical_D"].value == "0.0008"
     assert explorer.controls["tabs"].titles[2] == "Analytical"
     assert explorer.controls["mode_type"].value == "abs"
+    assert "mode_show_dispersion" in explorer.controls
     assert explorer.controls["tabs"].titles[3] == "Modes"
+
+
+def test_dispersion_interactive_mode_extract_renders_mode_in_main_output(monkeypatch):
+    import types
+
+    from mmpp.fft.dispersion._interactive import callbacks
+    from mmpp.fft.dispersion._interactive.state import DispersionExplorerState
+
+    class Control:
+        def __init__(self, value=""):
+            self.value = value
+
+    class FakeOutput:
+        def __init__(self):
+            self.cleared = False
+            self.items = []
+
+        def clear_output(self, wait=False):
+            self.cleared = True
+
+        def append_display_data(self, item):
+            self.items.append(item)
+
+    class FakePlot:
+        def __init__(self):
+            self.calls = []
+
+        def imshow(self, **kwargs):
+            self.calls.append(kwargs)
+            return "mode-figure", "mode-axis"
+
+    class FakeMode:
+        def __init__(self):
+            self.k_rad_um = 2.5
+            self.f_ghz = 3.25
+            self.z_layer = 1
+            self.component = "z"
+            self.plot = FakePlot()
+
+    class FakeModes:
+        def __init__(self):
+            self.calls = []
+            self.mode = FakeMode()
+
+        def at(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.mode
+
+    output = FakeOutput()
+    modes = FakeModes()
+    explorer = types.SimpleNamespace(
+        state=DispersionExplorerState(selected_k=2.5e6, selected_f=3.25e9),
+        result=types.SimpleNamespace(
+            component="perp",
+            S_complex=np.ones((4, 4), dtype=np.complex128),
+            modes=modes,
+        ),
+        controls={
+            "mode_z_layer": Control(1),
+            "mode_component": Control("z"),
+            "mode_type": Control("phase"),
+            "mode_info": Control(""),
+            "output": output,
+        },
+        last_mode=None,
+    )
+    monkeypatch.setattr(callbacks, "set_status", lambda *args, **kwargs: None)
+
+    callbacks.on_mode_extract(explorer)
+
+    assert modes.calls == [
+        {"k_rad_um": 2.5, "f_ghz": 3.25, "z_layer": 1, "component": "z"}
+    ]
+    assert explorer.last_mode is modes.mode
+    assert output.cleared is True
+    assert output.items == ["mode-figure"]
+    assert modes.mode.plot.calls[0]["mode_type"] == "phase"
+    assert modes.mode.plot.calls[0]["cmap"] == "hsv"
 
 
 def test_dispersion_interactive_export_selection_uses_widget_state_for_mode_request():

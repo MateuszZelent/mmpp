@@ -338,14 +338,26 @@ class _DispersionPlotAccessor:
         old_tmax = self._interface._tmax
         old_cache_dir = self._interface._cache_dir
         try:
-            slice_label = _format_slice_for_display(self._interface.slice_info)
-            slice_steps = self._interface._infer_time_length_from_slice()
+            slice_label = _format_slice_for_display(
+                getattr(self._interface, "slice_info", None)
+            )
+            infer_time_length = getattr(
+                self._interface,
+                "_infer_time_length_from_slice",
+                lambda: None,
+            )
+            slice_steps = infer_time_length()
             if slice_steps is not None:
                 time_label = f"time_steps={slice_steps} (from slice)"
             elif tmax is not None:
                 time_label = f"time_steps={int(tmax)} (from tmax)"
             else:
-                inferred_tmax = self._interface._determine_tmax(default=100)
+                determine_tmax = getattr(
+                    self._interface,
+                    "_determine_tmax",
+                    lambda default=100: default,
+                )
+                inferred_tmax = determine_tmax(default=100)
                 time_label = (
                     "time_steps=all"
                     if inferred_tmax is None
@@ -354,7 +366,7 @@ class _DispersionPlotAccessor:
             progress_reporter.emit(
                 stage="prepare",
                 message=(
-                    f"dataset={self._interface.dataset_name or '<auto>'} "
+                    f"dataset={getattr(self._interface, 'dataset_name', None) or '<auto>'} "
                     f"slice={slice_label or '[full]'} "
                     f"{time_label} "
                     f"axis={compute_kwargs.get('axis', 'x')} "
