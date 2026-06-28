@@ -615,6 +615,138 @@ def test_dispersion_interactive_viewer_exposes_result_notes_in_state_export_and_
     assert exported["viewer"]["result_notes"] == result.notes
     assert "Sampling warning: only 6 time samples" in html
     assert "Use &lt;raw&gt; spectrum for analysis" in html
+    assert "Lightweight status view" in html
+    assert "call with store_complex=True" in html
+
+
+def test_dispersion_interactive_viewer_show_builds_heatmap_widget(monkeypatch):
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.arange(n_k * n_f, dtype=np.float32).reshape(n_k, n_f),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+    )
+
+    displayed = []
+
+    class FakeDisplayHandle:
+        def __init__(self, payload):
+            self.payload = payload
+            self.updated = []
+
+        def update(self, value):
+            self.updated.append(value)
+
+    fake_display_mod = types.ModuleType("IPython.display")
+    fake_display_mod.display = lambda payload, display_id=True: (
+        displayed.append(payload) or FakeDisplayHandle(payload)
+    )
+    fake_ipython = types.ModuleType("IPython")
+    fake_ipython.display = fake_display_mod
+
+    class FakeWidget:
+        def __init__(self, *children, **kwargs):
+            self.children = tuple(children)
+            self.kwargs = kwargs
+            self.value = kwargs.get("value")
+            self.description = kwargs.get("description", "")
+            self.options = kwargs.get("options", [])
+            self.max = kwargs.get("max")
+            self.min = kwargs.get("min")
+            self.step = kwargs.get("step")
+            self._observers = []
+
+        def observe(self, callback, names=None):
+            self._observers.append((callback, names))
+
+        def close(self):
+            self.closed = True
+
+    fake_widgets = types.ModuleType("ipywidgets")
+    fake_widgets.VBox = lambda children=(), **kwargs: FakeWidget(*children, **kwargs)
+    fake_widgets.HBox = lambda children=(), **kwargs: FakeWidget(*children, **kwargs)
+    fake_widgets.Output = lambda **kwargs: FakeWidget(**kwargs)
+    fake_widgets.Checkbox = FakeWidget
+    fake_widgets.Dropdown = FakeWidget
+    fake_widgets.FloatSlider = FakeWidget
+    fake_widgets.FloatText = FakeWidget
+    fake_widgets.HTML = FakeWidget
+
+    class FakeCanvas:
+        def draw_idle(self):
+            self.drawn = True
+
+    class FakeFigure:
+        def __init__(self):
+            self.canvas = FakeCanvas()
+
+    class FakeAxes:
+        def __init__(self):
+            self.images = []
+            self.title = ""
+            self.xlabel = ""
+            self.ylabel = ""
+
+        def imshow(self, data, **kwargs):
+            image = types.SimpleNamespace(data=data, kwargs=kwargs)
+            self.images.append(image)
+            return image
+
+        def clear(self):
+            self.images.clear()
+
+        def set_title(self, value):
+            self.title = value
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+    fake_pyplot = types.ModuleType("matplotlib.pyplot")
+    fake_fig = FakeFigure()
+    fake_ax = FakeAxes()
+    fake_pyplot.subplots = lambda *args, **kwargs: (fake_fig, fake_ax)
+    fake_pyplot.close = lambda fig=None: setattr(fig, "closed", True)
+    fake_matplotlib = types.ModuleType("matplotlib")
+    fake_colors = types.ModuleType("matplotlib.colors")
+    fake_colors.LogNorm = lambda **kwargs: ("LogNorm", kwargs)
+
+    monkeypatch.setitem(sys.modules, "IPython", fake_ipython)
+    monkeypatch.setitem(sys.modules, "IPython.display", fake_display_mod)
+    monkeypatch.setitem(sys.modules, "ipywidgets", fake_widgets)
+    monkeypatch.setitem(sys.modules, "matplotlib", fake_matplotlib)
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", fake_pyplot)
+    monkeypatch.setitem(sys.modules, "matplotlib.colors", fake_colors)
+
+    viewer = result.plot.interactive(show=False, fmax=1.0)
+    assert viewer._widget is None
+
+    assert viewer.show() is viewer
+
+    assert viewer._widget is not None
+    assert viewer._figure is fake_fig
+    assert viewer._axes is fake_ax
+    assert fake_ax.images
+    assert viewer.state["widget_status"] == "ready"
+    assert viewer.state["options"]["fmax"] == 1.0
+    assert displayed and displayed[-1] is viewer._widget
+
+    viewer.close()
+    assert viewer._widget is None
+    assert viewer._figure is None
+    assert viewer._axes is None
+    assert fake_fig.closed is True
 
 
 def test_dispersion_notebook_repr_documents_public_accessors():

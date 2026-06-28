@@ -698,11 +698,15 @@ class SpinWaveAnalyzer:
                 self.dt,
                 time_axis_source,
             )
-            if declared_dt is not None and not np.isclose(
-                declared_dt,
-                time_axis_dt,
-                rtol=1e-6,
-                atol=np.finfo(float).eps * 10,
+            if declared_dt is not None:
+                dt_delta_tolerance = max(
+                    abs(declared_dt),
+                    abs(time_axis_dt),
+                    np.finfo(float).tiny,
+                ) * 1e-6
+            if (
+                declared_dt is not None
+                and abs(declared_dt - time_axis_dt) > dt_delta_tolerance
             ):
                 self._time_axis_notes.append(
                     f"Sampling warning: time axis dt={time_axis_dt:g} s differs "
