@@ -4565,6 +4565,7 @@ def test_dispersion_plot_interactive_finishes_progress_before_notebook_show(monk
     )
 
     assert viewer.result is result
+    assert viewer.options["toolbar"] == "auto"
     assert show_positions
     assert "done" in show_positions[0]
     assert events[-1]["stage"] == "done"
