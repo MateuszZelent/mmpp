@@ -59,11 +59,16 @@ DISPERSION_CACHE_SCHEMA_VERSION = 4
 
 _INTERACTIVE_VIEWER_KEYS = {
     "show",
+    "toolbar",
     "figsize",
+    "dpi",
     "kscale",
     "f_units",
+    "fmin",
     "fmax",
     "lognorm",
+    "source",
+    "cmap",
     "components",
     "mode_components",
     "spectrum_components",

@@ -106,9 +106,10 @@ class DispersionInteractiveViewer:
             viewer.show()
         return viewer
 
-    def show(self) -> "DispersionInteractiveViewer":
+    def show(self, *, toolbar: bool | str = "auto") -> "DispersionInteractiveViewer":
         """Display an interactive dispersion heatmap when notebook deps exist."""
         self.show_requested = True
+        self.options["toolbar"] = toolbar
         try:
             from IPython.display import display
         except ImportError:
@@ -177,7 +178,19 @@ class DispersionInteractiveViewer:
             "result_notes": result_notes,
             "widget_status": self._widget_status,
             "widget_error": self._widget_error,
+            "diagnostics": self.diagnostics(),
             "options": json_safe(self.options),
+        }
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Return runtime diagnostics for notebook/backend troubleshooting."""
+        if self._widget_engine is not None:
+            return json_safe(self._widget_engine.diagnostics())
+        return {
+            "toolbar_enabled": False,
+            "click_connected": False,
+            "backend": "not-shown",
+            "interactive_backend": False,
         }
 
     def export_selection(self, **selection: Any) -> dict[str, Any]:
@@ -191,7 +204,11 @@ class DispersionInteractiveViewer:
         """Persist lightweight viewer state to a JSON preset file."""
         preset_path = Path(path)
         preset_path.parent.mkdir(parents=True, exist_ok=True)
-        preset_path.write_text(json.dumps(self.state, indent=2, sort_keys=True) + "\n")
+        payload = self.state
+        if self._widget_engine is not None:
+            payload = dict(payload)
+            payload["explorer"] = json_safe(self._widget_engine.collect_preset())
+        preset_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         return preset_path
 
     def load_preset(self, path: str | Path) -> "DispersionInteractiveViewer":
@@ -210,6 +227,9 @@ class DispersionInteractiveViewer:
         options = payload.get("options", {})
         self.options = dict(options) if isinstance(options, dict) else {}
         self.options.setdefault("positive_frequencies", True)
+        explorer_payload = payload.get("explorer")
+        if isinstance(explorer_payload, dict) and self._widget_engine is not None:
+            self._widget_engine.apply_preset(explorer_payload)
         return self
 
     def _repr_html_(self) -> str:
@@ -219,7 +239,10 @@ class DispersionInteractiveViewer:
             NODE_COLOR_ANALYSIS,
             NODE_COLOR_PLOT,
             NODE_COLOR_UTIL,
-            helper_card_html,
+            accessors_section_html,
+            api_help_html,
+            metrics_section_html,
+            node_card_html,
         )
 
         status = "mode-ready" if self.can_reconstruct_modes else "spectrum-only"
@@ -229,29 +252,34 @@ class DispersionInteractiveViewer:
             if self.can_reconstruct_modes
             else "For mode reconstruction, call with store_complex=True."
         )
-        metrics = [
-            ("status", status),
-            ("axis", getattr(self.result, "axis", "?")),
-            ("component", getattr(self.result, "component", "?")),
-            ("widget", self._widget_status),
-        ]
-        actions = [
+        metrics = metrics_section_html(
+            [
+                ("status", status, NODE_COLOR_PLOT),
+                ("axis", getattr(self.result, "axis", "?"), NODE_COLOR_ANALYSIS),
+                ("component", getattr(self.result, "component", "?"), NODE_COLOR_ANALYSIS),
+                ("widget", self._widget_status, NODE_COLOR_UTIL),
+            ]
+        )
+        actions = accessors_section_html(
             (
-                "Display:",
-                [
-                    (".show()", "Render ipywidgets heatmap", NODE_COLOR_PLOT),
-                    (".close()", "Release display resources", NODE_COLOR_UTIL),
-                ],
-            ),
-            (
-                "State:",
-                [
-                    (".state", "Serializable viewer state", NODE_COLOR_ANALYSIS),
-                    (".export_selection(...)", "Export current selection", NODE_COLOR_UTIL),
-                    (".save_preset(path)", "Persist viewer preset", NODE_COLOR_UTIL),
-                ],
-            ),
-        ]
+                (
+                    "Display:",
+                    [
+                        (".show(toolbar='auto')", NODE_COLOR_PLOT),
+                        (".close()", NODE_COLOR_UTIL),
+                        (".diagnostics()", NODE_COLOR_UTIL),
+                    ],
+                ),
+                (
+                    "State:",
+                    [
+                        (".state", NODE_COLOR_ANALYSIS),
+                        (".export_selection(...)", NODE_COLOR_UTIL),
+                        (".save_preset(path)", NODE_COLOR_UTIL),
+                    ],
+                ),
+            )
+        )
         notes_html = (
             "<div style='color:#cbd5e1;font-size:0.9em;'>"
             "Lightweight status view. Full widget controls are initialized by "
@@ -263,13 +291,21 @@ class DispersionInteractiveViewer:
             if len(notes) > 8:
                 rows += f"<li>... {len(notes) - 8} more notes</li>"
             notes_html += f"<ul style='margin:6px 0 0 18px;padding:0;'>{rows}</ul>"
-        return helper_card_html(
+        api = api_help_html(
+            self,
+            title="Dispersion interactive viewer API help",
+            prefix="viewer",
+            methods=["show", "close", "diagnostics", "export_selection", "save_preset", "load_preset"],
+            subtitle="Live controller returned by dispersion.plot.interactive().",
+            chrome=False,
+        )
+        return node_card_html(
             f"DispersionInteractiveViewer: {status}",
+            icon="📈",
             subtitle="Notebook controller for plotting spin-wave dispersion S(k, f).",
-            status=(status, NODE_COLOR_PLOT),
-            metrics=metrics,
-            details=[("Notes", notes_html)],
-            action_groups=actions,
+            badge=(status, NODE_COLOR_PLOT),
+            sections=[metrics, actions, f"<div>{notes_html}</div>"],
+            api=api,
             uid=f"mmpp-dispersion-interactive-{str(_uuid.uuid4())[:8]}",
         )
 
@@ -284,8 +320,9 @@ class DispersionInteractiveViewer:
             self._widget_error = f"{type(exc).__name__}: {exc}"
             return None
 
+        toolbar = self.options.get("toolbar", "auto")
         self._widget_engine = DispersionHeatmapWidget(self.result, self.options)
-        self._widget = self._widget_engine.build(display_func)
+        self._widget = self._widget_engine.build(display_func, toolbar=toolbar)
         self._figure = self._widget_engine.figure
         self._axes = self._widget_engine.axes
         self._controls = self._widget_engine.controls

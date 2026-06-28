@@ -1,66 +1,71 @@
-"""ipywidgets-based heatmap widget for dispersion results."""
+"""Interactive dispersion explorer engine."""
 
 from __future__ import annotations
 
 from html import escape
 from typing import TYPE_CHECKING, Any
 
+from .callbacks import on_canvas_click
+from .presets import apply_preset_state, collect_preset_state
+from .rendering import draw_dispersion_panel, refresh_output_widget
+from .state import DispersionExplorerState
+from .status import set_status
+from .widgets import build_toolbar
+
 if TYPE_CHECKING:
     from mmpp.fft.dispersion.models import DispersionResult1D
 
 
 class DispersionHeatmapWidget:
-    """Build and render the notebook heatmap for ``DispersionResult1D``."""
+    """Notebook explorer for ``DispersionResult1D`` using the shared toolbar pattern."""
 
     def __init__(self, result: "DispersionResult1D", options: dict[str, Any]):
         self.result = result
         self.options = dict(options)
+        self.state = self._initial_state()
         self.widget: Any = None
         self.figure: Any = None
         self.axes: Any = None
         self.controls: dict[str, Any] = {}
+        self._status_history: list[str] = []
+        self._presets_dir = None
+        self._click_connection = None
+        self._image = None
 
-    def build(self, display_func: Any) -> Any:
-        """Create controls and render the initial ``S(k, f)`` heatmap."""
-        import ipywidgets as widgets
+    def build(self, display_func: Any, *, toolbar: bool | str = "auto") -> Any:
+        """Create figure, controls, callbacks, and initial heatmap."""
         import matplotlib.pyplot as plt
 
-        if self.widget is not None:
+        toolbar_enabled = self._resolve_toolbar(toolbar)
+        figsize = tuple(self.options.get("figsize", (8.0, 5.2)))
+        dpi = self.options.get("dpi", 100)
+        if hasattr(plt, "ioff"):
+            plt.ioff()
+        self.figure, self.axes = plt.subplots(figsize=figsize, dpi=dpi)
+        if hasattr(self.figure, "canvas") and hasattr(self.figure.canvas, "mpl_connect"):
+            self._click_connection = self.figure.canvas.mpl_connect(
+                "button_press_event",
+                lambda event: on_canvas_click(self, event),
+            )
+
+        if toolbar_enabled:
+            import ipywidgets as widgets
+
+            build_toolbar(self, widgets)
             return self.widget
 
-        figsize = tuple(self.options.get("figsize", (7.0, 4.5)))
-        dpi = self.options.get("dpi", 100)
-        self.figure, self.axes = plt.subplots(figsize=figsize, dpi=dpi)
-
-        self.controls = self._create_controls(widgets)
-        for control in self.controls.values():
-            if hasattr(control, "observe"):
-                control.observe(lambda _change=None: self.render(), names="value")
-
-        plot_output = widgets.Output()
-        toolbar = widgets.HBox(
-            [
-                self.controls["fmax"],
-                self.controls["lognorm"],
-                self.controls["source"],
-                self.controls["positive"],
-                self.controls["kscale"],
-            ]
-        )
-        info = widgets.HTML(value=self.status_html())
-        self.widget = widgets.VBox([toolbar, plot_output, info])
-
-        self.render()
-        try:
-            with plot_output:
-                display_func(self.figure)
-        except Exception:
-            display_func(self.figure)
-
-        return self.widget
+        draw_dispersion_panel(self)
+        display_func(self.figure)
+        set_status(self, "Matplotlib dispersion figure ready", color="#0F766E")
+        return self.figure
 
     def close(self) -> None:
         """Release owned widgets and Matplotlib figure."""
+        if self.figure is not None and self._click_connection is not None:
+            try:
+                self.figure.canvas.mpl_disconnect(self._click_connection)
+            except Exception:
+                pass
         for control in list(self.controls.values()):
             if hasattr(control, "close"):
                 try:
@@ -83,9 +88,66 @@ class DispersionHeatmapWidget:
         self.figure = None
         self.axes = None
         self.controls = {}
+        self._click_connection = None
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Return runtime diagnostics for notebook/backend troubleshooting."""
+        backend = "unknown"
+        interactive_backend = False
+        try:
+            import matplotlib
+
+            backend = str(matplotlib.get_backend())
+            interactive_backend = any(
+                kw in backend.lower() for kw in ("widget", "ipympl", "nbagg", "notebook")
+            )
+        except Exception:
+            pass
+        return {
+            "backend": backend,
+            "interactive_backend": interactive_backend,
+            "click_connected": bool(self._click_connection is not None),
+            "toolbar_enabled": bool(self.widget is not None and self.controls),
+            "selected": {
+                "k_rad_per_m": self.state.selected_k,
+                "f_hz": self.state.selected_f,
+                "power": self.state.selected_power,
+            },
+        }
+
+    def apply_state_to_controls(self) -> None:
+        """Synchronize state into toolbar controls."""
+        if not self.controls:
+            return
+        mapping = {
+            "fmin": self.state.fmin_ghz,
+            "fmax": self.state.fmax_ghz,
+            "source": self.state.source,
+            "kscale": self.state.kscale,
+            "cmap": self.state.cmap,
+            "positive": self.state.positive_frequencies,
+            "lognorm": self.state.lognorm,
+        }
+        for key, value in mapping.items():
+            if key in self.controls:
+                self.controls[key].value = value
+        for key, value in (self.state.show_flags or {}).items():
+            if key in self.controls:
+                self.controls[key].value = bool(value)
+
+    def collect_preset(self) -> dict[str, Any]:
+        """Return serializable preset state."""
+        return collect_preset_state(self)
+
+    def apply_preset(self, payload: dict[str, Any]) -> None:
+        """Apply serializable preset state and redraw."""
+        apply_preset_state(self, payload)
+        self.apply_state_to_controls()
+        draw_dispersion_panel(self)
+        refresh_output_widget(self)
 
     def status_html(self) -> str:
-        """Return a compact status area for notes under the widget."""
+        """Return compact note block for fallback/status displays."""
         notes = list(getattr(self.result, "notes", None) or [])
         rows = "".join(f"<li>{escape(str(note))}</li>" for note in notes[:6])
         notes_html = (
@@ -101,127 +163,31 @@ class DispersionHeatmapWidget:
         )
 
     def render(self) -> None:
-        """Render ``S(k, f)`` into the managed Matplotlib axes."""
-        if self.axes is None or self.figure is None:
-            return
+        """Redraw the heatmap and output widget."""
+        draw_dispersion_panel(self)
+        refresh_output_widget(self)
 
-        import numpy as np
+    def _resolve_toolbar(self, toolbar: bool | str) -> bool:
+        if isinstance(toolbar, str):
+            if toolbar.lower() == "auto":
+                return True
+            return toolbar.lower() in {"1", "true", "yes", "on"}
+        return bool(toolbar)
 
-        ax = self.axes
-        if hasattr(ax, "clear"):
-            ax.clear()
-
-        source = str(self._control_value("source", self.options.get("source", "display")))
-        positive = bool(
-            self._control_value(
-                "positive",
-                self.options.get("positive_frequencies", True),
-            )
-        )
-        spectrum, k_axis, f_axis = self.result.frequency_view(
-            positive_frequencies=positive,
-            analysis_source=source,
-        )
-        spectrum = np.asarray(spectrum, dtype=float)
-        k_axis = np.asarray(k_axis, dtype=float)
-        f_axis = np.asarray(f_axis, dtype=float)
-
-        fmax = self._control_value("fmax", self.options.get("fmax"))
-        if fmax:
-            mask = f_axis <= float(fmax) * 1e9
-            if np.any(mask):
-                spectrum = spectrum[:, mask]
-                f_axis = f_axis[mask]
-
-        k_plot, k_label = self._scaled_k_axis(k_axis)
-        f_plot = f_axis / 1e9
-        if k_plot.size == 0 or f_plot.size == 0:
-            if hasattr(ax, "text"):
-                ax.text(0.5, 0.5, "No dispersion data", ha="center")
-            return
-
-        ax.imshow(
-            spectrum.T,
-            aspect="auto",
-            origin="lower",
-            extent=(
-                float(k_plot[0]),
-                float(k_plot[-1]),
-                float(f_plot[0]),
-                float(f_plot[-1]),
-            ),
-            cmap=str(self.options.get("cmap", "viridis")),
-            norm=self._norm(spectrum),
-        )
-        ax.set_title(f"Dispersion S(k, f) - {source}")
-        ax.set_xlabel(k_label)
-        ax.set_ylabel("Frequency [GHz]")
-        if hasattr(self.figure, "canvas") and hasattr(self.figure.canvas, "draw_idle"):
-            self.figure.canvas.draw_idle()
-
-    def _create_controls(self, widgets: Any) -> dict[str, Any]:
+    def _initial_state(self) -> DispersionExplorerState:
         f_axis = getattr(self.result, "f_axis", None)
         if f_axis is not None and len(f_axis):
-            fmax_default = float(self.options.get("fmax") or max(0.0, max(f_axis) / 1e9))
+            positives = [float(v) / 1e9 for v in f_axis if float(v) >= 0.0]
+            fmin = min(positives) if positives else 0.0
+            fmax = max(positives) if positives else 1.0
         else:
-            fmax_default = float(self.options.get("fmax") or 1.0)
-
-        return {
-            "fmax": widgets.FloatText(
-                value=fmax_default,
-                description="fmax GHz",
-            ),
-            "lognorm": widgets.Checkbox(
-                value=bool(self.options.get("lognorm", False)),
-                description="log",
-            ),
-            "source": widgets.Dropdown(
-                options=["display", "raw"],
-                value=str(self.options.get("source", "display")),
-                description="source",
-            ),
-            "positive": widgets.Checkbox(
-                value=bool(self.options.get("positive_frequencies", True)),
-                description="f >= 0",
-            ),
-            "kscale": widgets.Dropdown(
-                options=[
-                    ("rad/um", "rad_um"),
-                    ("rad/m", "rad"),
-                    ("1/m", "cycles_m"),
-                ],
-                value=str(self.options.get("kscale", "rad_um")),
-                description="k",
-            ),
-        }
-
-    def _control_value(self, name: str, default: Any) -> Any:
-        control = self.controls.get(name)
-        return getattr(control, "value", default)
-
-    def _scaled_k_axis(self, k_axis: Any) -> tuple[Any, str]:
-        import numpy as np
-
-        kscale = str(self._control_value("kscale", self.options.get("kscale", "rad_um")))
-        if kscale == "rad_um":
-            return k_axis / 1e6, "k [rad/um]"
-        if kscale in {"cycles_m", "meter"}:
-            return k_axis / (2 * np.pi), "k [1/m]"
-        return k_axis, "k [rad/m]"
-
-    def _norm(self, spectrum: Any) -> Any:
-        if not bool(self._control_value("lognorm", self.options.get("lognorm", False))):
-            return None
-        try:
-            import numpy as np
-            from matplotlib.colors import LogNorm
-
-            positive_values = spectrum[spectrum > 0]
-            if positive_values.size:
-                return LogNorm(
-                    vmin=float(np.min(positive_values)),
-                    vmax=float(np.max(positive_values)),
-                )
-        except Exception:
-            return None
-        return None
+            fmin, fmax = 0.0, 1.0
+        return DispersionExplorerState(
+            fmin_ghz=float(self.options.get("fmin", fmin)),
+            fmax_ghz=float(self.options.get("fmax") or fmax or 1.0),
+            source=str(self.options.get("source", "display")),
+            kscale=str(self.options.get("kscale", "rad_um")),
+            cmap=str(self.options.get("cmap", "viridis")),
+            positive_frequencies=bool(self.options.get("positive_frequencies", True)),
+            lognorm=bool(self.options.get("lognorm", False)),
+        )

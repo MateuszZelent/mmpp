@@ -740,6 +740,10 @@ def test_dispersion_interactive_viewer_show_builds_heatmap_widget(monkeypatch):
     assert fake_ax.images
     assert viewer.state["widget_status"] == "ready"
     assert viewer.state["options"]["fmax"] == 1.0
+    assert {"tabs", "status_log", "preset_select", "output"}.issubset(
+        viewer._controls
+    )
+    assert viewer.diagnostics()["toolbar_enabled"] is True
     assert displayed and displayed[-1] is viewer._widget
 
     viewer.close()
