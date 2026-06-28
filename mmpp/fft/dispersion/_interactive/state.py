@@ -20,6 +20,7 @@ class DispersionExplorerState:
     selected_k: float | None = None
     selected_f: float | None = None
     selected_power: float | None = None
+    mode_type: str = "abs"
     show_flags: dict[str, bool] | None = None
     analytical: dict[str, Any] | None = None
 

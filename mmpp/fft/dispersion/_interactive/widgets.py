@@ -21,7 +21,12 @@ def _maybe_layout(widgets: Any, **kwargs: Any) -> dict[str, Any]:
     return {"layout": layout} if layout is not None else {}
 
 
-def build_toolbar(explorer: Any, widgets_module: Any) -> None:
+def build_toolbar(
+    explorer: Any,
+    widgets_module: Any,
+    *,
+    render_initial: bool = True,
+) -> None:
     """Build ipywidgets toolbar controls and wire callbacks."""
     widgets = widgets_module
     controls: dict[str, Any] = {}
@@ -48,6 +53,11 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         value=str(explorer.state.source),
         description="source",
         **_maybe_layout(widgets, width="100%"),
+    )
+    controls["render_dispersion"] = (
+        button_cls(description="Render dispersion", **_maybe_layout(widgets, width="100%"))
+        if (button_cls := getattr(widgets, "Button", None)) is not None
+        else widgets.HTML(value="")
     )
     controls["kscale"] = widgets.Dropdown(
         options=[
@@ -176,7 +186,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         **_maybe_layout(widgets, width="100%"),
     )
     mode_type_options = ["abs", "real", "imag", "phase"]
-    mode_type_value = str(explorer.options.get("mode_type") or "abs")
+    mode_type_value = str(getattr(explorer.state, "mode_type", None) or "abs")
     if mode_type_value not in mode_type_options:
         mode_type_options.append(mode_type_value)
     controls["mode_type"] = widgets.Dropdown(
@@ -187,7 +197,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     )
     controls["mode_extract"] = (
         button_cls(description="Extract selected mode", **_maybe_layout(widgets, width="100%"))
-        if (button_cls := getattr(widgets, "Button", None)) is not None
+        if button_cls is not None
         else widgets.HTML(value="")
     )
     controls["mode_show_dispersion"] = (
@@ -273,6 +283,15 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         controls["preset_save"].on_click(lambda _btn: _save_current_preset(explorer))
     if hasattr(controls["preset_load"], "on_click"):
         controls["preset_load"].on_click(lambda _btn: _load_selected_preset(explorer))
+    if hasattr(controls["render_dispersion"], "on_click"):
+        controls["render_dispersion"].on_click(
+            lambda _btn: (
+                set_status(explorer, "Rendering dispersion heatmap...", color="#334155"),
+                draw_dispersion_panel(explorer),
+                refresh_output_widget(explorer),
+                set_status(explorer, "Dispersion heatmap rendered", color="#0F766E"),
+            )
+        )
     if hasattr(controls["mode_extract"], "on_click"):
         controls["mode_extract"].on_click(lambda _btn: on_mode_extract(explorer))
     if hasattr(controls["mode_show_dispersion"], "on_click"):
@@ -289,6 +308,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
             controls["fmin"],
             controls["fmax"],
             controls["source"],
+            controls["render_dispersion"],
             controls["kscale"],
             controls["cmap"],
             controls["positive"],
@@ -383,9 +403,16 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     )
 
     sync_analytical_options(explorer)
-    draw_dispersion_panel(explorer)
-    refresh_output_widget(explorer)
-    set_status(explorer, "Interactive toolbar ready", color="#0F766E")
+    if render_initial:
+        draw_dispersion_panel(explorer)
+        refresh_output_widget(explorer)
+        set_status(explorer, "Interactive toolbar ready", color="#0F766E")
+    else:
+        set_status(
+            explorer,
+            "Interactive toolbar ready; press Render dispersion to draw the heatmap",
+            color="#334155",
+        )
 
 
 def _save_current_preset(explorer: Any) -> None:

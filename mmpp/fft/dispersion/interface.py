@@ -320,7 +320,7 @@ class _DispersionPlotAccessor:
         """Compute 1D dispersion and return a lightweight interactive viewer."""
         tmax = kwargs.pop("tmax", None)
         cache = kwargs.pop("cache", None)
-        progress = kwargs.pop("progress", True)
+        progress = kwargs.pop("progress", False)
         progress_callback = kwargs.pop("progress_callback", None)
         progress_label = str(kwargs.pop("progress_label", "MMPP dispersion"))
         progress_reporter = _DispersionProgressReporter(

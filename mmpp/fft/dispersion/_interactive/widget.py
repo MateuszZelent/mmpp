@@ -34,7 +34,13 @@ class DispersionHeatmapWidget:
         self._image = None
         self.last_mode: Any = None
 
-    def build(self, display_func: Any, *, toolbar: bool | str = "auto") -> Any:
+    def build(
+        self,
+        display_func: Any,
+        *,
+        toolbar: bool | str = "auto",
+        defer_initial_render: bool = False,
+    ) -> Any:
         """Create figure, controls, callbacks, and initial heatmap."""
         import matplotlib.pyplot as plt
 
@@ -53,8 +59,13 @@ class DispersionHeatmapWidget:
         if toolbar_enabled:
             import ipywidgets as widgets
 
-            build_toolbar(self, widgets)
-            self._warn_for_inline_backend()
+            build_toolbar(
+                self,
+                widgets,
+                render_initial=not bool(defer_initial_render),
+            )
+            if not defer_initial_render:
+                self._warn_for_inline_backend()
             return self.widget
 
         draw_dispersion_panel(self)
@@ -131,6 +142,7 @@ class DispersionHeatmapWidget:
             "cmap": self.state.cmap,
             "positive": self.state.positive_frequencies,
             "lognorm": self.state.lognorm,
+            "mode_type": self.state.mode_type,
         }
         for key, value in mapping.items():
             if key in self.controls:
@@ -219,6 +231,7 @@ class DispersionHeatmapWidget:
             cmap=str(self.options.get("cmap", "viridis")),
             positive_frequencies=bool(self.options.get("positive_frequencies", True)),
             lognorm=bool(self.options.get("lognorm", False)),
+            mode_type=str(self.options.get("mode_type") or "abs"),
             analytical=self._initial_analytical_state(),
         )
 

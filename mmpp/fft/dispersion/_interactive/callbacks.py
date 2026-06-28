@@ -127,6 +127,11 @@ def on_display_change(explorer: Any) -> None:
     explorer.state.cmap = str(controls["cmap"].value)
     explorer.state.positive_frequencies = bool(controls["positive"].value)
     explorer.state.lognorm = bool(controls["lognorm"].value)
+    if "mode_type" in controls:
+        explorer.state.mode_type = str(controls["mode_type"].value)
+        options = getattr(explorer, "options", None)
+        if isinstance(options, dict):
+            options["mode_type"] = explorer.state.mode_type
     for key in ["grid", "selection", "notes"]:
         if key in controls and explorer.state.show_flags is not None:
             explorer.state.show_flags[key] = bool(controls[key].value)
@@ -181,6 +186,9 @@ def _selected_mode_type(explorer: Any) -> str:
     controls = getattr(explorer, "controls", {})
     if "mode_type" in controls:
         return str(getattr(controls["mode_type"], "value", "abs") or "abs")
+    state = getattr(explorer, "state", None)
+    if state is not None:
+        return str(getattr(state, "mode_type", None) or "abs")
     options = getattr(explorer, "options", {})
     if isinstance(options, dict):
         return str(options.get("mode_type") or "abs")

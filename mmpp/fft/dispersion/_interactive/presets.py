@@ -39,6 +39,7 @@ def collect_preset_state(explorer: Any) -> dict[str, Any]:
         "lognorm": bool(state.lognorm),
         "selected_k": state.selected_k,
         "selected_f": state.selected_f,
+        "mode_type": str(getattr(state, "mode_type", "abs") or "abs"),
         "show_flags": dict(state.show_flags or {}),
         "analytical": dict(state.analytical or {}),
     }
@@ -58,6 +59,7 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
     state.lognorm = bool(payload.get("lognorm", state.lognorm))
     state.selected_k = payload.get("selected_k", state.selected_k)
     state.selected_f = payload.get("selected_f", state.selected_f)
+    state.mode_type = str(payload.get("mode_type", getattr(state, "mode_type", "abs")))
     show_flags = payload.get("show_flags")
     if isinstance(show_flags, dict):
         merged = dict(state.show_flags or {})

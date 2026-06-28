@@ -48,6 +48,7 @@ INTERACTIVE_VIEWER_KEYS = {
     "f_units",
     "fmin",
     "fmax",
+    "initial_render",
     "lognorm",
     "source",
     "cmap",
@@ -248,13 +249,19 @@ class DispersionInteractiveViewer:
             return self
 
         try:
-            widget = self._build_widget(display)
+            initial_render = bool(self.options.get("initial_render", False))
+            widget = self._build_widget(
+                display,
+                defer_initial_render=not initial_render,
+            )
         except Exception as exc:
             self._widget_status = "fallback"
             self._widget_error = f"{type(exc).__name__}: {exc}"
             self._close_widget_state()
             widget = None
         self._display_handle = display(widget if widget is not None else self, display_id=True)
+        if widget is not None and bool(self.options.get("initial_render", False)):
+            self._render_widget_after_display()
         return self
 
     def close(self) -> None:
@@ -529,7 +536,12 @@ class DispersionInteractiveViewer:
             uid=f"mmpp-dispersion-interactive-{str(_uuid.uuid4())[:8]}",
         )
 
-    def _build_widget(self, display_func: Any) -> Any:
+    def _build_widget(
+        self,
+        display_func: Any,
+        *,
+        defer_initial_render: bool = False,
+    ) -> Any:
         """Create the notebook widget lazily, falling back to HTML status."""
         if self._widget is not None:
             return self._widget
@@ -543,13 +555,51 @@ class DispersionInteractiveViewer:
         widget_options = self._widget_options()
         toolbar = widget_options.get("toolbar", "auto")
         self._widget_engine = DispersionHeatmapWidget(self.result, widget_options)
-        self._widget = self._widget_engine.build(display_func, toolbar=toolbar)
+        self._widget = self._widget_engine.build(
+            display_func,
+            toolbar=toolbar,
+            defer_initial_render=defer_initial_render,
+        )
         self._figure = self._widget_engine.figure
         self._axes = self._widget_engine.axes
         self._controls = self._widget_engine.controls
         self._widget_status = "ready"
         self._widget_error = ""
         return self._widget
+
+    def _render_widget_after_display(self) -> None:
+        """Render the initial heatmap after the widget shell has been displayed."""
+        if self._widget_engine is None:
+            return
+        try:
+            from ._interactive.status import set_status
+
+            set_status(
+                self._widget_engine,
+                "Rendering initial dispersion heatmap...",
+                color="#334155",
+            )
+            self._widget_engine.render()
+            self._widget_engine._warn_for_inline_backend()
+            if self._widget_engine.diagnostics().get("interactive_backend", False):
+                set_status(
+                    self._widget_engine,
+                    "Interactive dispersion ready",
+                    color="#0F766E",
+                )
+        except Exception as exc:
+            self._widget_status = "render-error"
+            self._widget_error = f"{type(exc).__name__}: {exc}"
+            try:
+                from ._interactive.status import set_status
+
+                set_status(
+                    self._widget_engine,
+                    f"Initial dispersion render failed: {self._widget_error}",
+                    color="crimson",
+                )
+            except Exception:
+                pass
 
     def _widget_options(self) -> dict[str, Any]:
         """Translate stable viewer state into options consumed by the widget engine."""
