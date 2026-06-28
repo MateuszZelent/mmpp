@@ -227,7 +227,7 @@ class DispersionInteractiveViewer:
         mode_text = (
             "Complex spectrum is available for mode workflows."
             if self.can_reconstruct_modes
-            else "Full mode reconstruction requires store_complex=True."
+            else "For mode reconstruction, call with store_complex=True."
         )
         metrics = [
             ("status", status),
@@ -264,7 +264,7 @@ class DispersionInteractiveViewer:
                 rows += f"<li>... {len(notes) - 8} more notes</li>"
             notes_html += f"<ul style='margin:6px 0 0 18px;padding:0;'>{rows}</ul>"
         return helper_card_html(
-            "Dispersion Interactive Viewer",
+            f"DispersionInteractiveViewer: {status}",
             subtitle="Notebook controller for plotting spin-wave dispersion S(k, f).",
             status=(status, NODE_COLOR_PLOT),
             metrics=metrics,
