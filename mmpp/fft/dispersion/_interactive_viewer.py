@@ -49,6 +49,7 @@ INTERACTIVE_VIEWER_KEYS = {
     "fmin",
     "fmax",
     "initial_render",
+    "auto_render",
     "lognorm",
     "source",
     "cmap",

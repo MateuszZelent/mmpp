@@ -137,14 +137,19 @@ def on_display_change(explorer: Any) -> None:
             explorer.state.show_flags[key] = bool(controls[key].value)
     _update_analytical_state_from_controls(explorer)
     sync_analytical_options(explorer)
-    draw_dispersion_panel(explorer)
-    refresh_output_widget(explorer)
+    if bool(getattr(explorer, "options", {}).get("auto_render", False)):
+        draw_dispersion_panel(explorer)
+        refresh_output_widget(explorer)
+        render_note = "rendered"
+    else:
+        render_note = "press Render dispersion to update plot"
     set_status(
         explorer,
         (
             f"range={explorer.state.fmin_ghz:.4g}.."
             f"{explorer.state.fmax_ghz:.4g} GHz, "
-            f"source={explorer.state.source}, k={explorer.state.kscale}"
+            f"source={explorer.state.source}, k={explorer.state.kscale}; "
+            f"{render_note}"
         ),
         color="#0F766E",
     )

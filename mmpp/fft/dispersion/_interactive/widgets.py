@@ -21,6 +21,22 @@ def _maybe_layout(widgets: Any, **kwargs: Any) -> dict[str, Any]:
     return {"layout": layout} if layout is not None else {}
 
 
+def _render_current_dispersion(explorer: Any) -> None:
+    """Render the current heatmap with visible status and error reporting."""
+    try:
+        set_status(explorer, "Rendering dispersion heatmap...", color="#334155")
+        draw_dispersion_panel(explorer)
+        refresh_output_widget(explorer)
+        explorer._has_rendered_dispersion = True
+        set_status(explorer, "Dispersion heatmap rendered", color="#0F766E")
+    except Exception as exc:
+        set_status(
+            explorer,
+            f"Dispersion render failed: {type(exc).__name__}: {exc}",
+            color="crimson",
+        )
+
+
 def build_toolbar(
     explorer: Any,
     widgets_module: Any,
@@ -284,14 +300,7 @@ def build_toolbar(
     if hasattr(controls["preset_load"], "on_click"):
         controls["preset_load"].on_click(lambda _btn: _load_selected_preset(explorer))
     if hasattr(controls["render_dispersion"], "on_click"):
-        controls["render_dispersion"].on_click(
-            lambda _btn: (
-                set_status(explorer, "Rendering dispersion heatmap...", color="#334155"),
-                draw_dispersion_panel(explorer),
-                refresh_output_widget(explorer),
-                set_status(explorer, "Dispersion heatmap rendered", color="#0F766E"),
-            )
-        )
+        controls["render_dispersion"].on_click(lambda _btn: _render_current_dispersion(explorer))
     if hasattr(controls["mode_extract"], "on_click"):
         controls["mode_extract"].on_click(lambda _btn: on_mode_extract(explorer))
     if hasattr(controls["mode_show_dispersion"], "on_click"):
