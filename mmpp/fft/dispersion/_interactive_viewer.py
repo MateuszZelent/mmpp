@@ -475,6 +475,34 @@ class DispersionInteractiveViewer:
 
         status = "mode-ready" if self.can_reconstruct_modes else "spectrum-only"
         notes = list(getattr(self.result, "notes", None) or [])
+        if not self.show_requested and self._widget_status == "not-shown":
+            notes_html = ""
+            if notes:
+                rows = "".join(
+                    f"<li>{escape(str(note))}</li>" for note in notes[:3]
+                )
+                notes_html = (
+                    "<ul style='margin:4px 0 0 16px;padding:0;color:#64748b;'>"
+                    f"{rows}</ul>"
+                )
+            return (
+                "<div style='font-family:monospace;border:1px solid #cbd5e1;"
+                "border-radius:6px;padding:8px;background:#f8fafc;color:#334155;"
+                "max-width:620px;'>"
+                "<b>DispersionInteractiveViewer</b> "
+                "<span style='color:#64748b'>(show=False, widget not shown)</span>"
+                "<div style='margin-top:4px;'>"
+                f"status={escape(status)}, "
+                f"axis={escape(str(getattr(self.result, 'axis', '?')))}, "
+                f"component={escape(str(getattr(self.result, 'component', '?')))}"
+                "</div>"
+                "<div style='margin-top:4px;color:#64748b;'>"
+                "Use <code>viewer.show()</code> to display the toolbar, or inspect "
+                "<code>viewer.state</code> for a JSON-friendly snapshot."
+                "</div>"
+                f"{notes_html}"
+                "</div>"
+            )
         mode_text = (
             "Complex spectrum is available for mode workflows."
             if self.can_reconstruct_modes
@@ -576,10 +604,12 @@ class DispersionInteractiveViewer:
             from ._interactive.status import set_status
 
             set_status(
-                self._widget_engine,
-                "Rendering initial dispersion heatmap...",
-                color="#334155",
-            )
+            self._widget_engine,
+            "Rendering initial dispersion heatmap...",
+            color="#334155",
+        )
+            if hasattr(self._widget_engine, "ensure_figure"):
+                self._widget_engine.ensure_figure()
             self._widget_engine.render()
             self._widget_engine._warn_for_inline_backend()
             if self._widget_engine.diagnostics().get("interactive_backend", False):

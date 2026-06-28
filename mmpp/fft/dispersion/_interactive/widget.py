@@ -42,19 +42,7 @@ class DispersionHeatmapWidget:
         defer_initial_render: bool = False,
     ) -> Any:
         """Create figure, controls, callbacks, and initial heatmap."""
-        import matplotlib.pyplot as plt
-
         toolbar_enabled = self._resolve_toolbar(toolbar)
-        figsize = tuple(self.options.get("figsize", (8.0, 5.2)))
-        dpi = self.options.get("dpi", 100)
-        if hasattr(plt, "ioff"):
-            plt.ioff()
-        self.figure, self.axes = plt.subplots(figsize=figsize, dpi=dpi)
-        if hasattr(self.figure, "canvas") and hasattr(self.figure.canvas, "mpl_connect"):
-            self._click_connection = self.figure.canvas.mpl_connect(
-                "button_press_event",
-                lambda event: on_canvas_click(self, event),
-            )
 
         if toolbar_enabled:
             import ipywidgets as widgets
@@ -68,11 +56,30 @@ class DispersionHeatmapWidget:
                 self._warn_for_inline_backend()
             return self.widget
 
+        self.ensure_figure()
         draw_dispersion_panel(self)
         display_func(self.figure)
         set_status(self, "Matplotlib dispersion figure ready", color="#0F766E")
         self._warn_for_inline_backend()
         return self.figure
+
+    def ensure_figure(self) -> None:
+        """Create the Matplotlib figure lazily, only when rendering is requested."""
+        if self.figure is not None and self.axes is not None:
+            return
+
+        import matplotlib.pyplot as plt
+
+        figsize = tuple(self.options.get("figsize", (8.0, 5.2)))
+        dpi = self.options.get("dpi", 100)
+        if hasattr(plt, "ioff"):
+            plt.ioff()
+        self.figure, self.axes = plt.subplots(figsize=figsize, dpi=dpi)
+        if hasattr(self.figure, "canvas") and hasattr(self.figure.canvas, "mpl_connect"):
+            self._click_connection = self.figure.canvas.mpl_connect(
+                "button_press_event",
+                lambda event: on_canvas_click(self, event),
+            )
 
     def close(self) -> None:
         """Release owned widgets and Matplotlib figure."""

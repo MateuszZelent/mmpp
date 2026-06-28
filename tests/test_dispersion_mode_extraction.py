@@ -1025,7 +1025,9 @@ def test_dispersion_notebook_repr_documents_public_accessors():
     assert ".at(k_rad_um=2.3, f_ghz=5.0)" in modes_html
 
     viewer_html = result.plot.interactive(show=False)._repr_html_()
-    assert "DispersionInteractiveViewer: mode-ready" in viewer_html
+    assert "DispersionInteractiveViewer" in viewer_html
+    assert "show=False, widget not shown" in viewer_html
+    assert "Dispersion interactive viewer API help" not in viewer_html
     assert "Sampling warning: synthetic smoke" in viewer_html
 
 
@@ -3818,6 +3820,100 @@ def test_dispersion_interactive_display_change_syncs_analytical_overlay_options(
     assert explorer.options["analytical_D"] == 1.2e-3
 
 
+def test_dispersion_interactive_display_change_does_not_auto_render_by_default(
+    monkeypatch,
+):
+    import types
+
+    from mmpp.fft.dispersion._interactive import callbacks
+    from mmpp.fft.dispersion._interactive.callbacks import on_display_change
+    from mmpp.fft.dispersion._interactive.state import DispersionExplorerState
+
+    class Control:
+        def __init__(self, value):
+            self.value = value
+
+    calls = []
+    monkeypatch.setattr(
+        callbacks,
+        "draw_dispersion_panel",
+        lambda explorer: calls.append("draw"),
+    )
+    monkeypatch.setattr(
+        callbacks,
+        "refresh_output_widget",
+        lambda explorer: calls.append("refresh"),
+    )
+    monkeypatch.setattr(callbacks, "set_status", lambda *args, **kwargs: None)
+
+    explorer = types.SimpleNamespace(
+        state=DispersionExplorerState(fmin_ghz=0.0, fmax_ghz=25.0),
+        options={},
+        controls={
+            "fmin": Control(1.0),
+            "fmax": Control(18.0),
+            "source": Control("display"),
+            "kscale": Control("rad_um"),
+            "cmap": Control("magma"),
+            "positive": Control(True),
+            "lognorm": Control(False),
+            "grid": Control(True),
+            "selection": Control(True),
+            "notes": Control(False),
+        },
+    )
+
+    on_display_change(explorer)
+
+    assert calls == []
+
+
+def test_dispersion_interactive_display_change_can_auto_render(monkeypatch):
+    import types
+
+    from mmpp.fft.dispersion._interactive import callbacks
+    from mmpp.fft.dispersion._interactive.callbacks import on_display_change
+    from mmpp.fft.dispersion._interactive.state import DispersionExplorerState
+
+    class Control:
+        def __init__(self, value):
+            self.value = value
+
+    calls = []
+    monkeypatch.setattr(
+        callbacks,
+        "draw_dispersion_panel",
+        lambda explorer: calls.append("draw"),
+    )
+    monkeypatch.setattr(
+        callbacks,
+        "refresh_output_widget",
+        lambda explorer: calls.append("refresh"),
+    )
+    monkeypatch.setattr(callbacks, "set_status", lambda *args, **kwargs: None)
+
+    explorer = types.SimpleNamespace(
+        state=DispersionExplorerState(fmin_ghz=0.0, fmax_ghz=25.0),
+        options={"auto_render": True},
+        controls={
+            "fmin": Control(1.0),
+            "fmax": Control(18.0),
+            "source": Control("display"),
+            "kscale": Control("rad_um"),
+            "cmap": Control("magma"),
+            "positive": Control(True),
+            "lognorm": Control(False),
+            "grid": Control(True),
+            "selection": Control(True),
+            "notes": Control(False),
+        },
+    )
+
+    on_display_change(explorer)
+
+    assert calls == ["draw", "refresh"]
+
+
 def test_dispersion_interactive_frequency_window_defaults_to_ghz_limits():
     from mmpp.fft.dispersion._interactive.frequency import (
         normalize_frequency_window_ghz,
@@ -3858,6 +3954,79 @@ def test_dispersion_interactive_widget_state_keeps_requested_fmax():
 
     assert explorer.state.fmin_ghz == 0.0
     assert explorer.state.fmax_ghz == 25.0
+
+
+def test_dispersion_interactive_deferred_toolbar_does_not_create_matplotlib(
+    monkeypatch,
+):
+    import builtins
+    import sys
+    import types
+
+    from mmpp.fft.dispersion._interactive.widget import DispersionHeatmapWidget
+
+    class FakeWidget:
+        def __init__(self, *children, **kwargs):
+            self.children = tuple(children)
+            self.kwargs = kwargs
+            self.value = kwargs.get("value")
+            self.description = kwargs.get("description", "")
+            self.options = kwargs.get("options", [])
+            self._observers = []
+            self._clicks = []
+
+        def observe(self, callback, names=None):
+            self._observers.append((callback, names))
+
+        def on_click(self, callback):
+            self._clicks.append(callback)
+
+    class FakeTab(FakeWidget):
+        def __init__(self, *children, **kwargs):
+            super().__init__(*children, **kwargs)
+            self.titles = {}
+
+        def set_title(self, index, title):
+            self.titles[index] = title
+
+    fake_widgets = types.SimpleNamespace(
+        FloatText=FakeWidget,
+        Dropdown=FakeWidget,
+        Checkbox=FakeWidget,
+        HTML=FakeWidget,
+        Output=FakeWidget,
+        Text=FakeWidget,
+        Button=FakeWidget,
+        VBox=lambda children=(), **kwargs: FakeWidget(*children, **kwargs),
+        HBox=lambda children=(), **kwargs: FakeWidget(*children, **kwargs),
+        Tab=FakeTab,
+    )
+    monkeypatch.setitem(sys.modules, "ipywidgets", fake_widgets)
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "matplotlib" or name.startswith("matplotlib."):
+            raise AssertionError(f"unexpected matplotlib import: {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    explorer = DispersionHeatmapWidget(
+        types.SimpleNamespace(f_axis=np.array([0.0, 25e9, 500e9]), notes=[]),
+        {"fmax": 25, "f_units": "GHz"},
+    )
+
+    widget = explorer.build(
+        lambda _obj: None,
+        toolbar=True,
+        defer_initial_render=True,
+    )
+
+    assert widget is explorer.widget
+    assert explorer.figure is None
+    assert explorer.axes is None
+    assert "render_dispersion" in explorer.controls
 
 
 def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
@@ -3946,7 +4115,13 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
     assert explorer.controls["tabs"].titles[2] == "Analytical"
     assert explorer.controls["mode_type"].value == "abs"
     assert "mode_show_dispersion" in explorer.controls
+    assert explorer.controls["render_dispersion"].description == (
+        "Render / refresh dispersion"
+    )
+    assert "Render / refresh dispersion" in explorer.controls["output_placeholder"].value
+    assert explorer.controls["export_refresh"].description == "Refresh export snapshot"
     assert explorer.controls["tabs"].titles[3] == "Modes"
+    assert explorer.controls["tabs"].titles[4] == "Export"
 
 
 def test_dispersion_interactive_mode_extract_renders_mode_in_main_output(monkeypatch):

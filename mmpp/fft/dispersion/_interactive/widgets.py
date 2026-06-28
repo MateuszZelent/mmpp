@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .callbacks import on_display_change, on_mode_extract, sync_analytical_options
@@ -25,6 +26,8 @@ def _render_current_dispersion(explorer: Any) -> None:
     """Render the current heatmap with visible status and error reporting."""
     try:
         set_status(explorer, "Rendering dispersion heatmap...", color="#334155")
+        if hasattr(explorer, "ensure_figure"):
+            explorer.ensure_figure()
         draw_dispersion_panel(explorer)
         refresh_output_widget(explorer)
         explorer._has_rendered_dispersion = True
@@ -35,6 +38,86 @@ def _render_current_dispersion(explorer: Any) -> None:
             f"Dispersion render failed: {type(exc).__name__}: {exc}",
             color="crimson",
         )
+
+
+def _show_dispersion_placeholder(explorer: Any) -> None:
+    """Show a lightweight placeholder before the first Matplotlib render."""
+    output = explorer.controls.get("output") if explorer.controls else None
+    placeholder = explorer.controls.get("output_placeholder") if explorer.controls else None
+    if output is None or placeholder is None:
+        return
+    if not hasattr(output, "clear_output") or not hasattr(output, "append_display_data"):
+        return
+    output.clear_output(wait=False)
+    output.append_display_data(placeholder)
+
+
+def _selection_payload(explorer: Any) -> dict[str, Any]:
+    """Return current selected point in JSON-friendly display and raw units."""
+    selected_k = getattr(explorer.state, "selected_k", None)
+    selected_f = getattr(explorer.state, "selected_f", None)
+    selected_power = getattr(explorer.state, "selected_power", None)
+    payload: dict[str, Any] = {}
+    if selected_k is not None:
+        k_rad_per_m = float(selected_k)
+        payload["k_rad_per_m"] = k_rad_per_m
+        payload["k_rad_um"] = k_rad_per_m / 1e6
+    if selected_f is not None:
+        f_hz = float(selected_f)
+        payload["f_hz"] = f_hz
+        payload["f_ghz"] = f_hz / 1e9
+    if selected_power is not None:
+        payload["power"] = float(selected_power)
+    return payload
+
+
+def _mode_request_payload(explorer: Any, selection: dict[str, Any]) -> dict[str, Any]:
+    """Return a lightweight mode request matching the public viewer shape."""
+    request = {
+        "available": False,
+        "k_rad_um": selection.get("k_rad_um"),
+        "f_ghz": selection.get("f_ghz"),
+        "z_layer": 0,
+        "component": getattr(explorer.result, "component", None),
+        "reason": "",
+    }
+    controls = getattr(explorer, "controls", {})
+    if "mode_z_layer" in controls:
+        try:
+            request["z_layer"] = max(0, int(float(controls["mode_z_layer"].value)))
+        except (TypeError, ValueError):
+            request["z_layer"] = 0
+    if "mode_component" in controls:
+        request["component"] = str(controls["mode_component"].value)
+    if request["k_rad_um"] is None or request["f_ghz"] is None:
+        request["reason"] = "Select a dispersion point with k and f first."
+        return request
+    if getattr(explorer.result, "S_complex", None) is None:
+        request["reason"] = "Mode reconstruction requires S_complex."
+        return request
+    request["available"] = True
+    return request
+
+
+def _export_snapshot(explorer: Any) -> None:
+    """Show a compact JSON snapshot of current viewer state."""
+    selection = _selection_payload(explorer)
+    payload = {
+        "viewer": explorer.collect_preset(),
+        "selection": selection,
+        "mode_request": _mode_request_payload(explorer, selection),
+        "diagnostics": explorer.diagnostics() if hasattr(explorer, "diagnostics") else {},
+    }
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if "export_snapshot" in explorer.controls:
+        explorer.controls["export_snapshot"].value = (
+            "<pre style='max-height:260px;overflow:auto;font-size:11px;"
+            "line-height:1.25;background:#0f172a;color:#dbeafe;"
+            "padding:8px;border-radius:6px;'>"
+            f"{text}"
+            "</pre>"
+        )
+    set_status(explorer, "Export snapshot refreshed", color="#0F766E")
 
 
 def build_toolbar(
@@ -71,7 +154,10 @@ def build_toolbar(
         **_maybe_layout(widgets, width="100%"),
     )
     controls["render_dispersion"] = (
-        button_cls(description="Render dispersion", **_maybe_layout(widgets, width="100%"))
+        button_cls(
+            description="Render / refresh dispersion",
+            **_maybe_layout(widgets, width="100%"),
+        )
         if (button_cls := getattr(widgets, "Button", None)) is not None
         else widgets.HTML(value="")
     )
@@ -217,7 +303,10 @@ def build_toolbar(
         else widgets.HTML(value="")
     )
     controls["mode_show_dispersion"] = (
-        button_cls(description="Show dispersion", **_maybe_layout(widgets, width="100%"))
+        button_cls(
+            description="Back to dispersion heatmap",
+            **_maybe_layout(widgets, width="100%"),
+        )
         if button_cls is not None
         else widgets.HTML(value="")
     )
@@ -234,6 +323,27 @@ def build_toolbar(
     )
     controls["output"] = widgets.Output(
         **_maybe_layout(widgets, border="1px solid #e2e8f0", width="100%")
+    )
+    controls["output_placeholder"] = widgets.HTML(
+        value=(
+            "<div style='padding:18px;font-family:monospace;color:#334155;'>"
+            "<b>Dispersion viewer ready.</b><br>"
+            "Press <b>Render / refresh dispersion</b> to draw S(k, f). "
+            "The first render is explicit so notebook backends cannot block "
+            "the toolbar startup."
+            "</div>"
+        )
+    )
+    controls["export_refresh"] = (
+        button_cls(
+            description="Refresh export snapshot",
+            **_maybe_layout(widgets, width="100%"),
+        )
+        if button_cls is not None
+        else widgets.HTML(value="")
+    )
+    controls["export_snapshot"] = widgets.HTML(
+        value="<small>Press Refresh export snapshot to inspect state.</small>"
     )
 
     text_cls = getattr(widgets, "Text", None)
@@ -304,20 +414,15 @@ def build_toolbar(
     if hasattr(controls["mode_extract"], "on_click"):
         controls["mode_extract"].on_click(lambda _btn: on_mode_extract(explorer))
     if hasattr(controls["mode_show_dispersion"], "on_click"):
-        controls["mode_show_dispersion"].on_click(
-            lambda _btn: (
-                draw_dispersion_panel(explorer),
-                refresh_output_widget(explorer),
-                set_status(explorer, "Dispersion heatmap shown", color="#0F766E"),
-            )
-        )
+        controls["mode_show_dispersion"].on_click(lambda _btn: _render_current_dispersion(explorer))
+    if hasattr(controls["export_refresh"], "on_click"):
+        controls["export_refresh"].on_click(lambda _btn: _export_snapshot(explorer))
 
     display_tab = widgets.VBox(
         [
             controls["fmin"],
             controls["fmax"],
             controls["source"],
-            controls["render_dispersion"],
             controls["kscale"],
             controls["cmap"],
             controls["positive"],
@@ -369,11 +474,18 @@ def build_toolbar(
         ],
         **_maybe_layout(widgets, width="100%"),
     )
+    export_tab = widgets.VBox(
+        [
+            controls["export_refresh"],
+            controls["export_snapshot"],
+        ],
+        **_maybe_layout(widgets, width="100%"),
+    )
 
     tab_cls = getattr(widgets, "Tab", None)
     if tab_cls is not None:
         tabs = tab_cls(
-            children=[display_tab, overlays_tab, analytical_tab, modes_tab],
+            children=[display_tab, overlays_tab, analytical_tab, modes_tab, export_tab],
             selected_index=0,
             **_maybe_layout(widgets, width="100%"),
         )
@@ -381,13 +493,17 @@ def build_toolbar(
         tabs.set_title(1, "Overlays")
         tabs.set_title(2, "Analytical")
         tabs.set_title(3, "Modes")
+        tabs.set_title(4, "Export")
     else:
-        tabs = widgets.VBox([display_tab, overlays_tab, analytical_tab, modes_tab])
+        tabs = widgets.VBox(
+            [display_tab, overlays_tab, analytical_tab, modes_tab, export_tab]
+        )
     controls["tabs"] = tabs
 
     control_panel = widgets.VBox(
         [
             widgets.HTML("<b>Dispersion Toolbar v3</b>"),
+            controls["render_dispersion"],
             preset_box,
             tabs,
             controls["status"],
@@ -417,9 +533,10 @@ def build_toolbar(
         refresh_output_widget(explorer)
         set_status(explorer, "Interactive toolbar ready", color="#0F766E")
     else:
+        _show_dispersion_placeholder(explorer)
         set_status(
             explorer,
-            "Interactive toolbar ready; press Render dispersion to draw the heatmap",
+            "Interactive toolbar ready; press Render / refresh dispersion to draw the heatmap",
             color="#334155",
         )
 
