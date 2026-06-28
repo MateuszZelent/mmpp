@@ -480,7 +480,7 @@ class DispersionPlotAccessor:
             sw_config=sw_config,
             n_modes=n_modes,
             k_points=k_points,
-            phi=phi,
+            phi=phi if phi is not None else auto_params.get("phi"),
             D=D,
             B=effective["B"],
             Ms=effective["Ms"],

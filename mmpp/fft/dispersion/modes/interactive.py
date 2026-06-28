@@ -63,6 +63,10 @@ if TYPE_CHECKING:
     from .detection import BrillouinZoneDetector
 
 from .mode_profile import ModeProfile
+from .._interactive_viewer import (
+    normalize_dispersion_interactive_options,
+    split_dispersion_interactive_kwargs,
+)
 from ._interactive import (
     apply_params as _apply_params_impl,
     base_default_params as _base_default_params_impl,
@@ -138,6 +142,10 @@ class InteractiveDispersionModes:
         self._animation = None  # FuncAnimation object
         self._is_animating = False
         self._last_compute_kwargs: dict[str, object] = {}
+        self._interactive_viewer_options: dict[str, object] = {}
+        self._mode_components: list[str] | None = None
+        self._spectrum_components: list[str] | None = None
+        self._analytical_options: dict[str, object] = {}
 
         # Default parameters
         self._default_params = self._base_default_params()
@@ -307,6 +315,20 @@ class InteractiveDispersionModes:
         """
 
         self._ensure_runtime_state()
+        compute_kwargs, viewer_kwargs = split_dispersion_interactive_kwargs(
+            dict(compute_kwargs)
+        )
+        (
+            mode_components,
+            spectrum_components,
+            _modes_requested,
+            viewer_options,
+            analytical_options,
+        ) = normalize_dispersion_interactive_options(**viewer_kwargs)
+        self._interactive_viewer_options = dict(viewer_options)
+        self._mode_components = mode_components
+        self._spectrum_components = spectrum_components
+        self._analytical_options = dict(analytical_options)
 
         if not _HAS_WIDGETS:
             raise ImportError(
@@ -349,6 +371,12 @@ class InteractiveDispersionModes:
         if lognorm is not None:
             self._default_params["live_log_enabled"] = bool(lognorm)
             self._default_params.setdefault("live_log_method", "log1p")
+        if "n_bz" in viewer_options:
+            self._default_params["n_bz_mask"] = int(viewer_options["n_bz"])
+        if "mode_type" in viewer_options:
+            self._default_params["mode_type"] = str(viewer_options["mode_type"])
+        if "cmap" in viewer_options:
+            self._default_params["cmap_disp"] = str(viewer_options["cmap"])
 
         # Store geometry contour for mode overlay
         if add_contour is not None:
@@ -518,7 +546,7 @@ class InteractiveDispersionModes:
                 ("Phase φ[M]", "phase"),
                 ("Ampl×Phase", "ampl_phase"),
             ],
-            value="real",
+            value=params.get("mode_type", "real"),
             description="Mode type:",
             layout=widgets.Layout(width="95%"),
             style={"description_width": "70px"},

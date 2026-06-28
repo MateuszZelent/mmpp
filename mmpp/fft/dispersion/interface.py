@@ -35,6 +35,7 @@ except ImportError:
     _SCIPY_AVAILABLE = False
 
 from .core import SpinWaveAnalyzer, DispersionConfig, _normalize_dispersion_scaling
+from ._interactive_viewer import split_dispersion_interactive_kwargs
 from ..method_helpers import CallableMethodHelper
 from .models import DispersionResult1D, DispersionResult2D, DispersionBranch
 from .utils import (
@@ -57,54 +58,6 @@ logger = logging.getLogger(__name__)
 DISPERSION_CACHE_SCHEMA_VERSION = 4
 
 
-_INTERACTIVE_VIEWER_KEYS = {
-    "show",
-    "toolbar",
-    "figsize",
-    "dpi",
-    "kscale",
-    "f_units",
-    "fmin",
-    "fmax",
-    "lognorm",
-    "source",
-    "cmap",
-    "components",
-    "mode_components",
-    "spectrum_components",
-    "modes",
-    "animate",
-    "auto_animate",
-    "lattice_constant_nm",
-    "use_holography",
-    "z_layer",
-    "mode_type",
-    "n_bz",
-    "positive_frequencies",
-    "analitical",
-    "analytical",
-    "model",
-    "sw_config",
-    "n_modes",
-    "B",
-    "Ms",
-    "Aex",
-    "d",
-    "Ku",
-    "Kc1",
-    "Kc2",
-    "phi",
-    "phi_ani",
-    "D",
-    "g",
-    "k_points",
-    "color",
-    "linestyle",
-    "linewidth",
-    "alpha",
-}
-
-
 class _DispersionProgressReporter:
     """Small stage-based progress reporter for notebook-facing dispersion calls."""
 
@@ -117,6 +70,7 @@ class _DispersionProgressReporter:
         total: int = 5,
     ) -> None:
         self.enabled = bool(enabled) or callback is not None
+        self._visible = bool(enabled)
         self.callback = callback
         self.label = label
         self.total = max(1, int(total))
@@ -124,7 +78,7 @@ class _DispersionProgressReporter:
         self._bar: Any = None
         self._use_print = True
 
-        if self.enabled and enabled not in {False, "print"}:
+        if self._visible and enabled not in {False, "print"}:
             try:
                 from tqdm.auto import tqdm
 
@@ -151,7 +105,7 @@ class _DispersionProgressReporter:
         if self.callback is not None:
             self.callback(payload)
 
-        if not self.enabled:
+        if not self._visible:
             return
 
         self.count = min(self.total, self.count + 1)
@@ -356,8 +310,6 @@ class _DispersionPlotAccessor:
 
     def interactive(self, **kwargs: Any) -> Any:
         """Compute 1D dispersion and return a lightweight interactive viewer."""
-        viewer_kwargs: dict[str, Any] = {}
-        compute_kwargs: dict[str, Any] = {}
         tmax = kwargs.pop("tmax", None)
         cache = kwargs.pop("cache", None)
         progress = kwargs.pop("progress", True)
@@ -369,11 +321,7 @@ class _DispersionPlotAccessor:
             label=progress_label,
             total=7,
         )
-        for key, value in kwargs.items():
-            if key in _INTERACTIVE_VIEWER_KEYS:
-                viewer_kwargs[key] = value
-            else:
-                compute_kwargs[key] = value
+        compute_kwargs, viewer_kwargs = split_dispersion_interactive_kwargs(kwargs)
         if _interactive_modes_requested(viewer_kwargs.get("modes", "auto")):
             compute_kwargs.setdefault("store_complex", True)
         else:
@@ -409,11 +357,16 @@ class _DispersionPlotAccessor:
             self._interface._tmax = old_tmax
             self._interface._cache_dir = old_cache_dir
         progress_reporter.emit(stage="viewer", message="building interactive viewer")
+        show_requested = bool(viewer_kwargs.pop("show", True))
         try:
-            return result.plot.interactive(**viewer_kwargs)
+            viewer = result.plot.interactive(show=False, **viewer_kwargs)
         finally:
             progress_reporter.emit(stage="done", message="interactive dispersion ready")
             progress_reporter.close()
+        if show_requested:
+            toolbar = viewer.options.get("toolbar", "auto")
+            return viewer.show(toolbar=toolbar)
+        return viewer
 
     def __repr__(self) -> str:
         return "<FFTDispersionInterface.plot: interactive>"
@@ -1824,11 +1777,13 @@ class FFTDispersionInterface:
         )
         context_json, context_hash = self._context_signature(context)
         memory_key = self._memory_key("dispersion_1d", context_hash)
+        entry_name = f"dispersion1d_{context_hash}"
         _emit_dispersion_progress(
             progress_callback,
             "cache",
-            f"cache key prepared {entry_name if 'entry_name' in locals() else context_hash[:12]}",
+            f"cache key prepared {entry_name}",
             context_hash=context_hash,
+            entry_name=entry_name,
         )
 
         base_result: Optional[DispersionResult1D] = None
@@ -1856,7 +1811,6 @@ class FFTDispersionInterface:
                     memory_key=memory_key,
                 )
 
-        entry_name = f"dispersion1d_{context_hash}"
         disk_group: Optional[zarr.Group] = None
 
         if base_result is None and disk_cache_flag and not force:

@@ -144,7 +144,7 @@ def _draw_analytical_overlay(explorer: Any, ax: Any, kscale: str) -> None:
             sw_config=request,
             n_modes=n_modes,
             k_points=k_points,
-            phi=options.get("analytical_phi"),
+            phi=options.get("analytical_phi", auto_params.get("phi")),
             D=options.get("analytical_D"),
             B=effective["B"],
             Ms=effective["Ms"],

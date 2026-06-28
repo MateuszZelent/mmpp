@@ -8,9 +8,13 @@ Internal module — used by :class:`DispersionPlotAccessor.add_analytics`.
 
 from __future__ import annotations
 
+import ast
+import glob
 import logging
 import math
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+import os
+import re
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional, Union
 
 import numpy as np
 
@@ -18,6 +22,10 @@ if TYPE_CHECKING:
     from ..models import DispersionResult1D
 
 logger = logging.getLogger(__name__)
+
+_MX3_ASSIGNMENT_RE = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)\s*(.+?)\s*$"
+)
 
 # ── SW-config presets ─────────────────────────────────────────────────────
 # Maps human-readable geometry names to phi angles (radians)
@@ -81,6 +89,155 @@ def _safe_float(val: Any) -> Optional[float]:
         return None
 
 
+def _sidecar_mx3_path(job_result: Any) -> Optional[str]:
+    """Return the best matching sidecar ``.mx3`` file for a zarr job."""
+    if job_result is None or not getattr(job_result, "path", None):
+        return None
+    zarr_path = str(job_result.path)
+    base_name = os.path.basename(zarr_path).replace(".zarr", "")
+    parent_dir = os.path.dirname(zarr_path)
+    exact = os.path.join(parent_dir, f"{base_name}.mx3")
+    if os.path.exists(exact):
+        return exact
+    matches = sorted(glob.glob(os.path.join(parent_dir, f"{base_name}.mx3*")))
+    return matches[0] if matches else None
+
+
+def _eval_mx3_expr(expr: str, env: Mapping[str, Any]) -> Any:
+    """Evaluate a small, safe subset of mumax3 scalar/vector expressions."""
+    tree = ast.parse(expr.strip().rstrip(";").replace("^", "**"), mode="eval")
+
+    def _eval(node: ast.AST) -> Any:
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (int, float, bool)):
+                return node.value
+            raise ValueError("unsupported constant")
+        if isinstance(node, ast.Name):
+            if node.id in env:
+                return env[node.id]
+            if node.id == "pi":
+                return math.pi
+            if node.id == "e":
+                return math.e
+            if node.id in {"true", "True"}:
+                return True
+            if node.id in {"false", "False"}:
+                return False
+            raise ValueError(f"unknown name {node.id!r}")
+        if isinstance(node, ast.BinOp):
+            left = _eval(node.left)
+            right = _eval(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.Pow):
+                return left**right
+            raise ValueError("unsupported binary operator")
+        if isinstance(node, ast.UnaryOp):
+            operand = _eval(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return +operand
+            if isinstance(node.op, ast.USub):
+                return -operand
+            raise ValueError("unsupported unary operator")
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return tuple(_eval(elt) for elt in node.elts)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            name = node.func.id
+            if name == "vector":
+                return tuple(_eval(arg) for arg in node.args)
+            if name == "sin":
+                return math.sin(_eval(node.args[0]))
+            if name == "cos":
+                return math.cos(_eval(node.args[0]))
+            if name == "tan":
+                return math.tan(_eval(node.args[0]))
+            if name == "sqrt":
+                return math.sqrt(_eval(node.args[0]))
+            if name == "abs":
+                return abs(_eval(node.args[0]))
+            if name == "log":
+                return math.log(_eval(node.args[0]))
+            if name == "exp":
+                return math.exp(_eval(node.args[0]))
+            raise ValueError(f"unsupported call {name!r}")
+        raise ValueError("unsupported syntax")
+
+    return _eval(tree)
+
+
+def _parse_mx3_scalars(path: Optional[str]) -> dict[str, Any]:
+    """Parse simple mumax3 assignments from a sidecar script."""
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return {}
+
+    env: dict[str, Any] = {}
+    for raw_line in lines:
+        line = raw_line.split("//", 1)[0].split("#", 1)[0].strip()
+        if not line:
+            continue
+        match = _MX3_ASSIGNMENT_RE.match(line)
+        if not match:
+            continue
+        name, expr = match.groups()
+        try:
+            env[name] = _eval_mx3_expr(expr, env)
+        except Exception:
+            continue
+    return env
+
+
+def _safe_field_vector(value: Any) -> Optional[tuple[float, float, float]]:
+    """Coerce scalar/vector field values into a 3D vector in Tesla."""
+    if value is None or _is_mumax_pointer(value):
+        return None
+    try:
+        arr = np.asarray(value, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return None
+    if arr.size == 1:
+        return (0.0, 0.0, float(arr[0]))
+    if arr.size >= 3:
+        return (float(arr[0]), float(arr[1]), float(arr[2]))
+    return None
+
+
+def _field_magnitude(value: Any) -> Optional[float]:
+    vector = _safe_field_vector(value)
+    if vector is None:
+        return _safe_float(value)
+    return float(np.linalg.norm(np.asarray(vector, dtype=float)))
+
+
+def _field_phi_for_axis(
+    vector: Optional[tuple[float, float, float]],
+    axis: str,
+) -> Optional[float]:
+    """Return in-plane angle between propagation axis and static field."""
+    if vector is None:
+        return None
+    field_xy = np.asarray(vector[:2], dtype=float)
+    norm = float(np.linalg.norm(field_xy))
+    if norm == 0.0:
+        return None
+    axis_key = str(axis or "x").lower()
+    k_vec = np.array([1.0, 0.0]) if axis_key == "x" else np.array([0.0, 1.0])
+    cos_phi = float(np.clip(np.dot(field_xy, k_vec) / norm, -1.0, 1.0))
+    return float(math.acos(cos_phi))
+
+
 def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
     """Auto-extract material parameters from zarr attrs via DispersionResult1D back-reference.
 
@@ -98,9 +255,11 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
     """
     params: dict[str, Any] = {
         "B": None,
+        "B_vector": None,
         "Ms": None,
         "d": None,
         "Aex": None,
+        "phi": None,
         "Ku": 0.0,  # default to 0 — most sims don't have uniaxial anisotropy
     }
 
@@ -127,17 +286,15 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
     except Exception as exc:
         logger.debug("Failed to read zarr attrs: %s", exc)
         return params
+    mx3_path = _sidecar_mx3_path(job_result)
+    mx3_params = _parse_mx3_scalars(mx3_path)
 
     # ── B_ext ─────────────────────────────────────────────────
     b_ext = attrs.get("B_ext")
     b_val = None
 
     if b_ext is not None and not _is_mumax_pointer(b_ext):
-        try:
-            b_arr = np.asarray(b_ext, dtype=float)
-            b_val = float(b_arr) if b_arr.ndim == 0 else float(np.linalg.norm(b_arr))
-        except (TypeError, ValueError):
-            pass
+        b_val = _field_magnitude(b_ext)
 
     if b_val is None:
         # Fallback: try Bmax (common mumax3 scalar attr for bias field)
@@ -152,16 +309,39 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
                 b_val = abs(b_scalar)
                 logger.info("B_ext is a mumax3 pointer; using |b|=%.4f T as fallback", b_val)
 
+    b_vector = _safe_field_vector(b_ext)
+    if b_vector is None:
+        for key in ("B_ext", "Bext", "B", "B0", "Bmax", "bex", "b"):
+            if key not in mx3_params:
+                continue
+            b_vector = _safe_field_vector(mx3_params[key])
+            if b_vector is not None:
+                b_val = _field_magnitude(b_vector)
+                logger.info(
+                    "Using static field from sidecar %s: %s=%s -> |B|=%.6g T",
+                    mx3_path,
+                    key,
+                    mx3_params[key],
+                    b_val,
+                )
+                break
+
     if b_val is None:
         logger.warning(
             "Cannot auto-detect B field (B_ext='%s' is a mumax3 pointer). "
-            "Please provide B= manually in add_analytics().",
+            "Please provide B= manually or keep the matching .mx3 sidecar next to the .zarr.",
             b_ext,
         )
     params["B"] = b_val
+    params["B_vector"] = b_vector
+    phi = _field_phi_for_axis(b_vector, getattr(result, "axis", "x"))
+    if phi is not None:
+        params["phi"] = phi
 
     # ── Msat ──────────────────────────────────────────────────
     ms_val = _safe_float(attrs.get("Msat"))
+    if ms_val is None:
+        ms_val = _safe_float(mx3_params.get("Msat"))
     if ms_val is not None:
         params["Ms"] = ms_val
     else:
@@ -169,12 +349,16 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
 
     # ── Aex ───────────────────────────────────────────────────
     aex_val = _safe_float(attrs.get("Aex"))
+    if aex_val is None:
+        aex_val = _safe_float(mx3_params.get("Aex"))
     if aex_val is not None:
         params["Aex"] = aex_val
 
     # ── Thickness ─────────────────────────────────────────────
     # Prefer Tz (total thickness) if available, otherwise Nz * dz
     tz = _safe_float(attrs.get("Tz"))
+    if tz is None:
+        tz = _safe_float(mx3_params.get("Tz"))
     if tz is not None and tz > 0:
         params["d"] = tz
     else:

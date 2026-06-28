@@ -497,6 +497,44 @@ def test_dispersion_plot_interactive_modes_true_stores_complex_and_viewer_state(
     assert viewer.state["options"]["auto_animate"] is True
 
 
+def test_dispersion_interactive_kwargs_split_keeps_compute_and_viewer_roles():
+    from mmpp.fft.dispersion._interactive_viewer import (
+        split_dispersion_interactive_kwargs,
+    )
+
+    compute_kwargs, viewer_kwargs = split_dispersion_interactive_kwargs(
+        {
+            "axis": "x",
+            "component": "perp",
+            "save": True,
+            "disk_cache": False,
+            "components": ["z", "+"],
+            "modes": True,
+            "fmax": 4.0,
+            "analytical": True,
+            "model": "kalinikos",
+            "B": 0.12,
+            "linestyle": "--",
+        }
+    )
+
+    assert compute_kwargs == {
+        "axis": "x",
+        "component": "perp",
+        "save": True,
+        "disk_cache": False,
+    }
+    assert viewer_kwargs == {
+        "components": ["z", "+"],
+        "modes": True,
+        "fmax": 4.0,
+        "analytical": True,
+        "model": "kalinikos",
+        "B": 0.12,
+        "linestyle": "--",
+    }
+
+
 def test_dispersion_plot_interactive_preserves_analytical_overlay_state():
     from mmpp.fft.dispersion.interface import _DispersionPlotAccessor
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
@@ -2843,6 +2881,71 @@ def test_interactive_dispersion_modes_plot_interactive_applies_startup_options(
     assert modes._default_params["live_log_method"] == "log1p"
 
 
+def test_interactive_dispersion_modes_plot_interactive_uses_shared_viewer_normalization(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion.modes import interactive as interactive_module
+    from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+        S_complex=np.ones((n_k, n_f), dtype=np.complex128),
+    )
+    calls = []
+
+    def fake_compute_1d(**kwargs):
+        calls.append(dict(kwargs))
+        return result
+
+    modes = InteractiveDispersionModes(SimpleNamespace(compute_1d=fake_compute_1d))
+
+    monkeypatch.setattr(interactive_module, "_HAS_WIDGETS", True)
+    monkeypatch.setattr(interactive_module, "_HAS_MATPLOTLIB", True)
+    monkeypatch.setattr(modes, "_create_widgets", lambda: None)
+    monkeypatch.setattr(modes, "_create_layout", lambda: object())
+    monkeypatch.setattr(modes, "_initialize_figure", lambda: None)
+    monkeypatch.setattr(modes, "_update_dispersion_plot", lambda: None)
+    monkeypatch.setattr(
+        interactive_module,
+        "display",
+        lambda *_args, **_kwargs: SimpleNamespace(update=lambda *_: None),
+        raising=False,
+    )
+
+    modes.plot_interactive(
+        axis="x",
+        components=["z", "+"],
+        mode_type="phase",
+        n_bz=3,
+        auto_animate=True,
+        analytical=True,
+        model="kalinikos",
+    )
+
+    assert calls == [{"axis": "x"}]
+    assert modes._mode_components == ["z", "+"]
+    assert modes._spectrum_components == ["z", "+"]
+    assert modes._interactive_viewer_options["auto_animate"] is True
+    assert modes._interactive_viewer_options["mode_type"] == "phase"
+    assert modes._analytical_options["enabled"] is True
+    assert modes._analytical_options["model"] == "kalinikos"
+    assert modes._default_params["mode_type"] == "phase"
+    assert modes._default_params["n_bz_mask"] == 3
+
+
 def test_interactive_dispersion_modes_close_cleans_display_animation_and_figure(
     monkeypatch,
 ):
@@ -3128,6 +3231,65 @@ def test_draw_analytical_overlay_renders_scatter_from_layer_params(monkeypatch):
     assert captured["scatter_calls"][0]["kwargs"]["label"] == "DE"
     assert captured["scatter_calls"][1]["kwargs"]["label"] == "DE (n=1)"
     assert "legend_called" in captured
+
+
+def test_extract_material_params_reads_b_ext_vector_from_mx3_sidecar(tmp_path):
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion._plotting._analytics_overlay import (
+        extract_material_params,
+    )
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    zarr_path = tmp_path / "disp_2.zarr"
+    root = zarr.open(str(zarr_path), mode="w")
+    root.attrs.update(
+        {
+            "B_ext": "0xc000241a10",
+            "Msat": "157600",
+            "Aex": "3.7e-12",
+            "Tz": 70e-9,
+        }
+    )
+    (tmp_path / "disp_2.mx3").write_text(
+        "\n".join(
+            [
+                "bex := 0.008",
+                "B_ext = vector(0, bex, 0)",
+                "B_ext.add(thermalNoise, 1e-4)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = DispersionResult1D(
+        S=np.ones((4, 4), dtype=np.float32),
+        k_axis=np.arange(4, dtype=float),
+        f_axis=np.arange(4, dtype=float),
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=1.0, dx=1.0),
+        dt=1.0,
+        dx=1.0,
+    )
+    object.__setattr__(
+        result,
+        "_interface",
+        SimpleNamespace(
+            parent_fft=SimpleNamespace(
+                job_result=SimpleNamespace(path=zarr_path, name="disp_2")
+            )
+        ),
+    )
+
+    params = extract_material_params(result)
+
+    assert params["B"] == pytest.approx(0.008)
+    assert params["B_vector"] == (0.0, 0.008, 0.0)
+    assert params["phi"] == pytest.approx(np.pi / 2)
+    assert params["Ms"] == pytest.approx(157600)
+    assert params["Aex"] == pytest.approx(3.7e-12)
+    assert params["d"] == pytest.approx(70e-9)
 
 
 def test_dispersion_interface_plot_interactive_defaults_to_lightweight_compute():
@@ -3929,3 +4091,55 @@ def test_dispersion_plot_interactive_reports_progress_without_polluting_compute_
     assert "compute" in stages
     assert "viewer" in stages
     assert any("slice" in event["message"] for event in events)
+
+
+def test_dispersion_plot_interactive_finishes_progress_before_notebook_show(monkeypatch):
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion._interactive_viewer import DispersionInteractiveViewer
+    from mmpp.fft.dispersion.interface import FFTDispersionInterface
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+    )
+    iface = FFTDispersionInterface(
+        SimpleNamespace(job_result=SimpleNamespace(path="/tmp/run.zarr"))
+    )
+    events = []
+    show_positions = []
+
+    def fake_compute_1d(**kwargs):
+        kwargs.pop("progress_callback")({"stage": "compute", "message": "done"})
+        return result
+
+    def fake_show(self, *, toolbar="auto"):
+        show_positions.append([event["stage"] for event in events])
+        self.show_requested = True
+        self.options["toolbar"] = toolbar
+        return self
+
+    iface.compute_1d = fake_compute_1d
+    monkeypatch.setattr(DispersionInteractiveViewer, "show", fake_show)
+
+    viewer = iface.plot.interactive(
+        show=True,
+        axis="x",
+        progress=True,
+        progress_callback=events.append,
+    )
+
+    assert viewer.result is result
+    assert show_positions
+    assert "done" in show_positions[0]
+    assert events[-1]["stage"] == "done"

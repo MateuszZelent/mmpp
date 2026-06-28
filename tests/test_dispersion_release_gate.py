@@ -139,6 +139,18 @@ def test_fft_dispersion_release_gate_reports_core_api_and_benchmark(tmp_path):
         "marker": [5.0, 6.0],
     }
     assert report["mode_viewers_status"] == {"status": "ok", "failures": []}
+    assert report["docs_example"]["dataset_first_viewer_show"] is False
+    assert report["docs_example"]["dataset_first_dataset"] == "m"
+    assert "slice(None, 4" in report["docs_example"]["dataset_first_slice"]
+    assert report["docs_example"]["dataset_first_shape"]
+    assert set(report["docs_example"]["dataset_first_progress_stages"]) >= {
+        "prepare",
+        "compute",
+        "cache",
+        "result",
+        "viewer",
+        "done",
+    }
     assert report["docs_example"]["compute_viewer_show"] is False
     assert report["docs_example"]["result_viewer_show"] is False
     assert report["docs_example"]["positive_frequencies"] is True
@@ -290,6 +302,18 @@ def test_fft_dispersion_release_gate_fails_on_docs_example_regression(monkeypatc
         release_gate,
         "_run_docs_example_smoke",
         lambda: {
+            "dataset_first_viewer_show": False,
+            "dataset_first_dataset": "m",
+            "dataset_first_slice": "(slice(None, 4, None), Ellipsis)",
+            "dataset_first_shape": [8, 4],
+            "dataset_first_progress_stages": [
+                "prepare",
+                "compute",
+                "cache",
+                "result",
+                "viewer",
+                "done",
+            ],
             "compute_viewer_show": False,
             "result_viewer_show": False,
             "positive_frequencies": True,

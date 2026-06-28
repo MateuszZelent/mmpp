@@ -39,6 +39,48 @@ _ANALYTICAL_OPTION_KEYS = {
     "alpha",
 }
 _ANALYTICAL_STYLE_KEYS = {"color", "linestyle", "linewidth", "alpha"}
+INTERACTIVE_VIEWER_KEYS = {
+    "show",
+    "toolbar",
+    "figsize",
+    "dpi",
+    "kscale",
+    "f_units",
+    "fmin",
+    "fmax",
+    "lognorm",
+    "source",
+    "cmap",
+    "components",
+    "mode_components",
+    "spectrum_components",
+    "modes",
+    "animate",
+    "auto_animate",
+    "lattice_constant_nm",
+    "use_holography",
+    "z_layer",
+    "mode_type",
+    "n_bz",
+    "positive_frequencies",
+    "analitical",
+    "analytical",
+    *_ANALYTICAL_OPTION_KEYS,
+}
+
+
+def split_dispersion_interactive_kwargs(
+    kwargs: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split compute-then-viewer kwargs using the canonical viewer option map."""
+    viewer_kwargs: dict[str, Any] = {}
+    compute_kwargs: dict[str, Any] = {}
+    for key, value in dict(kwargs).items():
+        if key in INTERACTIVE_VIEWER_KEYS:
+            viewer_kwargs[key] = value
+        else:
+            compute_kwargs[key] = value
+    return compute_kwargs, viewer_kwargs
 
 
 def _normalize_analytical_options(
@@ -107,6 +149,13 @@ def _normalize_interactive_options(
         options["analitical"] = analitical
 
     return mode_components, spectrum_components, modes, options, analytical_options
+
+
+def normalize_dispersion_interactive_options(
+    **kwargs: Any,
+) -> tuple[Optional[list[str]], Optional[list[str]], Any, dict[str, Any], dict[str, Any]]:
+    """Public wrapper for shared dispersion interactive option normalization."""
+    return _normalize_interactive_options(**kwargs)
 
 
 

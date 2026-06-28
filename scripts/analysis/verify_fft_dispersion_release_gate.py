@@ -265,11 +265,26 @@ def _write_docs_smoke_zarr(path: Path) -> None:
 
 def _run_docs_example_smoke() -> dict[str, Any]:
     """Execute the public dispersion docs pattern on a synthetic dataset."""
+    import mmpp
+
     from mmpp.fft.dispersion.interface import FFTDispersionInterface
 
     with tempfile.TemporaryDirectory(prefix="mmpp-dispersion-docs-smoke-") as tmp:
         zarr_path = Path(tmp) / "docs-smoke.zarr"
         _write_docs_smoke_zarr(zarr_path)
+        db = mmpp.open(tmp, force=True, max_workers=1)
+        dataset_disp = db[0].m[:4, ...].fft.dispersion
+        dataset_progress: list[dict[str, Any]] = []
+        dataset_viewer = dataset_disp.plot.interactive(
+            axis="x",
+            component="perp",
+            fmax=25,
+            show=False,
+            disk_cache=False,
+            progress=False,
+            progress_callback=dataset_progress.append,
+        )
+
         disp = FFTDispersionInterface(
             SimpleNamespace(
                 job_result=SimpleNamespace(path=zarr_path, name="docs-smoke")
@@ -319,6 +334,13 @@ def _run_docs_example_smoke() -> dict[str, Any]:
         animation_viewer = mode_result.modes.plot.animation(peaks=[0], show=False)
 
     return {
+        "dataset_first_viewer_show": bool(dataset_viewer.state["show"]),
+        "dataset_first_dataset": dataset_disp.dataset_name,
+        "dataset_first_slice": str(dataset_disp.slice_info),
+        "dataset_first_shape": list(dataset_viewer.result.shape),
+        "dataset_first_progress_stages": [
+            str(event.get("stage")) for event in dataset_progress
+        ],
         "compute_viewer_show": bool(compute_viewer.state["show"]),
         "result_viewer_show": bool(result_viewer.state["show"]),
         "positive_frequencies": bool(
@@ -338,7 +360,23 @@ def _run_docs_example_smoke() -> dict[str, Any]:
 
 
 def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
+    progress_stages = set(docs_example.get("dataset_first_progress_stages") or [])
     checks = {
+        "dataset_first_headless": docs_example.get("dataset_first_viewer_show")
+        is False,
+        "dataset_first_uses_m": docs_example.get("dataset_first_dataset") == "m",
+        "dataset_first_slice": "slice(None, 4" in str(
+            docs_example.get("dataset_first_slice")
+        ),
+        "dataset_first_shape": bool(docs_example.get("dataset_first_shape")),
+        "dataset_first_progress": {
+            "prepare",
+            "compute",
+            "cache",
+            "result",
+            "viewer",
+            "done",
+        }.issubset(progress_stages),
         "compute_viewer_headless": docs_example.get("compute_viewer_show") is False,
         "result_viewer_headless": docs_example.get("result_viewer_show") is False,
         "positive_frequencies": docs_example.get("positive_frequencies") is True,
