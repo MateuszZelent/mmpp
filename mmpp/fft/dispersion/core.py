@@ -213,7 +213,7 @@ class SpinWaveAnalyzer:
         self,
         zarr_path: str | Path,
         config: Optional[DispersionConfig] = None,
-        tmax: Optional[int] = 100,
+        tmax: Optional[int] = None,
         slice_info: Optional[tuple] = None,
         dataset_name: Optional[str] = None,
     ):
@@ -228,7 +228,7 @@ class SpinWaveAnalyzer:
             Analysis configuration parameters
         tmax : int or None, optional
             Maximum time steps to load. If None, loads ALL available timesteps.
-            Default is 100 for optimization.
+            Default is None, which loads all available timesteps.
         slice_info : tuple, optional
             Slicing information from DatasetAwareWrapper
         dataset_name : str, optional
@@ -632,9 +632,9 @@ class SpinWaveAnalyzer:
                 logger.error(msg)
                 raise MemoryError(msg)
 
-    def _ensure_data_loaded(self, tmax: int = 100) -> None:
+    def _ensure_data_loaded(self, tmax: Optional[int] = None) -> None:
         """Ensure magnetization data is loaded up to requested tmax."""
-        if self.M_data is not None and tmax <= self._loaded_time:
+        if self.M_data is not None and (tmax is None or tmax <= self._loaded_time):
             return
 
         if self._M_ref is None:

@@ -355,9 +355,9 @@ class _DispersionPlotAccessor:
                 determine_tmax = getattr(
                     self._interface,
                     "_determine_tmax",
-                    lambda default=100: default,
+                    lambda default=None: default,
                 )
-                inferred_tmax = determine_tmax(default=100)
+                inferred_tmax = determine_tmax()
                 time_label = (
                     "time_steps=all"
                     if inferred_tmax is None
@@ -531,7 +531,7 @@ class FFTDispersionInterface:
         self.slice_info = slice_info
         self._analyzer = None
         self._config = None
-        self._tmax: Optional[int] = 100
+        self._tmax: Optional[int] = None
         self._memory_cache: dict[str, DispersionResult1D] = {}
         self._filters_config: Optional[dict[str, Any]] = None
         self._last_plot_result: Optional[DispersionResult1D] = None
@@ -613,7 +613,7 @@ class FFTDispersionInterface:
         if self._analyzer is None:
             zarr_path = self.parent_fft.job_result.path
             config = self._config or DispersionConfig()
-            effective_tmax = self._determine_tmax(default=100)
+            effective_tmax = self._determine_tmax()
             self._analyzer = SpinWaveAnalyzer(
                 zarr_path,
                 config=config,
@@ -774,14 +774,14 @@ class FFTDispersionInterface:
 
         return modes
 
-    def _determine_tmax(self, default: int = 100) -> Optional[int]:
+    def _determine_tmax(self, default: Optional[int] = None) -> Optional[int]:
         """
         Determine number of time steps to load based on config and slicing.
 
         Priority order:
         1. Explicit slice from user (e.g., [:1000,...,2]) - ALWAYS respected
         2. Configured tmax via .configure(tmax=X)
-        3. Default tmax=100 (only if no slice and no config)
+        3. Default behavior: use all available timesteps
 
         Returns
         -------
@@ -810,15 +810,21 @@ class FFTDispersionInterface:
             )
             return None  # None means "don't limit timesteps"
 
-        # Case B: No slice at all - use configured tmax or default
+        # Case B: No slice at all - use configured tmax when explicitly set.
         if self._tmax is not None:
             logger.debug(
                 "No user slice - using configured tmax: %d timesteps", self._tmax
             )
             return int(self._tmax)
 
-        # No slice, no config - use default for optimization
-        logger.debug("No slice or config - using default tmax: %d timesteps", default)
+        # No slice, no config - use all data unless the caller explicitly supplies
+        # a compatibility default. The public notebook path should not silently
+        # trim the time axis.
+        if default is None:
+            logger.debug("No slice or config - using ALL available timesteps")
+            return None
+
+        logger.debug("No slice or config - using caller default tmax: %d timesteps", default)
         return default
 
     def _infer_time_length_from_slice(self) -> Optional[int]:
@@ -908,7 +914,7 @@ class FFTDispersionInterface:
             "kwargs": self._serialize_for_json(extra_kwargs),
             "job_name": getattr(self.parent_fft.job_result, "name", None),
             "zarr_path": str(self.parent_fft.job_result.path),
-            "tmax": self._determine_tmax(default=100),
+            "tmax": self._determine_tmax(),
         }
         return context
 
@@ -1568,7 +1574,7 @@ class FFTDispersionInterface:
         component: str = "perp",
         time_window: str = "hann",
         detrend: str = "mean",
-        tmax: int = 100,
+        tmax: Optional[int] = None,
         **kwargs,
     ) -> "FFTDispersionInterface":
         """
@@ -1586,8 +1592,9 @@ class FFTDispersionInterface:
             Time-domain window function
         detrend : str, default="mean"
             Detrending method ('mean', 'initial', None)
-        tmax : int, default=100
-            Maximum number of time steps to load for speed
+        tmax : int or None, default=None
+            Maximum number of time steps to load. If None, use all available
+            timesteps unless the dataset accessor slice already limits time.
 
         Returns
         -------
