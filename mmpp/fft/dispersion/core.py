@@ -214,6 +214,7 @@ class SpinWaveAnalyzer:
         zarr_path: str | Path,
         config: Optional[DispersionConfig] = None,
         tmax: Optional[int] = None,
+        tmin: Optional[int] = None,
         slice_info: Optional[tuple] = None,
         dataset_name: Optional[str] = None,
     ):
@@ -226,15 +227,17 @@ class SpinWaveAnalyzer:
             Path to zarr simulation file
         config : DispersionConfig, optional
             Analysis configuration parameters
-        tmax : int or None, optional
-            Maximum time steps to load. If None, loads ALL available timesteps.
-            Default is None, which loads all available timesteps.
+        tmin, tmax : int or None, optional
+            Optional time-index window. ``tmin`` is the first loaded time index;
+            ``tmax`` is the exclusive stop index. If both are None, loads all
+            available timesteps.
         slice_info : tuple, optional
             Slicing information from DatasetAwareWrapper
         dataset_name : str, optional
             Name of magnetization dataset in zarr file
         """
         self.config: DispersionConfig = config or DispersionConfig()
+        self.tmin: Optional[int] = tmin if tmin is None else int(tmin)
         self.tmax: Optional[int] = tmax if tmax is None else int(tmax)
         self.slice_info: Optional[tuple] = slice_info
         self.dataset_name: Optional[str] = dataset_name
@@ -314,7 +317,7 @@ class SpinWaveAnalyzer:
                 self._M_path = path
                 self._configure_indexing(M_ref)
 
-                self.M_data = self._load_reference_data(self.tmax)
+                self.M_data = self._load_reference_data(self.tmin, self.tmax)
                 logger.info("Loaded magnetization data: shape %s", self.M_data.shape)
 
                 # Accept arrays with any last dimension (1 for single component, 3 for vector)
@@ -368,7 +371,7 @@ class SpinWaveAnalyzer:
         self._base_indexer = base_indexer
         self._time_axis_pos, self._time_axis_length = self._resolve_time_axis(base_indexer, shape)
         if self._time_axis_pos is None:
-            logger.debug("Time axis collapsed by slice; full series not available for tmax control")
+            logger.debug("Time axis collapsed by slice; full series not available for tmin/tmax control")
         else:
             logger.debug(
                 "Time axis index=%s, length=%s after applying slice", self._time_axis_pos, self._time_axis_length
@@ -428,35 +431,56 @@ class SpinWaveAnalyzer:
     def _limit_time_slice(
         self,
         base_slice: slice,
-        tmax: int,
+        tmin: Optional[int],
+        tmax: Optional[int],
         axis_length: int,
     ) -> Tuple[slice, bool]:
-        if tmax is None or tmax <= 0 or axis_length <= 0:
+        if axis_length <= 0:
             return base_slice, False
 
         start, stop, step = base_slice.indices(axis_length)
         if step <= 0:
             return base_slice, False
 
-        available = max(0, (stop - start + step - 1) // step)
-        if available <= tmax:
+        requested_start = start
+        if tmin is not None and tmin > 0:
+            requested_start = min(start + int(tmin) * step, stop)
+
+        requested_stop = stop
+        if tmax is not None:
+            if tmax <= 0:
+                return base_slice, False
+            requested_stop = min(start + int(tmax) * step, stop)
+
+        if requested_start == start and requested_stop == stop:
             return base_slice, False
 
-        new_stop = start + tmax * step
-        return slice(start, min(new_stop, stop), step), True
+        if requested_stop < requested_start:
+            requested_stop = requested_start
 
-    def _indexer_for_tmax(self, tmax: Optional[int]) -> Optional[tuple]:
+        return slice(requested_start, requested_stop, step), True
+
+    def _indexer_for_time_window(
+        self,
+        tmin: Optional[int],
+        tmax: Optional[int],
+    ) -> Optional[tuple]:
         if self._base_indexer is None or self._time_axis_pos is None or self._time_axis_length is None:
             return self._base_indexer
 
-        if tmax is None:
+        if tmin is None and tmax is None:
             return self._base_indexer
 
         base_slice = self._base_indexer[self._time_axis_pos]
         if not isinstance(base_slice, slice):
             return self._base_indexer
 
-        limited_slice, changed = self._limit_time_slice(base_slice, int(tmax), self._time_axis_length)
+        limited_slice, changed = self._limit_time_slice(
+            base_slice,
+            None if tmin is None else int(tmin),
+            None if tmax is None else int(tmax),
+            self._time_axis_length,
+        )
         if not changed:
             return self._base_indexer
 
@@ -506,11 +530,15 @@ class SpinWaveAnalyzer:
                     self.grid_spacings[axis],
                 )
 
-    def _load_reference_data(self, tmax: Optional[int]) -> np.ndarray:
+    def _load_reference_data(
+        self,
+        tmin: Optional[int],
+        tmax: Optional[int],
+    ) -> np.ndarray:
         if self._M_ref is None:
             raise ValueError("No magnetization reference available")
 
-        indexer = self._indexer_for_tmax(tmax)
+        indexer = self._indexer_for_time_window(tmin, tmax)
 
         # ── Pre-flight RAM check ──────────────────────────────
         self._check_memory(self._M_ref, indexer)
@@ -526,8 +554,9 @@ class SpinWaveAnalyzer:
         normalized = normalize_magnetization_components(data_array)
         self._loaded_time = normalized.shape[0] if normalized.ndim > 0 else 0
         logger.debug(
-            "Loaded %s time steps for dispersion analysis (requested tmax=%s)",
+            "Loaded %s time steps for dispersion analysis (requested tmin=%s, tmax=%s)",
             self._loaded_time,
+            tmin,
             tmax,
         )
         return normalized
@@ -632,16 +661,22 @@ class SpinWaveAnalyzer:
                 logger.error(msg)
                 raise MemoryError(msg)
 
-    def _ensure_data_loaded(self, tmax: Optional[int] = None) -> None:
-        """Ensure magnetization data is loaded up to requested tmax."""
-        if self.M_data is not None and (tmax is None or tmax <= self._loaded_time):
+    def _ensure_data_loaded(
+        self,
+        tmin: Optional[int] = None,
+        tmax: Optional[int] = None,
+    ) -> None:
+        """Ensure magnetization data is loaded for the requested time window."""
+        if self.M_data is not None and tmin == self.tmin and tmax == self.tmax:
             return
 
         if self._M_ref is None:
             raise ValueError("No magnetization reference available for deferred loading")
 
-        logger.info("Reloading magnetization data up to %s time steps", tmax)
-        self.M_data = self._load_reference_data(tmax)
+        logger.info("Reloading magnetization data for time window %s:%s", tmin, tmax)
+        self.M_data = self._load_reference_data(tmin, tmax)
+        self.tmin = tmin if tmin is None else int(tmin)
+        self.tmax = tmax if tmax is None else int(tmax)
 
     def _extract_grid_parameters(self) -> None:
         """Extract time step and spatial grid parameters from zarr attributes."""

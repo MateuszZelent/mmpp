@@ -2242,6 +2242,16 @@ def test_dispersion_interface_configured_tmax_controls_loaded_time_and_cache_key
     assert np.isclose(abs(short.k_axis[idx_k_short]), 3 * 2 * np.pi / (n_x * dx))
     assert np.isclose(abs(full.k_axis[idx_k_full]), 3 * 2 * np.pi / (n_x * dx))
 
+    windowed = iface.configure(
+        time_window=None,
+        detrend=None,
+        tmin=4,
+        tmax=12,
+    ).compute_1d(**compute_kwargs)
+    assert iface.analyzer.M_data.shape[0] == 8
+    assert windowed.S_raw.shape == (n_x, 8)
+    assert windowed is not short
+
 
 def test_dispersion_numpy_and_scipy_backends_match_on_synthetic_wave(tmp_path):
     pytest.importorskip("scipy")
@@ -3204,11 +3214,12 @@ def test_dispersion_interface_plot_interactive_handles_tmax_and_external_cache()
     iface = FFTDispersionInterface(
         SimpleNamespace(job_result=SimpleNamespace(path="/tmp/run.zarr"))
     )
+    iface._tmin = 20
     iface._tmax = 100
     calls = []
 
     def fake_compute_1d(**kwargs):
-        calls.append((dict(kwargs), iface._tmax, iface._cache_dir))
+        calls.append((dict(kwargs), iface._tmin, iface._tmax, iface._cache_dir))
         return result
 
     iface.compute_1d = fake_compute_1d
@@ -3216,6 +3227,7 @@ def test_dispersion_interface_plot_interactive_handles_tmax_and_external_cache()
     viewer = iface.plot.interactive(
         show=False,
         axis="x",
+        tmin=200,
         tmax=800,
         cache="/tmp/mmpp-dispersion",
         save=True,
@@ -3227,12 +3239,73 @@ def test_dispersion_interface_plot_interactive_handles_tmax_and_external_cache()
     assert calls == [
         (
             {"axis": "x", "save": True, "store_complex": False, "disk_cache": True},
+            200,
             800,
             "/tmp/mmpp-dispersion",
         )
     ]
+    assert iface._tmin == 20
     assert iface._tmax == 100
     assert iface._cache_dir is None
+    assert viewer.result._interface is not iface
+    assert viewer.result._interface._tmin == 200
+    assert viewer.result._interface._tmax == 800
+
+
+def test_dispersion_interface_plot_interactive_defaults_to_all_timesteps():
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion.interface import FFTDispersionInterface
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+    )
+    iface = FFTDispersionInterface(
+        SimpleNamespace(job_result=SimpleNamespace(path="/tmp/run.zarr"))
+    )
+    calls = []
+    events = []
+
+    def fake_compute_1d(**kwargs):
+        calls.append((dict(kwargs), iface._tmax))
+        return result
+
+    iface.compute_1d = fake_compute_1d
+
+    viewer = iface.plot.interactive(
+        show=False,
+        axis="x",
+        progress=True,
+        progress_callback=events.append,
+    )
+
+    assert viewer.result is result
+    assert calls == [
+        (
+            {
+                "axis": "x",
+                "store_complex": False,
+                "progress_callback": calls[0][0]["progress_callback"],
+            },
+            None,
+        )
+    ]
+    assert callable(calls[0][0]["progress_callback"])
+    assert iface._tmax is None
+    assert any("time_steps=all" in event["message"] for event in events)
+    assert events[0]["time_steps"] is None
+    assert events[0]["requested_tmax"] is None
 
 
 def test_dispersion_interface_plot_interactive_accepts_analitical_option():

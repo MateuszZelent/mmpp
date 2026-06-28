@@ -45,9 +45,10 @@ raw/display/cache/scaling contract.
 ## Typical Calls
 
 ```python
-disp = result.m[:100, ...].fft.dispersion
+disp = result.m.fft.dispersion
 
-# Main compute-and-view workflow. Dataset slices are preserved, so [:100, ...]
+# Main compute-and-view workflow. Without tmax or a dataset time slice, all
+# available timesteps are used. Dataset slices are preserved, so [:100, ...]
 # limits the time axis before FFT. modes=True requests S_complex for mode work.
 viewer = disp.plot.interactive(
     axis="x",
@@ -59,6 +60,10 @@ viewer = disp.plot.interactive(
     lattice_constant_nm=470,
     show=False,
 )
+
+# For a bounded compute window, use explicit sample indices:
+preview = result.m[:100, ...].fft.dispersion.plot.interactive(show=False)
+window = disp.plot.interactive(tmin=100, tmax=300, show=False)
 
 # Long-running notebook cells report progress by default before the heavy FFT
 # starts. Use progress=False for quiet batch runs or progress_callback=events.append

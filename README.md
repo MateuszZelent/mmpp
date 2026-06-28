@@ -92,8 +92,9 @@ fig = result.fft.modes.plot_modes(
 ## Dispersion (S(k, f))
 
 ```python
-# Dataset-first notebook workflow. Slices on the dataset, e.g. [:100, ...],
-# are preserved by the FFT/dispersion pipeline.
+# Dataset-first notebook workflow. Without a time slice, dispersion uses all
+# available time steps. Add [:100, ...] only when you intentionally want a
+# quick preview or workshop-sized subset.
 disp = result.m[:100, ...].fft.dispersion
 
 # Optional global config for this interface instance
@@ -101,7 +102,6 @@ disp.configure(
     dx=5e-9,
     dt=1e-12,
     component="perp",
-    tmax=800,
 )
 
 # Main interactive explorer: dispersion heatmap, analytical overlay, selected
@@ -120,6 +120,9 @@ viewer = disp.plot.interactive(
 
 # Long-running notebook cells show stage progress by default. Disable with
 # progress=False or collect events with progress_callback=events.append.
+# To limit compute time explicitly, use a dataset slice like result.m[:100, ...]
+# or pass plot.interactive(tmin=0, tmax=100). No hidden tmax limit is applied
+# by default.
 
 # Compute explicit result for reuse when you want static plots or scripts.
 res1d = disp.compute_1d(

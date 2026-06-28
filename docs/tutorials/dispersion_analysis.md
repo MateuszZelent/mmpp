@@ -7,7 +7,7 @@ extraction.
 ## Basic Interactive Workflow
 
 ```python
-disp = result.m[:100, ...].fft.dispersion
+disp = result.m.fft.dispersion
 
 viewer = disp.plot.interactive(
     axis="x",
@@ -23,9 +23,15 @@ viewer = disp.plot.interactive(
 viewer.show()
 ```
 
-The dataset slice is part of the public path. For example,
+Without an explicit time limit, the dispersion workflow uses all available time
+steps. The dataset slice is part of the public path when you want a quick
+preview or a workshop-sized subset. For example,
 `result.m[:100, ...].fft.dispersion.plot.interactive(...)` limits the time axis
-before the FFT and uses that same selection for cache keys and presets.
+before the FFT and uses that same selection for cache keys and presets. You can
+also pass `plot.interactive(tmin=0, tmax=100)` when a code-level limit is
+clearer than a dataset slice.
+For an offset window, use index semantics such as
+`plot.interactive(tmin=100, tmax=300)`.
 
 Long-running notebook cells report progress by default before and during the
 heavy compute stage. If you want a quiet script, pass `progress=False`; if you
@@ -98,9 +104,11 @@ disp.configure(
     dx=5e-9,
     dt=1e-12,
     component="perp",
-    tmax=800,
 )
 ```
+
+`configure(tmin=..., tmax=...)` is optional and explicit. Leave both as `None`
+to use all time steps selected by the dataset accessor.
 
 For reproducible runs, pin the FFT backend and workers either in code or through
 environment variables:

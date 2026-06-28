@@ -257,8 +257,8 @@ class FFTDispersionHelpAccessor:
     def configure(self) -> CallableMethodHelper:
         return self._method(
             "configure",
-            "Configure dispersion defaults (dt, dx, component, tmax).",
-            ["job[0].fft.dispersion.help.configure(component='perp', tmax=800)"],
+            "Configure dispersion defaults (dt, dx, component, tmin/tmax).",
+            ["job[0].fft.dispersion.help.configure(component='perp', tmin=0, tmax=800)"],
         )
 
     @property
@@ -318,6 +318,7 @@ class _DispersionPlotAccessor:
 
     def interactive(self, **kwargs: Any) -> Any:
         """Compute 1D dispersion and return a lightweight interactive viewer."""
+        tmin = kwargs.pop("tmin", None)
         tmax = kwargs.pop("tmax", None)
         cache = kwargs.pop("cache", None)
         progress = kwargs.pop("progress", False)
@@ -335,8 +336,10 @@ class _DispersionPlotAccessor:
         else:
             compute_kwargs.setdefault("store_complex", False)
 
-        old_tmax = self._interface._tmax
-        old_cache_dir = self._interface._cache_dir
+        old_tmin = getattr(self._interface, "_tmin", None)
+        old_tmax = getattr(self._interface, "_tmax", None)
+        old_analyzer = getattr(self._interface, "_analyzer", None)
+        old_cache_dir = getattr(self._interface, "_cache_dir", None)
         try:
             slice_label = _format_slice_for_display(
                 getattr(self._interface, "slice_info", None)
@@ -349,8 +352,12 @@ class _DispersionPlotAccessor:
             slice_steps = infer_time_length()
             if slice_steps is not None:
                 time_label = f"time_steps={slice_steps} (from slice)"
-            elif tmax is not None:
-                time_label = f"time_steps={int(tmax)} (from tmax)"
+            elif tmin is not None or tmax is not None:
+                time_label = (
+                    "time_window="
+                    f"{'' if tmin is None else int(tmin)}:"
+                    f"{'' if tmax is None else int(tmax)}"
+                )
             else:
                 determine_tmax = getattr(
                     self._interface,
@@ -373,23 +380,39 @@ class _DispersionPlotAccessor:
                     f"store_complex={compute_kwargs.get('store_complex')}"
                 ),
                 time_steps=slice_steps,
+                requested_tmin=tmin,
                 requested_tmax=tmax,
             )
+            if tmin is not None:
+                self._interface._tmin = int(tmin)
             if tmax is not None:
                 self._interface._tmax = int(tmax)
+            if tmin is not None or tmax is not None:
+                self._interface._analyzer = None
             if cache is not None:
                 self._interface._cache_dir = str(cache)
                 compute_kwargs.setdefault("disk_cache", True)
             if progress_reporter.enabled:
                 compute_kwargs["progress_callback"] = progress_reporter.emit
             result = self._interface.compute_1d(**compute_kwargs)
-            result._interface = self._interface
+            result_interface = self._interface
+            try:
+                result_interface = self._interface.clone_for_dataset(
+                    getattr(self._interface, "dataset_name", None),
+                    getattr(self._interface, "slice_info", None),
+                )
+                result_interface._analyzer = getattr(self._interface, "_analyzer", None)
+            except Exception:
+                result_interface = self._interface
+            result._interface = result_interface
             progress_reporter.emit(
                 stage="result",
                 message=f"dispersion result ready shape={getattr(result, 'shape', '?')}",
             )
         finally:
+            self._interface._tmin = old_tmin
             self._interface._tmax = old_tmax
+            self._interface._analyzer = old_analyzer
             self._interface._cache_dir = old_cache_dir
         progress_reporter.emit(stage="viewer", message="building interactive viewer")
         show_requested = bool(viewer_kwargs.pop("show", True))
@@ -492,7 +515,7 @@ class _DispersionPlotAccessor:
                             [
                                 ("disk_cache=False", NODE_COLOR_UTIL),
                                 ("store_complex=True", NODE_COLOR_UTIL),
-                                ("tmax=...", NODE_COLOR_UTIL),
+                                ("tmin=..., tmax=...", NODE_COLOR_UTIL),
                             ],
                         ),
                     ]
@@ -531,6 +554,7 @@ class FFTDispersionInterface:
         self.slice_info = slice_info
         self._analyzer = None
         self._config = None
+        self._tmin: Optional[int] = None
         self._tmax: Optional[int] = None
         self._memory_cache: dict[str, DispersionResult1D] = {}
         self._filters_config: Optional[dict[str, Any]] = None
@@ -582,6 +606,7 @@ class FFTDispersionInterface:
             slice_info=slice_info,
         )
         clone._config = self._config
+        clone._tmin = self._tmin
         clone._tmax = self._tmax
         clone._memory_cache = self._memory_cache
         clone._filters_config = copy.deepcopy(self._filters_config)
@@ -617,6 +642,7 @@ class FFTDispersionInterface:
             self._analyzer = SpinWaveAnalyzer(
                 zarr_path,
                 config=config,
+                tmin=self._determine_tmin(),
                 tmax=effective_tmax,
                 slice_info=self.slice_info,
                 dataset_name=self.dataset_name,
@@ -774,6 +800,14 @@ class FFTDispersionInterface:
 
         return modes
 
+    def _determine_tmin(self) -> Optional[int]:
+        """Determine first loaded time index for non-sliced data."""
+        if self.slice_info is not None:
+            return None
+        if self._tmin is None:
+            return None
+        return int(self._tmin)
+
     def _determine_tmax(self, default: Optional[int] = None) -> Optional[int]:
         """
         Determine number of time steps to load based on config and slicing.
@@ -800,7 +834,7 @@ class FFTDispersionInterface:
 
         # slice_length is None - could be two cases:
         # A) User used [:] (slice with no stop) → wants ALL timesteps → return None
-        # B) No slice at all (slice_info is None) → wants default optimization → use tmax
+        # B) No slice at all (slice_info is None) → use configured tmax if set
 
         if self.slice_info is not None:
             # Case A: User DID provide a slice, but it's [:] (no stop)
@@ -914,6 +948,7 @@ class FFTDispersionInterface:
             "kwargs": self._serialize_for_json(extra_kwargs),
             "job_name": getattr(self.parent_fft.job_result, "name", None),
             "zarr_path": str(self.parent_fft.job_result.path),
+            "tmin": self._determine_tmin(),
             "tmax": self._determine_tmax(),
         }
         return context
@@ -1574,6 +1609,7 @@ class FFTDispersionInterface:
         component: str = "perp",
         time_window: str = "hann",
         detrend: str = "mean",
+        tmin: Optional[int] = None,
         tmax: Optional[int] = None,
         **kwargs,
     ) -> "FFTDispersionInterface":
@@ -1592,6 +1628,9 @@ class FFTDispersionInterface:
             Time-domain window function
         detrend : str, default="mean"
             Detrending method ('mean', 'initial', None)
+        tmin : int or None, default=None
+            First time index to load for unsliced datasets. Ignored when the
+            dataset accessor already specifies a time slice.
         tmax : int or None, default=None
             Maximum number of time steps to load. If None, use all available
             timesteps unless the dataset accessor slice already limits time.
@@ -1617,6 +1656,7 @@ class FFTDispersionInterface:
 
         config_params.update(kwargs)
         self._config = DispersionConfig(**config_params)
+        self._tmin = tmin
         self._tmax = tmax
 
         # Reset analyzer to use new config
