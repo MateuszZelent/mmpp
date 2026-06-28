@@ -18,6 +18,34 @@ def _scaled_k_axis(k_axis: Any, kscale: str) -> tuple[Any, str]:
     return k_axis, "k [rad/m]"
 
 
+def _display_k_xlim(explorer: Any, k_plot: Any) -> tuple[float, float] | None:
+    """Return display-space k limits for the interactive heatmap."""
+    explicit = getattr(explorer, "options", {}).get("k_xlim")
+    if explicit is not None:
+        try:
+            lo, hi = explicit
+            return float(lo), float(hi)
+        except (TypeError, ValueError):
+            logger.debug("Ignoring invalid k_xlim=%r", explicit)
+
+    if str(explorer.state.kscale) != "rad_um":
+        return None
+
+    try:
+        data_lo = float(np.nanmin(k_plot))
+        data_hi = float(np.nanmax(k_plot))
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(data_lo) or not np.isfinite(data_hi) or data_lo >= data_hi:
+        return None
+
+    lo = max(data_lo, -10.0)
+    hi = min(data_hi, 10.0)
+    if lo >= hi:
+        return None
+    return lo, hi
+
+
 def _norm(explorer: Any, spectrum: Any) -> Any:
     if not bool(explorer.state.lognorm):
         return None
@@ -235,6 +263,9 @@ def draw_dispersion_panel(explorer: Any) -> None:
     if np.any(f_mask):
         spectrum = spectrum[:, f_mask]
         f_axis = f_axis[f_mask]
+    else:
+        spectrum = spectrum[:, :0]
+        f_axis = f_axis[:0]
 
     k_plot, k_label = _scaled_k_axis(k_axis, str(explorer.state.kscale))
     f_plot = f_axis / 1e9
@@ -256,6 +287,10 @@ def draw_dispersion_panel(explorer: Any) -> None:
         norm=_norm(explorer, spectrum),
     )
     explorer._image = image
+
+    k_xlim = _display_k_xlim(explorer, k_plot)
+    if k_xlim is not None:
+        ax.set_xlim(*k_xlim)
 
     if explorer.state.show_flags and explorer.state.show_flags.get("grid", True):
         if hasattr(ax, "grid"):
@@ -303,5 +338,14 @@ def refresh_output_widget(explorer: Any) -> None:
         return
     output.clear_output(wait=False)
     if explorer.figure is not None:
-        explorer.figure.canvas.draw()
-        output.append_display_data(explorer.figure)
+        try:
+            explorer.figure.canvas.draw_idle()
+        except Exception:
+            pass
+        try:
+            from IPython.display import display
+
+            with output:
+                display(explorer.figure)
+        except Exception:
+            output.append_display_data(explorer.figure)

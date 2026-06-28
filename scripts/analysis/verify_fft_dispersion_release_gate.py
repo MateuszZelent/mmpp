@@ -131,7 +131,7 @@ def _make_headless_viewer_state() -> dict[str, Any]:
     }
 
 
-def _run_viewer_display_lifecycle_smoke() -> bool:
+def _run_viewer_display_lifecycle_smoke() -> dict[str, Any]:
     """Exercise explicit show/close outside the headless import measurement."""
     from mmpp.fft.dispersion._interactive_viewer import DispersionInteractiveViewer
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
@@ -149,17 +149,31 @@ def _run_viewer_display_lifecycle_smoke() -> bool:
     lifecycle = DispersionInteractiveViewer.from_result(result, show=False)
     lifecycle.show()
     shown = lifecycle.show_requested is True
+    figure_after_show = getattr(lifecycle, "_figure", None) is not None
+    axes_after_show = getattr(lifecycle, "_axes", None) is not None
+    widget_status_after_show = getattr(lifecycle, "_widget_status", "")
     lifecycle.close()
-    return shown and lifecycle.show_requested is False and lifecycle._display_handle is None
+    return {
+        "shown": shown,
+        "closed": lifecycle.show_requested is False
+        and lifecycle._display_handle is None,
+        "figure_after_show": figure_after_show,
+        "axes_after_show": axes_after_show,
+        "widget_status_after_show": widget_status_after_show,
+    }
 
 
 def _viewer_status(viewer_state: dict[str, Any]) -> dict[str, Any]:
     selection = viewer_state.get("export_selection", {})
+    lifecycle = viewer_state.get("display_lifecycle") or {}
     checks = {
         "viewer_headless": viewer_state.get("show") is False,
         "positive_frequencies": viewer_state.get("positive_frequencies") is True,
         "preset_roundtrip": viewer_state.get("preset_roundtrip") is True,
-        "display_lifecycle": viewer_state.get("display_lifecycle") is True,
+        "display_lifecycle": lifecycle.get("shown") is True
+        and lifecycle.get("closed") is True,
+        "lazy_show_no_initial_figure": lifecycle.get("figure_after_show") is False
+        and lifecycle.get("axes_after_show") is False,
         "export_selection": selection.get("source") == "release_gate"
         and selection.get("marker") == [1.0, 2.0],
     }
@@ -808,6 +822,7 @@ def run_release_gate(
     if viewer_status.get("status") == "failed":
         masterplan_failure_details["headless_viewer"] = {
             "failures": viewer_status.get("failures", []),
+            "display_lifecycle": viewer_state.get("display_lifecycle", {}),
         }
     if mode_viewers_status.get("status") == "failed":
         masterplan_failure_details["mode_viewers"] = {

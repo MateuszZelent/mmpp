@@ -48,6 +48,7 @@ INTERACTIVE_VIEWER_KEYS = {
     "f_units",
     "fmin",
     "fmax",
+    "k_xlim",
     "initial_render",
     "auto_render",
     "lognorm",
@@ -256,7 +257,7 @@ class DispersionInteractiveViewer:
             # the heatmap with the visible Render / refresh dispersion button.
             # Callers that accept the backend risk can still request the old
             # eager behavior with ``initial_render=True``.
-            initial_render = bool(self.options.get("initial_render", False))
+            initial_render = bool(self.options.get("initial_render", True))
             widget = self._build_widget(
                 display,
                 defer_initial_render=not initial_render,

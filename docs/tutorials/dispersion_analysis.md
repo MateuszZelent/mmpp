@@ -144,7 +144,10 @@ interactive-dispersion plan; if the gate fails, `masterplan_failures` lists the
 failed contract groups first, and `masterplan_failure_details` gives the
 concrete failed checks or observed values. Use `recommended_next_steps` as the
 short repair checklist for the failed contract groups. `--summary-only` keeps
-stdout compact while `--output` still writes the full JSON report.
+stdout compact while `--output` still writes the full JSON report. The
+`headless_viewer` contract also guards the kernel-safe startup path: `.show()`
+must not create a Matplotlib figure until the user explicitly renders the
+heatmap.
 
 ## Filtering Pipeline
 
