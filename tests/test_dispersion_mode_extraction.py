@@ -3475,6 +3475,12 @@ def test_dispersion_interactive_display_change_syncs_analytical_overlay_options(
             "analytical_sw_config": Control("DE"),
             "analytical_n_modes": Control(2),
             "analytical_k_points": Control(512),
+            "analytical_B": Control(0.08),
+            "analytical_Ms": Control(800e3),
+            "analytical_Aex": Control(13e-12),
+            "analytical_d": Control(30e-9),
+            "analytical_phi": Control(0.15),
+            "analytical_D": Control(1.2e-3),
         },
         draw=lambda: None,
         redraw=lambda: None,
@@ -3488,11 +3494,23 @@ def test_dispersion_interactive_display_change_syncs_analytical_overlay_options(
         "sw_config": "DE",
         "n_modes": 2,
         "k_points": 512,
+        "B": 0.08,
+        "Ms": 800e3,
+        "Aex": 13e-12,
+        "d": 30e-9,
+        "phi": 0.15,
+        "D": 1.2e-3,
     }
     assert explorer.options["analytical"] == "DE"
     assert explorer.options["analytical_model"] == "kalinikos"
     assert explorer.options["analytical_n_modes"] == 2
     assert explorer.options["analytical_k_points"] == 512
+    assert explorer.options["B"] == 0.08
+    assert explorer.options["Ms"] == 800e3
+    assert explorer.options["Aex"] == 13e-12
+    assert explorer.options["d"] == 30e-9
+    assert explorer.options["analytical_phi"] == 0.15
+    assert explorer.options["analytical_D"] == 1.2e-3
 
 
 def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
@@ -3553,6 +3571,12 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
                 "sw_config": "BV",
                 "n_modes": 2,
                 "k_points": 512,
+                "B": 0.09,
+                "Ms": 900e3,
+                "Aex": 12e-12,
+                "d": 25e-9,
+                "phi": 0.25,
+                "D": 0.8e-3,
             }
         ),
         controls={},
@@ -3566,4 +3590,219 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
     assert explorer.controls["analytical_model"].value == "kalinikos"
     assert explorer.controls["analytical_n_modes"].value == 2.0
     assert explorer.controls["analytical_k_points"].value == 512.0
+    assert explorer.controls["analytical_B"].value == "0.09"
+    assert explorer.controls["analytical_Ms"].value == "900000.0"
+    assert explorer.controls["analytical_Aex"].value == "1.2e-11"
+    assert explorer.controls["analytical_d"].value == "2.5e-08"
+    assert explorer.controls["analytical_phi"].value == "0.25"
+    assert explorer.controls["analytical_D"].value == "0.0008"
     assert explorer.controls["tabs"].titles[2] == "Analytical"
+
+
+def test_dispersion_interactive_export_selection_uses_widget_state_for_mode_request():
+    import types
+
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+        S_complex=np.ones((n_k, n_f), dtype=np.complex128),
+    )
+    viewer = result.plot.interactive(show=False, modes=True)
+    viewer._widget_engine = types.SimpleNamespace(
+        state=types.SimpleNamespace(
+            selected_k=np.float64(2.5e6),
+            selected_f=np.float64(3.25e9),
+            selected_power=np.float32(4.5),
+        )
+    )
+
+    exported = viewer.export_selection()
+
+    assert exported["selection"] == {
+        "source": "widget",
+        "k_rad_per_m": 2.5e6,
+        "k_rad_um": 2.5,
+        "f_hz": 3.25e9,
+        "f_ghz": 3.25,
+        "power": 4.5,
+    }
+    assert exported["mode_request"] == {
+        "available": True,
+        "k_rad_um": 2.5,
+        "f_ghz": 3.25,
+        "z_layer": 0,
+        "component": "perp",
+        "reason": "",
+    }
+    json.dumps(exported)
+
+
+def test_dispersion_interactive_mode_at_selection_extracts_selected_mode():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    idx_k = n_k // 2 + 1
+    idx_f = n_f // 2 + 1
+    S_complex = np.zeros((n_k, n_f), dtype=np.complex128)
+    S_complex[idx_k, idx_f] = 5.0 + 1.0j
+    result = DispersionResult1D(
+        S=np.abs(S_complex) ** 2,
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+        S_complex=S_complex,
+    )
+    viewer = result.plot.interactive(show=False, modes=True)
+
+    mode = viewer.mode_at_selection(
+        k_rad_um=float(k_axis[idx_k]) / 1e6,
+        f_ghz=float(f_axis[idx_f]) / 1e9,
+        z_layer=2,
+        component="z",
+    )
+
+    assert mode.mode_data == S_complex[idx_k, idx_f]
+    assert mode.z_layer == 2
+    assert mode.component == "z"
+
+
+def test_dispersion_interactive_mode_request_reports_unavailable_without_complex_data():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+    )
+    viewer = result.plot.interactive(show=False, modes=True)
+
+    exported = viewer.export_selection(k_rad_um=1.0, f_ghz=2.0)
+
+    assert exported["mode_request"]["available"] is False
+    assert "S_complex" in exported["mode_request"]["reason"]
+    with pytest.raises(ValueError, match="S_complex"):
+        viewer.mode_at_selection(k_rad_um=1.0, f_ghz=2.0)
+
+
+def test_dispersion_interactive_modes_panel_extracts_current_selection(monkeypatch, tmp_path):
+    import types
+
+    from mmpp.fft.dispersion._interactive import widgets as toolbar_widgets
+    from mmpp.fft.dispersion._interactive.callbacks import on_mode_extract
+    from mmpp.fft.dispersion._interactive.state import DispersionExplorerState
+
+    class FakeWidget:
+        def __init__(self, *children, **kwargs):
+            self.children = tuple(children)
+            self.kwargs = kwargs
+            self.value = kwargs.get("value")
+            self.description = kwargs.get("description", "")
+            self.options = kwargs.get("options", [])
+            self._observers = []
+            self._clicks = []
+
+        def observe(self, callback, names=None):
+            self._observers.append((callback, names))
+
+        def on_click(self, callback):
+            self._clicks.append(callback)
+
+    class FakeTab(FakeWidget):
+        def __init__(self, *children, **kwargs):
+            super().__init__(*children, **kwargs)
+            self.titles = {}
+
+        def set_title(self, index, title):
+            self.titles[index] = title
+
+    fake_widgets = types.SimpleNamespace(
+        FloatText=FakeWidget,
+        Dropdown=FakeWidget,
+        Checkbox=FakeWidget,
+        HTML=FakeWidget,
+        Output=FakeWidget,
+        Text=FakeWidget,
+        Button=FakeWidget,
+        VBox=lambda children=(), **kwargs: FakeWidget(*children, **kwargs),
+        HBox=lambda children=(), **kwargs: FakeWidget(*children, **kwargs),
+        Tab=FakeTab,
+    )
+    monkeypatch.setattr(toolbar_widgets, "draw_dispersion_panel", lambda explorer: None)
+    monkeypatch.setattr(toolbar_widgets, "refresh_output_widget", lambda explorer: None)
+    monkeypatch.setattr(toolbar_widgets, "set_status", lambda *args, **kwargs: None)
+
+    extracted = []
+
+    class FakeResult:
+        f_axis = []
+        component = "perp"
+        S_complex = object()
+
+        class modes:
+            @staticmethod
+            def at(k_rad_um, f_ghz, *, z_layer=0, component=None):
+                extracted.append(
+                    {
+                        "k_rad_um": k_rad_um,
+                        "f_ghz": f_ghz,
+                        "z_layer": z_layer,
+                        "component": component,
+                    }
+                )
+                return types.SimpleNamespace(
+                    k_rad_um=k_rad_um,
+                    f_ghz=f_ghz,
+                    z_layer=z_layer,
+                    component=component,
+                    mode_data=[1, 2, 3],
+                )
+
+    explorer = types.SimpleNamespace(
+        result=FakeResult(),
+        options={"can_reconstruct_modes": True, "mode_components": ["z", "+"]},
+        state=DispersionExplorerState(),
+        controls={},
+        _presets_dir=tmp_path,
+        last_mode=None,
+    )
+    explorer.state.selected_k = 2.25e6
+    explorer.state.selected_f = 4.5e9
+
+    toolbar_widgets.build_toolbar(explorer, fake_widgets)
+    explorer.controls["mode_component"].value = "z"
+    explorer.controls["mode_z_layer"].value = 2
+
+    on_mode_extract(explorer)
+
+    assert explorer.controls["tabs"].titles[3] == "Modes"
+    assert extracted == [
+        {"k_rad_um": 2.25, "f_ghz": 4.5, "z_layer": 2, "component": "z"}
+    ]
+    assert explorer.last_mode.component == "z"
+    assert "k=2.25 rad/um" in explorer.controls["mode_info"].value
+    assert "f=4.5 GHz" in explorer.controls["mode_info"].value

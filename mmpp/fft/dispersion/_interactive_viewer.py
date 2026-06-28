@@ -269,7 +269,7 @@ class DispersionInteractiveViewer:
 
     def diagnostics(self) -> dict[str, Any]:
         """Return runtime diagnostics for notebook/backend troubleshooting."""
-        if self._widget_engine is not None:
+        if self._widget_engine is not None and hasattr(self._widget_engine, "diagnostics"):
             return json_safe(self._widget_engine.diagnostics())
         return {
             "toolbar_enabled": False,
@@ -280,10 +280,93 @@ class DispersionInteractiveViewer:
 
     def export_selection(self, **selection: Any) -> dict[str, Any]:
         """Return a JSON-serializable snapshot of viewer state and selection."""
+        selection_payload = (
+            self._widget_selection_payload() if not selection else dict(selection)
+        )
+        normalized_selection = self._normalized_selection(selection_payload)
         return {
             "viewer": self.state,
-            "selection": json_safe(selection),
+            "selection": json_safe(selection_payload),
+            "mode_request": json_safe(self._mode_request(normalized_selection)),
         }
+
+    def mode_at_selection(self, **selection: Any) -> Any:
+        """Extract the dispersion mode at the selected ``(k, f)`` point."""
+        selection_payload = self._normalized_selection(selection)
+        mode_request = self._mode_request(selection_payload)
+        if not mode_request.get("available", False):
+            raise ValueError(str(mode_request.get("reason") or "Mode selection unavailable."))
+        return self.result.modes.at(
+            k_rad_um=float(mode_request["k_rad_um"]),
+            f_ghz=float(mode_request["f_ghz"]),
+            z_layer=int(mode_request.get("z_layer", 0)),
+            component=mode_request.get("component"),
+        )
+
+    def _normalized_selection(self, selection: dict[str, Any]) -> dict[str, Any]:
+        """Merge explicit selection kwargs with the live widget selection."""
+        payload = dict(selection or self._widget_selection_payload())
+        if "k_rad_um" not in payload and "k_rad_per_m" in payload:
+            payload["k_rad_um"] = float(payload["k_rad_per_m"]) / 1e6
+        if "k_rad_per_m" not in payload and "k_rad_um" in payload:
+            payload["k_rad_per_m"] = float(payload["k_rad_um"]) * 1e6
+        if "f_ghz" not in payload and "f_hz" in payload:
+            payload["f_ghz"] = float(payload["f_hz"]) / 1e9
+        if "f_hz" not in payload and "f_ghz" in payload:
+            payload["f_hz"] = float(payload["f_ghz"]) * 1e9
+        return payload
+
+    def _widget_selection_payload(self) -> dict[str, Any]:
+        """Return the live widget selection in both renderer and mode units."""
+        payload: dict[str, Any] = {}
+        if self._widget_engine is None:
+            return payload
+        state = getattr(self._widget_engine, "state", None)
+        selected_k = getattr(state, "selected_k", None)
+        selected_f = getattr(state, "selected_f", None)
+        selected_power = getattr(state, "selected_power", None)
+        if selected_k is not None or selected_f is not None:
+            payload["source"] = "widget"
+        if selected_k is not None:
+            k_rad_per_m = float(selected_k)
+            payload["k_rad_per_m"] = k_rad_per_m
+            payload["k_rad_um"] = k_rad_per_m / 1e6
+        if selected_f is not None:
+            f_hz = float(selected_f)
+            payload["f_hz"] = f_hz
+            payload["f_ghz"] = f_hz / 1e9
+        if selected_power is not None:
+            payload["power"] = float(selected_power)
+        return payload
+
+    def _mode_request(self, selection: dict[str, Any]) -> dict[str, Any]:
+        """Build a serializable request for mode reconstruction."""
+        k_rad_um = selection.get("k_rad_um")
+        f_ghz = selection.get("f_ghz")
+        component = selection.get("component", getattr(self.result, "component", None))
+        request = {
+            "available": False,
+            "k_rad_um": None,
+            "f_ghz": None,
+            "z_layer": int(selection.get("z_layer", 0)),
+            "component": component,
+            "reason": "",
+        }
+        if k_rad_um is None or f_ghz is None:
+            request["reason"] = "Select a dispersion point with k and f first."
+            return request
+        request["k_rad_um"] = float(k_rad_um)
+        request["f_ghz"] = float(f_ghz)
+        if not self.can_reconstruct_modes:
+            request["reason"] = self.mode_unavailable_reason or (
+                "Mode reconstruction requires S_complex."
+            )
+            return request
+        if getattr(self.result, "S_complex", None) is None:
+            request["reason"] = "Mode reconstruction requires S_complex."
+            return request
+        request["available"] = True
+        return request
 
     def save_preset(self, path: str | Path) -> Path:
         """Persist lightweight viewer state to a JSON preset file."""

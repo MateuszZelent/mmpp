@@ -8,6 +8,10 @@ from .rendering import draw_dispersion_panel, refresh_output_widget
 from .status import set_status
 
 
+_ANALYTICAL_MATERIAL_KEYS = ("B", "Ms", "Aex", "d", "Ku", "Kc1", "Kc2", "phi_ani", "g")
+_ANALYTICAL_MAPPED_MATERIAL_KEYS = {"phi": "analytical_phi", "D": "analytical_D"}
+
+
 def _positive_int(value: Any, default: int) -> int:
     """Convert widget numeric values to a positive integer."""
     try:
@@ -15,6 +19,16 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(1, converted)
+
+
+def _optional_float(value: Any) -> float | None:
+    """Convert optional widget numeric values to float."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def sync_analytical_options(explorer: Any) -> None:
@@ -27,6 +41,14 @@ def sync_analytical_options(explorer: Any) -> None:
         "n_modes": _positive_int(analytical.get("n_modes"), 1),
         "k_points": _positive_int(analytical.get("k_points"), 500),
     }
+    for key in _ANALYTICAL_MATERIAL_KEYS:
+        value = _optional_float(analytical.get(key))
+        if value is not None:
+            normalized[key] = value
+    for key in _ANALYTICAL_MAPPED_MATERIAL_KEYS:
+        value = _optional_float(analytical.get(key))
+        if value is not None:
+            normalized[key] = value
     explorer.state.analytical = normalized
 
     options = getattr(explorer, "options", None)
@@ -36,6 +58,12 @@ def sync_analytical_options(explorer: Any) -> None:
     options["analytical_model"] = normalized["model"]
     options["analytical_n_modes"] = normalized["n_modes"]
     options["analytical_k_points"] = normalized["k_points"]
+    for key in _ANALYTICAL_MATERIAL_KEYS:
+        if key in normalized:
+            options[key] = normalized[key]
+    for key, target_key in _ANALYTICAL_MAPPED_MATERIAL_KEYS.items():
+        if key in normalized:
+            options[target_key] = normalized[key]
 
 
 def _update_analytical_state_from_controls(explorer: Any) -> None:
@@ -46,6 +74,17 @@ def _update_analytical_state_from_controls(explorer: Any) -> None:
         "analytical_sw_config",
         "analytical_n_modes",
         "analytical_k_points",
+        "analytical_B",
+        "analytical_Ms",
+        "analytical_Aex",
+        "analytical_d",
+        "analytical_Ku",
+        "analytical_Kc1",
+        "analytical_Kc2",
+        "analytical_phi",
+        "analytical_phi_ani",
+        "analytical_D",
+        "analytical_g",
     }
     if not any(key in controls for key in analytical_keys):
         return
@@ -61,6 +100,18 @@ def _update_analytical_state_from_controls(explorer: Any) -> None:
         analytical["n_modes"] = _positive_int(controls["analytical_n_modes"].value, 1)
     if "analytical_k_points" in controls:
         analytical["k_points"] = _positive_int(controls["analytical_k_points"].value, 500)
+    for key in _ANALYTICAL_MATERIAL_KEYS:
+        control_key = f"analytical_{key}"
+        if control_key in controls:
+            value = _optional_float(controls[control_key].value)
+            if value is not None:
+                analytical[key] = value
+    for key in _ANALYTICAL_MAPPED_MATERIAL_KEYS:
+        control_key = f"analytical_{key}"
+        if control_key in controls:
+            value = _optional_float(controls[control_key].value)
+            if value is not None:
+                analytical[key] = value
     explorer.state.analytical = analytical
 
 
@@ -89,6 +140,84 @@ def on_display_change(explorer: Any) -> None:
             f"range={explorer.state.fmin_ghz:.4g}.."
             f"{explorer.state.fmax_ghz:.4g} GHz, "
             f"source={explorer.state.source}, k={explorer.state.kscale}"
+        ),
+        color="#0F766E",
+    )
+
+
+def _selected_mode_request_from_explorer(explorer: Any) -> dict[str, Any]:
+    """Build a mode reconstruction request from the current heatmap selection."""
+    selected_k = getattr(explorer.state, "selected_k", None)
+    selected_f = getattr(explorer.state, "selected_f", None)
+    request = {
+        "available": False,
+        "k_rad_um": None,
+        "f_ghz": None,
+        "z_layer": 0,
+        "component": getattr(explorer.result, "component", None),
+        "reason": "",
+    }
+    controls = getattr(explorer, "controls", {})
+    if "mode_z_layer" in controls:
+        try:
+            request["z_layer"] = max(0, int(float(controls["mode_z_layer"].value)))
+        except (TypeError, ValueError):
+            request["z_layer"] = 0
+    if "mode_component" in controls:
+        request["component"] = str(controls["mode_component"].value)
+    if selected_k is None or selected_f is None:
+        request["reason"] = "Select a point on S(k, f) first."
+        return request
+    request["k_rad_um"] = float(selected_k) / 1e6
+    request["f_ghz"] = float(selected_f) / 1e9
+    if getattr(explorer.result, "S_complex", None) is None:
+        request["reason"] = "Mode reconstruction requires S_complex."
+        return request
+    request["available"] = True
+    return request
+
+
+def on_mode_extract(explorer: Any) -> None:
+    """Extract a mode for the currently selected dispersion point."""
+    request = _selected_mode_request_from_explorer(explorer)
+    if not request["available"]:
+        if "mode_info" in explorer.controls:
+            explorer.controls["mode_info"].value = (
+                f"<small>{request['reason']}</small>"
+            )
+        set_status(explorer, str(request["reason"]), color="crimson")
+        return
+
+    try:
+        mode = explorer.result.modes.at(
+            k_rad_um=float(request["k_rad_um"]),
+            f_ghz=float(request["f_ghz"]),
+            z_layer=int(request["z_layer"]),
+            component=request["component"],
+        )
+    except Exception as exc:
+        if "mode_info" in explorer.controls:
+            explorer.controls["mode_info"].value = (
+                f"<small>Mode extraction failed: {type(exc).__name__}: {exc}</small>"
+            )
+        set_status(explorer, f"Mode extraction failed: {exc}", color="crimson")
+        return
+
+    explorer.last_mode = mode
+    if "mode_info" in explorer.controls:
+        explorer.controls["mode_info"].value = (
+            "<small>"
+            f"k={float(request['k_rad_um']):.4g} rad/um, "
+            f"f={float(request['f_ghz']):.4g} GHz, "
+            f"component={request['component']}, "
+            f"z_layer={int(request['z_layer'])}"
+            "</small>"
+        )
+    set_status(
+        explorer,
+        (
+            f"mode extracted at k={float(request['k_rad_um']):.4g} rad/um, "
+            f"f={float(request['f_ghz']):.4g} GHz"
         ),
         color="#0F766E",
     )

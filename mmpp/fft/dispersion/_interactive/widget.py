@@ -31,6 +31,7 @@ class DispersionHeatmapWidget:
         self._presets_dir = None
         self._click_connection = None
         self._image = None
+        self.last_mode: Any = None
 
     def build(self, display_func: Any, *, toolbar: bool | str = "auto") -> Any:
         """Create figure, controls, callbacks, and initial heatmap."""
@@ -142,6 +143,10 @@ class DispersionHeatmapWidget:
             "analytical_n_modes": analytical.get("n_modes", 1),
             "analytical_k_points": analytical.get("k_points", 500),
         }
+        for material_key in ("B", "Ms", "Aex", "d", "phi", "D"):
+            control_key = f"analytical_{material_key}"
+            if material_key in analytical:
+                analytical_mapping[control_key] = str(analytical[material_key])
         for key, value in analytical_mapping.items():
             if key in self.controls:
                 self.controls[key].value = value
@@ -214,7 +219,7 @@ class DispersionHeatmapWidget:
             sw_config = raw
         if sw_config is None:
             sw_config = "DE"
-        return {
+        analytical = {
             "enabled": enabled,
             "model": str(
                 raw_options.get("model")
@@ -233,3 +238,14 @@ class DispersionHeatmapWidget:
                 or 500
             ),
         }
+        for key in ("B", "Ms", "Aex", "d", "Ku", "Kc1", "Kc2", "phi_ani", "g"):
+            if key in raw_options:
+                analytical[key] = raw_options[key]
+            elif key in self.options:
+                analytical[key] = self.options[key]
+        for key, option_key in {"phi": "analytical_phi", "D": "analytical_D"}.items():
+            if key in raw_options:
+                analytical[key] = raw_options[key]
+            elif option_key in self.options:
+                analytical[key] = self.options[option_key]
+        return analytical

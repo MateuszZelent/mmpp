@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .callbacks import on_display_change, sync_analytical_options
+from .callbacks import on_display_change, on_mode_extract, sync_analytical_options
 from .presets import list_presets, load_preset, save_preset
 from .rendering import draw_dispersion_panel, refresh_output_widget
 from .status import set_status
@@ -143,7 +143,49 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         description="k points",
         **_maybe_layout(widgets, width="100%"),
     )
+    material_defaults = {
+        "B": ("B [T]", None),
+        "Ms": ("Ms [A/m]", None),
+        "Aex": ("Aex [J/m]", None),
+        "d": ("d [m]", None),
+        "phi": ("phi [rad]", None),
+        "D": ("D [J/m2]", None),
+    }
+    material_text_cls = getattr(widgets, "Text", None)
+    material_cls = material_text_cls if material_text_cls is not None else widgets.FloatText
+    for key, (description, default_value) in material_defaults.items():
+        value = analytical.get(key, default_value)
+        controls[f"analytical_{key}"] = material_cls(
+            value="" if value is None else str(value),
+            description=description,
+            **_maybe_layout(widgets, width="100%"),
+        )
     controls["selection_info"] = widgets.HTML(value="<small>No point selected</small>")
+    mode_components = list(explorer.options.get("mode_components") or [])
+    result_component = getattr(explorer.result, "component", None)
+    if result_component and result_component not in mode_components:
+        mode_components.insert(0, str(result_component))
+    if not mode_components:
+        mode_components = ["perp", "x", "y", "z", "+", "-"]
+    controls["mode_component"] = widgets.Dropdown(
+        options=mode_components,
+        value=mode_components[0],
+        description="component",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["mode_z_layer"] = widgets.FloatText(
+        value=float(explorer.options.get("z_layer", 0)),
+        description="z layer",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["mode_extract"] = (
+        button_cls(description="Extract selected mode", **_maybe_layout(widgets, width="100%"))
+        if (button_cls := getattr(widgets, "Button", None)) is not None
+        else widgets.HTML(value="")
+    )
+    controls["mode_info"] = widgets.HTML(
+        value="<small>Select a point on S(k, f), then extract a mode.</small>"
+    )
     controls["status"] = widgets.HTML(value="")
     controls["status_log"] = widgets.HTML(
         value=(
@@ -204,6 +246,12 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         "analytical_model",
         "analytical_n_modes",
         "analytical_k_points",
+        "analytical_B",
+        "analytical_Ms",
+        "analytical_Aex",
+        "analytical_d",
+        "analytical_phi",
+        "analytical_D",
     ]:
         if hasattr(controls[key], "observe"):
             controls[key].observe(lambda _change=None: on_display_change(explorer), names="value")
@@ -212,6 +260,8 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         controls["preset_save"].on_click(lambda _btn: _save_current_preset(explorer))
     if hasattr(controls["preset_load"], "on_click"):
         controls["preset_load"].on_click(lambda _btn: _load_selected_preset(explorer))
+    if hasattr(controls["mode_extract"], "on_click"):
+        controls["mode_extract"].on_click(lambda _btn: on_mode_extract(explorer))
 
     display_tab = widgets.VBox(
         [
@@ -241,6 +291,21 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
             controls["analytical_model"],
             controls["analytical_n_modes"],
             controls["analytical_k_points"],
+            controls["analytical_B"],
+            controls["analytical_Ms"],
+            controls["analytical_Aex"],
+            controls["analytical_d"],
+            controls["analytical_phi"],
+            controls["analytical_D"],
+        ],
+        **_maybe_layout(widgets, width="100%"),
+    )
+    modes_tab = widgets.VBox(
+        [
+            controls["mode_component"],
+            controls["mode_z_layer"],
+            controls["mode_extract"],
+            controls["mode_info"],
         ],
         **_maybe_layout(widgets, width="100%"),
     )
@@ -256,15 +321,16 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     tab_cls = getattr(widgets, "Tab", None)
     if tab_cls is not None:
         tabs = tab_cls(
-            children=[display_tab, overlays_tab, analytical_tab],
+            children=[display_tab, overlays_tab, analytical_tab, modes_tab],
             selected_index=0,
             **_maybe_layout(widgets, width="100%"),
         )
         tabs.set_title(0, "Display")
         tabs.set_title(1, "Overlays")
         tabs.set_title(2, "Analytical")
+        tabs.set_title(3, "Modes")
     else:
-        tabs = widgets.VBox([display_tab, overlays_tab, analytical_tab])
+        tabs = widgets.VBox([display_tab, overlays_tab, analytical_tab, modes_tab])
     controls["tabs"] = tabs
 
     control_panel = widgets.VBox(
