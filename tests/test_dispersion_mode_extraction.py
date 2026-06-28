@@ -4097,6 +4097,11 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
         ),
         controls={},
         _presets_dir=tmp_path,
+        collect_preset=lambda: {
+            "schema_version": "test",
+            "numpy_value": np.float32(1.5),
+            "unsafe": "<script>",
+        },
     )
 
     toolbar_widgets.build_toolbar(explorer, fake_widgets)
@@ -4120,8 +4125,27 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
     )
     assert "Render / refresh dispersion" in explorer.controls["output_placeholder"].value
     assert explorer.controls["export_refresh"].description == "Refresh export snapshot"
+    assert explorer.controls["analysis_refresh"].description == (
+        "Refresh analysis summary"
+    )
     assert explorer.controls["tabs"].titles[3] == "Modes"
-    assert explorer.controls["tabs"].titles[4] == "Export"
+    assert explorer.controls["tabs"].titles[4] == "Analysis"
+    assert explorer.controls["tabs"].titles[5] == "Export"
+
+    explorer.state.selected_k = np.float64(2.5e6)
+    explorer.state.selected_f = np.float64(3.25e9)
+    explorer.state.selected_power = np.float32(4.5)
+    toolbar_widgets._export_snapshot(explorer)
+
+    snapshot_html = explorer.controls["export_snapshot"].value
+    assert "&lt;script&gt;" in snapshot_html
+    assert '"numpy_value": 1.5' in snapshot_html
+    assert '"power": 4.5' in snapshot_html
+
+    toolbar_widgets._refresh_analysis_summary(explorer)
+    analysis_html = explorer.controls["analysis_summary"].value
+    assert "display_window_ghz" in analysis_html
+    assert "has_complex_modes" in analysis_html
 
 
 def test_dispersion_interactive_mode_extract_renders_mode_in_main_output(monkeypatch):

@@ -250,7 +250,7 @@ class DispersionInteractiveViewer:
             return self
 
         try:
-            initial_render = bool(self.options.get("initial_render", False))
+            initial_render = bool(self.options.get("initial_render", True))
             widget = self._build_widget(
                 display,
                 defer_initial_render=not initial_render,
@@ -261,7 +261,7 @@ class DispersionInteractiveViewer:
             self._close_widget_state()
             widget = None
         self._display_handle = display(widget if widget is not None else self, display_id=True)
-        if widget is not None and bool(self.options.get("initial_render", False)):
+        if widget is not None and bool(self.options.get("initial_render", True)):
             self._render_widget_after_display()
         return self
 

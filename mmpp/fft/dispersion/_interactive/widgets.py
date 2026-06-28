@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from html import escape
 from typing import Any
 
 from .callbacks import on_display_change, on_mode_extract, sync_analytical_options
@@ -10,6 +11,7 @@ from .frequency import normalize_frequency_window_ghz
 from .presets import list_presets, load_preset, save_preset
 from .rendering import draw_dispersion_panel, refresh_output_widget
 from .status import set_status
+from .._json import json_safe
 
 
 def _layout(widgets: Any, **kwargs: Any) -> Any:
@@ -99,6 +101,62 @@ def _mode_request_payload(explorer: Any, selection: dict[str, Any]) -> dict[str,
     return request
 
 
+def _axis_range(values: Any, *, scale: float = 1.0) -> tuple[float | None, float | None]:
+    try:
+        converted = [float(value) / scale for value in values]
+    except Exception:
+        return None, None
+    if not converted:
+        return None, None
+    return min(converted), max(converted)
+
+
+def _analysis_summary_payload(explorer: Any) -> dict[str, Any]:
+    """Return a lightweight analysis summary without touching Matplotlib."""
+    result = explorer.result
+    k_min, k_max = _axis_range(getattr(result, "k_axis", []), scale=1e6)
+    f_min, f_max = _axis_range(getattr(result, "f_axis", []), scale=1e9)
+    selection = _selection_payload(explorer)
+    return {
+        "shape": list(getattr(result, "shape", [])),
+        "axis": getattr(result, "axis", None),
+        "component": getattr(result, "component", None),
+        "k_range_rad_um": [k_min, k_max],
+        "f_range_ghz": [f_min, f_max],
+        "display_window_ghz": [
+            float(getattr(explorer.state, "fmin_ghz", 0.0)),
+            float(getattr(explorer.state, "fmax_ghz", 0.0)),
+        ],
+        "selection": selection,
+        "has_complex_modes": getattr(result, "S_complex", None) is not None,
+        "rendered": bool(getattr(explorer, "_has_rendered_dispersion", False)),
+        "backend": (
+            explorer.diagnostics().get("backend")
+            if hasattr(explorer, "diagnostics")
+            else "unknown"
+        ),
+    }
+
+
+def _refresh_analysis_summary(explorer: Any) -> None:
+    """Refresh lightweight analysis diagnostics in the Analysis tab."""
+    payload = json_safe(_analysis_summary_payload(explorer))
+    rows = "".join(
+        "<tr>"
+        f"<td style='padding:2px 8px;color:#475569;font-weight:600;'>{escape(str(key))}</td>"
+        f"<td style='padding:2px 8px;font-family:monospace;color:#0f172a;'>{escape(str(value))}</td>"
+        "</tr>"
+        for key, value in payload.items()
+    )
+    if "analysis_summary" in explorer.controls:
+        explorer.controls["analysis_summary"].value = (
+            "<table style='border-collapse:collapse;font-size:12px;'>"
+            f"{rows}"
+            "</table>"
+        )
+    set_status(explorer, "Analysis summary refreshed", color="#0F766E")
+
+
 def _export_snapshot(explorer: Any) -> None:
     """Show a compact JSON snapshot of current viewer state."""
     selection = _selection_payload(explorer)
@@ -108,13 +166,13 @@ def _export_snapshot(explorer: Any) -> None:
         "mode_request": _mode_request_payload(explorer, selection),
         "diagnostics": explorer.diagnostics() if hasattr(explorer, "diagnostics") else {},
     }
-    text = json.dumps(payload, indent=2, sort_keys=True)
+    text = json.dumps(json_safe(payload), indent=2, sort_keys=True)
     if "export_snapshot" in explorer.controls:
         explorer.controls["export_snapshot"].value = (
             "<pre style='max-height:260px;overflow:auto;font-size:11px;"
             "line-height:1.25;background:#0f172a;color:#dbeafe;"
             "padding:8px;border-radius:6px;'>"
-            f"{text}"
+            f"{escape(text)}"
             "</pre>"
         )
     set_status(explorer, "Export snapshot refreshed", color="#0F766E")
@@ -345,6 +403,17 @@ def build_toolbar(
     controls["export_snapshot"] = widgets.HTML(
         value="<small>Press Refresh export snapshot to inspect state.</small>"
     )
+    controls["analysis_refresh"] = (
+        button_cls(
+            description="Refresh analysis summary",
+            **_maybe_layout(widgets, width="100%"),
+        )
+        if button_cls is not None
+        else widgets.HTML(value="")
+    )
+    controls["analysis_summary"] = widgets.HTML(
+        value="<small>Press Refresh analysis summary to inspect current data.</small>"
+    )
 
     text_cls = getattr(widgets, "Text", None)
     button_cls = getattr(widgets, "Button", None)
@@ -417,9 +486,14 @@ def build_toolbar(
         controls["mode_show_dispersion"].on_click(lambda _btn: _render_current_dispersion(explorer))
     if hasattr(controls["export_refresh"], "on_click"):
         controls["export_refresh"].on_click(lambda _btn: _export_snapshot(explorer))
+    if hasattr(controls["analysis_refresh"], "on_click"):
+        controls["analysis_refresh"].on_click(
+            lambda _btn: _refresh_analysis_summary(explorer)
+        )
 
     display_tab = widgets.VBox(
         [
+            controls["render_dispersion"],
             controls["fmin"],
             controls["fmax"],
             controls["source"],
@@ -481,11 +555,25 @@ def build_toolbar(
         ],
         **_maybe_layout(widgets, width="100%"),
     )
+    analysis_tab = widgets.VBox(
+        [
+            controls["analysis_refresh"],
+            controls["analysis_summary"],
+        ],
+        **_maybe_layout(widgets, width="100%"),
+    )
 
     tab_cls = getattr(widgets, "Tab", None)
     if tab_cls is not None:
         tabs = tab_cls(
-            children=[display_tab, overlays_tab, analytical_tab, modes_tab, export_tab],
+            children=[
+                display_tab,
+                overlays_tab,
+                analytical_tab,
+                modes_tab,
+                analysis_tab,
+                export_tab,
+            ],
             selected_index=0,
             **_maybe_layout(widgets, width="100%"),
         )
@@ -493,17 +581,17 @@ def build_toolbar(
         tabs.set_title(1, "Overlays")
         tabs.set_title(2, "Analytical")
         tabs.set_title(3, "Modes")
-        tabs.set_title(4, "Export")
+        tabs.set_title(4, "Analysis")
+        tabs.set_title(5, "Export")
     else:
         tabs = widgets.VBox(
-            [display_tab, overlays_tab, analytical_tab, modes_tab, export_tab]
+            [display_tab, overlays_tab, analytical_tab, modes_tab, analysis_tab, export_tab]
         )
     controls["tabs"] = tabs
 
     control_panel = widgets.VBox(
         [
             widgets.HTML("<b>Dispersion Toolbar v3</b>"),
-            controls["render_dispersion"],
             preset_box,
             tabs,
             controls["status"],
