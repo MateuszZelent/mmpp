@@ -8,6 +8,62 @@ from .rendering import draw_dispersion_panel, refresh_output_widget
 from .status import set_status
 
 
+def _positive_int(value: Any, default: int) -> int:
+    """Convert widget numeric values to a positive integer."""
+    try:
+        converted = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return max(1, converted)
+
+
+def sync_analytical_options(explorer: Any) -> None:
+    """Mirror analytical overlay state into renderer options."""
+    analytical = dict(getattr(explorer.state, "analytical", None) or {})
+    normalized = {
+        "enabled": bool(analytical.get("enabled", False)),
+        "model": str(analytical.get("model") or "kalinikos"),
+        "sw_config": str(analytical.get("sw_config") or "DE"),
+        "n_modes": _positive_int(analytical.get("n_modes"), 1),
+        "k_points": _positive_int(analytical.get("k_points"), 500),
+    }
+    explorer.state.analytical = normalized
+
+    options = getattr(explorer, "options", None)
+    if not isinstance(options, dict):
+        return
+    options["analytical"] = normalized["sw_config"] if normalized["enabled"] else False
+    options["analytical_model"] = normalized["model"]
+    options["analytical_n_modes"] = normalized["n_modes"]
+    options["analytical_k_points"] = normalized["k_points"]
+
+
+def _update_analytical_state_from_controls(explorer: Any) -> None:
+    controls = explorer.controls
+    analytical_keys = {
+        "analytical_enabled",
+        "analytical_model",
+        "analytical_sw_config",
+        "analytical_n_modes",
+        "analytical_k_points",
+    }
+    if not any(key in controls for key in analytical_keys):
+        return
+
+    analytical = dict(getattr(explorer.state, "analytical", None) or {})
+    if "analytical_enabled" in controls:
+        analytical["enabled"] = bool(controls["analytical_enabled"].value)
+    if "analytical_model" in controls:
+        analytical["model"] = str(controls["analytical_model"].value)
+    if "analytical_sw_config" in controls:
+        analytical["sw_config"] = str(controls["analytical_sw_config"].value)
+    if "analytical_n_modes" in controls:
+        analytical["n_modes"] = _positive_int(controls["analytical_n_modes"].value, 1)
+    if "analytical_k_points" in controls:
+        analytical["k_points"] = _positive_int(controls["analytical_k_points"].value, 500)
+    explorer.state.analytical = analytical
+
+
 def on_display_change(explorer: Any) -> None:
     """Apply current widget values to state and redraw."""
     controls = explorer.controls
@@ -23,6 +79,8 @@ def on_display_change(explorer: Any) -> None:
     for key in ["grid", "selection", "notes"]:
         if key in controls and explorer.state.show_flags is not None:
             explorer.state.show_flags[key] = bool(controls[key].value)
+    _update_analytical_state_from_controls(explorer)
+    sync_analytical_options(explorer)
     draw_dispersion_panel(explorer)
     refresh_output_widget(explorer)
     set_status(

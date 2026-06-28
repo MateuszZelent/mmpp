@@ -447,6 +447,172 @@ def test_modes_plot_animation_show_false_returns_headless_viewer():
     assert "DispersionModesAnimationViewer" in html
 
 
+def test_dispersion_plot_interactive_modes_true_stores_complex_and_viewer_state():
+    from mmpp.fft.dispersion.interface import _DispersionPlotAccessor
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    class FakeInterface:
+        def __init__(self):
+            self._tmax = None
+            self._cache_dir = None
+            self.calls = []
+
+        def compute_1d(self, **kwargs):
+            self.calls.append(kwargs)
+            n_k, n_f = 8, 6
+            dx, dt = 5e-9, 2e-9
+            k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+            S_complex = (
+                np.ones((n_k, n_f), dtype=np.complex128)
+                if kwargs.get("store_complex")
+                else None
+            )
+            return DispersionResult1D(
+                S=np.ones((n_k, n_f), dtype=np.float32),
+                k_axis=k_axis,
+                f_axis=f_axis,
+                axis=kwargs.get("axis", "x"),
+                component=kwargs.get("component", "perp"),
+                config=DispersionConfig(dt=dt, dx=dx),
+                dt=dt,
+                dx=dx,
+                S_complex=S_complex,
+            )
+
+    fake = FakeInterface()
+
+    viewer = _DispersionPlotAccessor(fake).interactive(
+        show=False,
+        modes=True,
+        components=["z", "+", "-"],
+        animate=True,
+        axis="x",
+    )
+
+    assert fake.calls == [{"axis": "x", "store_complex": True}]
+    assert viewer.can_reconstruct_modes is True
+    assert viewer.state["modes"] is True
+    assert viewer.state["mode_components"] == ["z", "+", "-"]
+    assert viewer.state["spectrum_components"] == ["z", "+", "-"]
+    assert viewer.state["options"]["auto_animate"] is True
+
+
+def test_dispersion_plot_interactive_preserves_analytical_overlay_state():
+    from mmpp.fft.dispersion.interface import _DispersionPlotAccessor
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    class FakeInterface:
+        _tmax = None
+        _cache_dir = None
+
+        def __init__(self):
+            self.calls = []
+
+        def compute_1d(self, **kwargs):
+            self.calls.append(kwargs)
+            n_k, n_f = 8, 6
+            dx, dt = 5e-9, 2e-9
+            k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+            return DispersionResult1D(
+                S=np.ones((n_k, n_f), dtype=np.float32),
+                k_axis=k_axis,
+                f_axis=f_axis,
+                axis=kwargs.get("axis", "x"),
+                component=kwargs.get("component", "perp"),
+                config=DispersionConfig(dt=dt, dx=dx),
+                dt=dt,
+                dx=dx,
+            )
+
+    viewer = _DispersionPlotAccessor(FakeInterface()).interactive(
+        show=False,
+        analytical=True,
+        model="kalinikos",
+        sw_config="DE",
+        n_modes=3,
+        B=0.12,
+        Ms=800e3,
+        Aex=13e-12,
+        d=20e-9,
+        linestyle="--",
+        alpha=0.7,
+    )
+
+    assert viewer.state["analytical"] == {
+        "enabled": True,
+        "model": "kalinikos",
+        "sw_config": "DE",
+        "n_modes": 3,
+        "B": 0.12,
+        "Ms": 800e3,
+        "Aex": 13e-12,
+        "d": 20e-9,
+        "linestyle": "--",
+        "alpha": 0.7,
+    }
+    assert "model" not in viewer.state["options"]
+    assert "B" not in viewer.state["options"]
+
+
+def test_dispersion_viewer_passes_analytical_overlay_to_heatmap_widget(monkeypatch):
+    from mmpp.fft.dispersion import _interactive as interactive_module
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    captured = {}
+
+    class FakeHeatmapWidget:
+        def __init__(self, result, options):
+            captured["result"] = result
+            captured["options"] = options
+            self.figure = None
+            self.axes = None
+            self.controls = {}
+
+        def build(self, display_func, toolbar="auto"):
+            captured["toolbar"] = toolbar
+            return "fake-widget"
+
+    monkeypatch.setattr(interactive_module, "DispersionHeatmapWidget", FakeHeatmapWidget)
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+    )
+
+    viewer = result.plot.interactive(
+        show=False,
+        analytical=True,
+        model="kalinikos",
+        sw_config="BV",
+        n_modes=2,
+        k_points=800,
+        B=0.08,
+        color="white",
+        linewidth=2.0,
+    )
+
+    assert viewer._build_widget(lambda *_args, **_kwargs: None) == "fake-widget"
+    assert captured["result"] is result
+    assert captured["options"]["analytical"] == "BV"
+    assert captured["options"]["analytical_model"] == "kalinikos"
+    assert captured["options"]["analytical_n_modes"] == 2
+    assert captured["options"]["analytical_k_points"] == 800
+    assert captured["options"]["B"] == 0.08
+    assert captured["options"]["analytical_style"] == {
+        "color": "white",
+        "linewidth": 2.0,
+    }
+
+
 def test_modes_plot_animation_show_and_close_update_display_state(monkeypatch):
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
 
@@ -3247,3 +3413,157 @@ def test_branch_quality_coverage_uses_reference_k_axis():
 
     assert partial_quality < full_quality
     assert full_quality - partial_quality > 0.2
+
+
+def test_dispersion_interactive_preset_roundtrips_analytical_overlay_state():
+    import types
+
+    from mmpp.fft.dispersion._interactive.presets import (
+        apply_preset_state,
+        collect_preset_state,
+    )
+    from mmpp.fft.dispersion._interactive.state import DispersionExplorerState
+
+    analytical = {
+        "enabled": True,
+        "model": "kalinikos",
+        "sw_config": "BV",
+        "n_modes": 3,
+        "k_points": 640,
+    }
+    explorer = types.SimpleNamespace(state=DispersionExplorerState())
+    explorer.state.analytical = dict(analytical)
+
+    payload = collect_preset_state(explorer)
+
+    assert payload["analytical"] == analytical
+
+    restored = types.SimpleNamespace(state=DispersionExplorerState())
+    apply_preset_state(restored, payload)
+
+    assert restored.state.analytical == analytical
+
+
+def test_dispersion_interactive_display_change_syncs_analytical_overlay_options():
+    import types
+
+    from mmpp.fft.dispersion._interactive.callbacks import on_display_change
+    from mmpp.fft.dispersion._interactive.state import DispersionExplorerState
+
+    class Control:
+        def __init__(self, value):
+            self.value = value
+
+    explorer = types.SimpleNamespace(
+        state=DispersionExplorerState(fmin_ghz=0.0, fmax_ghz=25.0),
+        options={},
+        figure=None,
+        axes=None,
+        controls={
+            "fmin": Control(1.0),
+            "fmax": Control(18.0),
+            "source": Control("display"),
+            "kscale": Control("rad_um"),
+            "cmap": Control("magma"),
+            "positive": Control(True),
+            "lognorm": Control(False),
+            "grid": Control(True),
+            "selection": Control(True),
+            "notes": Control(False),
+            "analytical_enabled": Control(True),
+            "analytical_model": Control("kalinikos"),
+            "analytical_sw_config": Control("DE"),
+            "analytical_n_modes": Control(2),
+            "analytical_k_points": Control(512),
+        },
+        draw=lambda: None,
+        redraw=lambda: None,
+    )
+
+    on_display_change(explorer)
+
+    assert explorer.state.analytical == {
+        "enabled": True,
+        "model": "kalinikos",
+        "sw_config": "DE",
+        "n_modes": 2,
+        "k_points": 512,
+    }
+    assert explorer.options["analytical"] == "DE"
+    assert explorer.options["analytical_model"] == "kalinikos"
+    assert explorer.options["analytical_n_modes"] == 2
+    assert explorer.options["analytical_k_points"] == 512
+
+
+def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
+    monkeypatch, tmp_path
+):
+    import types
+
+    from mmpp.fft.dispersion._interactive import widgets as toolbar_widgets
+    from mmpp.fft.dispersion._interactive.state import DispersionExplorerState
+
+    class FakeWidget:
+        def __init__(self, *children, **kwargs):
+            self.children = tuple(children)
+            self.kwargs = kwargs
+            self.value = kwargs.get("value")
+            self.description = kwargs.get("description", "")
+            self.options = kwargs.get("options", [])
+            self._observers = []
+            self._clicks = []
+
+        def observe(self, callback, names=None):
+            self._observers.append((callback, names))
+
+        def on_click(self, callback):
+            self._clicks.append(callback)
+
+    class FakeTab(FakeWidget):
+        def __init__(self, *children, **kwargs):
+            super().__init__(*children, **kwargs)
+            self.titles = {}
+
+        def set_title(self, index, title):
+            self.titles[index] = title
+
+    fake_widgets = types.SimpleNamespace(
+        FloatText=FakeWidget,
+        Dropdown=FakeWidget,
+        Checkbox=FakeWidget,
+        HTML=FakeWidget,
+        Output=FakeWidget,
+        Text=FakeWidget,
+        Button=FakeWidget,
+        VBox=lambda children=(), **kwargs: FakeWidget(*children, **kwargs),
+        HBox=lambda children=(), **kwargs: FakeWidget(*children, **kwargs),
+        Tab=FakeTab,
+    )
+    monkeypatch.setattr(toolbar_widgets, "draw_dispersion_panel", lambda explorer: None)
+    monkeypatch.setattr(toolbar_widgets, "refresh_output_widget", lambda explorer: None)
+    monkeypatch.setattr(toolbar_widgets, "set_status", lambda *args, **kwargs: None)
+
+    explorer = types.SimpleNamespace(
+        result=types.SimpleNamespace(f_axis=[]),
+        options={},
+        state=DispersionExplorerState(
+            analytical={
+                "enabled": True,
+                "model": "kalinikos",
+                "sw_config": "BV",
+                "n_modes": 2,
+                "k_points": 512,
+            }
+        ),
+        controls={},
+        _presets_dir=tmp_path,
+    )
+
+    toolbar_widgets.build_toolbar(explorer, fake_widgets)
+
+    assert explorer.controls["analytical_enabled"].value is True
+    assert explorer.controls["analytical_sw_config"].value == "BV"
+    assert explorer.controls["analytical_model"].value == "kalinikos"
+    assert explorer.controls["analytical_n_modes"].value == 2.0
+    assert explorer.controls["analytical_k_points"].value == 512.0
+    assert explorer.controls["tabs"].titles[2] == "Analytical"

@@ -17,6 +17,59 @@ if TYPE_CHECKING:
     from .models import DispersionResult1D
 
 
+_ANALYTICAL_OPTION_KEYS = {
+    "model",
+    "sw_config",
+    "n_modes",
+    "B",
+    "Ms",
+    "Aex",
+    "d",
+    "Ku",
+    "Kc1",
+    "Kc2",
+    "phi",
+    "phi_ani",
+    "D",
+    "g",
+    "k_points",
+    "color",
+    "linestyle",
+    "linewidth",
+    "alpha",
+}
+_ANALYTICAL_STYLE_KEYS = {"color", "linestyle", "linewidth", "alpha"}
+
+
+def _normalize_analytical_options(
+    analytical: Any = None,
+    analitical: Any = None,
+    options: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Collect analytical-overlay options into one serializable state block."""
+    overlay: dict[str, Any] = {}
+    requested = analytical if analytical is not None else analitical
+
+    if isinstance(requested, dict):
+        overlay.update(requested)
+        overlay.setdefault("enabled", True)
+    elif requested is not None:
+        overlay["enabled"] = bool(requested)
+
+    if options is not None:
+        non_style_keys = _ANALYTICAL_OPTION_KEYS - _ANALYTICAL_STYLE_KEYS
+        has_explicit_overlay_option = any(key in options for key in non_style_keys)
+        if requested is None and not has_explicit_overlay_option:
+            return overlay
+        for key in list(options):
+            if key in _ANALYTICAL_OPTION_KEYS:
+                overlay[key] = options.pop(key)
+
+    if overlay and "enabled" not in overlay:
+        overlay["enabled"] = True
+    return overlay
+
+
 def _normalize_interactive_options(
     *,
     components: Optional[list[str]] = None,
@@ -24,8 +77,11 @@ def _normalize_interactive_options(
     spectrum_components: Optional[list[str]] = None,
     animate: Optional[bool] = None,
     auto_animate: Optional[bool] = None,
+    modes: Any = "auto",
+    analytical: Any = None,
+    analitical: Any = None,
     **kwargs: Any,
-) -> tuple[Optional[list[str]], Optional[list[str]], dict[str, Any]]:
+) -> tuple[Optional[list[str]], Optional[list[str]], Any, dict[str, Any], dict[str, Any]]:
     """Normalize compatibility aliases used by spectrum/modes notebooks."""
     if components is not None:
         if mode_components is None:
@@ -40,7 +96,18 @@ def _normalize_interactive_options(
     if auto_animate is not None:
         options["auto_animate"] = bool(auto_animate)
 
-    return mode_components, spectrum_components, options
+    analytical_options = _normalize_analytical_options(
+        analytical=analytical,
+        analitical=analitical,
+        options=options,
+    )
+    if analytical is not None:
+        options["analytical"] = analytical
+    if analitical is not None:
+        options["analitical"] = analitical
+
+    return mode_components, spectrum_components, modes, options, analytical_options
+
 
 
 @dataclass
@@ -49,10 +116,12 @@ class DispersionInteractiveViewer:
 
     result: "DispersionResult1D"
     show_requested: bool = True
+    modes: Any = "auto"
     mode_components: Optional[list[str]] = None
     spectrum_components: Optional[list[str]] = None
     can_reconstruct_modes: bool = False
     mode_unavailable_reason: str = ""
+    analytical: dict[str, Any] = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
     _display_handle: Any = None
     _widget: Any = None
@@ -76,14 +145,26 @@ class DispersionInteractiveViewer:
         spectrum_components: Optional[list[str]] = None,
         animate: Optional[bool] = None,
         auto_animate: Optional[bool] = None,
+        modes: Any = "auto",
+        analytical: Any = None,
+        analitical: Any = None,
         **kwargs: Any,
     ) -> "DispersionInteractiveViewer":
-        mode_components, spectrum_components, options = _normalize_interactive_options(
+        (
+            mode_components,
+            spectrum_components,
+            modes,
+            options,
+            analytical_options,
+        ) = _normalize_interactive_options(
             components=components,
             mode_components=mode_components,
             spectrum_components=spectrum_components,
             animate=animate,
             auto_animate=auto_animate,
+            modes=modes,
+            analytical=analytical,
+            analitical=analitical,
             **kwargs,
         )
         if can_reconstruct_modes is None:
@@ -96,10 +177,12 @@ class DispersionInteractiveViewer:
         viewer = cls(
             result=result,
             show_requested=bool(show),
+            modes=modes,
             mode_components=mode_components,
             spectrum_components=spectrum_components,
             can_reconstruct_modes=bool(can_reconstruct_modes),
             mode_unavailable_reason=mode_unavailable_reason,
+            analytical=analytical_options,
             options=options,
         )
         if show:
@@ -171,10 +254,12 @@ class DispersionInteractiveViewer:
         result_notes = list(getattr(self.result, "notes", None) or [])
         return {
             "show": self.show_requested,
+            "modes": json_safe(self.modes),
             "mode_components": self.mode_components,
             "spectrum_components": self.spectrum_components,
             "can_reconstruct_modes": self.can_reconstruct_modes,
             "mode_unavailable_reason": self.mode_unavailable_reason,
+            "analytical": json_safe(self.analytical),
             "result_notes": result_notes,
             "widget_status": self._widget_status,
             "widget_error": self._widget_error,
@@ -216,6 +301,7 @@ class DispersionInteractiveViewer:
         preset_path = Path(path)
         payload = json.loads(preset_path.read_text())
         self.show_requested = bool(payload.get("show", self.show_requested))
+        self.modes = payload.get("modes", self.modes)
         self.mode_components = payload.get("mode_components")
         self.spectrum_components = payload.get("spectrum_components")
         self.can_reconstruct_modes = bool(
@@ -227,6 +313,8 @@ class DispersionInteractiveViewer:
         options = payload.get("options", {})
         self.options = dict(options) if isinstance(options, dict) else {}
         self.options.setdefault("positive_frequencies", True)
+        analytical = payload.get("analytical", {})
+        self.analytical = dict(analytical) if isinstance(analytical, dict) else {}
         explorer_payload = payload.get("explorer")
         if isinstance(explorer_payload, dict) and self._widget_engine is not None:
             self._widget_engine.apply_preset(explorer_payload)
@@ -320,8 +408,9 @@ class DispersionInteractiveViewer:
             self._widget_error = f"{type(exc).__name__}: {exc}"
             return None
 
-        toolbar = self.options.get("toolbar", "auto")
-        self._widget_engine = DispersionHeatmapWidget(self.result, self.options)
+        widget_options = self._widget_options()
+        toolbar = widget_options.get("toolbar", "auto")
+        self._widget_engine = DispersionHeatmapWidget(self.result, widget_options)
         self._widget = self._widget_engine.build(display_func, toolbar=toolbar)
         self._figure = self._widget_engine.figure
         self._axes = self._widget_engine.axes
@@ -329,6 +418,40 @@ class DispersionInteractiveViewer:
         self._widget_status = "ready"
         self._widget_error = ""
         return self._widget
+
+    def _widget_options(self) -> dict[str, Any]:
+        """Translate stable viewer state into options consumed by the widget engine."""
+        options = dict(self.options)
+        analytical = dict(self.analytical or {})
+        if not analytical:
+            return options
+
+        enabled = bool(analytical.get("enabled", True))
+        options["analytical"] = analytical.get("sw_config", True) if enabled else False
+
+        mapped_keys = {
+            "model": "analytical_model",
+            "n_modes": "analytical_n_modes",
+            "k_points": "analytical_k_points",
+            "phi": "analytical_phi",
+            "D": "analytical_D",
+        }
+        for source_key, target_key in mapped_keys.items():
+            if source_key in analytical:
+                options[target_key] = analytical[source_key]
+
+        for key in ("B", "Ms", "Aex", "d", "Ku", "Kc1", "Kc2", "phi_ani", "g"):
+            if key in analytical:
+                options[key] = analytical[key]
+
+        style = {
+            key: analytical[key]
+            for key in ("color", "linestyle", "linewidth", "alpha")
+            if key in analytical
+        }
+        if style:
+            options["analytical_style"] = style
+        return options
 
     def _status_html(self) -> str:
         if self._widget_engine is not None:

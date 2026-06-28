@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .callbacks import on_display_change
+from .callbacks import on_display_change, sync_analytical_options
 from .presets import list_presets, load_preset, save_preset
 from .rendering import draw_dispersion_panel, refresh_output_widget
 from .status import set_status
@@ -98,6 +98,51 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         indent=False,
         **_maybe_layout(widgets, width="100%"),
     )
+    analytical = dict(explorer.state.analytical or {})
+    sw_config_options = ["DE", "BV", "FV"]
+    sw_config_value = str(analytical.get("sw_config") or "DE")
+    if sw_config_value not in sw_config_options:
+        sw_config_options.append(sw_config_value)
+    model_options = [
+        "kalinikos",
+        "damon_eshbach",
+        "backward_volume",
+        "forward_volume",
+        "bottcher",
+        "kim",
+        "cortes_ortuno",
+    ]
+    model_value = str(analytical.get("model") or "kalinikos")
+    if model_value not in model_options:
+        model_options.append(model_value)
+    controls["analytical_enabled"] = widgets.Checkbox(
+        value=bool(analytical.get("enabled", False)),
+        description="analytical overlay",
+        indent=False,
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["analytical_sw_config"] = widgets.Dropdown(
+        options=sw_config_options,
+        value=sw_config_value,
+        description="geometry",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["analytical_model"] = widgets.Dropdown(
+        options=model_options,
+        value=model_value,
+        description="model",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["analytical_n_modes"] = widgets.FloatText(
+        value=float(analytical.get("n_modes") or 1),
+        description="branches",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["analytical_k_points"] = widgets.FloatText(
+        value=float(analytical.get("k_points") or 500),
+        description="k points",
+        **_maybe_layout(widgets, width="100%"),
+    )
     controls["selection_info"] = widgets.HTML(value="<small>No point selected</small>")
     controls["status"] = widgets.HTML(value="")
     controls["status_log"] = widgets.HTML(
@@ -154,6 +199,11 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         "grid",
         "selection",
         "notes",
+        "analytical_enabled",
+        "analytical_sw_config",
+        "analytical_model",
+        "analytical_n_modes",
+        "analytical_k_points",
     ]:
         if hasattr(controls[key], "observe"):
             controls[key].observe(lambda _change=None: on_display_change(explorer), names="value")
@@ -184,6 +234,16 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         ],
         **_maybe_layout(widgets, width="100%"),
     )
+    analytical_tab = widgets.VBox(
+        [
+            controls["analytical_enabled"],
+            controls["analytical_sw_config"],
+            controls["analytical_model"],
+            controls["analytical_n_modes"],
+            controls["analytical_k_points"],
+        ],
+        **_maybe_layout(widgets, width="100%"),
+    )
     preset_box = widgets.VBox(
         [
             controls["preset_select"],
@@ -196,14 +256,15 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     tab_cls = getattr(widgets, "Tab", None)
     if tab_cls is not None:
         tabs = tab_cls(
-            children=[display_tab, overlays_tab],
+            children=[display_tab, overlays_tab, analytical_tab],
             selected_index=0,
             **_maybe_layout(widgets, width="100%"),
         )
         tabs.set_title(0, "Display")
         tabs.set_title(1, "Overlays")
+        tabs.set_title(2, "Analytical")
     else:
-        tabs = widgets.VBox([display_tab, overlays_tab])
+        tabs = widgets.VBox([display_tab, overlays_tab, analytical_tab])
     controls["tabs"] = tabs
 
     control_panel = widgets.VBox(
@@ -232,6 +293,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         **_maybe_layout(widgets, width="100%", align_items="stretch"),
     )
 
+    sync_analytical_options(explorer)
     draw_dispersion_panel(explorer)
     refresh_output_widget(explorer)
     set_status(explorer, "Interactive toolbar ready", color="#0F766E")

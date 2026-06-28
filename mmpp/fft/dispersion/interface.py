@@ -72,13 +72,45 @@ _INTERACTIVE_VIEWER_KEYS = {
     "components",
     "mode_components",
     "spectrum_components",
+    "modes",
     "animate",
     "auto_animate",
     "lattice_constant_nm",
+    "use_holography",
+    "z_layer",
+    "mode_type",
+    "n_bz",
     "positive_frequencies",
     "analitical",
     "analytical",
+    "model",
+    "sw_config",
+    "n_modes",
+    "B",
+    "Ms",
+    "Aex",
+    "d",
+    "Ku",
+    "Kc1",
+    "Kc2",
+    "phi",
+    "phi_ani",
+    "D",
+    "g",
+    "k_points",
+    "color",
+    "linestyle",
+    "linewidth",
+    "alpha",
 }
+
+
+def _interactive_modes_requested(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "required"}
+    return False
 
 
 def _format_slice_for_display(slice_info: Optional[Any]) -> str:
@@ -250,7 +282,10 @@ class _DispersionPlotAccessor:
                 viewer_kwargs[key] = value
             else:
                 compute_kwargs[key] = value
-        compute_kwargs.setdefault("store_complex", False)
+        if _interactive_modes_requested(viewer_kwargs.get("modes", "auto")):
+            compute_kwargs.setdefault("store_complex", True)
+        else:
+            compute_kwargs.setdefault("store_complex", False)
 
         old_tmax = self._interface._tmax
         old_cache_dir = self._interface._cache_dir
@@ -261,6 +296,7 @@ class _DispersionPlotAccessor:
                 self._interface._cache_dir = str(cache)
                 compute_kwargs.setdefault("disk_cache", True)
             result = self._interface.compute_1d(**compute_kwargs)
+            result._interface = self._interface
         finally:
             self._interface._tmax = old_tmax
             self._interface._cache_dir = old_cache_dir

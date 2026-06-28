@@ -109,15 +109,15 @@ def _draw_analytical_overlay(explorer: Any, ax: Any, kscale: str) -> None:
 
     auto_params = extract_material_params(explorer.result)
     effective = {
-        "B": auto_params.get("B"),
-        "Ms": auto_params.get("Ms"),
-        "Aex": auto_params.get("Aex"),
-        "d": auto_params.get("d"),
-        "Ku": auto_params.get("Ku", 0.0),
-        "Kc1": auto_params.get("Kc1", 0.0),
-        "Kc2": auto_params.get("Kc2", 0.0),
-        "phi_ani": auto_params.get("phi_ani", 0.0),
-        "g": auto_params.get("g", 2.0),
+        "B": options.get("B", auto_params.get("B")),
+        "Ms": options.get("Ms", auto_params.get("Ms")),
+        "Aex": options.get("Aex", auto_params.get("Aex")),
+        "d": options.get("d", auto_params.get("d")),
+        "Ku": options.get("Ku", auto_params.get("Ku", 0.0)),
+        "Kc1": options.get("Kc1", auto_params.get("Kc1", 0.0)),
+        "Kc2": options.get("Kc2", auto_params.get("Kc2", 0.0)),
+        "phi_ani": options.get("phi_ani", auto_params.get("phi_ani", 0.0)),
+        "g": options.get("g", auto_params.get("g", 2.0)),
     }
     missing = [key for key in ("B", "Ms", "Aex", "d") if effective[key] is None]
     if missing:

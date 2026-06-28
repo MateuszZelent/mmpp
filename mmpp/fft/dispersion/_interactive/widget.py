@@ -5,7 +5,7 @@ from __future__ import annotations
 from html import escape
 from typing import TYPE_CHECKING, Any
 
-from .callbacks import on_canvas_click
+from .callbacks import on_canvas_click, sync_analytical_options
 from .presets import apply_preset_state, collect_preset_state
 from .rendering import draw_dispersion_panel, refresh_output_widget
 from .state import DispersionExplorerState
@@ -134,6 +134,18 @@ class DispersionHeatmapWidget:
         for key, value in (self.state.show_flags or {}).items():
             if key in self.controls:
                 self.controls[key].value = bool(value)
+        analytical = self.state.analytical or {}
+        analytical_mapping = {
+            "analytical_enabled": bool(analytical.get("enabled", False)),
+            "analytical_model": analytical.get("model", "kalinikos"),
+            "analytical_sw_config": analytical.get("sw_config", "DE"),
+            "analytical_n_modes": analytical.get("n_modes", 1),
+            "analytical_k_points": analytical.get("k_points", 500),
+        }
+        for key, value in analytical_mapping.items():
+            if key in self.controls:
+                self.controls[key].value = value
+        sync_analytical_options(self)
 
     def collect_preset(self) -> dict[str, Any]:
         """Return serializable preset state."""
@@ -190,4 +202,34 @@ class DispersionHeatmapWidget:
             cmap=str(self.options.get("cmap", "viridis")),
             positive_frequencies=bool(self.options.get("positive_frequencies", True)),
             lognorm=bool(self.options.get("lognorm", False)),
+            analytical=self._initial_analytical_state(),
         )
+
+    def _initial_analytical_state(self) -> dict[str, Any]:
+        raw = self.options.get("analytical", False)
+        raw_options = dict(raw) if isinstance(raw, dict) else {}
+        enabled = bool(raw)
+        sw_config = raw_options.get("sw_config") or self.options.get("analytical_sw_config")
+        if sw_config is None and isinstance(raw, str):
+            sw_config = raw
+        if sw_config is None:
+            sw_config = "DE"
+        return {
+            "enabled": enabled,
+            "model": str(
+                raw_options.get("model")
+                or self.options.get("analytical_model")
+                or "kalinikos"
+            ),
+            "sw_config": str(sw_config),
+            "n_modes": int(
+                raw_options.get("n_modes")
+                or self.options.get("analytical_n_modes")
+                or 1
+            ),
+            "k_points": int(
+                raw_options.get("k_points")
+                or self.options.get("analytical_k_points")
+                or 500
+            ),
+        }

@@ -40,6 +40,7 @@ def collect_preset_state(explorer: Any) -> dict[str, Any]:
         "selected_k": state.selected_k,
         "selected_f": state.selected_f,
         "show_flags": dict(state.show_flags or {}),
+        "analytical": dict(state.analytical or {}),
     }
 
 
@@ -63,6 +64,11 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
         for key, value in show_flags.items():
             merged[str(key)] = bool(value)
         state.show_flags = merged
+    analytical = payload.get("analytical")
+    if isinstance(analytical, dict):
+        merged_analytical = dict(state.analytical or {})
+        merged_analytical.update(analytical)
+        state.analytical = merged_analytical
 
 
 def save_preset(explorer: Any, name: str) -> Path:

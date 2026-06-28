@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -20,6 +21,7 @@ class DispersionExplorerState:
     selected_f: float | None = None
     selected_power: float | None = None
     show_flags: dict[str, bool] | None = None
+    analytical: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.show_flags is None:
@@ -27,4 +29,12 @@ class DispersionExplorerState:
                 "grid": True,
                 "selection": True,
                 "notes": True,
+            }
+        if self.analytical is None:
+            self.analytical = {
+                "enabled": False,
+                "model": "kalinikos",
+                "sw_config": "DE",
+                "n_modes": 1,
+                "k_points": 500,
             }
