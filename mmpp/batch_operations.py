@@ -19,13 +19,22 @@ from .cli.logging_config import get_mmpp_logger
 # Get logger for batch operations
 log = get_mmpp_logger("mmpp.batch")
 
-try:
-    from .fft import FFT
+FFT_AVAILABLE: Optional[bool] = None
+_FFT_IMPORT_ERROR: ImportError | None = None
 
+
+def _resolve_fft_class(context: str = "batch operations") -> Any:
+    """Import FFT lazily so single-result imports do not emit batch warnings."""
+    global FFT_AVAILABLE, _FFT_IMPORT_ERROR
+    try:
+        from .fft import FFT
+    except ImportError as exc:
+        FFT_AVAILABLE = False
+        _FFT_IMPORT_ERROR = exc
+        raise ImportError(f"FFT functionality not available for {context}") from exc
     FFT_AVAILABLE = True
-except ImportError:
-    FFT_AVAILABLE = False
-    log.warning("FFT module not available for batch operations")
+    _FFT_IMPORT_ERROR = None
+    return FFT
 
 
 class BatchFFT:
@@ -134,8 +143,7 @@ class BatchFFT:
         Dict[str, Any]
             Summary of batch FFT computation results
         """
-        if not FFT_AVAILABLE:
-            raise ImportError("FFT functionality not available")
+        FFT = _resolve_fft_class("batch operations")
 
         log.info(f"Starting batch FFT computation for {len(self.results)} results")
 
@@ -356,8 +364,7 @@ class BatchModeAnalyzer:
         Dict[str, Any]
             Summary of batch mode computation results
         """
-        if not FFT_AVAILABLE:
-            raise ImportError("FFT functionality not available for mode analysis")
+        FFT = _resolve_fft_class("mode analysis")
 
         # Auto-select largest m dataset if none specified
         if dset is None and self.results:
@@ -524,8 +531,7 @@ class BatchModeAnalyzer:
         Dict[str, Any]
             Summary of batch mode analysis results
         """
-        if not FFT_AVAILABLE:
-            raise ImportError("FFT functionality not available for mode analysis")
+        FFT = _resolve_fft_class("mode analysis")
 
         log.info(f"Starting batch mode analysis for {len(self.results)} results")
 
