@@ -45,22 +45,33 @@ raw/display/cache/scaling contract.
 ## Typical Calls
 
 ```python
-disp = result.fft.dispersion
+disp = result.m[:100, ...].fft.dispersion
 
-# Lightweight compute-and-view workflow. This does not store S_complex unless
-# explicitly requested, so it is the preferred notebook preview path.
+# Main compute-and-view workflow. Dataset slices are preserved, so [:100, ...]
+# limits the time axis before FFT. modes=True requests S_complex for mode work.
 viewer = disp.plot.interactive(
     axis="x",
     component="perp",
     fmax=25,
+    analytical="DE",
+    model="kalinikos",
+    modes=True,
+    lattice_constant_nm=470,
     show=False,
 )
+
+# Long-running notebook cells report progress by default before the heavy FFT
+# starts. Use progress=False for quiet batch runs or progress_callback=events.append
+# to collect structured events.
+events = []
+viewer = disp.plot.interactive(axis="x", show=False, progress_callback=events.append)
 
 # Compute once and reuse the result for static plots, filters, and headless UI.
 res = disp.compute_1d(
     axis="x",
     component="perp",
-    store_complex=False,
+    avg_over_orthogonal=False,
+    store_complex=True,
     scaling="amplitude_squared",
 )
 viewer = res.plot.interactive(show=False, fmax=25)
@@ -79,17 +90,17 @@ Mode reconstruction needs complex spectra and orthogonal spatial context. Use
 spatial mode profiles.
 
 ```python
-res = disp.compute_1d(
+viewer = disp.plot.interactive(
     axis="x",
     component="perp",
     avg_over_orthogonal=False,
     store_complex=True,
-    scaling="amplitude_squared",
+    modes=True,
+    lattice_constant_nm=470,
+    show=False,
 )
-modes = res.modes.interactive(show=False, lattice_constant_nm=470)
-mode = res.modes.at(k_rad_um=2.3, f_ghz=1.1)
+mode = viewer.mode_at_selection(k_rad_um=2.3, f_ghz=1.1, component="z")
 mode_viewer = mode.plot.interactive(show=False, mode_type="abs")
-animation = res.modes.plot.animation(peaks=[0], show=False)
 ```
 
 `DispersionResult1D.S_raw` is the analysis source. `S_display` is the current
@@ -121,10 +132,21 @@ for deterministic CI gates; `-1` means all available cores.
 ## Legacy Folded-Mode Workflow
 
 The older folded-mode entry point remains available for compatibility, but new
-notebooks should prefer `disp.plot.interactive(...)` and
-`res.modes.interactive(...)`.
+notebooks should prefer `disp.plot.interactive(modes=True, ...)`.
 
 ```python
 modes = disp.dispersion_modes(result=res, lattice_constant_nm=470)
 modes.plot_interactive()
+```
+
+Migration:
+
+```python
+# Old
+modes = disp.dispersion_modes(result=res, lattice_constant_nm=470)
+modes.plot_interactive()
+
+# New
+viewer = disp.plot.interactive(modes=True, lattice_constant_nm=470)
+mode = viewer.mode_at_selection(k_rad_um=2.3, f_ghz=1.1)
 ```

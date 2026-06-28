@@ -4,17 +4,39 @@
 `plot.interactive`, static heatmaps, filtering, branch tracking, and folded-mode
 extraction.
 
-## Basic Plot-First Workflow
+## Basic Interactive Workflow
 
 ```python
-disp = result.fft.dispersion
+disp = result.m[:100, ...].fft.dispersion
 
-fig, ax = disp.plot_dispersion(
+viewer = disp.plot.interactive(
     axis="x",
     component="perp",
-    kscale="rad_um",
-    f_units="GHz",
     fmax=25,
+    analytical="DE",
+    model="kalinikos",
+    modes=True,
+    lattice_constant_nm=470,
+    show=False,
+)
+
+viewer.show()
+```
+
+The dataset slice is part of the public path. For example,
+`result.m[:100, ...].fft.dispersion.plot.interactive(...)` limits the time axis
+before the FFT and uses that same selection for cache keys and presets.
+
+Long-running notebook cells report progress by default before and during the
+heavy compute stage. If you want a quiet script, pass `progress=False`; if you
+want to connect the messages to your own logger or UI, pass a callback:
+
+```python
+events = []
+viewer = disp.plot.interactive(
+    axis="x",
+    show=False,
+    progress_callback=events.append,
 )
 ```
 
@@ -46,6 +68,9 @@ viewer = disp.plot.interactive(
     axis="x",
     component="perp",
     fmax=25,
+    analytical="DE",
+    modes=True,
+    lattice_constant_nm=470,
     show=False,
 )
 
@@ -123,37 +148,39 @@ context. Recompute with `store_complex=True` and `avg_over_orthogonal=False`
 before using `.modes.at(...)` or mode-ready interactive panels.
 
 ```python
-mode_ready = disp.compute_1d(
+viewer = disp.plot.interactive(
     axis="x",
     component="perp",
     avg_over_orthogonal=False,
     store_complex=True,
-    scaling="amplitude_squared",
-)
-
-modes = mode_ready.modes.interactive(
-    show=False,
+    modes=True,
     lattice_constant_nm=470,
+    show=False,
 )
 
-mode = mode_ready.modes.at(k_rad_um=2.3, f_ghz=1.1)
+mode = viewer.mode_at_selection(k_rad_um=2.3, f_ghz=1.1, component="z")
 mode.plot.imshow(mode_type="abs")
 mode_viewer = mode.plot.interactive(show=False, mode_type="phase")
-animation = mode_ready.modes.plot.animation(peaks=[0], show=False)
 ```
 
 ## Legacy Folded-Mode Workflow
 
 `dispersion_modes(...).plot_interactive()` remains available for older
-notebooks, but new code should prefer `disp.plot.interactive(...)` for spectrum
-exploration and `res1d.modes.interactive(...)` for mode workflows.
+notebooks, but new code should prefer `disp.plot.interactive(modes=True, ...)`
+for spectrum exploration, analytical overlays, selection export, and mode
+extraction in one window.
 
 ```python
+# Old
 modes = disp.dispersion_modes(result=res1d, lattice_constant_nm=470)
 modes.plot_interactive()
 
 mode = modes.mode(k=2.3, f=1.1)
 mode.plot(mode_type="abs")
+
+# New
+viewer = disp.plot.interactive(modes=True, lattice_constant_nm=470)
+mode = viewer.mode_at_selection(k_rad_um=2.3, f_ghz=1.1)
 ```
 
 ## 2D Dispersion

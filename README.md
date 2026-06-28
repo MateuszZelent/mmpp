@@ -92,7 +92,9 @@ fig = result.fft.modes.plot_modes(
 ## Dispersion (S(k, f))
 
 ```python
-disp = result.fft.dispersion
+# Dataset-first notebook workflow. Slices on the dataset, e.g. [:100, ...],
+# are preserved by the FFT/dispersion pipeline.
+disp = result.m[:100, ...].fft.dispersion
 
 # Optional global config for this interface instance
 disp.configure(
@@ -102,32 +104,37 @@ disp.configure(
     tmax=800,
 )
 
-# Compute explicit result for reuse
-res1d = disp.compute_1d(
-    axis="x",
-    avg_over_orthogonal=False,
-    scaling="amplitude_squared",  # or "raw_power" for legacy |FFT|^2, "psd" for density
-    save=True,
-)
-
-# Lightweight interactive explorer (does not store S_complex by default)
+# Main interactive explorer: dispersion heatmap, analytical overlay, selected
+# point export, and mode extraction in one window.
 viewer = disp.plot.interactive(
     axis="x",
     component="perp",
     fmax=25,
+    analytical="DE",
+    model="kalinikos",
+    modes=True,
+    lattice_constant_nm=470,
     cache="/tmp/mmpp-dispersion",
     show=False,
 )
 
-# Static plot using the same cached result path
+# Long-running notebook cells show stage progress by default. Disable with
+# progress=False or collect events with progress_callback=events.append.
+
+# Compute explicit result for reuse when you want static plots or scripts.
+res1d = disp.compute_1d(
+    axis="x",
+    avg_over_orthogonal=False,
+    store_complex=True,
+    scaling="amplitude_squared",  # or "raw_power" for legacy |FFT|^2, "psd" for density
+    save=True,
+)
 fig, ax = res1d.plot.heatmap(kscale="rad_um", f_units="GHz", fmax=25)
 
-# Brillouin-zone folding + interactive mode extraction (legacy-compatible path)
-modes = disp.dispersion_modes(result=res1d, lattice_constant_nm=470)
-modes.plot_interactive()
-
-mode = modes.mode(k=2.3, f=1.1)
-mode.plot(mode_type="abs")
+# Old notebooks using dispersion_modes(...).plot_interactive() still work, but
+# new notebooks should prefer disp.plot.interactive(modes=True, ...).
+mode = viewer.mode_at_selection(k_rad_um=2.3, f_ghz=1.1, component="z")
+mode.plot.imshow(mode_type="abs")
 ```
 
 Benchmark the same compute path with synthetic data:

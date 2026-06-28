@@ -2942,6 +2942,7 @@ def test_dispersion_interface_plot_interactive_computes_then_returns_viewer():
         component="perp",
         fmax=4.0,
         components=["z"],
+        progress=False,
     )
 
     assert calls == [{"axis": "x", "component": "perp", "store_complex": False}]
@@ -2989,6 +2990,7 @@ def test_dispersion_interface_plot_interactive_handles_tmax_and_external_cache()
         cache="/tmp/mmpp-dispersion",
         save=True,
         fmax=4.0,
+        progress=False,
     )
 
     assert viewer.result is result
@@ -3033,7 +3035,12 @@ def test_dispersion_interface_plot_interactive_accepts_analitical_option():
 
     iface.compute_1d = fake_compute_1d
 
-    viewer = iface.plot.interactive(show=False, axis="x", analitical="DE")
+    viewer = iface.plot.interactive(
+        show=False,
+        axis="x",
+        analitical="DE",
+        progress=False,
+    )
 
     assert viewer.result is result
     assert viewer.options["analitical"] == "DE"
@@ -3153,8 +3160,8 @@ def test_dispersion_interface_plot_interactive_defaults_to_lightweight_compute()
 
     iface.compute_1d = fake_compute_1d
 
-    iface.plot.interactive(show=False, axis="x")
-    iface.plot.interactive(show=False, axis="x", store_complex=True)
+    iface.plot.interactive(show=False, axis="x", progress=False)
+    iface.plot.interactive(show=False, axis="x", store_complex=True, progress=False)
 
     assert calls == [
         {"axis": "x", "store_complex": False},
@@ -3192,7 +3199,12 @@ def test_dispersion_interactive_analysis_aliases_plot_interactive():
 
     iface.compute_1d = fake_compute_1d
 
-    viewer = iface.interactive_analysis(show=False, axis="x", fmax=4.0)
+    viewer = iface.interactive_analysis(
+        show=False,
+        axis="x",
+        fmax=4.0,
+        progress=False,
+    )
 
     assert viewer.result is result
     assert viewer.show_requested is False
@@ -3341,7 +3353,13 @@ def test_spin_wave_analyzer_accepts_nonuniform_time_axis_with_effective_dt(tmp_p
         SimpleNamespace(job_result=SimpleNamespace(path=str(zarr_path), name="run")),
         dataset_name="m",
     )
-    viewer = iface.plot.interactive(show=False, axis="x", component="mx", disk_cache=False)
+    viewer = iface.plot.interactive(
+        show=False,
+        axis="x",
+        component="mx",
+        disk_cache=False,
+        progress=False,
+    )
     assert viewer.state["show"] is False
     assert any("Non-uniform time axis" in note for note in viewer.state["result_notes"])
 
@@ -3806,3 +3824,108 @@ def test_dispersion_interactive_modes_panel_extracts_current_selection(monkeypat
     assert explorer.last_mode.component == "z"
     assert "k=2.25 rad/um" in explorer.controls["mode_info"].value
     assert "f=4.5 GHz" in explorer.controls["mode_info"].value
+
+
+def test_legacy_dispersion_modes_attaches_interface_to_reused_result(monkeypatch):
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion.interface import FFTDispersionInterface
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+        S_complex=np.ones((n_k, n_f), dtype=np.complex128),
+    )
+    iface = FFTDispersionInterface(
+        SimpleNamespace(job_result=SimpleNamespace(path="/tmp/run.zarr"))
+    )
+
+    class FakeInteractiveDispersionModes:
+        def __init__(self, interface):
+            self.interface = interface
+            self._default_params = {}
+            self.result = None
+
+    import mmpp.fft.dispersion.modes as modes_module
+
+    monkeypatch.setattr(
+        modes_module,
+        "InteractiveDispersionModes",
+        FakeInteractiveDispersionModes,
+    )
+
+    modes = iface.dispersion_modes(result=result, lattice_constant_nm=512.0)
+
+    assert modes.result is result
+    assert result._interface is iface
+    assert modes._default_params["lattice_nm"] == 512.0
+
+
+def test_dispersion_plot_interactive_reports_progress_without_polluting_compute_kwargs():
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion.interface import FFTDispersionInterface
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+    )
+    iface = FFTDispersionInterface(
+        SimpleNamespace(job_result=SimpleNamespace(path="/tmp/run.zarr")),
+        dataset_name="m",
+        slice_info=(slice(None, 100, None), Ellipsis),
+    )
+    calls = []
+    events = []
+
+    def fake_compute_1d(**kwargs):
+        calls.append(dict(kwargs))
+        callback = kwargs.pop("progress_callback")
+        callback({"stage": "compute", "message": "fake compute started"})
+        callback({"stage": "compute", "message": "fake compute finished"})
+        return result
+
+    iface.compute_1d = fake_compute_1d
+
+    viewer = iface.plot.interactive(
+        show=False,
+        axis="x",
+        fmax=4.0,
+        progress=True,
+        progress_callback=events.append,
+    )
+
+    assert viewer.result is result
+    assert calls == [
+        {
+            "axis": "x",
+            "store_complex": False,
+            "progress_callback": calls[0]["progress_callback"],
+        }
+    ]
+    assert callable(calls[0]["progress_callback"])
+    stages = [event["stage"] for event in events]
+    assert "prepare" in stages
+    assert "compute" in stages
+    assert "viewer" in stages
+    assert any("slice" in event["message"] for event in events)

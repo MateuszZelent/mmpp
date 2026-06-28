@@ -105,6 +105,89 @@ _INTERACTIVE_VIEWER_KEYS = {
 }
 
 
+class _DispersionProgressReporter:
+    """Small stage-based progress reporter for notebook-facing dispersion calls."""
+
+    def __init__(
+        self,
+        *,
+        enabled: Any = True,
+        callback: Optional[Any] = None,
+        label: str = "MMPP dispersion",
+        total: int = 5,
+    ) -> None:
+        self.enabled = bool(enabled) or callback is not None
+        self.callback = callback
+        self.label = label
+        self.total = max(1, int(total))
+        self.count = 0
+        self._bar: Any = None
+        self._use_print = True
+
+        if self.enabled and enabled not in {False, "print"}:
+            try:
+                from tqdm.auto import tqdm
+
+                self._bar = tqdm(total=self.total, desc=self.label, leave=True)
+                self._use_print = False
+            except Exception:
+                self._bar = None
+                self._use_print = True
+
+    def emit(self, event: Any = None, /, **kwargs: Any) -> None:
+        """Emit one progress event to callback and visible notebook output."""
+        if isinstance(event, dict):
+            payload = dict(event)
+            payload.update(kwargs)
+        else:
+            payload = dict(kwargs)
+            if event is not None:
+                payload.setdefault("message", str(event))
+        stage = str(payload.get("stage", "progress"))
+        message = str(payload.get("message", stage))
+        payload.setdefault("stage", stage)
+        payload.setdefault("message", message)
+
+        if self.callback is not None:
+            self.callback(payload)
+
+        if not self.enabled:
+            return
+
+        self.count = min(self.total, self.count + 1)
+        if self._bar is not None:
+            self._bar.set_description(f"{self.label}: {stage}")
+            self._bar.set_postfix_str(message[:80])
+            self._bar.update(1)
+        elif self._use_print:
+            print(
+                f"[{self.label}] {self.count}/{self.total} {stage}: {message}",
+                flush=True,
+            )
+
+    def close(self) -> None:
+        if self._bar is not None:
+            try:
+                remaining = self.total - self.count
+                if remaining > 0:
+                    self._bar.update(remaining)
+                self._bar.close()
+            except Exception:
+                pass
+
+
+def _emit_dispersion_progress(
+    callback: Optional[Any],
+    stage: str,
+    message: str,
+    **extra: Any,
+) -> None:
+    """Emit a progress callback event if one was supplied."""
+    if callback is None:
+        return
+    callback({"stage": stage, "message": message, **extra})
+
+
 def _interactive_modes_requested(value: Any) -> bool:
     if value is True:
         return True
@@ -277,6 +360,15 @@ class _DispersionPlotAccessor:
         compute_kwargs: dict[str, Any] = {}
         tmax = kwargs.pop("tmax", None)
         cache = kwargs.pop("cache", None)
+        progress = kwargs.pop("progress", True)
+        progress_callback = kwargs.pop("progress_callback", None)
+        progress_label = str(kwargs.pop("progress_label", "MMPP dispersion"))
+        progress_reporter = _DispersionProgressReporter(
+            enabled=progress,
+            callback=progress_callback,
+            label=progress_label,
+            total=7,
+        )
         for key, value in kwargs.items():
             if key in _INTERACTIVE_VIEWER_KEYS:
                 viewer_kwargs[key] = value
@@ -290,17 +382,38 @@ class _DispersionPlotAccessor:
         old_tmax = self._interface._tmax
         old_cache_dir = self._interface._cache_dir
         try:
+            slice_label = _format_slice_for_display(self._interface.slice_info)
+            progress_reporter.emit(
+                stage="prepare",
+                message=(
+                    f"dataset={self._interface.dataset_name or '<auto>'} "
+                    f"slice={slice_label or '[full]'} "
+                    f"axis={compute_kwargs.get('axis', 'x')} "
+                    f"store_complex={compute_kwargs.get('store_complex')}"
+                ),
+            )
             if tmax is not None:
                 self._interface._tmax = int(tmax)
             if cache is not None:
                 self._interface._cache_dir = str(cache)
                 compute_kwargs.setdefault("disk_cache", True)
+            if progress_reporter.enabled:
+                compute_kwargs["progress_callback"] = progress_reporter.emit
             result = self._interface.compute_1d(**compute_kwargs)
             result._interface = self._interface
+            progress_reporter.emit(
+                stage="result",
+                message=f"dispersion result ready shape={getattr(result, 'shape', '?')}",
+            )
         finally:
             self._interface._tmax = old_tmax
             self._interface._cache_dir = old_cache_dir
-        return result.plot.interactive(**viewer_kwargs)
+        progress_reporter.emit(stage="viewer", message="building interactive viewer")
+        try:
+            return result.plot.interactive(**viewer_kwargs)
+        finally:
+            progress_reporter.emit(stage="done", message="interactive dispersion ready")
+            progress_reporter.close()
 
     def __repr__(self) -> str:
         return "<FFTDispersionInterface.plot: interactive>"
@@ -564,6 +677,7 @@ class FFTDispersionInterface:
                 self._cache_dir = None
 
         # Store result in modes instance for reuse
+        result._interface = self
         modes.result = result
 
         return modes
@@ -1607,6 +1721,19 @@ class FFTDispersionInterface:
             1D dispersion analysis result
         """
         compute_kwargs = dict(kwargs)
+        progress_callback = compute_kwargs.pop("progress_callback", None)
+        _emit_dispersion_progress(
+            progress_callback,
+            "compute",
+            (
+                f"compute_1d start dataset={self.dataset_name or '<auto>'} "
+                f"slice={_format_slice_for_display(self.slice_info) or '[full]'}"
+            ),
+            axis=axis,
+            component=component,
+            dataset=self.dataset_name,
+            slice_info=self._serialize_for_json(self.slice_info),
+        )
 
         # FFT backend configuration (also available via .dispersion(backend=...))
         _backend = compute_kwargs.pop("backend", None)
@@ -1697,6 +1824,12 @@ class FFTDispersionInterface:
         )
         context_json, context_hash = self._context_signature(context)
         memory_key = self._memory_key("dispersion_1d", context_hash)
+        _emit_dispersion_progress(
+            progress_callback,
+            "cache",
+            f"cache key prepared {entry_name if 'entry_name' in locals() else context_hash[:12]}",
+            context_hash=context_hash,
+        )
 
         base_result: Optional[DispersionResult1D] = None
 
@@ -1705,11 +1838,23 @@ class FFTDispersionInterface:
                 "Force recompute requested; skipping caches for %s",
                 memory_key,
             )
+            _emit_dispersion_progress(
+                progress_callback,
+                "cache",
+                "force=True; skipping dispersion caches",
+                memory_key=memory_key,
+            )
         elif use_cache:
             cached = self._memory_cache.get(memory_key)
             if cached is not None:
                 logger.info("Using in-memory dispersion cache for %s", memory_key)
                 base_result = cached
+                _emit_dispersion_progress(
+                    progress_callback,
+                    "cache",
+                    "loaded dispersion from in-memory cache",
+                    memory_key=memory_key,
+                )
 
         entry_name = f"dispersion1d_{context_hash}"
         disk_group: Optional[zarr.Group] = None
@@ -1726,6 +1871,12 @@ class FFTDispersionInterface:
                     "Loaded dispersion1d result from on-disk cache (%s)", entry_name
                 )
                 base_result = cached_disk
+                _emit_dispersion_progress(
+                    progress_callback,
+                    "cache",
+                    f"loaded dispersion from disk cache {entry_name}",
+                    entry_name=entry_name,
+                )
                 if use_cache:
                     self._memory_cache[memory_key] = cached_disk
 
@@ -1744,6 +1895,14 @@ class FFTDispersionInterface:
 
         if base_result is None:
             logger.info("Computing dispersion1d from scratch (force=%s)", force)
+            _emit_dispersion_progress(
+                progress_callback,
+                "compute",
+                "cache miss; computing dispersion1d from raw data",
+                force=force,
+                store_complex=store_complex,
+                scaling=scaling,
+            )
             base_result = self.analyzer.compute_dispersion_1d(
                 axis=axis,
                 component=component,
@@ -1753,9 +1912,21 @@ class FFTDispersionInterface:
             )
             if use_cache:
                 self._memory_cache[memory_key] = base_result
+            _emit_dispersion_progress(
+                progress_callback,
+                "compute",
+                f"raw dispersion compute finished shape={getattr(base_result, 'shape', '?')}",
+                shape=list(getattr(base_result, "shape", []) or []),
+            )
             if persist_result:
                 disk_group = disk_group or self._get_dispersion_dataset_group(
                     write=True
+                )
+                _emit_dispersion_progress(
+                    progress_callback,
+                    "cache",
+                    f"saving dispersion result {entry_name}",
+                    entry_name=entry_name,
                 )
                 self._save_dispersion_result(
                     disk_group,
