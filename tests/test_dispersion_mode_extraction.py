@@ -2837,6 +2837,126 @@ def test_dispersion_interface_plot_interactive_handles_tmax_and_external_cache()
     assert iface._cache_dir is None
 
 
+def test_dispersion_interface_plot_interactive_accepts_analitical_option():
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion.interface import FFTDispersionInterface
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+    )
+    iface = FFTDispersionInterface(
+        SimpleNamespace(job_result=SimpleNamespace(path="/tmp/run.zarr"))
+    )
+    calls = []
+
+    def fake_compute_1d(**kwargs):
+        calls.append(dict(kwargs))
+        return result
+
+    iface.compute_1d = fake_compute_1d
+
+    viewer = iface.plot.interactive(show=False, axis="x", analitical="DE")
+
+    assert viewer.result is result
+    assert viewer.options["analitical"] == "DE"
+    assert calls == [{"axis": "x", "store_complex": False}]
+
+
+def test_draw_analytical_overlay_renders_scatter_from_layer_params(monkeypatch):
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion._interactive import rendering
+    from mmpp.fft.dispersion._plotting import _analytics_overlay
+
+    captured = {}
+
+    def fake_extract_material_params(_result):
+        captured["extract_called"] = True
+        return {
+            "B": 0.12,
+            "Ms": 8.0e5,
+            "Aex": 13.0e-12,
+            "d": 120.0e-9,
+            "Ku": 0.0,
+            "Kc1": 0.0,
+            "Kc2": 0.0,
+            "phi_ani": 0.0,
+            "g": 2.0,
+        }
+
+    def fake_compute_analytical_dispersion(
+        k_range,
+        **kwargs,
+    ):
+        captured.update({"k_range": k_range, "compute_kwargs": dict(kwargs)})
+        return [
+            (np.array([k_range[0], k_range[1]]), np.array([2.0, 3.0]), "DE"),
+            (np.array([k_range[0], k_range[1]]), np.array([1.0, 1.5]), "DE"),
+        ]
+
+    def fake_scatter(x, y, **kwargs):
+        captured.setdefault("scatter_calls", []).append(
+            {"x": np.asarray(x), "y": np.asarray(y), "kwargs": dict(kwargs)}
+        )
+
+    class FakeAxis:
+        def get_xlim(self):
+            return (0.0, 1.0)
+
+        def scatter(self, x, y, **kwargs):
+            fake_scatter(x, y, **kwargs)
+
+        def legend(self, *args, **kwargs):
+            captured["legend_called"] = (args, kwargs)
+
+    class FakeExplorer:
+        def __init__(self):
+            self.options = {
+                "analitical": "DE",
+                "analytical_model": "kalinikos",
+                "analytical_n_modes": 2,
+            }
+            self.result = SimpleNamespace(_interface=SimpleNamespace())
+
+    monkeypatch.setattr(
+        _analytics_overlay,
+        "extract_material_params",
+        fake_extract_material_params,
+    )
+    monkeypatch.setattr(
+        _analytics_overlay,
+        "compute_analytical_dispersion",
+        fake_compute_analytical_dispersion,
+    )
+
+    explorer = FakeExplorer()
+    rendering._draw_analytical_overlay(explorer, FakeAxis(), "rad_um")
+
+    assert captured["extract_called"] is True
+    assert captured["k_range"] == (0.0, 1.0e6)
+    assert captured["compute_kwargs"]["sw_config"] == "DE"
+    assert captured["compute_kwargs"]["model"] == "kalinikos"
+    assert captured["compute_kwargs"]["n_modes"] == 2
+    assert captured["compute_kwargs"]["B"] == 0.12
+    assert captured["compute_kwargs"]["Ms"] == 8.0e5
+    assert len(captured["scatter_calls"]) == 2
+    assert captured["scatter_calls"][0]["kwargs"]["label"] == "DE"
+    assert captured["scatter_calls"][1]["kwargs"]["label"] == "DE (n=1)"
+    assert "legend_called" in captured
+
+
 def test_dispersion_interface_plot_interactive_defaults_to_lightweight_compute():
     from types import SimpleNamespace
 

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def _scaled_k_axis(k_axis: Any, kscale: str) -> tuple[Any, str]:
-    import numpy as np
-
     if kscale == "rad_um":
         return k_axis / 1e6, "k [rad/um]"
     if kscale in {"cycles_m", "meter"}:
@@ -19,7 +22,6 @@ def _norm(explorer: Any, spectrum: Any) -> Any:
     if not bool(explorer.state.lognorm):
         return None
     try:
-        import numpy as np
         from matplotlib.colors import LogNorm
 
         positive_values = spectrum[spectrum > 0]
@@ -33,12 +35,186 @@ def _norm(explorer: Any, spectrum: Any) -> Any:
     return None
 
 
+def _normalise_analytical_setting(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool):
+        return "DE" if raw_value else None
+    if isinstance(raw_value, str):
+        value = raw_value.strip()
+        if not value:
+            return None
+        canonical = value.upper()
+        if canonical in {"OFF", "NONE", "FALSE", "0"}:
+            return None
+        return canonical
+    return None
+
+
+def _analytical_k_range(ax: Any, kscale: str) -> tuple[float, float] | None:
+    try:
+        k_min_disp, k_max_disp = ax.get_xlim()
+    except Exception:
+        return None
+    if k_min_disp is None or k_max_disp is None:
+        return None
+    try:
+        lo = float(k_min_disp)
+        hi = float(k_max_disp)
+    except (TypeError, ValueError):
+        return None
+    if lo == hi:
+        return None
+
+    if kscale == "rad_um":
+        lo *= 1e6
+        hi *= 1e6
+    elif kscale in {"cycles_m", "meter"}:
+        lo *= 2 * np.pi
+        hi *= 2 * np.pi
+
+    lo_plot = float(min(lo, hi))
+    hi_plot = float(max(lo, hi))
+    if np.isnan(lo_plot) or np.isnan(hi_plot):
+        return None
+    return lo_plot, hi_plot
+
+
+def _draw_analytical_overlay(explorer: Any, ax: Any, kscale: str) -> None:
+    options = explorer.options
+    raw_request = options.get("analitical", options.get("analytical"))
+    request = _normalise_analytical_setting(raw_request)
+    if request is None:
+        return
+    if not hasattr(ax, "scatter"):
+        logger.debug("Analytical overlay skipped: axis does not support scatter")
+        return
+
+    try:
+        k_range = _analytical_k_range(ax, kscale)
+    except Exception:
+        k_range = None
+    if k_range is None:
+        logger.debug("Analytical overlay skipped: invalid k-range")
+        return
+
+    try:
+        from .._plotting._analytics_overlay import (
+            compute_analytical_dispersion,
+            extract_material_params,
+        )
+    except Exception as exc:
+        logger.warning("Analytical overlay unavailable: %s", exc)
+        return
+
+    auto_params = extract_material_params(explorer.result)
+    effective = {
+        "B": auto_params.get("B"),
+        "Ms": auto_params.get("Ms"),
+        "Aex": auto_params.get("Aex"),
+        "d": auto_params.get("d"),
+        "Ku": auto_params.get("Ku", 0.0),
+        "Kc1": auto_params.get("Kc1", 0.0),
+        "Kc2": auto_params.get("Kc2", 0.0),
+        "phi_ani": auto_params.get("phi_ani", 0.0),
+        "g": auto_params.get("g", 2.0),
+    }
+    missing = [key for key in ("B", "Ms", "Aex", "d") if effective[key] is None]
+    if missing:
+        logger.warning(
+            "Analytical overlay skipped for config=%s: missing material params %s",
+            request,
+            ", ".join(missing),
+        )
+        return
+
+    try:
+        n_modes = max(1, int(options.get("analytical_n_modes", 1)))
+    except Exception:
+        n_modes = 1
+    try:
+        k_points = max(50, min(5000, int(options.get("analytical_k_points", 500))))
+    except Exception:
+        k_points = 500
+
+    try:
+        curves = compute_analytical_dispersion(
+            k_range=k_range,
+            model=str(options.get("analytical_model", "kalinikos")),
+            sw_config=request,
+            n_modes=n_modes,
+            k_points=k_points,
+            phi=options.get("analytical_phi"),
+            D=options.get("analytical_D"),
+            B=effective["B"],
+            Ms=effective["Ms"],
+            d=effective["d"],
+            Aex=effective["Aex"],
+            Ku=effective["Ku"],
+            Kc1=effective["Kc1"],
+            Kc2=effective["Kc2"],
+            phi_ani=effective["phi_ani"],
+            g=effective["g"],
+        )
+    except Exception as exc:
+        logger.warning(
+            "Analytical overlay computation failed for config=%s: %s",
+            request,
+            exc,
+        )
+        return
+
+    base_scatter = {
+        "s": 30,
+        "marker": "x",
+        "color": "white",
+        "alpha": 0.85,
+        "linewidths": 1.0,
+        "zorder": 20,
+    }
+    style_override = options.get("analytical_style")
+    if isinstance(style_override, dict):
+        base_scatter.update(style_override)
+
+    plotted_any = False
+    for idx, (k_values, f_ghz, mode_label) in enumerate(curves):
+        if k_values is None or f_ghz is None:
+            continue
+
+        if kscale == "rad_um":
+            k_plot = np.asarray(k_values, dtype=float) / 1e6
+        elif kscale in {"cycles_m", "meter"}:
+            k_plot = np.asarray(k_values, dtype=float) / (2 * np.pi)
+        else:
+            k_plot = np.asarray(k_values, dtype=float)
+        f_plot = np.asarray(f_ghz, dtype=float)
+
+        finite = np.isfinite(k_plot) & np.isfinite(f_plot)
+        if not bool(np.any(finite)):
+            continue
+        k_plot = k_plot[finite]
+        f_plot = f_plot[finite]
+        if k_plot.size == 0 or f_plot.size == 0:
+            continue
+
+        scatter_kwargs = dict(base_scatter)
+        scatter_kwargs["label"] = (
+            mode_label if (n_modes == 1 or idx == 0) else f"{mode_label} (n={idx})"
+        )
+        ax.scatter(k_plot, f_plot, **scatter_kwargs)
+        plotted_any = True
+
+    if plotted_any:
+        try:
+            ax.legend(loc="upper right", fontsize=8, framealpha=0.75)
+        except Exception:
+            pass
+
+
 def draw_dispersion_panel(explorer: Any) -> None:
     """Render ``S(k, f)`` into the explorer axes."""
     if explorer.axes is None or explorer.figure is None:
         return
-
-    import numpy as np
 
     ax = explorer.axes
     ax.clear()
@@ -106,6 +282,11 @@ def draw_dispersion_panel(explorer: Any) -> None:
                 markeredgewidth=1.8,
                 markersize=8,
             )
+
+    try:
+        _draw_analytical_overlay(explorer, ax, str(explorer.state.kscale))
+    except Exception as exc:
+        logger.debug("Analytical overlay rendering failed: %s", exc)
 
     ax.set_title(f"Dispersion S(k, f) - {explorer.state.source}")
     ax.set_xlabel(k_label)

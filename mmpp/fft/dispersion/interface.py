@@ -76,6 +76,8 @@ _INTERACTIVE_VIEWER_KEYS = {
     "auto_animate",
     "lattice_constant_nm",
     "positive_frequencies",
+    "analitical",
+    "analytical",
 }
 
 
