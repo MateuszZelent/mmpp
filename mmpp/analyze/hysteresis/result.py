@@ -114,7 +114,8 @@ class HysteresisResult:
         reversible micromagnetic simulations where only one field polarity was
         computed.  Both the field axis and the magnetization axis are reflected
         around the origin and appended to form a closed two-branch loop
-        (ascending + descending) with the same |B| range on both polarities.
+        (ascending + descending) with the same absolute field range on both
+        polarities.
 
         The returned result contains ``4N − 1`` points, where *N* is the
         number of original samples.  For the interactive snapshot explorer,

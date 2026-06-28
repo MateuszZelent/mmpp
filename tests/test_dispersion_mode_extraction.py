@@ -2885,24 +2885,43 @@ def test_spin_wave_analyzer_infers_dt_from_uniform_time_axis(tmp_path):
     assert np.allclose(analyzer.time_axis, np.arange(4, dtype=float) * 2e-12)
 
 
-def test_spin_wave_analyzer_rejects_nonuniform_time_axis(tmp_path):
+def test_spin_wave_analyzer_accepts_nonuniform_time_axis_with_effective_dt(tmp_path):
+    from types import SimpleNamespace
+
     from mmpp.fft.dispersion.core import SpinWaveAnalyzer
+    from mmpp.fft.dispersion.interface import FFTDispersionInterface
     from mmpp.fft.dispersion.models import DispersionConfig
 
     zarr_path = tmp_path / "dispersion_nonuniform_time_axis.zarr"
     data = np.zeros((4, 1, 1, 4, 3), dtype=np.float32)
     root = zarr.open(str(zarr_path), mode="w")
     root.create_dataset("m", data=data, chunks=data.shape)
-    root.create_dataset("t", data=np.array([0.0, 1e-12, 2.4e-12, 3.0e-12]))
+    root["m"].attrs["t"] = [0.0, 1.2e-12, 2.8e-12, 4.5e-12]
+    root.attrs["t_sampl"] = 1e-12
     root.attrs["dx"] = 1e-9
     root.attrs["dy"] = 1e-9
 
-    with pytest.raises(ValueError, match="Non-uniform time axis"):
-        SpinWaveAnalyzer(
-            zarr_path,
-            config=DispersionConfig(dt=1e-12),
-            tmax=None,
-        )
+    analyzer = SpinWaveAnalyzer(
+        zarr_path,
+        config=DispersionConfig(dt=9e-12),
+        tmax=None,
+    )
+
+    assert np.isclose(analyzer.dt, 1.5e-12)
+    assert np.isclose(analyzer.config.dt, 1.5e-12)
+    assert np.allclose(analyzer.time_axis, [0.0, 1.2e-12, 2.8e-12, 4.5e-12])
+
+    result = analyzer.compute_dispersion_1d(axis="x", component="mx")
+    assert any("Non-uniform time axis" in note for note in result.notes)
+    assert any("declared t_sampl=1e-12" in note for note in result.notes)
+
+    iface = FFTDispersionInterface(
+        SimpleNamespace(job_result=SimpleNamespace(path=str(zarr_path), name="run")),
+        dataset_name="m",
+    )
+    viewer = iface.plot.interactive(show=False, axis="x", component="mx", disk_cache=False)
+    assert viewer.state["show"] is False
+    assert any("Non-uniform time axis" in note for note in viewer.state["result_notes"])
 
 
 def test_spin_wave_analyzer_infers_spacing_from_uniform_spatial_axes(tmp_path):

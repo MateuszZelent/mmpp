@@ -24,10 +24,54 @@ def test_dev_extra_declares_docs_linkify_dependency():
     pyproject = Path("pyproject.toml").read_text()
     setup_py = Path("setup.py").read_text()
     docs_conf = Path("docs/conf.py").read_text()
+    pyproject_dev = re.search(r"dev = \[(.*?)\n\]", pyproject, re.S)
+    setup_dev = re.search(r'"dev": \[(.*?)\n        \]', setup_py, re.S)
 
     assert '"linkify"' in docs_conf
     assert '"linkify-it-py",' in pyproject
     assert '"linkify-it-py",' in setup_py
+    assert pyproject_dev is not None
+    assert setup_dev is not None
+    assert '"scipy",' in pyproject_dev.group(1)
+    assert '"scipy",' in setup_dev.group(1)
+
+
+def test_sphinx_static_path_exists():
+    docs_conf = Path("docs/conf.py").read_text()
+
+    assert 'html_static_path = ["_static"]' in docs_conf
+    assert docs_conf.count('html_static_path = ["_static"]') == 1
+    assert Path("docs/_static").is_dir()
+
+
+def test_sphinx_theme_options_do_not_use_unsupported_display_version():
+    docs_conf = Path("docs/conf.py").read_text()
+
+    assert '"display_version"' not in docs_conf
+
+
+def test_sphinx_suppresses_intentional_archive_toctree_warnings():
+    docs_conf = Path("docs/conf.py").read_text()
+
+    assert '"toc.not_included"' in docs_conf
+
+
+def test_known_docs_warning_regressions_are_fixed():
+    development_readme = Path("docs/development/README.md").read_text()
+    refactor_plan = Path("docs/raports/10.05.2025/refacktor/plan.md").read_text()
+    hysteresis_result = Path("mmpp/analyze/hysteresis/result.py").read_text()
+
+    assert "../../DEVELOPMENT.md" not in development_readme
+    assert "```toml\nzarr>=3\nh5py\n```" not in refactor_plan
+    assert "same |B| range" not in hysteresis_result
+
+
+def test_dispersion_docstrings_do_not_trigger_rst_substitutions():
+    dispersion_interface = Path("mmpp/fft/dispersion/interface.py").read_text()
+    dispersion_core = Path("mmpp/fft/dispersion/core.py").read_text()
+
+    assert "Trim returned data to |k|" not in dispersion_interface
+    assert "mean |FFT|" not in dispersion_core
 
 
 def test_docs_workflows_use_dev_extra_for_linkify_dependency():

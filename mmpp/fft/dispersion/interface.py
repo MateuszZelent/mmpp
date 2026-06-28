@@ -1549,7 +1549,7 @@ class FFTDispersionInterface:
             Store complex FFT spectrum in ``result.S_complex`` (default True).
             Set to ``False`` to reduce memory when phase reconstruction is not needed.
         kmax : float, optional (via kwargs)
-            Trim returned data to |k| ≤ kmax (rad/m) without affecting cached data.
+            Trim returned data to ``abs(k) <= kmax`` (rad/m) without affecting cached data.
             Note: Input in rad/m regardless of display units (rad_um, meter, etc.)
         flipx : bool, optional (via kwargs), default True
             When True (default), mirror the dispersion result along the k-axis so that

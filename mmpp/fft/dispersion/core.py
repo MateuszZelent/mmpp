@@ -76,11 +76,11 @@ def _mirror_k_indices(k_axis: np.ndarray) -> np.ndarray:
     )
 
 
-def _uniform_time_spacing(time_values: Any, source: str) -> Optional[float]:
-    """Return dt from a uniformly sampled time axis, or raise on invalid axes."""
+def _time_spacing_from_axis(time_values: Any, source: str) -> tuple[Optional[float], List[str]]:
+    """Return effective dt from a monotonic time axis and any quality notes."""
     axis = np.asarray(time_values, dtype=float).reshape(-1)
     if axis.size < 2:
-        return None
+        return None, []
     if not np.all(np.isfinite(axis)):
         raise ValueError(f"Time axis '{source}' contains non-finite values")
 
@@ -88,15 +88,17 @@ def _uniform_time_spacing(time_values: Any, source: str) -> Optional[float]:
     if np.any(deltas <= 0):
         raise ValueError(f"Time axis '{source}' must be strictly increasing")
 
-    spacing = float(deltas[0])
+    spacing = float(np.mean(deltas))
     tolerance = max(abs(spacing) * 1e-6, np.finfo(float).eps * 10)
     max_delta = float(np.max(np.abs(deltas - spacing)))
+    notes: List[str] = []
     if max_delta > tolerance:
-        raise ValueError(
-            f"Non-uniform time axis '{source}' is not supported for FFT dispersion "
-            f"(max dt deviation {max_delta:g} s, tolerance {tolerance:g} s)"
+        notes.append(
+            f"Sampling warning: Non-uniform time axis '{source}' approximated by "
+            f"mean dt={spacing:g} s for FFT dispersion (max dt deviation "
+            f"{max_delta:g} s, tolerance {tolerance:g} s)"
         )
-    return spacing
+    return spacing, notes
 
 
 def _uniform_spatial_spacing(axis_values: Any, source: str) -> Optional[float]:
@@ -248,6 +250,7 @@ class SpinWaveAnalyzer:
         self._time_axis_length: Optional[int] = None
         self._loaded_time: int = 0
         self.time_axis: Optional[np.ndarray] = None
+        self._time_axis_notes: List[str] = []
         self.dt: float = 0.0
         self.grid_spacings: Dict[str, float] = {}
 
@@ -650,15 +653,27 @@ class SpinWaveAnalyzer:
 
         time_axis_dt: Optional[float] = None
         time_axis_source: Optional[str] = None
+        declared_dt: Optional[float] = None
+        declared_dt_source: Optional[str] = None
+        dt_keys = ['t_sampl', 'dt', 'Dt', 'timestep', 'time_step']
+        for key in dt_keys:
+            if key in attrs:
+                attr_val = attrs[key]
+                if isinstance(attr_val, (int, float)):
+                    declared_dt = float(attr_val)
+                    declared_dt_source = key
+                    break
+
         if hasattr(self, '_M_path') and self._M_path:
             try:
                 dataset = self.zarr_file[self._M_path]
                 if hasattr(dataset, 'attrs') and 't' in dataset.attrs:
                     t_attr = dataset.attrs['t']
-                    time_axis_dt = _uniform_time_spacing(
+                    time_axis_dt, notes = _time_spacing_from_axis(
                         t_attr,
                         f"{self._M_path}.attrs['t']",
                     )
+                    self._time_axis_notes.extend(notes)
                     if time_axis_dt is not None:
                         self.time_axis = np.asarray(t_attr, dtype=float).reshape(-1)
                         time_axis_source = f"{self._M_path}.attrs['t']"
@@ -667,31 +682,40 @@ class SpinWaveAnalyzer:
 
         if time_axis_dt is None and 't' in self.zarr_file:
             t = np.array(self.zarr_file['t'])
-            time_axis_dt = _uniform_time_spacing(t, "t")
+            time_axis_dt, notes = _time_spacing_from_axis(t, "t")
+            self._time_axis_notes.extend(notes)
             if time_axis_dt is not None:
                 self.time_axis = np.asarray(t, dtype=float).reshape(-1)
                 time_axis_source = "t"
         
-        # Time step - Check in order of specificity:
-        # 1. Global t_sampl attribute
-        # 2. Dataset-specific 't' attribute (most accurate for per-dataset time)
-        # 3. Time array datasets
-        dt_keys = ['t_sampl', 'dt', 'Dt', 'timestep', 'time_step']
-        for key in dt_keys:
-            if key in attrs:
-                attr_val = attrs[key]
-                if isinstance(attr_val, (int, float)):
-                    self.dt = float(attr_val)
-                    logger.info(f"Extracted dt = {self.dt} s from global '{key}'")
-                    break
-        else:
-            if time_axis_dt is not None:
-                self.dt = time_axis_dt
-                logger.info(
-                    "Extracted dt = %s s from uniform time axis '%s'",
-                    self.dt,
-                    time_axis_source,
+        # Time axis metadata is more specific than scalar t_sampl/dt.  Accept
+        # monotonic non-uniform output times by using their mean spacing and
+        # surfacing a sampling note; FFT still uses one effective dt.
+        if time_axis_dt is not None:
+            self.dt = time_axis_dt
+            logger.info(
+                "Extracted effective dt = %s s from time axis '%s'",
+                self.dt,
+                time_axis_source,
+            )
+            if declared_dt is not None and not np.isclose(
+                declared_dt,
+                time_axis_dt,
+                rtol=1e-6,
+                atol=np.finfo(float).eps * 10,
+            ):
+                self._time_axis_notes.append(
+                    f"Sampling warning: time axis dt={time_axis_dt:g} s differs "
+                    f"from declared {declared_dt_source}={declared_dt:g} s; "
+                    "using time axis dt for FFT dispersion"
                 )
+        elif declared_dt is not None:
+            self.dt = declared_dt
+            logger.info(
+                "Extracted dt = %s s from global '%s'",
+                self.dt,
+                declared_dt_source,
+            )
             
         if self.dt <= 0:
             logger.warning("Could not determine time step dt, using config value")
@@ -827,7 +851,7 @@ class SpinWaveAnalyzer:
             Strategy for collapsing the orthogonal axis. Supported values:
             - 'magnetization': average signal before spatial FFT (legacy default)
             - 'fft_power': mean spectral power after FFT (phase-robust)
-            - 'fft_abs': mean |FFT|, squared back to power (preserves localized modes)
+            - 'fft_abs': mean FFT magnitude, squared back to power (preserves localized modes)
             - 'fft_power_max': keep max spectral power along orth axis
             - 'fft_power_median': median spectral power (outlier resistant)
             If None, uses config.orthogonal_avg_mode.
@@ -1197,6 +1221,7 @@ class SpinWaveAnalyzer:
         if not store_complex:
             notes.append("Complex spectrum disabled (store_complex=False)")
         notes.append(f"Spectral scaling: {scaling}")
+        notes.extend(self._time_axis_notes)
         sampling_notes = _sampling_quality_notes(
             n_time=T_len,
             n_space=N_space,

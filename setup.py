@@ -54,6 +54,7 @@ setup(
             "sphinx-autodoc-typehints",
             "myst-parser",
             "linkify-it-py",
+            "scipy",
         ],
         "interactive": [
             "itables",

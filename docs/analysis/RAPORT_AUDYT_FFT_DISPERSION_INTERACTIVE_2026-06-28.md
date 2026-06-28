@@ -65,7 +65,7 @@ install wheel/sdist, extras matrix i docs build w CI.
 | Docs example smoke | Release gate wykonuje publiczny wzorzec `disp.plot.interactive(...)`, `disp.compute_1d(...)`, `res.plot.interactive(...)` oraz workflow modów `store_complex=True -> res.modes.interactive(show=False) -> mode.plot.interactive(show=False) -> res.modes.plot.animation(show=False)` na syntetycznym `.zarr`; `docs_example_status` zmienia top-level `status` na `failed`, jeśli którykolwiek invariant docs smoke nie przejdzie. | `verify_fft_dispersion_release_gate.py`, `tests/test_dispersion_release_gate.py`. |
 | Benchmark | Dodano skrypt syntetycznego benchmarku z profilami `small-ci`/`medium-dev`/`research-reference`, czasem, peak memory i preflightem pamięci; release gate używa `small-ci`, release verify uruchamia preflight większych profili, a osobny weekly/manual workflow wykonuje `medium-dev` i preflight `research-reference`. | `scripts/analysis/benchmark_fft_dispersion.py`, `verify_fft_dispersion_release_gate.py`, `.github/workflows/fft-dispersion-benchmark.yml`, testy benchmark/release. |
 | Widget smoke gate | Release gate raportuje `widget_smoke`; `--require-widget-smoke` zmienia brak `ipywidgets`/Matplotlib w twardy fail, a ścieżka `ok` sprawdza też, że legacy widget `.close()` czyści display i figurę. | `verify_fft_dispersion_release_gate.py`, `tests/test_dispersion_release_gate.py`. |
-| Docs build gate | Release verify job buduje Sphinx docs przed publikacją artefaktów; docs/release workflows instalują `.[dev]` w cytowanej formie, bez ręcznego `linkify-it-py`. | `.github/workflows/docs.yml`, `.github/workflows/release.yml`, `tests/test_dispersion_release_gate.py`. |
+| Docs build gate | Release verify job buduje Sphinx docs przed publikacją artefaktów; docs/release workflows instalują `.[dev]` w cytowanej formie, bez ręcznego `linkify-it-py`. `dev` extra deklaruje też `scipy`, żeby autodoc FFT nie działał w ograniczonym trybie. Lokalny clean build w izolowanym `/tmp/mmpp-docs-venv` zakończył się kodem 0. | `.github/workflows/docs.yml`, `.github/workflows/release.yml`, `docs/_static/.gitkeep`, `pyproject.toml`, `setup.py`, `tests/test_dispersion_release_gate.py`. |
 | Extras matrix gate | Release workflow pobiera zbudowany artefakt `dist`, instaluje wheel z extras `.[fft]`, `.[interactive]`, `.[plotting]`, `.[full]` i uruchamia smoke w `--import-mode installed`; dla `fft/full` wymusza pyFFTW backend smoke, a dla `interactive/full` wymusza widget smoke. | `.github/workflows/release.yml`, `tests/test_dispersion_release_gate.py`. |
 | Python metadata | `pyproject.toml`, `setup.py` i CI deklarują/testują Python 3.9-3.12. | metadata + test `declared_python_versions_match_ci_matrix`. |
 | Release artifact smoke | Workflow instaluje wheel i wheel zbudowany ze sdist wraz z runtime dependencies, a smoke uruchamia `--import-mode installed`. Test workflow blokuje powrót do instalacji artefaktów przez `--no-deps`, w tym na etapie budowy wheel ze sdist, bo taki smoke nie dowodzi rozwiązywalności zależności pakietu. | `.github/workflows/release.yml`, `verify_fft_dispersion_release_gate.py`, `tests/test_dispersion_release_gate.py`. |
@@ -80,7 +80,7 @@ install wheel/sdist, extras matrix i docs build w CI.
 | Brak potwierdzenia extras/widget smoke w CI | Lokalnie `--require-widget-smoke` przechodzi w conda base z `IPython`/`ipywidgets`/Matplotlib, ale release musi jeszcze potwierdzić to po instalacji extra `interactive/full`. |
 | Niepełne wykonanie dużych benchmarków | `medium-dev` ma weekly/manual workflow, a `research-reference` ma preflight pamięciowy. Pełne wykonanie FFT profilu `research-reference` pozostaje poza release gate, żeby nie blokować szybkich publikacji. |
 | Niepełna walidacja backendów | NumPy/SciPy są pokryte syntetycznie; pyFFTW i workers policy wymagają bramki warunkowej. |
-| Brak pełnego lokalnego docs/example matrix | README, API docs i tutorial pokazują nowy wzorzec dyspersji, ale lokalnie nie wykonano pełnego Sphinx build ani smoke wszystkich przykładów spoza `fft/dispersion`. Metadata `dev` deklaruje już `myst-parser` i `linkify-it-py`, a workflows używają cytowanego `pip install -e ".[dev]"`, więc konfiguracja `myst_enable_extensions = ["linkify"]` nie wymaga ręcznej zależności poza extra. |
+| Docs warnings i niepełny example matrix | README, API docs i tutorial pokazują nowy wzorzec dyspersji, a lokalny Sphinx build z `.[dev]` przechodzi. Pozostaje cleanup ostrzeżeń Sphinx oraz smoke przykładów spoza `fft/dispersion`. |
 | Status pakietu Alpha | `pyproject.toml` nadal deklaruje `Development Status :: 3 - Alpha`; przy tym statusie nie wolno mówić o pełnej produkcyjności całej biblioteki. |
 
 ## Definicja produkcyjności
@@ -493,13 +493,17 @@ W przypadku kernela `numba_sprawna` root cause był konkretny: Python bez
 `~/.local/lib/python3.10/site-packages`, a `pandas` z conda env. Notebook
 usuwa teraz user-site z `sys.path` zanim zaimportuje pakiety binarne; jeśli
 któryś z nich został już załadowany z user-site, wymaga restartu kernela.
-Lokalnie pełny Sphinx build nie został wykonany, bo sprawdzone interpretery
-conda base i aktualny `python3` nie mają pakietu `sphinx`, a `.venv/bin/python`
-nie jest wykonywalny w tym checkoutcie; pozostaje szerszy example smoke poza
-samą dyspersją. Usunięto jednak lukę metadata i workflow: `dev` extra w
-`pyproject.toml` i `setup.py` deklaruje już `linkify-it-py`, wymagane przez
-MyST `linkify` w `docs/conf.py`, a workflows docs/release instalują cytowane
-`.[dev]` i nie instalują `linkify-it-py` ręcznie.
+Początkowo lokalny Sphinx build był zablokowany, bo sprawdzone interpretery
+conda base i aktualny `python3` nie miały pakietu `sphinx`, a `.venv/bin/python`
+nie był wykonywalny w tym checkoutcie. Ten blocker został zweryfikowany w
+izolowanym środowisku `/tmp/mmpp-docs-venv`: instalacja `pip install -e
+".[dev]"` zakończyła się kodem 0, a `python -m sphinx -b html docs docs/_build
+--keep-going` zakończył się kodem 0. Pozostaje szerszy example smoke poza samą
+dyspersją i cleanup ostrzeżeń dokumentacji. Usunięto też lukę metadata i
+workflow: `dev` extra w `pyproject.toml` i `setup.py` deklaruje już
+`linkify-it-py`, wymagane przez MyST `linkify` w `docs/conf.py`, a workflows
+docs/release instalują cytowane `.[dev]` i nie instalują `linkify-it-py`
+ręcznie.
 
 Zakres końcowy:
 
@@ -714,9 +718,33 @@ python3 -m sphinx --version
 
 Wynik odnotowany w pracy nad modułem: conda base i aktualny `python3` zwróciły
 `No module named sphinx`, a `.venv/bin/python` zwrócił `permission denied`.
-Pełny HTML build pozostaje więc do potwierdzenia w środowisku z `.[dev]`.
-Release workflow ma teraz krok `Build documentation`, który uruchamia
-`sphinx-build -b html . _build --keep-going` przed publikacją.
+
+```bash
+python3 -m venv /tmp/mmpp-docs-venv
+/tmp/mmpp-docs-venv/bin/python -m pip install -e ".[dev]"
+MPLCONFIGDIR=/tmp/mmpp-matplotlib \
+  /tmp/mmpp-docs-venv/bin/python -m sphinx -b html -E docs /tmp/mmpp-docs-clean-build-theme --keep-going
+```
+
+Wynik odnotowany w pracy nad modułem: izolowana instalacja `.[dev]` zakończyła
+się kodem 0. `dev` extra deklaruje teraz także `scipy`, więc docs build
+importuje i dokumentuje `mmpp.fft.electromagnetic_analysis` zamiast ostrzegać o
+braku SciPy. Najnowszy czysty Sphinx HTML build `-E --keep-going` zakończył się
+kodem 0, a log `/tmp/mmpp-sphinx-after-dispersion-docstring-fixes.log` miał 448
+linii: 306 wystąpień `WARNING` i 135 docutils `ERROR`. Nie ma już warningów
+`toc.not_included`, `display_version`, `html_static_path`, `No module named
+'scipy'`, `Unknown source document`, `highlighting_failure` ani `Undefined
+substitution` w `fft/dispersion`. Dodano `docs/_static/.gitkeep`, usunięto
+duplikat `html_static_path`, wyciszono intencjonalne archiwalne wpisy spoza
+toctree, usunięto nieobsługiwaną opcję motywu `display_version` z
+`docs/conf.py`, poprawiono nieistniejący link w `docs/development/README.md`,
+niepoprawny blok TOML w archiwalnym planie refaktoru oraz docstringi `|k|`,
+`|FFT|` i `|B|` interpretowane przez RST jako podstawienia. Pozostałe
+ostrzeżenia dotyczą m.in. offline intersphinx, zduplikowanych stron autodoc i
+starszych docstringów w modułach poza samym `fft/dispersion`; dlatego
+dokumentacja przechodzi lokalnie, ale nie jest jeszcze warning-clean. Release
+workflow ma krok `Build documentation`, który
+uruchamia `sphinx-build -b html . _build --keep-going` przed publikacją.
 
 Release workflow ma też job `extras-smoke`, który zależy od zbudowanego joba
 `build`, pobiera artefakt `dist` i instaluje wheel z extra `fft`,
@@ -764,10 +792,16 @@ Wynik odnotowany w pracy nad modułem: notebook smoke zakończył się
 `res.plot.interactive(show=False)` oraz `res.modes.interactive(show=False)`.
 Preflight wypisuje też `sys.executable`, wersje i ścieżki pakietów binarnych,
 co ułatwia wykrycie mieszania pakietów conda i user-site w notebookach.
-Ten sam notebook został dodatkowo wykonany interpreterem
-`/home/kkingstoun/software/anaconda3/envs/numba_sprawna/bin/python` bez
-zewnętrznego `PYTHONNOUSERSITE`; bootstrap usunął user-site i przebieg zakończył
-się `NOTEBOOK_SMOKE_OK`.
+Ten sam notebook został dodatkowo wykonany przez `nbclient` interpreterem
+`/home/kkingstoun/software/anaconda3/envs/numba_sprawna/bin/python` z
+`PYTHONNOUSERSITE=1`; przebieg zakończył się bez błędów i utworzył wykonany
+notebook w `/tmp/mmpp-fft-dispersion-interactive-smoke-executed.ipynb`. Bez
+zewnętrznego `PYTHONNOUSERSITE=1` ten kernel ładuje `numpy`, `zarr`, `numcodecs`
+i `h5py` z `~/.local/lib/python3.10/site-packages`, podczas gdy pandas pochodzi
+z conda env, co powtarzalnie wywołuje `ValueError: numpy.dtype size changed`.
+Jeżeli ten błąd pojawi się po pierwszym imporcie `mmpp`, należy zrestartować
+kernel i uruchomić Jupyter z `PYTHONNOUSERSITE=1`; samo ustawienie zmiennej w
+żywej sesji nie przeładuje bezpiecznie już zaimportowanych modułów binarnych.
 
 ```bash
 /home/kkingstoun/software/anaconda3/bin/python3 -m build \
@@ -933,29 +967,33 @@ uruchamia smoke przez `--import-mode installed` zamiast importować checkout.
 Ten sam test wymaga, żeby publikacja PyPI i TestPyPI miały
 `needs: [build, extras-smoke]`.
 Po refaktoryzacji workflow cały plik `tests/test_dispersion_release_gate.py`
-przeszedł lokalnie: 18 testów zakończonych kodem 0. Dodatkowo
+przeszedł lokalnie: 23 testy zakończone kodem 0, w tym kontrola istnienia
+`docs/_static`, pojedynczej deklaracji `html_static_path`, deklaracji `scipy` w
+`dev` extra oraz regresje dla naprawionych warningów Sphinx.
+Dodatkowo
 `/home/kkingstoun/software/anaconda3/bin/python3 -c "import yaml; ..."`
 potwierdził poprawne parsowanie `.github/workflows/release.yml` i
 `.github/workflows/docs.yml`.
 
 ```bash
 /home/kkingstoun/software/anaconda3/bin/python3 -m build --no-isolation \
-  --sdist --wheel --outdir /tmp/mmpp-docs-metadata-smoke/dist
+  --sdist --wheel --outdir /tmp/mmpp-dev-scipy-metadata/dist
 python3 - <<'PY'
 import zipfile
 from pathlib import Path
-wheel = next(Path("/tmp/mmpp-docs-metadata-smoke/dist").glob("*.whl"))
+wheel = next(Path("/tmp/mmpp-dev-scipy-metadata/dist").glob("*.whl"))
 with zipfile.ZipFile(wheel) as zf:
     metadata = zf.read("mmpp-0.5.3.dist-info/METADATA").decode()
 for line in metadata.splitlines():
-    if "linkify-it-py" in line or line == "Provides-Extra: dev":
+    if "linkify-it-py" in line or "scipy" in line or line == "Provides-Extra: dev":
         print(line)
 PY
 ```
 
 Wynik odnotowany w pracy nad modułem: build wheel/sdist zakończył się kodem 0,
 a wheel METADATA zawiera `Provides-Extra: dev` oraz
-`Requires-Dist: linkify-it-py; extra == "dev"`. Build nadal emituje istniejące
+`Requires-Dist: linkify-it-py; extra == "dev"` oraz
+`Requires-Dist: scipy; extra == "dev"`. Build nadal emituje istniejące
 ostrzeżenia setuptools o formacie licencji i read-only `conda-meta/history`.
 
 Ograniczenie: pełne `pytest tests/ -q` było wcześniej blokowane przez zależności

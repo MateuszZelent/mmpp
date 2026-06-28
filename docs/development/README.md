@@ -48,7 +48,7 @@ This directory contains technical documentation for MMPP developers and contribu
 
 ### 🚀 Getting Started with Development
 1. Read through relevant documents in this directory
-2. Check the main [DEVELOPMENT.md](../../DEVELOPMENT.md) for setup instructions
+2. Install development dependencies with `pip install -e ".[dev]"`
 3. Follow the workflow guidelines in WORKFLOW_FIXES.md
 4. Refer to performance docs when making optimizations
 
