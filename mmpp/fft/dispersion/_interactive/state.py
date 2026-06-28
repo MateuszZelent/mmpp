@@ -17,12 +17,14 @@ class DispersionExplorerState:
     cmap: str = "viridis"
     positive_frequencies: bool = True
     lognorm: bool = False
+    f_units: str = "GHz"
     selected_k: float | None = None
     selected_f: float | None = None
     selected_power: float | None = None
     mode_type: str = "abs"
     show_flags: dict[str, bool] | None = None
     analytical: dict[str, Any] | None = None
+    live_filters: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.show_flags is None:
@@ -39,3 +41,5 @@ class DispersionExplorerState:
                 "n_modes": 1,
                 "k_points": 500,
             }
+        if self.live_filters is not None and not isinstance(self.live_filters, dict):
+            self.live_filters = None

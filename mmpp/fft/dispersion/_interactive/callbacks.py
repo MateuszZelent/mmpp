@@ -115,6 +115,89 @@ def _update_analytical_state_from_controls(explorer: Any) -> None:
     explorer.state.analytical = analytical
 
 
+def _update_live_filter_state_from_controls(explorer: Any) -> None:
+    """Mirror live-filter controls into the shared viewer state."""
+    controls = explorer.controls
+    live: dict[str, Any] = {}
+
+    if controls.get("filter_snr_enabled") is not None and bool(
+        controls["filter_snr_enabled"].value
+    ):
+        live["snr_filter"] = {
+            "enabled": True,
+            "threshold_snr": _optional_float(controls["filter_snr_threshold"].value)
+            or 3.0,
+            "method": "percentile",
+            "noise_percentile": 5.0,
+        }
+
+    if controls.get("filter_gaussian_enabled") is not None and bool(
+        controls["filter_gaussian_enabled"].value
+    ):
+        live["gaussian_morph"] = {
+            "enabled": True,
+            "sigma_f": _optional_float(controls["filter_gaussian_sigma_f"].value)
+            or 1.0,
+            "sigma_k": _optional_float(controls["filter_gaussian_sigma_k"].value)
+            or 1.0,
+            "threshold_std": _optional_float(
+                controls["filter_gaussian_threshold"].value
+            )
+            or 1.5,
+            "opening_size": 3,
+        }
+
+    if controls.get("filter_percentile_enabled") is not None and bool(
+        controls["filter_percentile_enabled"].value
+    ):
+        live["percentile_autoscale"] = {
+            "enabled": True,
+            "low_percentile": _optional_float(controls["filter_percentile_low"].value)
+            or 2.0,
+            "high_percentile": _optional_float(controls["filter_percentile_high"].value)
+            or 99.0,
+        }
+
+    if controls.get("filter_soft_enabled") is not None and bool(
+        controls["filter_soft_enabled"].value
+    ):
+        live["soft_threshold"] = {
+            "enabled": True,
+            "threshold_percentile": _optional_float(
+                controls["filter_soft_percentile"].value
+            )
+            or 50.0,
+            "smoothness": _optional_float(controls["filter_soft_smoothness"].value)
+            or 5.0,
+        }
+
+    if controls.get("filter_log_enabled") is not None and bool(
+        controls["filter_log_enabled"].value
+    ):
+        live["log_transform"] = {
+            "enabled": True,
+            "method": str(controls["filter_log_method"].value),
+            "scale": 1.0,
+            "floor_percentile": 1.0,
+        }
+
+    if controls.get("filter_gamma_enabled") is not None and bool(
+        controls["filter_gamma_enabled"].value
+    ):
+        live["gamma"] = {
+            "enabled": True,
+            "gamma": _optional_float(controls["filter_gamma_value"].value) or 0.5,
+        }
+
+    explorer.state.live_filters = live or None
+    options = getattr(explorer, "options", None)
+    if isinstance(options, dict):
+        if live:
+            options["live_filters"] = live
+        else:
+            options.pop("live_filters", None)
+
+
 def on_display_change(explorer: Any) -> None:
     """Apply current widget values to state and redraw."""
     controls = explorer.controls
@@ -137,9 +220,10 @@ def on_display_change(explorer: Any) -> None:
             explorer.state.show_flags[key] = bool(controls[key].value)
     _update_analytical_state_from_controls(explorer)
     sync_analytical_options(explorer)
+    _update_live_filter_state_from_controls(explorer)
     if hasattr(explorer, "refresh_auxiliary_panels"):
         explorer.refresh_auxiliary_panels()
-    if bool(getattr(explorer, "options", {}).get("auto_render", False)):
+    if bool(getattr(explorer, "options", {}).get("auto_render", True)):
         if hasattr(explorer, "ensure_figure"):
             explorer.ensure_figure()
         draw_dispersion_panel(explorer)

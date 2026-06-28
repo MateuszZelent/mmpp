@@ -42,6 +42,7 @@ def collect_preset_state(explorer: Any) -> dict[str, Any]:
         "mode_type": str(getattr(state, "mode_type", "abs") or "abs"),
         "show_flags": dict(state.show_flags or {}),
         "analytical": dict(state.analytical or {}),
+        "live_filters": dict(state.live_filters or {}),
     }
 
 
@@ -71,6 +72,9 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
         merged_analytical = dict(state.analytical or {})
         merged_analytical.update(analytical)
         state.analytical = merged_analytical
+    live_filters = payload.get("live_filters")
+    if isinstance(live_filters, dict):
+        state.live_filters = dict(live_filters) or None
 
 
 def save_preset(explorer: Any, name: str) -> Path:

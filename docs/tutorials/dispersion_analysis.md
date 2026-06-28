@@ -69,11 +69,10 @@ Use `disp.plot.interactive(...)` for compute-and-view notebooks, or
 returns a headless controller that can be tested, saved as a preset, or displayed
 later with `.show()`.
 
-By default, `.show()` displays the interactive toolbar without forcing a
-synchronous Matplotlib draw. Press `Render / refresh dispersion` to draw the
-heatmap in the notebook. If you explicitly want the old eager behavior, pass
-`initial_render=True`, but the lazy default is safer for VS Code and ipympl
-kernels because it avoids blocking startup.
+By default, `.show()` displays the interactive toolbar and renders the first
+dispersion heatmap automatically. The renderer uses a non-blocking draw path for
+widget backends; use `initial_render=False` only when you deliberately want a
+placeholder first and a later manual `Render / refresh dispersion` click.
 
 ```python
 viewer = disp.plot.interactive(
@@ -145,9 +144,9 @@ failed contract groups first, and `masterplan_failure_details` gives the
 concrete failed checks or observed values. Use `recommended_next_steps` as the
 short repair checklist for the failed contract groups. `--summary-only` keeps
 stdout compact while `--output` still writes the full JSON report. The
-`headless_viewer` contract also guards the kernel-safe startup path: `.show()`
-must not create a Matplotlib figure until the user explicitly renders the
-heatmap.
+`headless_viewer` contract also guards the notebook startup path: `.show()`
+must render the first heatmap, keep `fmax` and the default `rad_um` k-window
+honest, and still close cleanly after the widget lifecycle smoke.
 
 ## Filtering Pipeline
 

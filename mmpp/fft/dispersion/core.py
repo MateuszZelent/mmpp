@@ -988,6 +988,17 @@ class SpinWaveAnalyzer:
             N_space = self.M_data.shape[2]
         else:
             raise ValueError("axis must be 'x' or 'y'")
+
+        if N_space < 2:
+            shape = tuple(int(v) for v in getattr(self.M_data, "shape", ()))
+            raise ValueError(
+                f"Cannot compute 1D dispersion along axis={axis!r}: selected "
+                f"propagation axis has only {N_space} cell(s) after slicing "
+                f"(normalized M_data shape={shape}). Choose a wider {axis}-range "
+                "or switch the dispersion axis to the spatial direction that still "
+                "has at least two cells. For a single z-plane prefer preserving the "
+                "dimension, e.g. m[:, 0:1, y0:y1, x0:x1, :] or m.sel('z', ...)."
+            )
             
         logger.info(f"Computing 1D dispersion along {axis}-axis, component='{component}'")
         # Extract magnetization component

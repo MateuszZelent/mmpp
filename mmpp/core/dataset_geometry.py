@@ -64,12 +64,11 @@ def make_index_plan(
     # Compose with previous plan when chaining
     if previous_plan is not None:
         storage_key = compose_index_keys(previous_plan.storage_key, storage_key, previous_plan.source_shape)
-        # Remap dropped axes through the previous storage key (unchanged axes only)
-        dropped = [
-            previous_plan.dropped_axes[axis] if axis < len(previous_plan.dropped_axes) else axis
-            for axis in dropped
-        ]
-        # Merge dropped axes from previous plan
+        # The analysis/storage view preserves dimensionality, so child keys are
+        # still expressed in source-axis coordinates.  Do not remap by position
+        # inside ``previous_plan.dropped_axes``; that confuses "axis 0/1/2" with
+        # "the first/second/third previously dropped axis" for chained slicing
+        # such as ``m[:, 0, :, :, :][..., y0:y1, x0:x1, :]``.
         merged_dropped = sorted(set(list(previous_plan.dropped_axes) + dropped))
         dropped = merged_dropped
         source_shape = previous_plan.source_shape

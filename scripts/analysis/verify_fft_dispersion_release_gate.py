@@ -137,21 +137,37 @@ def _run_viewer_display_lifecycle_smoke() -> dict[str, Any]:
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
 
     result = DispersionResult1D(
-        S=np.ones((4, 5), dtype=np.float32),
-        k_axis=np.linspace(-1.0, 1.0, 4),
-        f_axis=np.array([-2.0, -1.0, 0.0, 1.0, 2.0]),
+        S=np.ones((5, 4), dtype=np.float32),
+        k_axis=np.array([-600e6, -5e6, 0.0, 5e6, 600e6]),
+        f_axis=np.array([0.0, 5e9, 10e9, 500e9]),
         axis="x",
         component="perp",
         config=DispersionConfig(dt=1.0, dx=1.0),
         dt=1.0,
         dx=1.0,
     )
-    lifecycle = DispersionInteractiveViewer.from_result(result, show=False)
+    lifecycle = DispersionInteractiveViewer.from_result(
+        result,
+        show=False,
+        fmax=8,
+        f_units="GHz",
+        kscale="rad_um",
+    )
     lifecycle.show()
     shown = lifecycle.show_requested is True
     figure_after_show = getattr(lifecycle, "_figure", None) is not None
     axes_after_show = getattr(lifecycle, "_axes", None) is not None
     widget_status_after_show = getattr(lifecycle, "_widget_status", "")
+    rendered_xlim = None
+    rendered_ylim = None
+    axes = getattr(lifecycle, "_axes", None)
+    if axes is not None:
+        try:
+            rendered_xlim = [float(value) for value in axes.get_xlim()]
+            rendered_ylim = [float(value) for value in axes.get_ylim()]
+        except Exception:
+            rendered_xlim = None
+            rendered_ylim = None
     lifecycle.close()
     return {
         "shown": shown,
@@ -160,20 +176,42 @@ def _run_viewer_display_lifecycle_smoke() -> dict[str, Any]:
         "figure_after_show": figure_after_show,
         "axes_after_show": axes_after_show,
         "widget_status_after_show": widget_status_after_show,
+        "rendered_xlim": rendered_xlim,
+        "rendered_ylim": rendered_ylim,
     }
 
 
 def _viewer_status(viewer_state: dict[str, Any]) -> dict[str, Any]:
     selection = viewer_state.get("export_selection", {})
     lifecycle = viewer_state.get("display_lifecycle") or {}
+    widget_ready = lifecycle.get("widget_status_after_show") == "ready"
+    rendered_xlim = lifecycle.get("rendered_xlim") or []
+    rendered_ylim = lifecycle.get("rendered_ylim") or []
     checks = {
         "viewer_headless": viewer_state.get("show") is False,
         "positive_frequencies": viewer_state.get("positive_frequencies") is True,
         "preset_roundtrip": viewer_state.get("preset_roundtrip") is True,
         "display_lifecycle": lifecycle.get("shown") is True
         and lifecycle.get("closed") is True,
-        "lazy_show_no_initial_figure": lifecycle.get("figure_after_show") is False
-        and lifecycle.get("axes_after_show") is False,
+        "auto_show_initial_figure": (not widget_ready)
+        or (
+            lifecycle.get("figure_after_show") is True
+            and lifecycle.get("axes_after_show") is True
+        ),
+        "auto_show_default_k_xlim": (not widget_ready)
+        or (
+            len(rendered_xlim) == 2
+            and rendered_xlim[0] <= -9.99
+            and rendered_xlim[1] >= 9.99
+            and rendered_xlim[0] >= -10.01
+            and rendered_xlim[1] <= 10.01
+        ),
+        "auto_show_fmax_axis": (not widget_ready)
+        or (
+            len(rendered_ylim) == 2
+            and min(rendered_ylim) >= -1e-9
+            and max(rendered_ylim) <= 8.0
+        ),
         "export_selection": selection.get("source") == "release_gate"
         and selection.get("marker") == [1.0, 2.0],
     }

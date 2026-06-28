@@ -49,6 +49,7 @@ INTERACTIVE_VIEWER_KEYS = {
     "fmin",
     "fmax",
     "k_xlim",
+    "live_filters",
     "initial_render",
     "auto_render",
     "lognorm",
@@ -268,7 +269,7 @@ class DispersionInteractiveViewer:
             self._close_widget_state()
             widget = None
         self._display_handle = display(widget if widget is not None else self, display_id=True)
-        if widget is not None and bool(self.options.get("initial_render", False)):
+        if widget is not None and bool(self.options.get("initial_render", True)):
             self._render_widget_after_display()
         return self
 
@@ -324,6 +325,11 @@ class DispersionInteractiveViewer:
             "can_reconstruct_modes": self.can_reconstruct_modes,
             "mode_unavailable_reason": self.mode_unavailable_reason,
             "analytical": json_safe(self.analytical),
+            "live_filters": json_safe(
+                getattr(getattr(self, "_widget_engine", None), "state", None).live_filters
+                if getattr(self, "_widget_engine", None) is not None
+                else self.options.get("live_filters")
+            ),
             "result_notes": result_notes,
             "widget_status": self._widget_status,
             "widget_error": self._widget_error,
@@ -652,6 +658,7 @@ class DispersionInteractiveViewer:
 
         mapped_keys = {
             "model": "analytical_model",
+            "sw_config": "analytical_sw_config",
             "n_modes": "analytical_n_modes",
             "k_points": "analytical_k_points",
             "phi": "analytical_phi",

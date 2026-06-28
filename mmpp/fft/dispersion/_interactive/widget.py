@@ -240,6 +240,7 @@ class DispersionHeatmapWidget:
             cmap=str(self.options.get("cmap", "viridis")),
             positive_frequencies=bool(self.options.get("positive_frequencies", True)),
             lognorm=bool(self.options.get("lognorm", False)),
+            f_units=str(self.options.get("f_units", "GHz")),
             mode_type=str(self.options.get("mode_type") or "abs"),
             analytical=self._initial_analytical_state(),
         )

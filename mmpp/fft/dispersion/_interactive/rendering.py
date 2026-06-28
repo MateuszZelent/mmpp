@@ -255,6 +255,23 @@ def draw_dispersion_panel(explorer: Any) -> None:
     k_axis = np.asarray(k_axis, dtype=float)
     f_axis = np.asarray(f_axis, dtype=float)
 
+    live_filters = getattr(explorer.state, "live_filters", None)
+    if live_filters:
+        try:
+            from ..utils import apply_dispersion_post_filters
+
+            spectrum = apply_dispersion_post_filters(
+                spectrum,
+                k_axis=k_axis,
+                f_axis=f_axis,
+                filters={"live": live_filters},
+                include_live=True,
+            )
+            explorer._last_filter_error = ""
+        except Exception as exc:
+            explorer._last_filter_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("Interactive live filters failed: %s", exc)
+
     f_mask = np.ones_like(f_axis, dtype=bool)
     if explorer.state.positive_frequencies:
         f_mask &= f_axis >= 0
@@ -330,22 +347,51 @@ def draw_dispersion_panel(explorer: Any) -> None:
 
 
 def refresh_output_widget(explorer: Any) -> None:
-    """Render current figure into output widget, matching hysteresis explorer."""
+    """Render current figure into output widget, matching hysteresis explorer.
+
+    For non-interactive backends (e.g. ``inline``), falls back to embedding a
+    PNG snapshot so the widget output is always populated.
+    """
     output = explorer.controls.get("output") if explorer.controls else None
     if output is None:
         return
     if not hasattr(output, "clear_output") or not hasattr(output, "append_display_data"):
         return
     output.clear_output(wait=False)
-    if explorer.figure is not None:
-        try:
-            explorer.figure.canvas.draw_idle()
-        except Exception:
-            pass
-        try:
-            from IPython.display import display
+    if explorer.figure is None:
+        return
 
-            with output:
-                display(explorer.figure)
+    # Check if we have an interactive backend that supports canvas display
+    interactive_backend = False
+    try:
+        import matplotlib
+
+        backend = str(matplotlib.get_backend()).lower()
+        interactive_backend = any(
+            kw in backend for kw in ("widget", "ipympl", "nbagg", "notebook")
+        )
+    except Exception:
+        pass
+
+    if interactive_backend:
+        # Interactive backend — canvas display works correctly
+        explorer.figure.canvas.draw()
+        output.append_display_data(explorer.figure)
+    else:
+        # Inline / non-interactive backend — render to PNG and embed as Image
+        try:
+            import io
+
+            from IPython.display import Image
+
+            buf = io.BytesIO()
+            explorer.figure.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+            buf.seek(0)
+            output.append_display_data(Image(data=buf.getvalue(), format="png"))
         except Exception:
-            output.append_display_data(explorer.figure)
+            # Last resort — try direct display
+            try:
+                explorer.figure.canvas.draw()
+                output.append_display_data(explorer.figure)
+            except Exception:
+                pass

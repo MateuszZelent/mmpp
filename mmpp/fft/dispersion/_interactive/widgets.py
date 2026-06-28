@@ -242,7 +242,7 @@ def build_toolbar(
         **_maybe_layout(widgets, width="100%"),
     )
     controls["cmap"] = widgets.Dropdown(
-        options=["viridis", "plasma", "cividis", "turbo", "inferno", "magma"],
+        options=["viridis", "cmc.davos", "plasma", "cividis", "turbo", "inferno", "magma"],
         value=str(explorer.state.cmap),
         description="cmap",
         **_maybe_layout(widgets, width="100%"),
