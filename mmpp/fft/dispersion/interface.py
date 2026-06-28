@@ -82,7 +82,12 @@ class _DispersionProgressReporter:
             try:
                 from tqdm.auto import tqdm
 
-                self._bar = tqdm(total=self.total, desc=self.label, leave=True)
+                self._bar = tqdm(
+                    total=self.total,
+                    desc=self.label,
+                    leave=True,
+                    unit="stage",
+                )
                 self._use_print = False
             except Exception:
                 self._bar = None
@@ -108,11 +113,14 @@ class _DispersionProgressReporter:
         if not self._visible:
             return
 
-        self.count = min(self.total, self.count + 1)
+        should_advance = self.count < self.total
+        if should_advance:
+            self.count += 1
         if self._bar is not None:
             self._bar.set_description(f"{self.label}: {stage}")
             self._bar.set_postfix_str(message[:80])
-            self._bar.update(1)
+            if should_advance:
+                self._bar.update(1)
         elif self._use_print:
             print(
                 f"[{self.label}] {self.count}/{self.total} {stage}: {message}",
@@ -319,7 +327,7 @@ class _DispersionPlotAccessor:
             enabled=progress,
             callback=progress_callback,
             label=progress_label,
-            total=7,
+            total=8,
         )
         compute_kwargs, viewer_kwargs = split_dispersion_interactive_kwargs(kwargs)
         if _interactive_modes_requested(viewer_kwargs.get("modes", "auto")):
@@ -331,14 +339,29 @@ class _DispersionPlotAccessor:
         old_cache_dir = self._interface._cache_dir
         try:
             slice_label = _format_slice_for_display(self._interface.slice_info)
+            slice_steps = self._interface._infer_time_length_from_slice()
+            if slice_steps is not None:
+                time_label = f"time_steps={slice_steps} (from slice)"
+            elif tmax is not None:
+                time_label = f"time_steps={int(tmax)} (from tmax)"
+            else:
+                inferred_tmax = self._interface._determine_tmax(default=100)
+                time_label = (
+                    "time_steps=all"
+                    if inferred_tmax is None
+                    else f"time_steps={int(inferred_tmax)}"
+                )
             progress_reporter.emit(
                 stage="prepare",
                 message=(
                     f"dataset={self._interface.dataset_name or '<auto>'} "
                     f"slice={slice_label or '[full]'} "
+                    f"{time_label} "
                     f"axis={compute_kwargs.get('axis', 'x')} "
                     f"store_complex={compute_kwargs.get('store_complex')}"
                 ),
+                time_steps=slice_steps,
+                requested_tmax=tmax,
             )
             if tmax is not None:
                 self._interface._tmax = int(tmax)

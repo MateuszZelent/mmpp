@@ -2946,6 +2946,106 @@ def test_interactive_dispersion_modes_plot_interactive_uses_shared_viewer_normal
     assert modes._default_params["n_bz_mask"] == 3
 
 
+def test_interactive_dispersion_modes_exports_and_applies_shared_selection():
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    selected_k = float(k_axis[n_k // 2 + 1])
+    selected_f = float(f_axis[n_f // 2 + 1])
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+        S_complex=np.ones((n_k, n_f), dtype=np.complex128),
+    )
+    source = InteractiveDispersionModes(SimpleNamespace(compute_1d=lambda **_: result))
+    target = InteractiveDispersionModes(SimpleNamespace(compute_1d=lambda **_: result))
+    source.result = result
+    target.result = result
+    source._mode_components = ["z", "+"]
+    source._spectrum_components = ["perp"]
+    source._selected_k = selected_k
+    source._selected_f = selected_f
+
+    exported = source.export_selection(source="legacy-test")
+    target.apply_selection(exported)
+    mode = target.mode_at_selection()
+
+    assert exported["viewer"]["mode_components"] == ["z", "+"]
+    assert exported["viewer"]["spectrum_components"] == ["perp"]
+    assert exported["selection"]["source"] == "legacy-test"
+    assert exported["selection"]["k_rad_per_m"] == selected_k
+    assert exported["selection"]["f_hz"] == selected_f
+    assert exported["mode_request"]["available"] is True
+    assert target._selected_k == selected_k
+    assert target._selected_f == selected_f
+    assert mode.k_rad_um == pytest.approx(selected_k / 1e6)
+    assert mode.f_ghz == pytest.approx(selected_f / 1e9)
+
+
+def test_interactive_dispersion_modes_collects_and_applies_shared_preset():
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    n_k, n_f = 8, 6
+    dx, dt = 5e-9, 2e-9
+    k_axis, f_axis = _make_axes(n_k, n_f, dx=dx, dt=dt)
+    selected_k = float(k_axis[n_k // 2 + 1])
+    selected_f = float(f_axis[n_f // 2 + 1])
+    result = DispersionResult1D(
+        S=np.ones((n_k, n_f), dtype=np.float32),
+        k_axis=k_axis,
+        f_axis=f_axis,
+        axis="x",
+        component="perp",
+        config=DispersionConfig(dt=dt, dx=dx),
+        dt=dt,
+        dx=dx,
+        S_complex=np.ones((n_k, n_f), dtype=np.complex128),
+    )
+    source = InteractiveDispersionModes(SimpleNamespace(compute_1d=lambda **_: result))
+    target = InteractiveDispersionModes(SimpleNamespace(compute_1d=lambda **_: result))
+    source.result = result
+    target.result = result
+    source._mode_components = ["z", "+"]
+    source._spectrum_components = ["perp"]
+    source._interactive_viewer_options = {"mode_type": "phase", "auto_animate": True}
+    source._analytical_options = {"enabled": True, "model": "kalinikos"}
+    source._default_params["mode_type"] = "phase"
+    source._default_params["n_bz_mask"] = 4
+    source._selected_k = selected_k
+    source._selected_f = selected_f
+
+    preset = source.collect_preset()
+    returned = target.apply_preset(preset)
+
+    assert returned is target
+    assert preset["schema_version"] == "dispersion-interactive-preset/v1"
+    assert preset["viewer"]["mode_components"] == ["z", "+"]
+    assert preset["legacy_modes"]["params"]["mode_type"] == "phase"
+    assert preset["selection"]["k_rad_per_m"] == selected_k
+    assert target._mode_components == ["z", "+"]
+    assert target._spectrum_components == ["perp"]
+    assert target._interactive_viewer_options["auto_animate"] is True
+    assert target._analytical_options["model"] == "kalinikos"
+    assert target._default_params["mode_type"] == "phase"
+    assert target._default_params["n_bz_mask"] == 4
+    assert target._selected_k == selected_k
+    assert target._selected_f == selected_f
+
+
 def test_interactive_dispersion_modes_close_cleans_display_animation_and_figure(
     monkeypatch,
 ):
@@ -4091,6 +4191,8 @@ def test_dispersion_plot_interactive_reports_progress_without_polluting_compute_
     assert "compute" in stages
     assert "viewer" in stages
     assert any("slice" in event["message"] for event in events)
+    assert any("time_steps=100" in event["message"] for event in events)
+    assert events[0]["time_steps"] == 100
 
 
 def test_dispersion_plot_interactive_finishes_progress_before_notebook_show(monkeypatch):
@@ -4143,3 +4245,41 @@ def test_dispersion_plot_interactive_finishes_progress_before_notebook_show(monk
     assert show_positions
     assert "done" in show_positions[0]
     assert events[-1]["stage"] == "done"
+
+
+def test_dispersion_progress_bar_does_not_advance_past_declared_stage_total():
+    from mmpp.fft.dispersion.interface import _DispersionProgressReporter
+
+    class FakeBar:
+        def __init__(self):
+            self.updates = []
+            self.descriptions = []
+            self.postfixes = []
+            self.closed = False
+
+        def set_description(self, value):
+            self.descriptions.append(value)
+
+        def set_postfix_str(self, value):
+            self.postfixes.append(value)
+
+        def update(self, value):
+            self.updates.append(value)
+
+        def close(self):
+            self.closed = True
+
+    bar = FakeBar()
+    reporter = _DispersionProgressReporter(enabled=False, total=2)
+    reporter._visible = True
+    reporter._bar = bar
+    reporter._use_print = False
+
+    reporter.emit(stage="prepare", message="one")
+    reporter.emit(stage="compute", message="two")
+    reporter.emit(stage="done", message="three")
+    reporter.close()
+
+    assert reporter.count == 2
+    assert bar.updates == [1, 1]
+    assert bar.closed is True

@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from .detection import BrillouinZoneDetector
 
 from .mode_profile import ModeProfile
+from .._json import json_safe
 from .._interactive_viewer import (
     normalize_dispersion_interactive_options,
     split_dispersion_interactive_kwargs,
@@ -252,6 +253,115 @@ class InteractiveDispersionModes:
             List of preset names (without .json extension)
         """
         return _list_presets_impl(self, logger)
+
+    @property
+    def state(self) -> dict[str, Any]:
+        """Return a lightweight state compatible with the new dispersion viewer."""
+        self._ensure_runtime_state()
+        return {
+            "modes": True,
+            "mode_components": self._mode_components,
+            "spectrum_components": self._spectrum_components,
+            "can_reconstruct_modes": (
+                self.result is not None
+                and getattr(self.result, "S_complex", None) is not None
+            ),
+            "options": json_safe(self._interactive_viewer_options),
+            "analytical": json_safe(self._analytical_options),
+            "selected_k": self._selected_k,
+            "selected_f": self._selected_f,
+            "default_params": json_safe(self._default_params),
+        }
+
+    def _selection_payload(self, selection: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = dict(selection or {})
+        if not payload and (self._selected_k is not None or self._selected_f is not None):
+            payload["source"] = "legacy_modes"
+        if "k_rad_per_m" not in payload and "k_rad_um" in payload:
+            payload["k_rad_per_m"] = float(payload["k_rad_um"]) * 1e6
+        if "k_rad_um" not in payload and "k_rad_per_m" in payload:
+            payload["k_rad_um"] = float(payload["k_rad_per_m"]) / 1e6
+        if "f_hz" not in payload and "f_ghz" in payload:
+            payload["f_hz"] = float(payload["f_ghz"]) * 1e9
+        if "f_ghz" not in payload and "f_hz" in payload:
+            payload["f_ghz"] = float(payload["f_hz"]) / 1e9
+        if "k_rad_per_m" not in payload and self._selected_k is not None:
+            payload["k_rad_per_m"] = float(self._selected_k)
+            payload["k_rad_um"] = float(self._selected_k) / 1e6
+        if "f_hz" not in payload and self._selected_f is not None:
+            payload["f_hz"] = float(self._selected_f)
+            payload["f_ghz"] = float(self._selected_f) / 1e9
+        return payload
+
+    def _mode_request(self, selection: dict[str, Any]) -> dict[str, Any]:
+        k_rad_um = selection.get("k_rad_um")
+        f_ghz = selection.get("f_ghz")
+        component = selection.get(
+            "component",
+            getattr(self.result, "component", None) if self.result is not None else None,
+        )
+        request = {
+            "available": False,
+            "k_rad_um": None,
+            "f_ghz": None,
+            "z_layer": int(selection.get("z_layer", 0)),
+            "component": component,
+            "reason": "",
+        }
+        if k_rad_um is None or f_ghz is None:
+            request["reason"] = "Select a dispersion point with k and f first."
+            return request
+        request["k_rad_um"] = float(k_rad_um)
+        request["f_ghz"] = float(f_ghz)
+        if self.result is None:
+            request["reason"] = "Mode reconstruction requires a dispersion result."
+            return request
+        if getattr(self.result, "S_complex", None) is None:
+            request["reason"] = "Mode reconstruction requires S_complex."
+            return request
+        request["available"] = True
+        return request
+
+    def export_selection(self, **selection: Any) -> dict[str, Any]:
+        """Export selected ``(k, f)`` using the same shape as the new viewer."""
+        payload = self._selection_payload(selection)
+        return {
+            "viewer": json_safe(self.state),
+            "selection": json_safe(payload),
+            "mode_request": json_safe(self._mode_request(payload)),
+        }
+
+    def apply_selection(
+        self,
+        payload: dict[str, Any] | None = None,
+        **selection: Any,
+    ) -> "InteractiveDispersionModes":
+        """Apply a selection exported by this object or ``DispersionInteractiveViewer``."""
+        merged = dict(selection)
+        if payload:
+            if isinstance(payload.get("selection"), dict):
+                merged.update(payload["selection"])
+            else:
+                merged.update(payload)
+        normalized = self._selection_payload(merged)
+        if "k_rad_per_m" in normalized:
+            self._selected_k = float(normalized["k_rad_per_m"])
+        if "f_hz" in normalized:
+            self._selected_f = float(normalized["f_hz"])
+        return self
+
+    def mode_at_selection(self, **selection: Any) -> Any:
+        """Extract a mode at the current or supplied selection."""
+        payload = self._selection_payload(selection)
+        request = self._mode_request(payload)
+        if not request.get("available", False):
+            raise ValueError(str(request.get("reason") or "Mode selection unavailable."))
+        return self.result.modes.at(
+            k_rad_um=float(request["k_rad_um"]),
+            f_ghz=float(request["f_ghz"]),
+            z_layer=int(request.get("z_layer", 0)),
+            component=request.get("component"),
+        )
 
     def fold(
         self,
