@@ -59,6 +59,7 @@ class DispersionInteractiveViewer:
     _figure: Any = None
     _axes: Any = None
     _controls: dict[str, Any] = field(default_factory=dict)
+    _widget_engine: Any = None
     _widget_status: str = "not-shown"
     _widget_error: str = ""
 
@@ -113,7 +114,13 @@ class DispersionInteractiveViewer:
         except ImportError:
             return self
 
-        widget = self._build_widget(display)
+        try:
+            widget = self._build_widget(display)
+        except Exception as exc:
+            self._widget_status = "fallback"
+            self._widget_error = f"{type(exc).__name__}: {exc}"
+            self._close_widget_state()
+            widget = None
         self._display_handle = display(widget if widget is not None else self, display_id=True)
         return self
 
@@ -121,6 +128,18 @@ class DispersionInteractiveViewer:
         """Best-effort close/update hook for notebook integrations."""
         if self._display_handle is not None and hasattr(self._display_handle, "update"):
             self._display_handle.update(None)
+        self._close_widget_state()
+        self._display_handle = None
+        self._widget_status = "closed"
+        self.show_requested = False
+
+    def _close_widget_state(self) -> None:
+        """Release widget and Matplotlib resources owned by this viewer."""
+        if self._widget_engine is not None:
+            try:
+                self._widget_engine.close()
+            except Exception:
+                pass
         for control in list(self._controls.values()):
             if hasattr(control, "close"):
                 try:
@@ -139,13 +158,11 @@ class DispersionInteractiveViewer:
                 plt.close(self._figure)
             except Exception:
                 pass
-        self._display_handle = None
         self._widget = None
         self._figure = None
         self._axes = None
         self._controls = {}
-        self._widget_status = "closed"
-        self.show_requested = False
+        self._widget_engine = None
 
     @property
     def state(self) -> dict[str, Any]:
@@ -196,27 +213,64 @@ class DispersionInteractiveViewer:
         return self
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            helper_card_html,
+        )
+
         status = "mode-ready" if self.can_reconstruct_modes else "spectrum-only"
         notes = list(getattr(self.result, "notes", None) or [])
-        help_text = (
-            "Lightweight status view. Full widget controls are not initialized here. "
-            "For mode reconstruction, call with store_complex=True."
-            if not self.can_reconstruct_modes
-            else "Lightweight status view. Complex spectrum is available for mode workflows."
+        mode_text = (
+            "Complex spectrum is available for mode workflows."
+            if self.can_reconstruct_modes
+            else "Full mode reconstruction requires store_complex=True."
         )
-        notes_html = ""
+        metrics = [
+            ("status", status),
+            ("axis", getattr(self.result, "axis", "?")),
+            ("component", getattr(self.result, "component", "?")),
+            ("widget", self._widget_status),
+        ]
+        actions = [
+            (
+                "Display:",
+                [
+                    (".show()", "Render ipywidgets heatmap", NODE_COLOR_PLOT),
+                    (".close()", "Release display resources", NODE_COLOR_UTIL),
+                ],
+            ),
+            (
+                "State:",
+                [
+                    (".state", "Serializable viewer state", NODE_COLOR_ANALYSIS),
+                    (".export_selection(...)", "Export current selection", NODE_COLOR_UTIL),
+                    (".save_preset(path)", "Persist viewer preset", NODE_COLOR_UTIL),
+                ],
+            ),
+        ]
+        notes_html = (
+            "<div style='color:#cbd5e1;font-size:0.9em;'>"
+            "Lightweight status view. Full widget controls are initialized by "
+            "<code>.show()</code>. "
+            f"{escape(mode_text)}</div>"
+        )
         if notes:
             rows = "".join(f"<li>{escape(str(note))}</li>" for note in notes[:8])
             if len(notes) > 8:
                 rows += f"<li>... {len(notes) - 8} more notes</li>"
-            notes_html = f"<ul style='margin:6px 0 0 18px;padding:0;'>{rows}</ul>"
-        return (
-            "<div style='font-family:monospace;padding:8px;border:1px solid #334155;"
-            "border-radius:6px;background:#0f172a;color:#e2e8f0;'>"
-            f"DispersionInteractiveViewer: {status}"
-            f"<div style='margin-top:6px;color:#cbd5e1;'>{escape(help_text)}</div>"
-            f"{notes_html}"
-            "</div>"
+            notes_html += f"<ul style='margin:6px 0 0 18px;padding:0;'>{rows}</ul>"
+        return helper_card_html(
+            "Dispersion Interactive Viewer",
+            subtitle="Notebook controller for plotting spin-wave dispersion S(k, f).",
+            status=(status, NODE_COLOR_PLOT),
+            metrics=metrics,
+            details=[("Notes", notes_html)],
+            action_groups=actions,
+            uid=f"mmpp-dispersion-interactive-{str(_uuid.uuid4())[:8]}",
         )
 
     def _build_widget(self, display_func: Any) -> Any:
@@ -224,91 +278,25 @@ class DispersionInteractiveViewer:
         if self._widget is not None:
             return self._widget
         try:
-            import ipywidgets as widgets
-            import matplotlib.pyplot as plt
+            from ._interactive import DispersionHeatmapWidget
         except ImportError as exc:
             self._widget_status = "fallback"
             self._widget_error = f"{type(exc).__name__}: {exc}"
             return None
 
-        figsize = tuple(self.options.get("figsize", (7.0, 4.5)))
-        dpi = self.options.get("dpi", 100)
-        self._figure, self._axes = plt.subplots(figsize=figsize, dpi=dpi)
-
-        f_axis = getattr(self.result, "f_axis", None)
-        if f_axis is not None and len(f_axis):
-            fmax_default = float(self.options.get("fmax") or max(0.0, max(f_axis) / 1e9))
-            fmax_max = max(float(max(f_axis) / 1e9), fmax_default, 0.1)
-        else:
-            fmax_default = float(self.options.get("fmax") or 1.0)
-            fmax_max = max(fmax_default, 0.1)
-
-        controls = {
-            "fmax": widgets.FloatText(
-                value=fmax_default,
-                description="fmax GHz",
-            ),
-            "lognorm": widgets.Checkbox(
-                value=bool(self.options.get("lognorm", False)),
-                description="log",
-            ),
-            "source": widgets.Dropdown(
-                options=["display", "raw"],
-                value=str(self.options.get("source", "display")),
-                description="source",
-            ),
-            "positive": widgets.Checkbox(
-                value=bool(self.options.get("positive_frequencies", True)),
-                description="f >= 0",
-            ),
-            "kscale": widgets.Dropdown(
-                options=["rad_um", "rad", "meter"],
-                value=str(self.options.get("kscale", "rad_um")),
-                description="k",
-            ),
-        }
-        self._controls = controls
-
-        def _on_change(_change: Any = None) -> None:
-            self._render_heatmap()
-
-        for control in controls.values():
-            if hasattr(control, "observe"):
-                control.observe(_on_change, names="value")
-
-        plot_output = widgets.Output()
-        info = widgets.HTML(value=self._status_html())
-        toolbar = widgets.HBox(
-            [
-                controls["fmax"],
-                controls["lognorm"],
-                controls["source"],
-                controls["positive"],
-                controls["kscale"],
-            ]
-        )
-        self._widget = widgets.VBox([toolbar, plot_output, info])
-        self._render_heatmap()
-
-        try:
-            with plot_output:
-                display_func(self._figure)
-        except Exception:
-            display_func(self._figure)
-
+        self._widget_engine = DispersionHeatmapWidget(self.result, self.options)
+        self._widget = self._widget_engine.build(display_func)
+        self._figure = self._widget_engine.figure
+        self._axes = self._widget_engine.axes
+        self._controls = self._widget_engine.controls
         self._widget_status = "ready"
         self._widget_error = ""
         return self._widget
 
     def _status_html(self) -> str:
-        notes = list(getattr(self.result, "notes", None) or [])
-        rows = "".join(f"<li>{escape(str(note))}</li>" for note in notes[:6])
-        return (
-            "<div style='font-family:monospace;color:#cbd5e1;'>"
-            "<b>Dispersion interactive</b>"
-            f"<ul style='margin:4px 0 0 16px;padding:0;'>{rows}</ul>"
-            "</div>"
-        )
+        if self._widget_engine is not None:
+            return self._widget_engine.status_html()
+        return ""
 
     def _control_value(self, name: str, default: Any) -> Any:
         control = self._controls.get(name)
@@ -316,79 +304,5 @@ class DispersionInteractiveViewer:
 
     def _render_heatmap(self) -> None:
         """Render S(k, f) into the managed Matplotlib axes."""
-        if self._axes is None or self._figure is None:
-            return
-
-        import numpy as np
-
-        ax = self._axes
-        if hasattr(ax, "clear"):
-            ax.clear()
-
-        source = str(self._control_value("source", self.options.get("source", "display")))
-        positive = bool(
-            self._control_value(
-                "positive",
-                self.options.get("positive_frequencies", True),
-            )
-        )
-        spectrum, k_axis, f_axis = self.result.frequency_view(
-            positive_frequencies=positive,
-            analysis_source=source,
-        )
-        spectrum = np.asarray(spectrum, dtype=float)
-        k_axis = np.asarray(k_axis, dtype=float)
-        f_axis = np.asarray(f_axis, dtype=float)
-
-        fmax = self._control_value("fmax", self.options.get("fmax"))
-        if fmax:
-            mask = f_axis <= float(fmax) * 1e9
-            if np.any(mask):
-                spectrum = spectrum[:, mask]
-                f_axis = f_axis[mask]
-
-        kscale = str(self._control_value("kscale", self.options.get("kscale", "rad_um")))
-        if kscale == "rad_um":
-            k_plot = k_axis / 1e6
-            k_label = "k [rad/um]"
-        elif kscale == "meter":
-            k_plot = k_axis / (2 * np.pi)
-            k_label = "k [1/m]"
-        else:
-            k_plot = k_axis
-            k_label = "k [rad/m]"
-        f_plot = f_axis / 1e9
-
-        norm = None
-        if bool(self._control_value("lognorm", self.options.get("lognorm", False))):
-            try:
-                from matplotlib.colors import LogNorm
-
-                positive_values = spectrum[spectrum > 0]
-                if positive_values.size:
-                    norm = LogNorm(
-                        vmin=float(np.min(positive_values)),
-                        vmax=float(np.max(positive_values)),
-                    )
-            except Exception:
-                norm = None
-
-        extent = (
-            float(k_plot[0]),
-            float(k_plot[-1]),
-            float(f_plot[0]),
-            float(f_plot[-1]),
-        )
-        ax.imshow(
-            spectrum.T,
-            aspect="auto",
-            origin="lower",
-            extent=extent,
-            cmap=str(self.options.get("cmap", "viridis")),
-            norm=norm,
-        )
-        ax.set_title(f"Dispersion S(k, f) - {source}")
-        ax.set_xlabel(k_label)
-        ax.set_ylabel("Frequency [GHz]")
-        if hasattr(self._figure, "canvas") and hasattr(self._figure.canvas, "draw_idle"):
-            self._figure.canvas.draw_idle()
+        if self._widget_engine is not None:
+            self._widget_engine.render()
