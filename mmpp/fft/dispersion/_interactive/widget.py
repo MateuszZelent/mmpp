@@ -6,6 +6,7 @@ from html import escape
 from typing import TYPE_CHECKING, Any
 
 from .callbacks import on_canvas_click, sync_analytical_options
+from .frequency import normalize_frequency_window_ghz
 from .presets import apply_preset_state, collect_preset_state
 from .rendering import draw_dispersion_panel, refresh_output_widget
 from .state import DispersionExplorerState
@@ -53,11 +54,13 @@ class DispersionHeatmapWidget:
             import ipywidgets as widgets
 
             build_toolbar(self, widgets)
+            self._warn_for_inline_backend()
             return self.widget
 
         draw_dispersion_panel(self)
         display_func(self.figure)
         set_status(self, "Matplotlib dispersion figure ready", color="#0F766E")
+        self._warn_for_inline_backend()
         return self.figure
 
     def close(self) -> None:
@@ -172,10 +175,22 @@ class DispersionHeatmapWidget:
             if rows
             else ""
         )
+        diagnostics = self.diagnostics()
+        backend = escape(str(diagnostics.get("backend", "unknown")))
+        backend_warning = ""
+        if not diagnostics.get("interactive_backend", False):
+            backend_warning = (
+                "<div style='margin-top:6px;color:#fbbf24;'>"
+                f"Matplotlib backend: <code>{backend}</code>. "
+                "For a live widget use <code>%matplotlib widget</code> with ipympl "
+                "installed, then restart the kernel and rerun the first cell."
+                "</div>"
+            )
         return (
             "<div style='font-family:monospace;color:#cbd5e1;'>"
             "<b>Dispersion interactive</b>"
             f"{notes_html}"
+            f"{backend_warning}"
             "</div>"
         )
 
@@ -192,16 +207,13 @@ class DispersionHeatmapWidget:
         return bool(toolbar)
 
     def _initial_state(self) -> DispersionExplorerState:
-        f_axis = getattr(self.result, "f_axis", None)
-        if f_axis is not None and len(f_axis):
-            positives = [float(v) / 1e9 for v in f_axis if float(v) >= 0.0]
-            fmin = min(positives) if positives else 0.0
-            fmax = max(positives) if positives else 1.0
-        else:
-            fmin, fmax = 0.0, 1.0
+        fmin, fmax = normalize_frequency_window_ghz(
+            self.options,
+            getattr(self.result, "f_axis", None),
+        )
         return DispersionExplorerState(
-            fmin_ghz=float(self.options.get("fmin", fmin)),
-            fmax_ghz=float(self.options.get("fmax") or fmax or 1.0),
+            fmin_ghz=float(fmin),
+            fmax_ghz=float(fmax),
             source=str(self.options.get("source", "display")),
             kscale=str(self.options.get("kscale", "rad_um")),
             cmap=str(self.options.get("cmap", "viridis")),
@@ -249,3 +261,19 @@ class DispersionHeatmapWidget:
             elif option_key in self.options:
                 analytical[key] = self.options[option_key]
         return analytical
+
+    def _warn_for_inline_backend(self) -> None:
+        """Surface non-interactive Matplotlib backends inside the widget status."""
+        diagnostics = self.diagnostics()
+        if diagnostics.get("interactive_backend", False):
+            return
+        backend = str(diagnostics.get("backend", "unknown"))
+        set_status(
+            self,
+            (
+                f"Matplotlib backend is {backend}; figure may render inline. "
+                "Use %matplotlib widget with ipympl, restart the kernel, and rerun "
+                "the first cell for live pan/zoom/click callbacks."
+            ),
+            color="#B45309",
+        )

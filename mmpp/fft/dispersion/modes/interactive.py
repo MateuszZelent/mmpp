@@ -277,13 +277,29 @@ class InteractiveDispersionModes:
         payload = dict(selection or {})
         if not payload and (self._selected_k is not None or self._selected_f is not None):
             payload["source"] = "legacy_modes"
-        if "k_rad_per_m" not in payload and "k_rad_um" in payload:
+        if (
+            "k_rad_per_m" not in payload
+            and "k_rad_um" in payload
+            and payload["k_rad_um"] is not None
+        ):
             payload["k_rad_per_m"] = float(payload["k_rad_um"]) * 1e6
-        if "k_rad_um" not in payload and "k_rad_per_m" in payload:
+        if (
+            "k_rad_um" not in payload
+            and "k_rad_per_m" in payload
+            and payload["k_rad_per_m"] is not None
+        ):
             payload["k_rad_um"] = float(payload["k_rad_per_m"]) / 1e6
-        if "f_hz" not in payload and "f_ghz" in payload:
+        if (
+            "f_hz" not in payload
+            and "f_ghz" in payload
+            and payload["f_ghz"] is not None
+        ):
             payload["f_hz"] = float(payload["f_ghz"]) * 1e9
-        if "f_ghz" not in payload and "f_hz" in payload:
+        if (
+            "f_ghz" not in payload
+            and "f_hz" in payload
+            and payload["f_hz"] is not None
+        ):
             payload["f_ghz"] = float(payload["f_hz"]) / 1e9
         if "k_rad_per_m" not in payload and self._selected_k is not None:
             payload["k_rad_per_m"] = float(self._selected_k)
@@ -331,6 +347,64 @@ class InteractiveDispersionModes:
             "mode_request": json_safe(self._mode_request(payload)),
         }
 
+    def collect_preset(self) -> dict[str, Any]:
+        """Collect a shared interactive preset compatible with the new viewer."""
+        self._ensure_runtime_state()
+        selection = self._selection_payload()
+        return {
+            "schema_version": "dispersion-interactive-preset/v1",
+            "viewer": json_safe(self.state),
+            "selection": json_safe(selection),
+            "mode_request": json_safe(self._mode_request(selection)),
+            "legacy_modes": {
+                "params": json_safe(self._get_current_params()),
+            },
+        }
+
+    def apply_preset(self, payload: dict[str, Any]) -> "InteractiveDispersionModes":
+        """Apply a shared interactive preset from legacy or new viewer state."""
+        self._ensure_runtime_state()
+        if not isinstance(payload, dict):
+            return self
+
+        viewer_state = payload.get("viewer")
+        if not isinstance(viewer_state, dict):
+            viewer_state = payload
+
+        self._mode_components = viewer_state.get(
+            "mode_components",
+            self._mode_components,
+        )
+        self._spectrum_components = viewer_state.get(
+            "spectrum_components",
+            self._spectrum_components,
+        )
+        options = viewer_state.get("options")
+        if isinstance(options, dict):
+            self._interactive_viewer_options = dict(options)
+        analytical = viewer_state.get("analytical")
+        if isinstance(analytical, dict):
+            self._analytical_options = dict(analytical)
+
+        legacy_modes = payload.get("legacy_modes")
+        if isinstance(legacy_modes, dict) and isinstance(
+            legacy_modes.get("params"),
+            dict,
+        ):
+            self._apply_params(dict(legacy_modes["params"]))
+        elif isinstance(viewer_state.get("default_params"), dict):
+            self._apply_params(dict(viewer_state["default_params"]))
+
+        if isinstance(payload.get("selection"), dict):
+            self.apply_selection(payload)
+        elif isinstance(payload.get("explorer"), dict):
+            explorer = payload["explorer"]
+            self.apply_selection(
+                k_rad_per_m=explorer.get("selected_k"),
+                f_hz=explorer.get("selected_f"),
+            )
+        return self
+
     def apply_selection(
         self,
         payload: dict[str, Any] | None = None,
@@ -344,9 +418,9 @@ class InteractiveDispersionModes:
             else:
                 merged.update(payload)
         normalized = self._selection_payload(merged)
-        if "k_rad_per_m" in normalized:
+        if "k_rad_per_m" in normalized and normalized["k_rad_per_m"] is not None:
             self._selected_k = float(normalized["k_rad_per_m"])
-        if "f_hz" in normalized:
+        if "f_hz" in normalized and normalized["f_hz"] is not None:
             self._selected_f = float(normalized["f_hz"])
         return self
 

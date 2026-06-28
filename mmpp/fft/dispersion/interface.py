@@ -394,6 +394,110 @@ class _DispersionPlotAccessor:
     def __repr__(self) -> str:
         return "<FFTDispersionInterface.plot: interactive>"
 
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        usage_prefix = self._interface._usage_prefix()
+        dataset_label = self._interface.dataset_name or "auto"
+        slice_label = _format_slice_for_display(self._interface.slice_info) or "full"
+        config_state = "custom" if self._interface._config else "default"
+        filters_label = (
+            ", ".join(self._interface._describe_filter_flags())
+            if self._interface._filters_config
+            else "none"
+        )
+        plot_prefix = f"{usage_prefix}.plot"
+
+        api = api_help_html(
+            self,
+            title="Dispersion plot helper API",
+            prefix=plot_prefix,
+            methods=["interactive"],
+            subtitle="Compute-then-view helper for the interactive dispersion explorer.",
+            chrome=False,
+        )
+        examples = examples_section_html(
+            "\n".join(
+                [
+                    f"plot = {plot_prefix}",
+                    "viewer = plot.interactive(axis='x', component='mx', fmax=800, show=False)",
+                    "",
+                    "viewer = plot.interactive(",
+                    "    axis='x',",
+                    "    component='mx',",
+                    "    fmax=800,",
+                    "    scaling='amplitude_squared',",
+                    "    toolbar='auto',",
+                    "    show=False,",
+                    ")",
+                    "viewer.show(toolbar='auto')",
+                ]
+            )
+        )
+        return node_card_html(
+            "Dispersion Plot Helper",
+            icon="📈",
+            subtitle="Compute 1D spin-wave dispersion and open the shared toolbar explorer.",
+            badge=("interactive", NODE_COLOR_PLOT),
+            sections=[
+                metrics_section_html(
+                    [
+                        ("dataset", dataset_label, NODE_COLOR_COMPUTE),
+                        ("slice", slice_label, NODE_COLOR_ANALYSIS),
+                        ("config", config_state, NODE_COLOR_UTIL),
+                        ("filters", filters_label, NODE_COLOR_UTIL),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Explorer:",
+                            [
+                                (".interactive(axis='x', show=False)", NODE_COLOR_PLOT),
+                                (".interactive(toolbar='auto')", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                        (
+                            "Compute:",
+                            [
+                                ("axis='x'|'y'", NODE_COLOR_COMPUTE),
+                                ("component='mx'|'my'|'mz'|'perp'", NODE_COLOR_COMPUTE),
+                                ("scaling='amplitude_squared'", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                        (
+                            "Runtime:",
+                            [
+                                ("disk_cache=False", NODE_COLOR_UTIL),
+                                ("store_complex=True", NODE_COLOR_UTIL),
+                                ("tmax=...", NODE_COLOR_UTIL),
+                            ],
+                        ),
+                    ]
+                ),
+                examples,
+            ],
+            api=api,
+            uid="fft-dispersion-plot",
+        )
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        html = self._repr_html_()
+        text = self.__repr__()
+        if html:
+            return {"text/html": html, "text/plain": text}
+        return {"text/plain": text}
+
 
 class FFTDispersionInterface:
     """

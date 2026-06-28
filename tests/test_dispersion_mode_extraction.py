@@ -823,6 +823,31 @@ def test_dispersion_interactive_viewer_exposes_result_notes_in_state_export_and_
     assert "call with store_complex=True" in html
 
 
+def test_fft_dispersion_plot_accessor_has_notebook_helper_card():
+    from mmpp.fft.dispersion.interface import FFTDispersionInterface
+
+    parent_fft = types.SimpleNamespace(
+        job_result=types.SimpleNamespace(
+            path="/tmp/example.zarr",
+            name="example",
+        )
+    )
+    iface = FFTDispersionInterface(parent_fft, dataset_name="m")
+    plot = iface.plot
+
+    html = plot._repr_html_()
+
+    assert "Dispersion Plot Helper" in html
+    assert "plot.interactive(axis=&#x27;x&#x27;" in html
+    assert "show=False" in html
+    assert "toolbar=&#x27;auto&#x27;" in html
+    assert "html_tabs" not in html
+    assert "<h3" not in html
+    bundle = plot._repr_mimebundle_()
+    assert bundle["text/html"] == html
+    assert "FFTDispersionInterface.plot" in bundle["text/plain"]
+
+
 def test_dispersion_interactive_viewer_show_builds_heatmap_widget(monkeypatch):
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
 
@@ -3793,6 +3818,48 @@ def test_dispersion_interactive_display_change_syncs_analytical_overlay_options(
     assert explorer.options["analytical_D"] == 1.2e-3
 
 
+def test_dispersion_interactive_frequency_window_defaults_to_ghz_limits():
+    from mmpp.fft.dispersion._interactive.frequency import (
+        normalize_frequency_window_ghz,
+    )
+
+    fmin, fmax = normalize_frequency_window_ghz(
+        {"fmax": 25, "f_units": "GHz"},
+        np.array([0.0, 25e9, 500e9]),
+    )
+
+    assert fmin == 0.0
+    assert fmax == 25.0
+
+
+def test_dispersion_interactive_frequency_window_accepts_hz_limits():
+    from mmpp.fft.dispersion._interactive.frequency import (
+        normalize_frequency_window_ghz,
+    )
+
+    fmin, fmax = normalize_frequency_window_ghz(
+        {"fmin": 5e9, "fmax": 25e9, "f_units": "Hz"},
+        np.array([0.0, 25e9, 500e9]),
+    )
+
+    assert fmin == 5.0
+    assert fmax == 25.0
+
+
+def test_dispersion_interactive_widget_state_keeps_requested_fmax():
+    import types
+
+    from mmpp.fft.dispersion._interactive.widget import DispersionHeatmapWidget
+
+    explorer = DispersionHeatmapWidget(
+        types.SimpleNamespace(f_axis=np.array([0.0, 25e9, 500e9]), notes=[]),
+        {"fmax": 25, "f_units": "GHz"},
+    )
+
+    assert explorer.state.fmin_ghz == 0.0
+    assert explorer.state.fmax_ghz == 25.0
+
+
 def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
     monkeypatch, tmp_path
 ):
@@ -3877,6 +3944,8 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
     assert explorer.controls["analytical_phi"].value == "0.25"
     assert explorer.controls["analytical_D"].value == "0.0008"
     assert explorer.controls["tabs"].titles[2] == "Analytical"
+    assert explorer.controls["mode_type"].value == "abs"
+    assert explorer.controls["tabs"].titles[3] == "Modes"
 
 
 def test_dispersion_interactive_export_selection_uses_widget_state_for_mode_request():

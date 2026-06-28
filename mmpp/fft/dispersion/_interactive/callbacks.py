@@ -177,6 +177,49 @@ def _selected_mode_request_from_explorer(explorer: Any) -> dict[str, Any]:
     return request
 
 
+def _selected_mode_type(explorer: Any) -> str:
+    controls = getattr(explorer, "controls", {})
+    if "mode_type" in controls:
+        return str(getattr(controls["mode_type"], "value", "abs") or "abs")
+    options = getattr(explorer, "options", {})
+    if isinstance(options, dict):
+        return str(options.get("mode_type") or "abs")
+    return "abs"
+
+
+def _render_extracted_mode(explorer: Any, mode: Any) -> bool:
+    """Render the extracted mode in the main output panel."""
+    output = explorer.controls.get("output") if explorer.controls else None
+    if output is None:
+        return False
+    if not hasattr(output, "clear_output") or not hasattr(output, "append_display_data"):
+        return False
+
+    mode_type = _selected_mode_type(explorer)
+    cmap = "hsv" if mode_type == "phase" else "RdBu_r"
+    title = (
+        f"Mode {mode_type} @ k={float(mode.k_rad_um):.4g} rad/um, "
+        f"f={float(mode.f_ghz):.4g} GHz"
+    )
+    previous = getattr(explorer, "_mode_figure", None)
+    if previous is not None:
+        try:
+            import matplotlib.pyplot as plt
+
+            plt.close(previous)
+        except Exception:
+            pass
+    output.clear_output(wait=False)
+    try:
+        fig, _ax = mode.plot.imshow(mode_type=mode_type, cmap=cmap, title=title)
+        explorer._mode_figure = fig
+        output.append_display_data(fig)
+        return True
+    except Exception:
+        output.append_display_data(mode)
+        return False
+
+
 def on_mode_extract(explorer: Any) -> None:
     """Extract a mode for the currently selected dispersion point."""
     request = _selected_mode_request_from_explorer(explorer)
@@ -204,13 +247,15 @@ def on_mode_extract(explorer: Any) -> None:
         return
 
     explorer.last_mode = mode
+    rendered = _render_extracted_mode(explorer, mode)
     if "mode_info" in explorer.controls:
         explorer.controls["mode_info"].value = (
             "<small>"
             f"k={float(request['k_rad_um']):.4g} rad/um, "
             f"f={float(request['f_ghz']):.4g} GHz, "
             f"component={request['component']}, "
-            f"z_layer={int(request['z_layer'])}"
+            f"z_layer={int(request['z_layer'])}, "
+            f"mode_type={_selected_mode_type(explorer)}"
             "</small>"
         )
     set_status(
@@ -218,6 +263,7 @@ def on_mode_extract(explorer: Any) -> None:
         (
             f"mode extracted at k={float(request['k_rad_um']):.4g} rad/um, "
             f"f={float(request['f_ghz']):.4g} GHz"
+            + (", visualized in main panel" if rendered else ", metadata shown")
         ),
         color="#0F766E",
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .callbacks import on_display_change, on_mode_extract, sync_analytical_options
+from .frequency import normalize_frequency_window_ghz
 from .presets import list_presets, load_preset, save_preset
 from .rendering import draw_dispersion_panel, refresh_output_widget
 from .status import set_status
@@ -25,25 +26,21 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     widgets = widgets_module
     controls: dict[str, Any] = {}
 
-    f_axis = getattr(explorer.result, "f_axis", None)
-    if f_axis is not None and len(f_axis):
-        f_pos = [float(v) / 1e9 for v in f_axis if float(v) >= 0.0]
-        fmin = min(f_pos) if f_pos else 0.0
-        fmax = max(f_pos) if f_pos else 1.0
-    else:
-        fmin, fmax = 0.0, 1.0
-    fmax = float(explorer.options.get("fmax") or fmax or 1.0)
-    explorer.state.fmin_ghz = float(explorer.options.get("fmin", fmin))
-    explorer.state.fmax_ghz = fmax
+    fmin, fmax = normalize_frequency_window_ghz(
+        explorer.options,
+        getattr(explorer.result, "f_axis", None),
+    )
+    explorer.state.fmin_ghz = float(fmin)
+    explorer.state.fmax_ghz = float(fmax)
 
     controls["fmin"] = widgets.FloatText(
         value=float(explorer.state.fmin_ghz),
-        description="f min",
+        description="f min [GHz]",
         **_maybe_layout(widgets, width="100%"),
     )
     controls["fmax"] = widgets.FloatText(
         value=float(explorer.state.fmax_ghz),
-        description="f max",
+        description="f max [GHz]",
         **_maybe_layout(widgets, width="100%"),
     )
     controls["source"] = widgets.Dropdown(
@@ -178,6 +175,16 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         description="z layer",
         **_maybe_layout(widgets, width="100%"),
     )
+    mode_type_options = ["abs", "real", "imag", "phase"]
+    mode_type_value = str(explorer.options.get("mode_type") or "abs")
+    if mode_type_value not in mode_type_options:
+        mode_type_options.append(mode_type_value)
+    controls["mode_type"] = widgets.Dropdown(
+        options=mode_type_options,
+        value=mode_type_value,
+        description="view",
+        **_maybe_layout(widgets, width="100%"),
+    )
     controls["mode_extract"] = (
         button_cls(description="Extract selected mode", **_maybe_layout(widgets, width="100%"))
         if (button_cls := getattr(widgets, "Button", None)) is not None
@@ -252,6 +259,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         "analytical_d",
         "analytical_phi",
         "analytical_D",
+        "mode_type",
     ]:
         if hasattr(controls[key], "observe"):
             controls[key].observe(lambda _change=None: on_display_change(explorer), names="value")
@@ -304,6 +312,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         [
             controls["mode_component"],
             controls["mode_z_layer"],
+            controls["mode_type"],
             controls["mode_extract"],
             controls["mode_info"],
         ],
