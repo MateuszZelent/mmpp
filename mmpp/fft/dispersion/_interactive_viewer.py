@@ -250,7 +250,13 @@ class DispersionInteractiveViewer:
             return self
 
         try:
-            initial_render = bool(self.options.get("initial_render", True))
+            # Notebook backends can deadlock the kernel when Matplotlib draws
+            # synchronously during ``show()``.  Keep the default startup path
+            # lightweight: display the toolbar first and let the user trigger
+            # the heatmap with the visible Render / refresh dispersion button.
+            # Callers that accept the backend risk can still request the old
+            # eager behavior with ``initial_render=True``.
+            initial_render = bool(self.options.get("initial_render", False))
             widget = self._build_widget(
                 display,
                 defer_initial_render=not initial_render,
@@ -261,7 +267,7 @@ class DispersionInteractiveViewer:
             self._close_widget_state()
             widget = None
         self._display_handle = display(widget if widget is not None else self, display_id=True)
-        if widget is not None and bool(self.options.get("initial_render", True)):
+        if widget is not None and bool(self.options.get("initial_render", False)):
             self._render_widget_after_display()
         return self
 
@@ -605,7 +611,7 @@ class DispersionInteractiveViewer:
 
             set_status(
                 self._widget_engine,
-                "Rendering initial dispersion heatmap...",
+                "Rendering cached dispersion result heatmap...",
                 color="#334155",
             )
             self._widget_engine.render()

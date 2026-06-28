@@ -69,6 +69,12 @@ Use `disp.plot.interactive(...)` for compute-and-view notebooks, or
 returns a headless controller that can be tested, saved as a preset, or displayed
 later with `.show()`.
 
+By default, `.show()` displays the interactive toolbar without forcing a
+synchronous Matplotlib draw. Press `Render / refresh dispersion` to draw the
+heatmap in the notebook. If you explicitly want the old eager behavior, pass
+`initial_render=True`, but the lazy default is safer for VS Code and ipympl
+kernels because it avoids blocking startup.
+
 ```python
 viewer = disp.plot.interactive(
     axis="x",
@@ -118,8 +124,27 @@ disp = result.fft.dispersion(backend="numpy", workers=1)
 ```
 
 ```bash
-MMPP_FFT_BACKEND=numpy MMPP_FFT_WORKERS=1 python notebook_smoke.py
+MMPP_FFT_BACKEND=numpy MMPP_FFT_WORKERS=1 \
+python scripts/analysis/verify_fft_dispersion_release_gate.py \
+  --output /tmp/mmpp-dispersion-release-gate.json \
+  --summary-only
 ```
+
+The JSON report includes `docs_example_summary`, which should show three
+time-selection paths: the full dataset with no hidden `tmax`, an explicit
+dataset slice such as `m[:4, ...]`, and an explicit `tmin`/`tmax` compute
+window. The top-level `summary` is the quickest status view. The `mode_policy`
+section confirms that `modes=True` stores complex
+spectra for reconstruction and that spectrum-only results report a clear
+`store_complex=True` fallback. The `legacy_adapters` section guards old
+notebook paths such as `interactive_analysis(...)` and
+`dispersion_modes(...).plot_interactive(...)`. Start from the top-level
+`masterplan_contracts` section when checking whether the gate covers the
+interactive-dispersion plan; if the gate fails, `masterplan_failures` lists the
+failed contract groups first, and `masterplan_failure_details` gives the
+concrete failed checks or observed values. Use `recommended_next_steps` as the
+short repair checklist for the failed contract groups. `--summary-only` keeps
+stdout compact while `--output` still writes the full JSON report.
 
 ## Filtering Pipeline
 

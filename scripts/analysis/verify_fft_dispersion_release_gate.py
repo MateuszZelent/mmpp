@@ -1,9 +1,18 @@
 """Run a local release-smoke gate for FFT dispersion.
 
 The gate is intentionally small and synthetic. It verifies that the public
-dispersion imports, headless interactive controller, and benchmark path work from
-the current checkout. Release workflows should run this after installing the
-built wheel as an additional packaging proof.
+dispersion imports, headless interactive controller, dataset-first docs examples,
+explicit time-window examples, mode-reconstruction policy, and benchmark path
+work from the current checkout. Release workflows should run this after
+installing the built wheel as an additional packaging proof. JSON reports include
+``docs_example_summary`` for a compact overview of the full-dataset,
+sliced-dataset, ``tmin``/``tmax``, mode fallback, and legacy adapter paths.
+Top-level ``masterplan_contracts``, ``masterplan_failures``, and
+``masterplan_failure_details`` summarize the interactive-dispersion plan status.
+``summary`` gives the shortest status view, and ``recommended_next_steps`` maps
+failed contract groups to concise repair hints. Use ``--summary-only`` to print
+only the compact status payload while still writing the full report to
+``--output``.
 """
 
 from __future__ import annotations
@@ -273,6 +282,32 @@ def _run_docs_example_smoke() -> dict[str, Any]:
         zarr_path = Path(tmp) / "docs-smoke.zarr"
         _write_docs_smoke_zarr(zarr_path)
         db = mmpp.open(tmp, force=True, max_workers=1)
+        full_disp = db[0].m.fft.dispersion
+        full_viewer = full_disp.plot.interactive(
+            axis="x",
+            component="perp",
+            fmax=25,
+            show=False,
+            disk_cache=False,
+            progress=False,
+        )
+        auto_modes_viewer = full_disp.plot.interactive(
+            axis="x",
+            component="perp",
+            fmax=25,
+            modes=True,
+            show=False,
+            disk_cache=False,
+            progress=False,
+        )
+        legacy_alias_viewer = full_disp.interactive_analysis(
+            axis="x",
+            component="perp",
+            fmax=25,
+            show=False,
+            disk_cache=False,
+            progress=False,
+        )
         dataset_disp = db[0].m[:4, ...].fft.dispersion
         dataset_progress: list[dict[str, Any]] = []
         dataset_viewer = dataset_disp.plot.interactive(
@@ -294,8 +329,11 @@ def _run_docs_example_smoke() -> dict[str, Any]:
         compute_viewer = disp.plot.interactive(
             axis="x",
             component="perp",
+            tmin=2,
+            tmax=6,
             fmax=25,
             show=False,
+            disk_cache=False,
         )
         result = disp.compute_1d(
             axis="x",
@@ -332,8 +370,31 @@ def _run_docs_example_smoke() -> dict[str, Any]:
         )
         mode_viewer = mode.plot.interactive(show=False, mode_type="abs")
         animation_viewer = mode_result.modes.plot.animation(peaks=[0], show=False)
+        legacy_modes = disp.dispersion_modes(
+            result=mode_result,
+            lattice_constant_nm=470,
+        )
+        legacy_modes_export = legacy_modes.export_selection(
+            k_rad_um=target_k_rad_m / 1e6,
+            f_ghz=target_f_hz / 1e9,
+            source="legacy_modes",
+        )
 
     return {
+        "full_dataset_viewer_show": bool(full_viewer.state["show"]),
+        "full_dataset_shape": list(full_viewer.result.shape),
+        "full_dataset_time_window": [
+            getattr(full_viewer.result._interface, "_tmin", None),
+            getattr(full_viewer.result._interface, "_tmax", None),
+        ],
+        "auto_modes_viewer_show": bool(auto_modes_viewer.state["show"]),
+        "auto_modes_has_complex": auto_modes_viewer.result.S_complex is not None,
+        "auto_modes_can_reconstruct": bool(auto_modes_viewer.can_reconstruct_modes),
+        "auto_modes_unavailable_reason": auto_modes_viewer.mode_unavailable_reason,
+        "legacy_alias_viewer_show": bool(legacy_alias_viewer.state["show"]),
+        "legacy_alias_same_type": legacy_alias_viewer.__class__.__name__
+        == full_viewer.__class__.__name__,
+        "legacy_alias_shape": list(legacy_alias_viewer.result.shape),
         "dataset_first_viewer_show": bool(dataset_viewer.state["show"]),
         "dataset_first_dataset": dataset_disp.dataset_name,
         "dataset_first_slice": str(dataset_disp.slice_info),
@@ -342,6 +403,11 @@ def _run_docs_example_smoke() -> dict[str, Any]:
             str(event.get("stage")) for event in dataset_progress
         ],
         "compute_viewer_show": bool(compute_viewer.state["show"]),
+        "compute_viewer_shape": list(compute_viewer.result.shape),
+        "compute_viewer_time_window": [
+            getattr(compute_viewer.result._interface, "_tmin", None),
+            getattr(compute_viewer.result._interface, "_tmax", None),
+        ],
         "result_viewer_show": bool(result_viewer.state["show"]),
         "positive_frequencies": bool(
             result_viewer.state["options"].get("positive_frequencies")
@@ -350,25 +416,64 @@ def _run_docs_example_smoke() -> dict[str, Any]:
         "scaling": result.scaling,
         "s_complex_is_none": result.S_complex is None,
         "result_notes": result_viewer.state["result_notes"],
+        "result_viewer_can_reconstruct_modes": bool(
+            result_viewer.can_reconstruct_modes
+        ),
+        "result_viewer_unavailable_reason": result_viewer.mode_unavailable_reason,
         "export_source": exported["selection"]["source"],
+        "export_mode_request_reason": exported.get("mode_request", {}).get("reason"),
         "mode_result_has_complex": mode_result.S_complex is not None,
         "modes_viewer_can_reconstruct": bool(modes_viewer.can_reconstruct_modes),
         "mode_viewer_show": bool(mode_viewer.state["show"]),
         "mode_viewer_type": mode_viewer.state["mode_type"],
         "animation_peaks": animation_viewer.state["peaks"],
+        "legacy_modes_has_interface": getattr(legacy_modes.result, "_interface", None)
+        is disp,
+        "legacy_modes_lattice_nm": legacy_modes.state["default_params"].get(
+            "lattice_nm"
+        ),
+        "legacy_modes_can_reconstruct": bool(
+            legacy_modes.state["can_reconstruct_modes"]
+        ),
+        "legacy_modes_export_source": legacy_modes_export["selection"]["source"],
+        "legacy_modes_request_available": bool(
+            legacy_modes_export["mode_request"]["available"]
+        ),
     }
 
 
 def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
     progress_stages = set(docs_example.get("dataset_first_progress_stages") or [])
     checks = {
+        "full_dataset_headless": docs_example.get("full_dataset_viewer_show")
+        is False,
+        "full_dataset_uses_all_timesteps": (
+            docs_example.get("full_dataset_shape") or [None, None]
+        )[-1]
+        == 8,
+        "full_dataset_no_time_window": docs_example.get("full_dataset_time_window")
+        == [None, None],
+        "auto_modes_headless": docs_example.get("auto_modes_viewer_show") is False,
+        "auto_modes_store_complex": docs_example.get("auto_modes_has_complex") is True,
+        "auto_modes_can_reconstruct": docs_example.get("auto_modes_can_reconstruct")
+        is True,
+        "legacy_alias_headless": docs_example.get("legacy_alias_viewer_show")
+        is False,
+        "legacy_alias_same_type": docs_example.get("legacy_alias_same_type") is True,
+        "legacy_alias_uses_all_timesteps": (
+            docs_example.get("legacy_alias_shape") or [None, None]
+        )[-1]
+        == 8,
         "dataset_first_headless": docs_example.get("dataset_first_viewer_show")
         is False,
         "dataset_first_uses_m": docs_example.get("dataset_first_dataset") == "m",
         "dataset_first_slice": "slice(None, 4" in str(
             docs_example.get("dataset_first_slice")
         ),
-        "dataset_first_shape": bool(docs_example.get("dataset_first_shape")),
+        "dataset_first_shape": (
+            docs_example.get("dataset_first_shape") or [None, None]
+        )[-1]
+        == 4,
         "dataset_first_progress": {
             "prepare",
             "compute",
@@ -378,11 +483,24 @@ def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
             "done",
         }.issubset(progress_stages),
         "compute_viewer_headless": docs_example.get("compute_viewer_show") is False,
+        "compute_viewer_time_window": docs_example.get("compute_viewer_time_window")
+        == [2, 6],
+        "compute_viewer_window_shape": (
+            docs_example.get("compute_viewer_shape") or [None, None]
+        )[-1]
+        == 4,
         "result_viewer_headless": docs_example.get("result_viewer_show") is False,
         "positive_frequencies": docs_example.get("positive_frequencies") is True,
         "amplitude_squared_scaling": docs_example.get("scaling")
         == "amplitude_squared",
         "preview_without_complex": docs_example.get("s_complex_is_none") is True,
+        "preview_modes_unavailable": docs_example.get(
+            "result_viewer_can_reconstruct_modes"
+        )
+        is False,
+        "preview_fallback_mentions_store_complex": "store_complex=True"
+        in str(docs_example.get("result_viewer_unavailable_reason"))
+        or "S_complex" in str(docs_example.get("export_mode_request_reason")),
         "mode_result_has_complex": docs_example.get("mode_result_has_complex") is True,
         "modes_viewer_can_reconstruct": docs_example.get(
             "modes_viewer_can_reconstruct"
@@ -391,11 +509,100 @@ def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
         "mode_viewer_headless": docs_example.get("mode_viewer_show") is False,
         "mode_viewer_abs": docs_example.get("mode_viewer_type") == "abs",
         "animation_peaks": docs_example.get("animation_peaks") == [0],
+        "legacy_modes_has_interface": docs_example.get("legacy_modes_has_interface")
+        is True,
+        "legacy_modes_lattice": docs_example.get("legacy_modes_lattice_nm") == 470,
+        "legacy_modes_can_reconstruct": docs_example.get(
+            "legacy_modes_can_reconstruct"
+        )
+        is True,
+        "legacy_modes_export": docs_example.get("legacy_modes_export_source")
+        == "legacy_modes"
+        and docs_example.get("legacy_modes_request_available") is True,
     }
     failures = sorted(name for name, ok in checks.items() if not ok)
     return {
         "status": "failed" if failures else "ok",
         "failures": failures,
+        "observed": {
+            "full_dataset_shape": docs_example.get("full_dataset_shape"),
+            "full_dataset_time_window": docs_example.get("full_dataset_time_window"),
+            "auto_modes_has_complex": docs_example.get("auto_modes_has_complex"),
+            "auto_modes_can_reconstruct": docs_example.get(
+                "auto_modes_can_reconstruct"
+            ),
+            "legacy_alias_same_type": docs_example.get("legacy_alias_same_type"),
+            "legacy_alias_shape": docs_example.get("legacy_alias_shape"),
+            "dataset_first_shape": docs_example.get("dataset_first_shape"),
+            "dataset_first_slice": docs_example.get("dataset_first_slice"),
+            "compute_viewer_shape": docs_example.get("compute_viewer_shape"),
+            "compute_viewer_time_window": docs_example.get(
+                "compute_viewer_time_window"
+            ),
+            "fallback_mode_reason": docs_example.get(
+                "result_viewer_unavailable_reason"
+            ),
+            "legacy_modes_lattice_nm": docs_example.get("legacy_modes_lattice_nm"),
+            "legacy_modes_can_reconstruct": docs_example.get(
+                "legacy_modes_can_reconstruct"
+            ),
+            "legacy_modes_request_available": docs_example.get(
+                "legacy_modes_request_available"
+            ),
+            "progress_stages": sorted(progress_stages),
+        },
+    }
+
+
+def _docs_example_summary(docs_example: dict[str, Any]) -> dict[str, Any]:
+    """Return a compact human-readable summary of the public docs smoke paths."""
+
+    def _frequency_bins(key: str) -> Any:
+        shape = docs_example.get(key) or []
+        if not shape:
+            return None
+        return shape[-1]
+
+    return {
+        "full_dataset": {
+            "frequency_bins": _frequency_bins("full_dataset_shape"),
+            "time_window": docs_example.get("full_dataset_time_window"),
+        },
+        "dataset_slice": {
+            "dataset": docs_example.get("dataset_first_dataset"),
+            "slice": docs_example.get("dataset_first_slice"),
+            "frequency_bins": _frequency_bins("dataset_first_shape"),
+        },
+        "explicit_time_window": {
+            "frequency_bins": _frequency_bins("compute_viewer_shape"),
+            "time_window": docs_example.get("compute_viewer_time_window"),
+        },
+        "mode_policy": {
+            "modes_true_has_complex": docs_example.get("auto_modes_has_complex"),
+            "modes_true_can_reconstruct": docs_example.get(
+                "auto_modes_can_reconstruct"
+            ),
+            "fallback_without_complex": docs_example.get(
+                "result_viewer_unavailable_reason"
+            ),
+        },
+        "legacy_adapters": {
+            "interactive_analysis_same_type": docs_example.get(
+                "legacy_alias_same_type"
+            ),
+            "interactive_analysis_frequency_bins": _frequency_bins(
+                "legacy_alias_shape"
+            ),
+            "dispersion_modes_has_interface": docs_example.get(
+                "legacy_modes_has_interface"
+            ),
+            "dispersion_modes_can_reconstruct": docs_example.get(
+                "legacy_modes_can_reconstruct"
+            ),
+            "dispersion_modes_request_available": docs_example.get(
+                "legacy_modes_request_available"
+            ),
+        },
     }
 
 
@@ -492,6 +699,46 @@ def _run_widget_smoke(*, require: bool = False) -> dict[str, Any]:
     return report
 
 
+def _recommended_masterplan_next_steps(masterplan_failures: list[str]) -> list[str]:
+    """Return concise repair hints for failed masterplan contract groups."""
+
+    hints = {
+        "headless_viewer": (
+            "Inspect viewer_status.failures; show=False should stay lightweight "
+            "and preserve preset/export semantics."
+        ),
+        "mode_viewers": (
+            "Inspect mode_viewers_status.failures; mode plot and animation "
+            "controllers should remain headless-safe."
+        ),
+        "dataset_time_modes_and_legacy": (
+            "Inspect docs_example_status.failures and observed values; check "
+            "dataset slice, tmin/tmax, modes=True, and legacy adapter contracts."
+        ),
+        "headless_import_boundary": (
+            "Inspect headless_imports.new_widget_modules; headless paths should "
+            "not import IPython, ipywidgets, or Matplotlib."
+        ),
+        "optional_widget_smoke": (
+            "Inspect widget_smoke; install or repair optional notebook/widget "
+            "dependencies, or rerun without --require-widget-smoke when optional."
+        ),
+        "benchmark_threshold": (
+            "Inspect benchmark.threshold_failures, elapsed_s, and peak_memory_mb; "
+            "adjust performance or configured thresholds intentionally."
+        ),
+    }
+    if not masterplan_failures:
+        return [
+            "Run the real notebook smoke for %matplotlib widget, first render, "
+            "analytics overlay, mode extraction, Export snapshot, and legacy UI."
+        ]
+    return [
+        hints.get(name, f"Inspect contract group {name}.")
+        for name in masterplan_failures
+    ]
+
+
 def run_release_gate(
     output_path: str | Path | None = None,
     *,
@@ -542,9 +789,64 @@ def run_release_gate(
         or widget_smoke.get("status") == "failed"
         else "ok"
     )
+    masterplan_contracts = {
+        "headless_viewer": viewer_status.get("status"),
+        "mode_viewers": mode_viewers_status.get("status"),
+        "dataset_time_modes_and_legacy": docs_example_status.get("status"),
+        "headless_import_boundary": (
+            "ok" if headless_imports.get("no_new_widget_modules", False) else "failed"
+        ),
+        "optional_widget_smoke": widget_smoke.get("status"),
+        "benchmark_threshold": benchmark.get("threshold_status"),
+    }
+    masterplan_failures = [
+        name for name, contract_status in masterplan_contracts.items()
+        if contract_status == "failed"
+    ]
+    recommended_next_steps = _recommended_masterplan_next_steps(masterplan_failures)
+    masterplan_failure_details: dict[str, Any] = {}
+    if viewer_status.get("status") == "failed":
+        masterplan_failure_details["headless_viewer"] = {
+            "failures": viewer_status.get("failures", []),
+        }
+    if mode_viewers_status.get("status") == "failed":
+        masterplan_failure_details["mode_viewers"] = {
+            "failures": mode_viewers_status.get("failures", []),
+        }
+    if docs_example_status.get("status") == "failed":
+        masterplan_failure_details["dataset_time_modes_and_legacy"] = {
+            "failures": docs_example_status.get("failures", []),
+            "observed": docs_example_status.get("observed", {}),
+        }
+    if not headless_imports.get("no_new_widget_modules", False):
+        masterplan_failure_details["headless_import_boundary"] = {
+            "new_widget_modules": headless_imports.get("new_widget_modules", []),
+        }
+    if widget_smoke.get("status") == "failed":
+        masterplan_failure_details["optional_widget_smoke"] = {
+            "missing": widget_smoke.get("missing", []),
+            "reason": widget_smoke.get("reason"),
+            "error": widget_smoke.get("error"),
+        }
+    if benchmark.get("threshold_status") == "failed":
+        masterplan_failure_details["benchmark_threshold"] = {
+            "threshold_status": benchmark.get("threshold_status"),
+            "threshold_failures": benchmark.get("threshold_failures"),
+            "elapsed_s": benchmark.get("elapsed_s"),
+            "peak_memory_mb": benchmark.get("peak_memory_mb"),
+        }
+    summary = {
+        "status": status,
+        "failed_contract_count": len(masterplan_failures),
+        "failed_contracts": masterplan_failures,
+        "first_next_step": (
+            recommended_next_steps[0] if recommended_next_steps else None
+        ),
+    }
     report = {
         "gate": "fft_dispersion_release_smoke",
         "status": status,
+        "summary": summary,
         "imports": {
             "mmpp": mmpp.__name__ == "mmpp",
             "mmpp.fft.dispersion": dispersion.__name__ == "mmpp.fft.dispersion",
@@ -558,7 +860,12 @@ def run_release_gate(
         "mode_viewers_status": mode_viewers_status,
         "headless_imports": headless_imports,
         "docs_example": docs_example,
+        "docs_example_summary": _docs_example_summary(docs_example),
         "docs_example_status": docs_example_status,
+        "masterplan_contracts": masterplan_contracts,
+        "masterplan_failures": masterplan_failures,
+        "masterplan_failure_details": masterplan_failure_details,
+        "recommended_next_steps": recommended_next_steps,
         "widget_smoke": widget_smoke,
         "benchmark": benchmark,
         "import_path": import_info,
@@ -593,7 +900,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Fail when ipywidgets/Matplotlib smoke dependencies are unavailable.",
     )
-    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional JSON report path. The report includes docs_example_summary "
+            "with full-dataset, sliced-dataset, tmin/tmax, and mode-policy "
+            "and legacy-adapter smoke details, plus masterplan_contracts, "
+            "masterplan_failures, masterplan_failure_details, and "
+            "recommended_next_steps. The top-level summary is the quickest "
+            "status view."
+        ),
+    )
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help=(
+            "Print only summary, masterplan_contracts, masterplan_failures, "
+            "and recommended_next_steps to stdout. --output still writes the "
+            "full JSON report."
+        ),
+    )
     args = parser.parse_args(argv)
 
     report = run_release_gate(
@@ -604,7 +932,17 @@ def main(argv: list[str] | None = None) -> int:
         import_mode=args.import_mode,
         require_widget_smoke=args.require_widget_smoke,
     )
-    print(json.dumps(report, indent=2, sort_keys=True))
+    printed_report = (
+        {
+            "summary": report["summary"],
+            "masterplan_contracts": report["masterplan_contracts"],
+            "masterplan_failures": report["masterplan_failures"],
+            "recommended_next_steps": report["recommended_next_steps"],
+        }
+        if args.summary_only
+        else report
+    )
+    print(json.dumps(printed_report, indent=2, sort_keys=True))
     return 1 if report["status"] == "failed" else 0
 
 

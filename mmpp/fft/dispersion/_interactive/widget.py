@@ -39,9 +39,9 @@ class DispersionHeatmapWidget:
         display_func: Any,
         *,
         toolbar: bool | str = "auto",
-        defer_initial_render: bool = False,
+        defer_initial_render: bool = True,
     ) -> Any:
-        """Create figure, controls, callbacks, and initial heatmap."""
+        """Create controls lazily; render the heatmap only on explicit request."""
         toolbar_enabled = self._resolve_toolbar(toolbar)
 
         if toolbar_enabled:

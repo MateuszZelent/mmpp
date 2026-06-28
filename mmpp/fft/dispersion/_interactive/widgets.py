@@ -194,7 +194,7 @@ def build_toolbar(
     explorer: Any,
     widgets_module: Any,
     *,
-    render_initial: bool = True,
+    render_initial: bool = False,
 ) -> None:
     """Build ipywidgets toolbar controls and wire callbacks."""
     widgets = widgets_module
