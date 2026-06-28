@@ -137,12 +137,16 @@ def on_display_change(explorer: Any) -> None:
             explorer.state.show_flags[key] = bool(controls[key].value)
     _update_analytical_state_from_controls(explorer)
     sync_analytical_options(explorer)
+    if hasattr(explorer, "refresh_auxiliary_panels"):
+        explorer.refresh_auxiliary_panels()
     if bool(getattr(explorer, "options", {}).get("auto_render", False)):
+        if hasattr(explorer, "ensure_figure"):
+            explorer.ensure_figure()
         draw_dispersion_panel(explorer)
         refresh_output_widget(explorer)
         render_note = "rendered"
     else:
-        render_note = "press Render dispersion to update plot"
+        render_note = "press Render / refresh dispersion to update plot"
     set_status(
         explorer,
         (
@@ -324,6 +328,8 @@ def on_canvas_click(explorer: Any, event: Any) -> None:
         )
     draw_dispersion_panel(explorer)
     refresh_output_widget(explorer)
+    if hasattr(explorer, "refresh_auxiliary_panels"):
+        explorer.refresh_auxiliary_panels()
     set_status(
         explorer,
         f"selected k={k_value / 1e6:.4g} rad/um, f={f_value / 1e9:.4g} GHz",

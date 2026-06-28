@@ -4026,6 +4026,7 @@ def test_dispersion_interactive_deferred_toolbar_does_not_create_matplotlib(
     assert widget is explorer.widget
     assert explorer.figure is None
     assert explorer.axes is None
+    assert explorer.diagnostics()["backend"] == "not-created"
     assert "render_dispersion" in explorer.controls
 
 
@@ -4106,6 +4107,7 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
 
     toolbar_widgets.build_toolbar(explorer, fake_widgets)
 
+    assert callable(explorer.refresh_auxiliary_panels)
     assert explorer.controls["analytical_enabled"].value is True
     assert explorer.controls["analytical_sw_config"].value == "BV"
     assert explorer.controls["analytical_model"].value == "kalinikos"
@@ -4124,6 +4126,8 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
         "Render / refresh dispersion"
     )
     assert "Render / refresh dispersion" in explorer.controls["output_placeholder"].value
+    display_tab = explorer.controls["tabs"].kwargs["children"][0]
+    assert display_tab.children[0] is explorer.controls["render_dispersion"]
     assert explorer.controls["export_refresh"].description == "Refresh export snapshot"
     assert explorer.controls["analysis_refresh"].description == (
         "Refresh analysis summary"

@@ -604,13 +604,14 @@ class DispersionInteractiveViewer:
             from ._interactive.status import set_status
 
             set_status(
-            self._widget_engine,
-            "Rendering initial dispersion heatmap...",
-            color="#334155",
-        )
-            if hasattr(self._widget_engine, "ensure_figure"):
-                self._widget_engine.ensure_figure()
+                self._widget_engine,
+                "Rendering initial dispersion heatmap...",
+                color="#334155",
+            )
             self._widget_engine.render()
+            self._figure = self._widget_engine.figure
+            self._axes = self._widget_engine.axes
+            self._controls = self._widget_engine.controls
             self._widget_engine._warn_for_inline_backend()
             if self._widget_engine.diagnostics().get("interactive_backend", False):
                 set_status(

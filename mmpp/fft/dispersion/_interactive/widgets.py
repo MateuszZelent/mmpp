@@ -28,11 +28,15 @@ def _render_current_dispersion(explorer: Any) -> None:
     """Render the current heatmap with visible status and error reporting."""
     try:
         set_status(explorer, "Rendering dispersion heatmap...", color="#334155")
-        if hasattr(explorer, "ensure_figure"):
-            explorer.ensure_figure()
-        draw_dispersion_panel(explorer)
-        refresh_output_widget(explorer)
+        if hasattr(explorer, "render"):
+            explorer.render()
+        else:
+            if hasattr(explorer, "ensure_figure"):
+                explorer.ensure_figure()
+            draw_dispersion_panel(explorer)
+            refresh_output_widget(explorer)
         explorer._has_rendered_dispersion = True
+        _refresh_auxiliary_panels(explorer, update_status=False)
         set_status(explorer, "Dispersion heatmap rendered", color="#0F766E")
     except Exception as exc:
         set_status(
@@ -138,7 +142,7 @@ def _analysis_summary_payload(explorer: Any) -> dict[str, Any]:
     }
 
 
-def _refresh_analysis_summary(explorer: Any) -> None:
+def _refresh_analysis_summary(explorer: Any, *, update_status: bool = True) -> None:
     """Refresh lightweight analysis diagnostics in the Analysis tab."""
     payload = json_safe(_analysis_summary_payload(explorer))
     rows = "".join(
@@ -154,10 +158,11 @@ def _refresh_analysis_summary(explorer: Any) -> None:
             f"{rows}"
             "</table>"
         )
-    set_status(explorer, "Analysis summary refreshed", color="#0F766E")
+    if update_status:
+        set_status(explorer, "Analysis summary refreshed", color="#0F766E")
 
 
-def _export_snapshot(explorer: Any) -> None:
+def _export_snapshot(explorer: Any, *, update_status: bool = True) -> None:
     """Show a compact JSON snapshot of current viewer state."""
     selection = _selection_payload(explorer)
     payload = {
@@ -175,7 +180,14 @@ def _export_snapshot(explorer: Any) -> None:
             f"{escape(text)}"
             "</pre>"
         )
-    set_status(explorer, "Export snapshot refreshed", color="#0F766E")
+    if update_status:
+        set_status(explorer, "Export snapshot refreshed", color="#0F766E")
+
+
+def _refresh_auxiliary_panels(explorer: Any, *, update_status: bool = False) -> None:
+    """Refresh passive analysis/export panels without forcing a Matplotlib render."""
+    _refresh_analysis_summary(explorer, update_status=update_status)
+    _export_snapshot(explorer, update_status=update_status)
 
 
 def build_toolbar(
@@ -446,6 +458,10 @@ def build_toolbar(
     )
 
     explorer.controls = controls
+    explorer.refresh_auxiliary_panels = lambda: _refresh_auxiliary_panels(
+        explorer,
+        update_status=False,
+    )
 
     for key in [
         "fmin",
@@ -485,10 +501,12 @@ def build_toolbar(
     if hasattr(controls["mode_show_dispersion"], "on_click"):
         controls["mode_show_dispersion"].on_click(lambda _btn: _render_current_dispersion(explorer))
     if hasattr(controls["export_refresh"], "on_click"):
-        controls["export_refresh"].on_click(lambda _btn: _export_snapshot(explorer))
+        controls["export_refresh"].on_click(
+            lambda _btn: _export_snapshot(explorer, update_status=True)
+        )
     if hasattr(controls["analysis_refresh"], "on_click"):
         controls["analysis_refresh"].on_click(
-            lambda _btn: _refresh_analysis_summary(explorer)
+            lambda _btn: _refresh_analysis_summary(explorer, update_status=True)
         )
 
     display_tab = widgets.VBox(
@@ -602,24 +620,29 @@ def build_toolbar(
             width="320px",
             min_width="320px",
             flex="0 0 320px",
+            max_width="100%",
             border="1px solid #ddd",
             padding="8px",
         ),
     )
     right_panel = widgets.VBox(
         [controls["output"]],
-        **_maybe_layout(widgets, flex="1 1 auto", width="auto", min_width="760px"),
+        **_maybe_layout(widgets, flex="1 1 420px", width="100%", min_width="0"),
     )
     explorer.widget = widgets.HBox(
         [control_panel, right_panel],
-        **_maybe_layout(widgets, width="100%", align_items="stretch"),
+        **_maybe_layout(
+            widgets,
+            width="100%",
+            align_items="stretch",
+            flex_flow="row wrap",
+            gap="8px",
+        ),
     )
 
     sync_analytical_options(explorer)
     if render_initial:
-        draw_dispersion_panel(explorer)
-        refresh_output_widget(explorer)
-        set_status(explorer, "Interactive toolbar ready", color="#0F766E")
+        set_status(explorer, "Interactive toolbar ready; initial render pending", color="#334155")
     else:
         _show_dispersion_placeholder(explorer)
         set_status(
@@ -646,8 +669,7 @@ def _load_selected_preset(explorer: Any) -> None:
     try:
         load_preset(explorer, selected)
         explorer.apply_state_to_controls()
-        draw_dispersion_panel(explorer)
-        refresh_output_widget(explorer)
+        _render_current_dispersion(explorer)
         set_status(explorer, f"Preset loaded: {selected}", color="#0F766E")
     except Exception as exc:
         set_status(explorer, f"Preset load failed: {exc}", color="crimson")

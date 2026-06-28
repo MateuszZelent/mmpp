@@ -114,17 +114,19 @@ class DispersionHeatmapWidget:
 
     def diagnostics(self) -> dict[str, Any]:
         """Return runtime diagnostics for notebook/backend troubleshooting."""
-        backend = "unknown"
+        backend = "not-created"
         interactive_backend = False
-        try:
-            import matplotlib
+        if self.figure is not None:
+            try:
+                import matplotlib
 
-            backend = str(matplotlib.get_backend())
-            interactive_backend = any(
-                kw in backend.lower() for kw in ("widget", "ipympl", "nbagg", "notebook")
-            )
-        except Exception:
-            pass
+                backend = str(matplotlib.get_backend())
+                interactive_backend = any(
+                    kw in backend.lower()
+                    for kw in ("widget", "ipympl", "nbagg", "notebook")
+                )
+            except Exception:
+                backend = "unknown"
         return {
             "backend": backend,
             "interactive_backend": interactive_backend,
@@ -182,8 +184,7 @@ class DispersionHeatmapWidget:
         """Apply serializable preset state and redraw."""
         apply_preset_state(self, payload)
         self.apply_state_to_controls()
-        draw_dispersion_panel(self)
-        refresh_output_widget(self)
+        self.render()
 
     def status_html(self) -> str:
         """Return compact note block for fallback/status displays."""
@@ -215,6 +216,7 @@ class DispersionHeatmapWidget:
 
     def render(self) -> None:
         """Redraw the heatmap and output widget."""
+        self.ensure_figure()
         draw_dispersion_panel(self)
         refresh_output_widget(self)
 
@@ -285,6 +287,8 @@ class DispersionHeatmapWidget:
     def _warn_for_inline_backend(self) -> None:
         """Surface non-interactive Matplotlib backends inside the widget status."""
         diagnostics = self.diagnostics()
+        if diagnostics.get("backend") == "not-created":
+            return
         if diagnostics.get("interactive_backend", False):
             return
         backend = str(diagnostics.get("backend", "unknown"))
