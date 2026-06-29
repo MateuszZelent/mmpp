@@ -99,7 +99,7 @@ class HysteresisInteractiveExplorer:
                 zarr_group=zarr_group,
                 max_cached=50,
             )
-        elif self._snapshot_job is not None:
+        elif self._snapshot_job is not None and source_type != "table":
             self._snapshot_cache = SnapshotCache(
                 self._snapshot_job,
                 dset=self._snapshot_dset,
@@ -338,7 +338,11 @@ class HysteresisInteractiveExplorer:
             if not self._canvas_mounted:
                 output.clear_output(wait=False)
                 if self._fig is not None:
-                    output.append_display_data(self._fig.canvas)
+                    if display is not None:
+                        with output:
+                            display(self._fig.canvas)
+                    else:
+                        output.append_display_data(self._fig.canvas)
                 self._canvas_mounted = True
             if self._fig is not None:
                 self._fig.canvas.draw_idle()
@@ -348,7 +352,11 @@ class HysteresisInteractiveExplorer:
         output.clear_output(wait=False)
         if self._fig is not None:
             self._fig.canvas.draw()
-            output.append_display_data(self._fig)
+            if display is not None:
+                with output:
+                    display(self._fig)
+            else:
+                output.append_display_data(self._fig)
 
     def _set_index(self, idx: int, *, redraw: bool = True) -> None:
         n_points = int(self.result.field.size)

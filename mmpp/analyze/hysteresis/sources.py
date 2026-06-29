@@ -498,16 +498,51 @@ def from_magnetization(
 def _parse_field_from_key(key: str, key_prefix: str) -> float | None:
     """Extract float field value from a key like ``B-0.500000.6``.
 
-    Supports patterns: ``{prefix}{value}.{suffix}`` where suffix is digits.
+    Supports patterns:
+
+    - ``{prefix}{value}.{suffix}`` where suffix is digits (legacy form)
+    - ``{prefix}0_{value}_{unit}`` used by some `B0` keyed sweeps
+    - ``{prefix}{value}_{unit}`` with optional sign and unit suffix
     Returns ``None`` if the key does not match the pattern.
     """
-    prefix = re.escape(key_prefix)
-    pattern = rf"^{prefix}(.+)\.(\d+)$"
-    m = re.match(pattern, key)
-    if m is None:
+    if key_prefix:
+        if not key.startswith(key_prefix):
+            return None
+    else:
         return None
+
+    # Fast path for legacy keys like ``B-0.500000.6``.
+    pattern = rf"^{re.escape(key_prefix)}(.+)\.(\d+)$"
+    m = re.match(pattern, key)
+    if m is not None:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+
+    # Generalized parse: strip the prefix and parse the remaining token.
+    token = key[len(key_prefix) :]
+    if not token:
+        return None
+
+    # Some sweep writers encode field keys as ``B0_-10_mT`` or ``B0-10_mT``.
+    if token.startswith("0_") or token.startswith("0-"):
+        token = token[2:]
+
+    # Remove a trailing unit marker if present.
+    token = re.sub(r"[_-][a-zA-Z]+$", "", token)
+
+    # For older format like ``-0.500000.6`` keep the first two dot-separated
+    # parts as the numeric value.
+    if token.count(".") >= 2:
+        token = ".".join(token.split(".")[:-1])
+
+    token = token.strip("._-")
+    if not token:
+        return None
+
     try:
-        return float(m.group(1))
+        return float(token)
     except ValueError:
         return None
 
