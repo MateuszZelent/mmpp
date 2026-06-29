@@ -29,9 +29,9 @@ def _write_zarr_array(
     name: str,
     data: Any,
     *,
-    shape: tuple[int, ...] | None = None,
+    shape: Optional[tuple[int, ...]] = None,
     dtype: Any = None,
-    chunks: tuple[int, ...] | None = None,
+    chunks: Optional[tuple[int, ...]] = None,
     overwrite: bool = True,
 ) -> Any:
     """Write an array with a Zarr v2/v3 compatible group API."""
