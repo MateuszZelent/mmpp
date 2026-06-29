@@ -179,6 +179,212 @@ class TablePlotAccessor:
         return "TablePlotAccessor(prefix='job[0].table.plot')"
 
 
+class TablePreviewAccessor:
+    """Callable preview namespace for ``job[0].table.preview``."""
+
+    def __init__(self, table: "TableAwareWrapper"):
+        self._table = table
+
+    def __call__(
+        self,
+        n: int = 10,
+        columns: Optional[Union[str, Sequence[str]]] = None,
+        *,
+        start: int = 0,
+    ) -> Any:
+        return self._table._preview(n=n, columns=columns, start=start)
+
+    def _repr_html_(self) -> str:
+        return _table_method_helper_html(
+            self,
+            title="Table preview helper",
+            prefix="job[0].table.preview",
+            subtitle="Load a small table slice as a pandas DataFrame.",
+            action_color="#38bdf8",
+            rows=[
+                ("default rows", "10"),
+                ("columns", "all columns unless selected"),
+                ("returns", "pandas.DataFrame"),
+            ],
+            examples=(
+                "job[0].table.preview\n"
+                "job[0].table.preview(n=20)\n"
+                "job[0].table.preview(n=50, columns=['t', 'mx', 'my'])"
+            ),
+            methods=["__call__"],
+        )
+
+    def __repr__(self) -> str:
+        return "TablePreviewAccessor(prefix='job[0].table.preview')"
+
+
+class TableDataFrameAccessor:
+    """Callable DataFrame export namespace for ``job[0].table.to_dataframe``."""
+
+    def __init__(self, table: "TableAwareWrapper"):
+        self._table = table
+
+    def __call__(
+        self,
+        columns: Optional[Union[str, Sequence[str]]] = None,
+        *,
+        max_rows: Optional[int] = None,
+        start: int = 0,
+    ) -> Any:
+        return self._table._to_dataframe(
+            columns=columns,
+            max_rows=max_rows,
+            start=start,
+        )
+
+    def _repr_html_(self) -> str:
+        return _table_method_helper_html(
+            self,
+            title="Table DataFrame helper",
+            prefix="job[0].table.to_dataframe",
+            subtitle="Load selected table columns into pandas.",
+            action_color="#34d399",
+            rows=[
+                ("columns", "all columns by default"),
+                ("max_rows", "optional safety limit"),
+                ("returns", "pandas.DataFrame"),
+            ],
+            examples=(
+                "job[0].table.to_dataframe\n"
+                "df = job[0].table.to_dataframe(max_rows=1000)\n"
+                "df = job[0].table.to_dataframe(columns=['t', 'mx'])"
+            ),
+            methods=["__call__"],
+        )
+
+    def __repr__(self) -> str:
+        return "TableDataFrameAccessor(prefix='job[0].table.to_dataframe')"
+
+
+class TableInteractiveAccessor:
+    """Callable interactive namespace for ``job[0].table.interactive``."""
+
+    def __init__(self, table: "TableAwareWrapper"):
+        self._table = table
+
+    def __call__(self, *, show: bool = True, max_rows: int = 2000) -> "TableInteractiveViewer":
+        return self._table._interactive(show=show, max_rows=max_rows)
+
+    def _repr_html_(self) -> str:
+        return _table_method_helper_html(
+            self,
+            title="Table interactive helper",
+            prefix="job[0].table.interactive",
+            subtitle="Open the toolbar for table previewing and plotting.",
+            action_color="#a78bfa",
+            rows=[
+                ("toolbar", "x/y selectors, plot mode, row window"),
+                ("default max rows", "2000"),
+                ("returns", "TableInteractiveViewer"),
+            ],
+            examples=(
+                "job[0].table.interactive\n"
+                "viewer = job[0].table.interactive()\n"
+                "viewer = job[0].table.interactive(max_rows=500)"
+            ),
+            methods=["__call__"],
+        )
+
+    def __repr__(self) -> str:
+        return "TableInteractiveAccessor(prefix='job[0].table.interactive')"
+
+
+def _table_method_helper_html(
+    obj: Any,
+    *,
+    title: str,
+    prefix: str,
+    subtitle: str,
+    action_color: str,
+    rows: Sequence[tuple[str, object]],
+    examples: str,
+    methods: Sequence[str],
+) -> str:
+    import uuid as _uuid
+    from mmpp._repr_helpers import api_help_html, html_tabs
+
+    uid = str(_uuid.uuid4())[:8]
+    _sec = (
+        "background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,"
+        "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;"
+        "margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);"
+        "backdrop-filter:blur(10px);"
+    )
+    _code = (
+        "background:rgba(15,23,42,0.8);padding:5px 10px;border-radius:5px;"
+        "display:inline-block;margin:4px;font-family:'Courier New',monospace;"
+        "font-size:0.85em;border:1px solid rgba(71,85,105,0.4);font-weight:500;"
+    )
+
+    def _metric(label: str, value: object, color: str = "#cbd5e1") -> str:
+        return (
+            f"<b style='color:#94a3b8'>{html_escape(label)}:</b> "
+            f"<code style='background:rgba(15,23,42,0.6);padding:4px 10px;"
+            f"border-radius:5px;font-size:0.9em;color:{color};"
+            f"border:1px solid rgba(71,85,105,0.3);'>{html_escape(str(value))}</code><br>"
+        )
+
+    status_html = f"<div style='{_sec}'>"
+    for label, value in rows:
+        status_html += _metric(label, value)
+    status_html += "</div>"
+
+    accessors_html = (
+        f"<div style='{_sec}'>"
+        "<b style='color:#94a3b8;'>ACCESSORS &amp; METHODS</b><br>"
+        f"<small style='color:#64748b;margin-right:6px;'>Call:</small>"
+        f"<code style='{_code}color:{action_color};'>(...)</code>"
+        "</div>"
+    )
+    examples_html = (
+        f"<div style='{_sec}'>"
+        "<b style='color:#94a3b8;'>Examples</b><br>"
+        "<pre style='margin:6px 0 0 0;background:rgba(15,23,42,0.85);padding:10px;"
+        "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+        f"<code>{html_escape(examples)}</code></pre></div>"
+    )
+    api_card = api_help_html(
+        obj,
+        title=f"{title} API help",
+        prefix=prefix,
+        subtitle=subtitle,
+        methods=list(methods),
+        chrome=False,
+    )
+    overview_html = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+        "color:#e2e8f0;padding:4px 0 0 0;\">"
+        "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+        f"{html_escape(title)}"
+        "<span style='background:#22c55e;color:#0f172a;padding:1px 6px;"
+        "border-radius:10px;font-size:10px;margin-left:8px'>ready</span>"
+        "</div>"
+        f"<div style='font-size:0.85em;color:#94a3b8;margin-bottom:12px;'>{html_escape(subtitle)}</div>"
+        + status_html
+        + accessors_html
+        + examples_html
+        + "</div>"
+    )
+    return (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+        "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
+        "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+        "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
+        "0 0 0 1px rgba(148,163,184,0.1) inset;\">"
+        + html_tabs(
+            [("Overview", overview_html), ("API", api_card)],
+            uid=f"table-method-{uid}",
+        )
+        + "</div>"
+    )
+
+
 class TableAwareWrapper:
     """Notebook-friendly wrapper around the top-level ``table`` zarr group.
 
@@ -192,6 +398,9 @@ class TableAwareWrapper:
         self.name = name
         self._group = group
         self._plot_accessor = TablePlotAccessor(self)
+        self._preview_accessor = TablePreviewAccessor(self)
+        self._dataframe_accessor = TableDataFrameAccessor(self)
+        self._interactive_accessor = TableInteractiveAccessor(self)
 
     @property
     def z(self) -> Any:
@@ -273,6 +482,21 @@ class TableAwareWrapper:
         """Callable plotting helper shown as a notebook card."""
         return self._plot_accessor
 
+    @property
+    def preview(self) -> TablePreviewAccessor:
+        """Callable preview helper shown as a notebook card."""
+        return self._preview_accessor
+
+    @property
+    def to_dataframe(self) -> TableDataFrameAccessor:
+        """Callable DataFrame export helper shown as a notebook card."""
+        return self._dataframe_accessor
+
+    @property
+    def interactive(self) -> TableInteractiveAccessor:
+        """Callable interactive toolbar helper shown as a notebook card."""
+        return self._interactive_accessor
+
     def _normalize_columns(self, columns: Optional[Union[str, Sequence[str]]]) -> list[str]:
         requested = _as_list(columns)
         available = self.columns
@@ -301,7 +525,7 @@ class TableAwareWrapper:
             for component in range(flat.shape[1])
         }
 
-    def to_dataframe(
+    def _to_dataframe(
         self,
         columns: Optional[Union[str, Sequence[str]]] = None,
         *,
@@ -339,7 +563,7 @@ class TableAwareWrapper:
             data.update(self._read_column(column, start, stop))
         return pd.DataFrame(data)
 
-    def preview(
+    def _preview(
         self,
         n: int = 10,
         columns: Optional[Union[str, Sequence[str]]] = None,
@@ -347,7 +571,7 @@ class TableAwareWrapper:
         start: int = 0,
     ) -> Any:
         """Return the first rows as a pandas DataFrame."""
-        return self.to_dataframe(columns=columns, max_rows=n, start=start)
+        return self._to_dataframe(columns=columns, max_rows=n, start=start)
 
     def _default_x_column(self) -> str | None:
         candidates = ("t", "time", "Time", "step", "iteration")
@@ -386,7 +610,7 @@ class TableAwareWrapper:
         if x_column is not None:
             load_columns = [x_column] + [column for column in load_columns if column != x_column]
 
-        df = self.to_dataframe(load_columns, max_rows=max_rows, start=start)
+        df = self._to_dataframe(load_columns, max_rows=max_rows, start=start)
         if ax is None:
             _, ax = plt.subplots()
 
@@ -415,7 +639,7 @@ class TableAwareWrapper:
         ax.legend(loc="best")
         return ax
 
-    def interactive(self, *, show: bool = True, max_rows: int = 2000) -> "TableInteractiveViewer":
+    def _interactive(self, *, show: bool = True, max_rows: int = 2000) -> "TableInteractiveViewer":
         """Create an interactive table toolbar for notebook exploration."""
         viewer = TableInteractiveViewer(self, max_rows=max_rows)
         if show:
@@ -554,6 +778,7 @@ class TableInteractiveViewer:
         self._widget = None
         self._output = None
         self._status = None
+        self._displayed_via_show = False
 
     def _make_widget(self) -> Any:
         try:
@@ -709,10 +934,13 @@ class TableInteractiveViewer:
     def show(self) -> "TableInteractiveViewer":
         from IPython.display import display
 
+        self._displayed_via_show = True
         display(self.widget)
         return self
 
     def _repr_mimebundle_(self, include: Any = None, exclude: Any = None) -> dict[str, Any]:
+        if self._displayed_via_show:
+            return {"text/plain": ""}
         widget = self.widget
         bundle = getattr(widget, "_repr_mimebundle_", None)
         if bundle is not None:
