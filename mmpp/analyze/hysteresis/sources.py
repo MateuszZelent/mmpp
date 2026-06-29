@@ -43,6 +43,23 @@ _COMPONENT_KEYS = {
 }
 
 
+def _normalize_component(component: str | None) -> str:
+    """Normalize user-facing component aliases to internal keys."""
+    comp = str(component or "x").strip().lower()
+    aliases = {
+        "mx": "x",
+        "m_x": "x",
+        "my": "y",
+        "m_y": "y",
+        "mz": "z",
+        "m_z": "z",
+        "|m|": "norm",
+        "magnitude": "norm",
+        "snapshot": "norm",
+    }
+    return aliases.get(comp, comp)
+
+
 def _resolve_config(config: HysteresisConfig | None) -> HysteresisConfig:
     return config if config is not None else HysteresisConfig()
 
@@ -372,11 +389,12 @@ def from_magnetization(
             f"Dataset '{dset}' must be 4D or 5D magnetization, got ndim={len(shape)}"
         )
 
-    component_key = str(component).lower()
-    if component_key == "snapshot":
-        component_key = "norm"
+    component_key = _normalize_component(component)
     if component_key not in {"x", "y", "z", "norm"}:
-        raise ValueError("component must be one of: 'x', 'y', 'z', 'norm', 'snapshot'")
+        raise ValueError(
+            "component must be one of: 'x', 'y', 'z', 'mx', 'my', 'mz', "
+            "'norm', 'magnitude', 'snapshot'"
+        )
 
     if len(shape) == 5:
         # (t, z, y, x, c)
@@ -547,6 +565,26 @@ def _parse_field_from_key(key: str, key_prefix: str) -> float | None:
         return None
 
 
+def _parse_field_unit_from_key(key: str, key_prefix: str) -> str | None:
+    """Infer display field unit from a keyed snapshot name."""
+    if not key_prefix or not key.startswith(key_prefix):
+        return None
+
+    token = key[len(key_prefix) :]
+    if token.startswith("0_") or token.startswith("0-"):
+        token = token[2:]
+
+    match = re.search(r"[_-]([munp]?t)$", token, flags=re.IGNORECASE)
+    if match is None:
+        return None
+
+    unit = match.group(1)
+    prefix = unit[:-1]
+    if prefix:
+        return f"{prefix}{unit[-1].upper()}"
+    return unit.upper()
+
+
 def _extract_spatial_mean(
     array_obj,
     *,
@@ -604,7 +642,7 @@ def _extract_spatial_mean(
     if frame.size == 0:
         return float("nan")
 
-    comp = str(component).lower()
+    comp = _normalize_component(component)
     _comp_map = {"x": 0, "y": 1, "z": 2}
     if comp in _comp_map:
         idx = _comp_map[comp]
@@ -673,6 +711,12 @@ def from_zarr_keys(
         Sorted by field value, one point per matching key.
     """
     cfg = _resolve_config(config)
+    component_key = _normalize_component(component)
+    if component_key not in {"x", "y", "z", "norm"}:
+        raise ValueError(
+            "component must be one of: 'x', 'y', 'z', 'mx', 'my', 'mz', "
+            "'norm', 'magnitude', 'snapshot'"
+        )
 
     # ── resolve the zarr group ──────────────────────────────────────────────
     if hasattr(job_result, "_z"):
@@ -686,11 +730,12 @@ def from_zarr_keys(
     all_keys = list(zgroup.keys())
 
     # ── collect (field_value, key) pairs ───────────────────────────────────
-    candidates: list[tuple[float, str]] = []
+    candidates: list[tuple[float, str, str | None]] = []
     for key in all_keys:
         fval = _parse_field_from_key(key, key_prefix)
         if fval is None:
             continue
+        unit = _parse_field_unit_from_key(key, key_prefix)
         try:
             arr = zgroup[key]
             shape = tuple(getattr(arr, "shape", ()))
@@ -703,7 +748,7 @@ def from_zarr_keys(
                 continue
         except Exception:
             continue
-        candidates.append((fval, key))
+        candidates.append((fval, key, unit))
 
     if not candidates:
         raise ValueError(
@@ -713,6 +758,9 @@ def from_zarr_keys(
 
     # sort ascending by field value
     candidates.sort(key=lambda t: t[0])
+
+    units = {unit for _fval, _key, unit in candidates if unit}
+    inferred_field_unit = next(iter(units)) if len(units) == 1 else "T"
 
     # ── resolve ROI in index units ─────────────────────────────────────────
     roi_idx: tuple[int, int, int, int] | None = None
@@ -739,11 +787,11 @@ def from_zarr_keys(
     mag_vals: list[float] = []
     frame_indices: list[int] = []
 
-    for frame_idx, (fval, key) in enumerate(candidates):
+    for frame_idx, (fval, key, _unit) in enumerate(candidates):
         try:
             m_mean = _extract_spatial_mean(
                 zgroup[key],
-                component=component,
+                component=component_key,
                 z_layer=z_layer,
                 roi=roi_idx,
             )
@@ -780,11 +828,12 @@ def from_zarr_keys(
     meta.update({
         "source_type": "zarr_keys",
         "key_prefix": key_prefix,
-        "component": component,
+        "component": component_key,
+        "component_requested": component,
         "z_layer": z_layer,
         "roi": roi_idx,
         "n_keys_scanned": len(candidates),
-        "field_unit": "T",
+        "field_unit": meta.get("field_unit", inferred_field_unit),
         "job_result": job_result,
         "frame_keys": frame_keys,   # dict[int, str]: zarr key for each result frame
         "zarr_group": zgroup,       # the zarr root group for snapshot loading

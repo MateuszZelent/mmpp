@@ -208,6 +208,63 @@ def build_cloneflip_result(result: "HysteresisResult") -> "HysteresisResult":
             f"only {N} point(s) found after sorting."
         )
 
+    # ── bipolar monotonic sweep: do NOT mirror it again ──────────────────────
+    # Some simulations already save a single monotonic sweep across both
+    # polarities, e.g. +50 mT → −50 mT.  Such data is not a closed hysteresis
+    # loop, so cloneflip is still useful, but the correct reversible completion
+    # is just the time-reversal of the measured branch.  Reflecting
+    # (−B, −M) again would create duplicate field coordinates with opposite
+    # magnetization values interleaved by the sort step, producing a jagged
+    # zig-zag curve around every field sample.
+    if float(np.nanmin(B_s)) < 0.0 < float(np.nanmax(B_s)):
+        dB_orig = np.diff(B)
+        is_monotonic_original = bool(
+            np.all(dB_orig >= 0.0) or np.all(dB_orig <= 0.0)
+        )
+
+        if is_monotonic_original:
+            B_path = B
+            M_path = M
+            frame_path = (
+                frame_orig
+                if frame_orig is not None
+                else np.arange(B.size, dtype=int)
+            )
+        else:
+            B_path = B_s
+            M_path = M_s
+            frame_path = frame_s
+
+        B_return = B_path[::-1][1:]
+        M_return = M_path[::-1][1:]
+        frame_return = frame_path[::-1][1:]
+
+        B_loop = np.concatenate([B_path, B_return])
+        M_loop = np.concatenate([M_path, M_return])
+        frame_loop = np.concatenate([frame_path, frame_return])
+
+        meta = dict(result.metadata)
+        meta.update(
+            {
+                "cloneflip": True,
+                "cloneflip_mode": "reverse_existing_bipolar_sweep",
+                "n_original": N,
+                "cloneflip_field_range": (
+                    float(np.nanmin(B_loop)),
+                    float(np.nanmax(B_loop)),
+                ),
+            }
+        )
+
+        return HysteresisResult(
+            field=B_loop,
+            magnetization=M_loop,
+            branches=segment_branches(B_loop),
+            frame_index=frame_loop,
+            config=result.config,
+            metadata=meta,
+        )
+
     # ── reflected ascending part: (−B_s[::-1], −M_s[::-1]) ──────────────────
     # Points at the opposite polarity: B_refl is ascending (from −b_max to −b_min).
     B_refl = -B_s[::-1]
