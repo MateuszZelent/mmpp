@@ -24,6 +24,42 @@ def _maybe_layout(widgets: Any, **kwargs: Any) -> dict[str, Any]:
     return {"layout": layout} if layout is not None else {}
 
 
+def _make_button(
+    widgets: Any,
+    description: str,
+    *,
+    width: str = "100%",
+    color: str = "#0f766e",
+    button_style: str = "primary",
+    tooltip: str | None = None,
+) -> Any:
+    """Create a high-contrast action button that stays visible in notebooks."""
+    button_cls = getattr(widgets, "Button", None)
+    if button_cls is None:
+        return widgets.HTML(
+            value=(
+                "<div style='box-sizing:border-box;width:100%;min-height:34px;"
+                "margin:3px 0;padding:7px 10px;border-radius:6px;"
+                "background:#334155;color:#fff;font-weight:700;text-align:center;'>"
+                f"{escape(description)}"
+                "</div>"
+            )
+        )
+    button = button_cls(
+        description=description,
+        button_style=button_style,
+        tooltip=tooltip or description,
+        **_maybe_layout(widgets, width=width, height="34px", margin="3px 0px"),
+    )
+    try:
+        button.style.button_color = color
+        button.style.text_color = "#ffffff"
+        button.style.font_weight = "700"
+    except Exception:
+        pass
+    return button
+
+
 def _render_current_dispersion(explorer: Any) -> None:
     """Render the current heatmap with visible status and error reporting."""
     try:
@@ -226,13 +262,12 @@ def build_toolbar(
         description="source",
         **_maybe_layout(widgets, width="100%"),
     )
-    controls["render_dispersion"] = (
-        button_cls(
-            description="Render / refresh dispersion",
-            **_maybe_layout(widgets, width="100%"),
-        )
-        if (button_cls := getattr(widgets, "Button", None)) is not None
-        else widgets.HTML(value="")
+    controls["render_dispersion"] = _make_button(
+        widgets,
+        "Render heatmap",
+        color="#0f766e",
+        button_style="success",
+        tooltip="Render or refresh S(k, f) with the current display settings.",
     )
     controls["kscale"] = widgets.Dropdown(
         options=[
@@ -475,18 +510,19 @@ def build_toolbar(
         description="view",
         **_maybe_layout(widgets, width="100%"),
     )
-    controls["mode_extract"] = (
-        button_cls(description="Extract selected mode", **_maybe_layout(widgets, width="100%"))
-        if button_cls is not None
-        else widgets.HTML(value="")
+    controls["mode_extract"] = _make_button(
+        widgets,
+        "Extract mode",
+        color="#15803d",
+        button_style="success",
+        tooltip="Extract the dispersion mode selected on the heatmap.",
     )
-    controls["mode_show_dispersion"] = (
-        button_cls(
-            description="Back to dispersion heatmap",
-            **_maybe_layout(widgets, width="100%"),
-        )
-        if button_cls is not None
-        else widgets.HTML(value="")
+    controls["mode_show_dispersion"] = _make_button(
+        widgets,
+        "Show dispersion",
+        color="#2563eb",
+        button_style="info",
+        tooltip="Return to the dispersion heatmap output.",
     )
     controls["mode_info"] = widgets.HTML(
         value="<small>Select a point on S(k, f), then extract a mode.</small>"
@@ -521,31 +557,28 @@ def build_toolbar(
             "</div>"
         )
     )
-    controls["export_refresh"] = (
-        button_cls(
-            description="Refresh export snapshot",
-            **_maybe_layout(widgets, width="100%"),
-        )
-        if button_cls is not None
-        else widgets.HTML(value="")
+    controls["export_refresh"] = _make_button(
+        widgets,
+        "Refresh export",
+        color="#334155",
+        button_style="",
+        tooltip="Refresh the JSON-like export snapshot.",
     )
     controls["export_snapshot"] = widgets.HTML(
         value="<small>Press Refresh export snapshot to inspect state.</small>"
     )
-    controls["analysis_refresh"] = (
-        button_cls(
-            description="Refresh analysis summary",
-            **_maybe_layout(widgets, width="100%"),
-        )
-        if button_cls is not None
-        else widgets.HTML(value="")
+    controls["analysis_refresh"] = _make_button(
+        widgets,
+        "Refresh summary",
+        color="#334155",
+        button_style="",
+        tooltip="Refresh the analysis summary panel.",
     )
     controls["analysis_summary"] = widgets.HTML(
         value="<small>Press Refresh analysis summary to inspect current data.</small>"
     )
 
     text_cls = getattr(widgets, "Text", None)
-    button_cls = getattr(widgets, "Button", None)
     dropdown_cls = getattr(widgets, "Dropdown")
     controls["preset_name"] = (
         text_cls(
@@ -563,15 +596,19 @@ def build_toolbar(
         description="preset",
         **_maybe_layout(widgets, width="100%"),
     )
-    controls["preset_save"] = (
-        button_cls(description="Save preset", **_maybe_layout(widgets, width="49%"))
-        if button_cls is not None
-        else widgets.HTML(value="")
+    controls["preset_save"] = _make_button(
+        widgets,
+        "Save preset",
+        width="49%",
+        color="#475569",
+        button_style="",
     )
-    controls["preset_load"] = (
-        button_cls(description="Load preset", **_maybe_layout(widgets, width="49%"))
-        if button_cls is not None
-        else widgets.HTML(value="")
+    controls["preset_load"] = _make_button(
+        widgets,
+        "Load preset",
+        width="49%",
+        color="#475569",
+        button_style="",
     )
 
     explorer.controls = controls
