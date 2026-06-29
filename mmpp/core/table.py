@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from html import escape as html_escape
-from typing import TYPE_CHECKING, Any, Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Optional, Sequence, Union
 
 import numpy as np
 
@@ -9,12 +9,174 @@ if TYPE_CHECKING:
     from .job import ZarrJobResult
 
 
-def _as_list(value: str | Sequence[str] | None) -> list[str] | None:
+def _as_list(value: Optional[Union[str, Sequence[str]]]) -> Optional[list[str]]:
     if value is None:
         return None
     if isinstance(value, str):
         return [value]
     return [str(item) for item in value]
+
+
+class TablePlotAccessor:
+    """Callable plot namespace for ``job[0].table.plot``.
+
+    Accessing the object in a notebook shows a helper card. Calling it keeps the
+    short plotting syntax: ``job[0].table.plot(x="t", y="mx")``.
+    """
+
+    def __init__(self, table: "TableAwareWrapper"):
+        self._table = table
+
+    def __call__(
+        self,
+        x: Optional[str] = None,
+        y: Optional[Union[str, Sequence[str]]] = None,
+        *,
+        kind: str = "line",
+        max_rows: Optional[int] = None,
+        start: int = 0,
+        ax: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._table._plot(
+            x=x,
+            y=y,
+            kind=kind,
+            max_rows=max_rows,
+            start=start,
+            ax=ax,
+            **kwargs,
+        )
+
+    def interactive(self, *, show: bool = True, max_rows: int = 2000) -> "TableInteractiveViewer":
+        """Open the interactive table toolbar."""
+        return self._table.interactive(show=show, max_rows=max_rows)
+
+    def preview(
+        self,
+        n: int = 10,
+        columns: Optional[Union[str, Sequence[str]]] = None,
+        *,
+        start: int = 0,
+    ) -> Any:
+        """Preview rows before plotting."""
+        return self._table.preview(n=n, columns=columns, start=start)
+
+    def _repr_html_(self) -> str:
+        import uuid as _uuid
+        from mmpp._repr_helpers import api_help_html, html_tabs
+
+        uid = str(_uuid.uuid4())[:8]
+        table = self._table
+        default_x = table._default_x_column() or "row index"
+        default_y = ", ".join(table._default_y_columns(None)[:4]) or "auto"
+
+        _sec = (
+            "background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,"
+            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;"
+            "margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);"
+            "backdrop-filter:blur(10px);"
+        )
+        _code = (
+            "background:rgba(15,23,42,0.8);padding:5px 10px;border-radius:5px;"
+            "display:inline-block;margin:4px;font-family:'Courier New',monospace;"
+            "font-size:0.85em;border:1px solid rgba(71,85,105,0.4);font-weight:500;"
+        )
+
+        def _metric(label: str, value: object, color: str = "#cbd5e1") -> str:
+            return (
+                f"<b style='color:#94a3b8'>{html_escape(label)}:</b> "
+                f"<code style='background:rgba(15,23,42,0.6);padding:4px 10px;"
+                f"border-radius:5px;font-size:0.9em;color:{color};"
+                f"border:1px solid rgba(71,85,105,0.3);'>{html_escape(str(value))}</code><br>"
+            )
+
+        status_html = (
+            f"<div style='{_sec}'>"
+            + _metric("job", table._job_result.name)
+            + _metric("table", table.name)
+            + _metric("shape", f"{table.n_rows} rows x {len(table.columns)} columns")
+            + _metric("default x", default_x)
+            + _metric("default y", default_y)
+            + "</div>"
+        )
+
+        groups = [
+            ("Plot:", [("(...)", "#a78bfa"), ("(x='t', y='mx')", "#a78bfa")]),
+            ("Interactive:", [(".interactive()", "#38bdf8")]),
+            ("Preview:", [(".preview(n=20)", "#34d399")]),
+        ]
+        accessors_inner = ""
+        for label, items in groups:
+            chips = "".join(
+                f"<code style='{_code}color:{color};'>{html_escape(name)}</code>"
+                for name, color in items
+            )
+            accessors_inner += (
+                f"<small style='color:#64748b;margin-right:6px;'>{html_escape(label)}</small>"
+                f"{chips}<br>"
+            )
+        accessors_html = (
+            f"<div style='{_sec}'>"
+            "<b style='color:#94a3b8;'>ACCESSORS &amp; METHODS</b><br>"
+            f"{accessors_inner}</div>"
+        )
+
+        example_code = (
+            "job[0].table.plot\n"
+            "job[0].table.plot(x='t', y='mx')\n"
+            "job[0].table.plot(x='t', y=['mx', 'my'], kind='scatter')\n"
+            "job[0].table.plot.interactive()"
+        )
+        examples_html = (
+            f"<div style='{_sec}'>"
+            "<b style='color:#94a3b8;'>Examples</b><br>"
+            "<pre style='margin:6px 0 0 0;background:rgba(15,23,42,0.85);padding:10px;"
+            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
+            f"<code>{html_escape(example_code)}</code></pre></div>"
+        )
+
+        api_card = api_help_html(
+            self,
+            title="Table plot API help",
+            prefix="job[0].table.plot",
+            subtitle="Callable plotting helper for table columns.",
+            methods=["__call__", "interactive", "preview"],
+            chrome=False,
+        )
+
+        overview_html = (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;padding:4px 0 0 0;\">"
+            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
+            "Table plot helper"
+            "<span style='background:#22c55e;color:#0f172a;padding:1px 6px;"
+            "border-radius:10px;font-size:10px;margin-left:8px'>ready</span>"
+            "</div>"
+            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:12px;'>"
+            "Plot scalar table columns or open the interactive table toolbar.</div>"
+            + status_html
+            + accessors_html
+            + examples_html
+            + "</div>"
+        )
+
+        return (
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
+            "0 0 0 1px rgba(148,163,184,0.1) inset;\">"
+            + html_tabs(
+                [("Overview", overview_html), ("API", api_card)],
+                uid=f"table-plot-{uid}",
+            )
+            + "</div>"
+        )
+
+    def __repr__(self) -> str:
+        return "TablePlotAccessor(prefix='job[0].table.plot')"
 
 
 class TableAwareWrapper:
@@ -29,6 +191,7 @@ class TableAwareWrapper:
         self._job_result = job_result
         self.name = name
         self._group = group
+        self._plot_accessor = TablePlotAccessor(self)
 
     @property
     def z(self) -> Any:
@@ -105,7 +268,12 @@ class TableAwareWrapper:
         """Return ``(rows, columns)`` for the tabular view."""
         return (self.n_rows, len(self.columns))
 
-    def _normalize_columns(self, columns: str | Sequence[str] | None) -> list[str]:
+    @property
+    def plot(self) -> TablePlotAccessor:
+        """Callable plotting helper shown as a notebook card."""
+        return self._plot_accessor
+
+    def _normalize_columns(self, columns: Optional[Union[str, Sequence[str]]]) -> list[str]:
         requested = _as_list(columns)
         available = self.columns
         if requested is None:
@@ -135,11 +303,11 @@ class TableAwareWrapper:
 
     def to_dataframe(
         self,
-        columns: str | Sequence[str] | None = None,
+        columns: Optional[Union[str, Sequence[str]]] = None,
         *,
-        max_rows: int | None = None,
+        max_rows: Optional[int] = None,
         start: int = 0,
-    ):
+    ) -> Any:
         """Load selected table columns into a pandas DataFrame.
 
         Parameters
@@ -174,10 +342,10 @@ class TableAwareWrapper:
     def preview(
         self,
         n: int = 10,
-        columns: str | Sequence[str] | None = None,
+        columns: Optional[Union[str, Sequence[str]]] = None,
         *,
         start: int = 0,
-    ):
+    ) -> Any:
         """Return the first rows as a pandas DataFrame."""
         return self.to_dataframe(columns=columns, max_rows=n, start=start)
 
@@ -198,13 +366,13 @@ class TableAwareWrapper:
                 numeric.append(column)
         return numeric[:6]
 
-    def plot(
+    def _plot(
         self,
-        x: str | None = None,
-        y: str | Sequence[str] | None = None,
+        x: Optional[str] = None,
+        y: Optional[Union[str, Sequence[str]]] = None,
         *,
         kind: str = "line",
-        max_rows: int | None = None,
+        max_rows: Optional[int] = None,
         start: int = 0,
         ax: Any = None,
         **kwargs: Any,
