@@ -1,37 +1,40 @@
 # MMPP
 
-**MMPP (Micro Magnetic Post Processing)** is a Python library for post-processing results of micromagnetic simulations (`.zarr` and HDF-backed data).
-It provides a practical layer for:
+**MMPP (Micro Magnetic Post Processing)** is a Python library for post-processing
+micromagnetic simulations stored in `.zarr` and HDF containers. It covers
+metadata discovery, batch handling, lazy numerical loading, FFT/frequency-domain
+analysis, mode extraction, dispersion workflows, transmission analysis, and hysteresis
+post-processing.
 
-- scanning result folders,
-- filtering metadata and running batch workflows,
-- working with lazily loaded datasets,
-- safe conversion to `NumPy`,
-- frequency-domain analysis (`FFT`, spectrum, modes, dispersion, transmission),
-- hysteresis analysis,
-- CLI operations for submitting and monitoring jobs.
-
-This document is a practical guide to the public API.
+This README is designed as a practical onboarding and reference document. It
+contains both beginner and advanced examples and replaces outdated helper usage
+with current, consistent APIs.
 
 ## Table of contents
 
 1. [Installation](#installation)
 2. [Quick start](#quick-start)
-3. [Core API: opening and finding results](#core-api-open-and-find-results)
-4. [Scanning and refreshing metadata](#scanning-and-refreshing-metadata)
-5. [Filtering (`find`, `find_paths`)](#filtering-find-find_paths)
-6. [Working with a single result](#working-with-a-single-result)
-7. [Data and dataset wrappers](#data-and-dataset-wrappers)
-8. [Selecting and sampling data (`frame`, `sel`, `downsample`)](#selecting-and-sampling-data-frame-sel-downsample)
-9. [Converting to `NumPy`](#converting-to-numpy)
-10. [Batch workflow (`BatchOperations`)](#batch-workflow-batchoperations)
-11. [Result tables (`TableAwareWrapper`)](#result-tables-tableawarewrapper)
-12. [FFT / spectrum / modes / dispersion](#fft--spectrum--modes--dispersion)
-13. [Transmission](#transmission)
-14. [Hysteresis](#hysteresis)
-15. [CLI](#cli)
-16. [Environment helper tools](#environment-helper-tools)
-17. [Common pitfalls](#common-pitfalls)
+3. [Opening and scanning results](#opening-and-scanning-results)
+4. [Working with metadata tables](#working-with-metadata-tables)
+5. [Filtering and selecting results](#filtering-and-selecting-results)
+6. [Single result API (`ZarrJobResult`)](#single-result-api-zarrjobresult)
+7. [Dataset wrappers (`DatasetAwareWrapper`)](#dataset-wrappers-datasetawarewrapper)
+8. [Selecting data: `frame`, `sel`, slicing, downsampling](#selecting-data-frame-sel-slicing-downsampling)
+9. [Converting data to NumPy](#converting-data-to-numpy)
+10. [Batch workflows](#batch-workflows)
+11. [Table access (`TableAwareWrapper`)](#table-access-tableawarewrapper)
+12. [Plotting and analysis accessors](#plotting-and-analysis-accessors)
+13. [FFT facade](#fft-facade)
+14. [Spectrum](#spectrum)
+15. [Modes](#modes)
+16. [Dispersion](#dispersion)
+17. [Transmission](#transmission)
+18. [Hysteresis](#hysteresis)
+19. [CLI](#cli)
+20. [Environment helpers and optional dependencies](#environment-helpers-and-optional-dependencies)
+21. [Migration notes: outdated helper cleanup](#migration-notes-outdated-helper-cleanup)
+22. [Common pitfalls](#common-pitfalls)
+23. [Performance and safety notes](#performance-and-safety-notes)
 
 ## Installation
 
@@ -39,21 +42,20 @@ This document is a practical guide to the public API.
 pip install mmpp
 ```
 
-Optional extras:
+Optional extras are available for optional workflows:
 
 ```bash
-pip install mmpp[fft]         # spectral analysis
-pip install mmpp[plotting]    # advanced plotting
-pip install mmpp[interactive] # notebook widgets
-pip install mmpp[tui]         # terminal UI
-pip install mmpp[wavelets]    # wavelet workflows
+pip install mmpp[fft]         # FFT and spectrum support
+pip install mmpp[plotting]    # plotting helpers
+pip install mmpp[interactive] # notebook interactive tools
+pip install mmpp[tui]         # terminal UI helpers
+pip install mmpp[wavelets]    # wavelet tools
 pip install mmpp[image]       # image helpers
-pip install mmpp[ml]          # ML helpers (selected use cases)
-pip install mmpp[full]        # all extras above + optional extras
-pip install mmpp[dev]         # development dependencies (mypy, pytest, docs, etc.)
+pip install mmpp[ml]          # machine-learning helpers (selected)
+pip install mmpp[dev]         # development/test/lint/type tools
 ```
 
-After installation, the CLI is available:
+CLI entrypoint is installed with the package:
 
 ```bash
 mmpp --help
@@ -64,104 +66,115 @@ mmpp --help
 ```python
 import mmpp as mp
 
-# Main entry point
-jobs = mp.open("/path/to/results", max_workers=16)
-
-# Opening a single .zarr file (same as a single-job MMPP object)
-single = mp.open("/path/to/results/sim_001.zarr")
-
-# Force a full scan at initialization time
-jobs = mp.open("/path/to/results", force=True)
-
-print(len(jobs))
-print(jobs.columns[:5])
-print(jobs.base_path)
+jobs = mp.open("/path/to/results")
+print("jobs:", len(jobs))
+print("available columns:", jobs.columns[:10])
+print("dataframe:", type(jobs.df), jobs.df.shape)
+print("first result:", jobs[0].name)
 ```
 
-## Core API: opening and finding results
+## Opening and scanning results
 
-`mp.open(...)` returns an `MMPP` instance.
-`mp.mmpp(...)` is **not** an alias and does not exist.
+`mp.open(...)` creates an `MMPP` object and scans the provided location. The input
+may be:
+
+- a directory containing many simulation outputs
+- a single `.zarr` result path
+- a path that already points to one finished result dataset
 
 ```python
 jobs = mp.open("/path/to/results")
-jobs.base_path       # base directory / file
-jobs.dataframe       # alias to jobs.df
-jobs.df             # pandas.DataFrame with metadata
-jobs.columns        # available metadata columns
-len(jobs)           # number of discovered results
-jobs[0]             # single result (ZarrJobResult)
-jobs[:]             # BatchOperations for all results
-jobs[1:10]          # BatchOperations for a slice
-jobs[:].jobs         # in batch context, convenience alias to records
+jobs = mp.open("/path/to/results/sim_001.zarr")
+jobs = mp.open("/path/to/results", force=True)  # force full rescan immediately
 ```
 
-Note: when there are multiple results, `jobs.fft` uses the first one and emits a warning.
-For batch analysis use `jobs[:].fft`, and for single-result analysis use `jobs[i].fft`.
-
-## Scanning and refreshing metadata
-
-Scanning runs automatically during `jobs` creation, but you can trigger it manually:
+Scanning helpers:
 
 ```python
-jobs.scan()             # scans only when DF is empty
-jobs.scan(force=True)   # full scan
-jobs.force_rescan()     # direct alias for full scan
+jobs.scan()             # scans only if not yet scanned
+jobs.scan(force=True)   # explicit full scan now
+jobs.force_rescan()     # alias for scan(force=True)
 
-jobs.get_parsing_examples("/path/to/example_file.zarr")
-jobs.scan()             # idempotent on empty DF
+jobs.get_parsing_examples("/path/to/example_file.zarr")  # inspect parser heuristics
 ```
 
-## Filtering (`find`, `find_paths`)
+## Working with metadata tables
+
+`jobs` behaves like a table-backed collection with metadata columns and result records.
 
 ```python
-subset = jobs.find(Nx=256, Ny=256, solver=3)
-subset = jobs.find(PBCx=1, PBCy=1)
-subset = jobs.find(Bext=0.0500001)      # nearest-match behavior for numeric columns
-subset = jobs.find(alpha=0.02, PBCx=1)
-
-paths = subset.find_paths()
-paths = jobs.find(Nx=256).find_paths(PBCx=1)
+jobs.df                  # pandas.DataFrame metadata
+jobs.dataframe           # same as jobs.df
+jobs.columns             # metadata column names
+jobs.base_path           # path used to construct this object
+jobs.jobs                # raw list of result objects
+jobs[0]                  # first result (`ZarrJobResult`)
+jobs[:]                   # all results as BatchOperations
+jobs[1:4]                # slice as batch
 ```
 
-`find()` and `find_paths()` apply logical AND across all provided keys.
-
-## Working with a single result
+A quick check for the number of selected jobs:
 
 ```python
-res = jobs.find(PBCx=1, PBCy=1)[0]
-
-res.path                  # path to .zarr
-res.name                  # result name
-res.attrs                 # zarr attributes as mapping
-res.datasets              # top-level datasets
-res.list_datasets()       # full dataset list (recursive)
-res.has_dataset("m")      # dataset exists
-res.has_attr("dx")        # attribute exists
-res.is_finished()         # whether simulation is finished
-res.is_running()          # whether simulation is still running
-res.get_largest_m_dataset()# heuristic pick of largest m dataset
-res[res.keys()[0]]        # direct raw access
+subset = jobs.find(Nx=256, Ny=256)
+print(len(subset))
 ```
 
-Most convenient access goes through dataset attributes:
+## Filtering and selecting results
+
+`find(...)` and `find_paths(...)` apply **AND** logic across all criteria.
 
 ```python
-raw_m = res.m               # alias: DatasetAwareWrapper (lazy)
-raw_tbl = res["table"]      # dataset/group "table" as a zarr object
+sweep = jobs.find(Nx=256, Ny=256)
+xy_pbc = jobs.find(PBCx=1, PBCy=1)
+by_field = jobs.find(Bext=0.05)
+by_many = jobs.find(solver=3, Nx=128, Ny=128)
+
+paths = by_many.find_paths()
+print(paths[:3])
 ```
 
-Raw-value methods:
+Numeric columns use nearest-match behavior, so `Bext=0.0500001` selects nearest value
+from metadata when exact match is not available.
+
+## Single result API (`ZarrJobResult`)
 
 ```python
-res.get_raw("m")                        # raw zarr.Array (or array when slicing)
-res.get_raw_data("m")                   # np.ndarray with source dtype
-res.get_raw_f32("m")                    # np.float32
-res.get_raw_c64("modes/arr")            # np.complex64
+res = jobs.find(PBCx=1)[0]
+
+res.path          # full dataset path
+res.name          # short result name
+res.attrs         # result attributes (zarr attrs mapping)
+res.datasets      # top-level dataset names
+res.keys()        # dataset/group keys available in root
+res.list_datasets()  # recursive dataset listing
+res.has_dataset("m")
+res.has_attr("dx")
+res.is_finished()
+res.is_running()
+
+res.mock_data     # small helper fixture-like view (when available)
+res.script        # source mx3 or script metadata helper (if exposed)
+```
+
+You can also access datasets directly through attributes:
+
+```python
+res["m"]
+res["table"]
+res.m              # lazy wrapper for magnetization (if present)
+res.table          # table wrapper, if table group exists
+```
+
+Raw zarr accessors and typed getters:
+
+```python
+res.get_raw("m")              # raw zarr.Array-like object
+res.get_raw_data("m")         # eager numpy with source dtype
+res.get_raw_f32("m")
+res.get_raw_c64("modes/arr")
 
 res.get_f32("m", (0, 10, slice(None), slice(None), slice(None)))
-res.get_c64("modes/arr", slice(0, 10))
-
 res.get_np1d("t", (slice(None),))
 res.get_np2d("m", (slice(None), slice(None)))
 res.get_np3d("m", (slice(None), slice(None), slice(None)))
@@ -170,149 +183,288 @@ res.get_np5d("m", (slice(None), slice(None), slice(None), slice(None), slice(Non
 res.get_np4dc("modes/arr", (slice(None), slice(None), slice(None), slice(None)))
 ```
 
-There is no `get_np(...)` method without a suffix.
+There is no generic `get_np(...)` helper; use `get_np1d`..`get_np5d` and suffixed
+complex variants where available.
 
-## Data and dataset wrappers
+## Dataset wrappers (`DatasetAwareWrapper`)
 
-`res.m` is a `DatasetAwareWrapper`:
+Access dataset data lazily via attributes (`res.m`, `res.mx`, `res.my`, etc.
+if present). Wrappers are cheap until materialized.
 
 ```python
-arr = res.m
-arr.analysis_shape
-arr.numpy_shape
-arr.shape
-arr.is_lazy
-arr.is_materialized
-arr.keys()
-arr.array                 # np.ndarray alias
-arr.values                # np.ndarray alias
-arr.np                    # immediate np.ndarray getter for chained indexing
+m = res.m
+
+print("analysis_shape:", m.analysis_shape)
+print("numpy_shape:", m.numpy_shape)
+print("shape:", m.shape)
+print("is_lazy:", m.is_lazy)
+print("is_materialized:", m.is_materialized)
+print("estimated_nbytes:", m.estimated_nbytes)
+print("keys:", m.keys())
 ```
 
-`numpy()` and `to_numpy()` are style variants that both materialize data:
+Useful aliases:
 
 ```python
-arr = res.m
-arr2 = arr.to_numpy(copy=False)
-arr3 = arr.numpy(dtype="float32", keepdims=True)
+m.array
+m.values
+m.np           # immediate numpy through wrapper
+m.np[...]      # chained indexing into materialized array
 ```
 
-'to_numpy(copy=False)' exposes data immediately in memory; by default, analysis dimensions are cast in an approximate way as expected by existing behavior.
-
-## Selecting and sampling data (`frame`, `sel`, `downsample`)
+Materialization:
 
 ```python
-view = res.m.frame(t=0, z=0, y=(0, 128), x=(0, 256))
-roi = res.m.sel(x=(0.0, 25e-9), y=(5e-9, 10e-9))
-
-coarse = res.m.downsample(":", ":", 128, 128, ":")
-coarse_strict = res.m.downsample(":", 300, 128, 64, ":", strict=True)
+x1 = m.to_numpy()                    # immediate ndarray
+x2 = m.numpy()                       # immediate ndarray
+x3 = m.to_numpy(dtype="float32", copy=False)
+x4 = m.numpy(dtype="float32", keepdims=True)
 ```
 
-## Converting to `NumPy`
+## Selecting data: `frame`, `sel`, slicing, downsampling
+
+### Slicing and indexing
 
 ```python
-# Materializing wrapper (returns ndarray)
-arr1 = res.m.to_numpy()
-arr2 = res.m.numpy()
-arr3 = res.m.to_numpy(dtype="float32")
-
-# Direct access via get (returns immediate np.ndarray)
-arr4 = res.get.m[:]                    # full dataset
-arr5 = res.get.m[0:100, ..., 0]        # slicing via get
-arr6 = res.get["m_layer13"][:]         # key-based get access
+# positional and full-slice style
+m_t0 = m[0]              # first time slice
+m_tz = m[0:50, 0, ...]  # first 50 times + z layer
 ```
 
-`res.get[...]` builds arrays immediately and always returns standard `np.ndarray`.
+### `frame(...)`
 
-## Batch workflow (`BatchOperations`)
+`frame` selects by axis values in order where supported by dimensions.
 
 ```python
-all_batch = jobs[:]
+roi = m.frame(t=0, z=0, y=(0, 128), x=(0, 256))
+```
+
+### `sel(...)`
+
+`sel` selects using physical coordinates when those axes carry coordinate metadata.
+
+```python
+roi_physical = m.sel(
+    x=(0.0, 25e-9),
+    y=(5e-9, 10e-9),
+)
+``` 
+
+### Downsampling
+
+```python
+coarse = m.downsample(":", ":", 128, 128, ":")
+coarse_strict = m.downsample(":", 300, 128, 64, ":", strict=True)
+```
+
+- default `strict=False` allows trimming on incompatible dimensions
+- `strict=True` raises if downsample factors are incompatible with shape
+
+Dataset wrappers also support direct materialized views from `jobs[:].get` for batching.
+
+## Converting data to NumPy
+
+There are two conceptually different paths:
+
+- **lazy pipeline**: chaining and filtering stays lazy until materialization (`DatasetAwareWrapper`).
+- **immediate path**: `res.get[...]` returns immediately materialized data.
+
+```python
+# wrapper path
+a = res.m.to_numpy()
+res.m[:10, ...].to_numpy(dtype="float32")
+res.m.numpy(copy=False)
+
+# immediate getter path
+full_np = res.get.m[:]                    # always ndarray
+slice_np = res.get.m[0:100, ..., 0]       # direct ndarray
+layer_np = res.get["m_layer13"][:]
+
+# conversion from lazy chain
+view_np = (res.m[0:100, ..., 0]).to_numpy(dtype="float32")
+```
+
+## Batch workflows
+
+`jobs[:]` and any filtered result set return a batch-style API.
+
+```python
+batch = jobs[:]                 # all results
 pc_batch = jobs.find(PBCx=1, PBCy=1)
 first_three = pc_batch[0:3]
-len(pc_batch)
+
+print(len(pc_batch))
+print(type(pc_batch))
 ```
 
-In batch mode, dataset operations are available through `pc_batch.<dataset>` and `pc_batch.get`:
+Batch getter and FFT helpers:
 
 ```python
-stack = pc_batch.get.m[:]  # shape: [n_jobs, ...]
-stack = pc_batch.get.m[0:100, :, :, :, 0]
+# eager materialization over all results
+stack = pc_batch.get.m[:]         # shape: [n_jobs, ...]
+stack_small = pc_batch.get.m[0:100, :, :, :, 0]
 
-pc_batch.fft.compute_all()                                # FFT for all results
-spectra = pc_batch.fft.spectrum.compute_all(dset="m", fmin=5e9, fmax=25e9)
-spectra.plot_heatmap(parameter="Bext")                    # if parameter axis is variable
+pc_batch.fft.compute_all()        # compute FFT pipeline for all results
+specs = pc_batch.fft.spectrum.compute_all(dset="m", fmin=5e9, fmax=25e9)
+specs.plot_heatmap(parameter="Bext")
 
-pc_batch.fft.modes.compute_modes()                        # batch mode analysis
-pc_batch.fft.modes.analyze_all()                          # analyze all results
+pc_batch.fft.modes.compute_modes()
+pc_batch.fft.modes.analyze_all()
 
 pc_batch.fft.transmission.compute_all()
-pc_batch.m_layer13[:10].fft.transmission()               # dataset-aware usage
-pc_batch["m_layer13"][:10].fft.spectrum()                # equivalent by key
 ```
 
-## Result tables (`TableAwareWrapper`)
+Legacy-compatible mixed forms are still supported in many places:
 
-The table wrapper is available when a run contains a `table` group:
+```python
+pc_batch.m_layer13[:10].fft.transmission()
+pc_batch["m_layer13"][:10].fft.spectrum()
+```
+
+Batching for HDF5/zarr table-like metadata is also available through wrapper methods
+on table-oriented batches when present.
+
+## Table access (`TableAwareWrapper`)
+
+If a result exposes a `table` group, use the table wrapper for metadata columns,
+quick summaries, and plotting.
 
 ```python
 if hasattr(res, "table"):
     t = res.table
-    t.columns
-    t.n_rows
-    t.shape
-    t_preview = t.preview(n=10, columns=["t", "mx", "my"])
+    print(t.columns)
+    print(t.n_rows)
+    print(t.shape)
+
+    preview = t.preview(n=10, columns=["t", "mx", "my"])
     df = t.to_dataframe(columns=["t", "mx", "my"], max_rows=1000)
     fig = t.plot(x="t", y=["mx", "my"], kind="line")
+    # optional interactive chart if optional plotting backend is available
     t.interactive(show=True)
 ```
 
-## FFT / spectrum / modes / dispersion
+## Plotting and analysis accessors
 
-### FFT + spectrum
+Result and dataset wrappers expose convenience sub-accessors:
 
 ```python
-spec = res.fft.spectrum()                  # SpectrumResult
-spec.frequencies
-spec.spectrum
-spec.power                               # |FFT|^2
-spec.magnitude                           # |FFT|
-spec.phase                               # arg(FFT)
+m = res.m
 
-res.fft.frequencies()
-res.fft.power()
-res.fft.magnitude()
-res.fft.phase()
+m.plot
+m.analyze
+m.fft
+m.solitons
+m.vortex
+
+# table example already above
+```
+
+Use these as entry points for rich methods from their respective namespaces.
+
+## FFT facade
+
+FFT on a single result:
+
+```python
+spectrum = res.fft.spectrum()
+print(spectrum.frequencies.shape)
+print(spectrum.spectrum.shape)
+print(spectrum.power[:3, :3])
+```
+
+You can also call direct spectrum helpers:
+
+```python
+freqs = res.fft.frequencies()
+power = res.fft.power()
+mag = res.fft.magnitude()
+phase = res.fft.phase()
+```
+
+Plot quick helpers:
+
+```python
 res.fft.plot_spectrum(log_scale=True)
-spec.plot.spectrum(log_scale=True)
+spectrum.plot.spectrum(log_scale=True)
+spectrum.plot.power(log_scale=False)
 ```
 
+## Spectrum
+
+`SpectrumResult` exposes explicit fields and aliases.
+
 ```python
-res.fft.spectrum.plot.interactive()        # interactive browser if dependencies are available
-res.fft.plot_spectrum()                    # quick plotting shortcut
+spec = res.fft.spectrum()
+
+print(spec.frequencies)
+print(spec.frequency)
+print(spec.freqs)
+print(spec.spectrum)
+print(spec.data)
+print(spec.power)
+print(spec.magnitude)
+print(spec.amplitude)
+print(spec.phase)
+print(spec.spectral_quantity)
+print(spec.power_quantity)
+print(spec.spectral_quantity_label)
 ```
 
-### Modes
+Plot helpers on spectra:
 
 ```python
-res_modes = res.fft.modes.compute_modes()       # compute/recompute modes
-fig_modes = res.fft.modes.plot_modes(frequency=9.5)
-viewer = res.fft.modes.interactive_spectrum(dpi=140)  # legacy helper
+fig = spec.plot.spectrum()
+fig = spec.plot.power()
+fig = spec.plot.magnitude()
+fig = spec.plot.phase()
+fig = spec.plot.modes(freq=9.5)
 ```
 
-### Dispersion
+## Modes
+
+Modes are accessed from FFT namespace on the result:
 
 ```python
-res_disp1 = res.fft.dispersion.configure(
+modes_iface = res.fft.modes
+modes_res = modes_iface.compute_modes()
+fig = modes_iface.plot_modes(frequency=9.5)
+viewer = modes_iface.interactive_spectrum(dpi=140)
+```
+
+Legacy-compatible mode entry points are still available where present:
+
+```python
+res_modes = res.fft.modes.compute_modes()
+res_modes = res.fft.modes.analyze()
+```
+
+## Dispersion
+
+Canonical user-facing path is dataset-first and interactive:
+
+```python
+viewer = res.m.fft.dispersion.plot.interactive()
+```
+
+Programmatic compute paths are available too:
+
+```python
+result_1d = res.fft.dispersion.configure(
     component="perp",
     time_window="hann",
+    filter_type="cosine"
 ).compute_1d(axis="x")
 
-res_disp2 = res.fft.dispersion.compute_2d(component="mz")
+result_2d = res.fft.dispersion.compute_2d(component="mz")
 
-res_disp1.plot.heatmap()
+result_1d.plot.heatmap()
 res.fft.dispersion.plot_dispersion(axis="x", fmax=30)
+```
+
+If batch compute is needed:
+
+```python
+pc_batch.fft.dispersion.compute_all(axis="x")
 ```
 
 ## Transmission
@@ -321,21 +473,19 @@ res.fft.dispersion.plot_dispersion(axis="x", fmax=30)
 tx = res.fft.transmission(save=True)
 fig, ax = tx.plot_transmission()
 
-# Manual cache for repeated runs if needed
-tx2 = res.fft.transmission(
+# explicit cache control
+_tx2 = res.fft.transmission(
     save=True,
     cache_path="/tmp/fft_cache",
     force=True,
 )
-```
 
-Batch variant:
-
-```python
 pc_batch.fft.transmission.compute_all(save=True)
 ```
 
 ## Hysteresis
+
+Access hysteresis analysis through `analyze.hysteresis`.
 
 ```python
 ha = res.analyze.hysteresis
@@ -350,63 +500,178 @@ ha_from_table.plot.interactive(show_hc=True)
 ha_from_table.plot.animation()
 ```
 
+Result object fields often include:
+
+```python
+metrics = ha_from_table.metrics
+comp = ha_from_table.compare(other_hysteresis)
+ha_from_table.export("/tmp/loop.csv")
+```
+
 ## CLI
+
+`mmpp` ships with a command suite useful for running/inspecting jobs.
 
 ```bash
 mmpp --version
 mmpp --help
 mmpp info
-```
 
-Authentication:
-
-```bash
+# authentication and server handling
 mmpp auth login
 mmpp auth status
 mmpp auth logout
-```
 
-Jobs:
-
-```bash
+# job discovery and run helpers
 mmpp jobs list
 mmpp jobs list --server <alias-or-url>
-```
 
-Running simulations:
-
-```bash
 mmpp run my_job.mx3
 mmpp run "test*.mx3" --detach --time 10h --cpus 16 --memory 64 --gpus 1
 mmpp run status
 mmpp run check
-```
 
-Swap tool:
-
-```bash
+# swap utility group
 mmpp swap init
 mmpp swap info
 mmpp swap validate
 mmpp swap run
 ```
 
-## Environment helper tools
+## Environment helpers and optional dependencies
+
+Runtime diagnostics for optional modules:
 
 ```python
 status = mp.check_dependencies()
-print(status["core"]["available"])
-print(status["fft"]["available"])
+print(status)
+print("core:", status["core"]["available"])
+print("fft:", status["fft"]["available"])
 
 mp.install_ffmpeg(verbose=True)
 ```
 
+Use this to check what is available in headless or CI environments.
+
+## Migration notes: outdated helper cleanup
+
+Use these as the **canonical, supported examples**:
+
+- `mp.open(...)` is the canonical entry point.
+- `mp.mmpp(...)` does **not** exist.
+- Prefer batch-aware paths (`jobs[:]`, `jobs.find(...)`, `jobs[:].get`) over ad-hoc manual loops.
+- Prefer dataset wrappers (`res.m`, `res.get[...]`, `res.fft`, `res.analyze`) over repeatedly touching raw `zarr` internals.
+- For downsampling and selection, use wrapper APIs (`frame`, `sel`, `downsample`, slicing) to retain axis metadata.
+
+Outdated examples to avoid:
+
+```python
+# Do not use
+mp.mmpp(path)
+res.get_np("m")
+```
+
+Supported replacements:
+
+```python
+mp.open(path)
+res.get_np1d("t", (slice(None),))
+res.get_np2d("m", ...)
+# etc.
+```
+
+Also note:
+
+- `jobs.fft` on multiple results may warn and use the first result in legacy context.
+  Use `jobs[:].fft` for explicit batch execution.
+- If you need deterministic result selection, chain `find` filters and work on the exact
+  returned batch/result object.
+
 ## Common pitfalls
 
-- `mp.mmpp(...)` does not exist. Use `mp.open(...)`.
-- `res.get_np(...)` does not exist. Use `get_np1d`, `get_np2d`, `get_np3d`, `get_np4d`, `get_np5d`, `get_np4dc`.
-- For numeric columns, `jobs.find(...)` returns the closest value, not exact equality.
-- `res.get(...)` and `jobs[:].get` return immediate `numpy` results; `DatasetAwareWrapper` remains lazy until materialized.
-- `jobs.fft` with multiple results runs on the first record and warns; use `jobs[:].fft` for batch.
-- `downsample(..., strict=False)` (default) may crop at boundaries when the division is not exact; set `strict=True` to error on mismatched dimensions.
-- `jobs.find_paths(...)` returns a list of paths, not result objects.
+- `jobs.find` numeric filters are nearest-match, not strict binary-match equality.
+- `res.get[...]` and `batch.get[...]` materialize immediately.
+- `DatasetAwareWrapper` methods remain lazy by default.
+- `downsample(..., strict=False)` can trim edges; strict mode protects shape assumptions.
+- `res.m.as_zarr()` works only for non-materialized, unsliced wrappers.
+- `jobs.find_paths(...)` returns filesystem paths, not result objects.
+- `show=False` on interactive views should be used for CI/headless workflows.
+
+## Performance and safety notes
+
+- Prefer narrow selection first (`find(...)`) then operations:
+  smaller batches and fewer computations.
+- Use `cache`, `save`, `force` arguments where provided to control recomputation.
+- For very large results, avoid eager calls (`to_numpy`) on whole arrays unless needed.
+- Keep plotting/interactive workflows in notebook-aware code paths and use headless mode for
+  scripted checks.
+
+## End-to-end example
+
+This script demonstrates a realistic flow: scan, filter, inspect, downsample, FFT,
+and visualization-oriented steps.
+
+```python
+import mmpp as mp
+import numpy as np
+
+# 1) discover results
+jobs = mp.open("/path/to/results")
+print(jobs.columns)
+
+# 2) filter by metadata
+subset = jobs.find(Nx=256, Ny=256, PBCx=1, PBCy=1)
+print("selected:", len(subset))
+
+# 3) pick first result
+res = subset[0]
+print("result:", res.name, res.path)
+print("attrs keys:", list(res.attrs)[:5])
+
+# 4) inspect mesh and simulation grid metadata
+print("shape:", res.m.shape)
+print("keys:", res.keys()[:10])
+
+# 5) select region
+roi = res.m.frame(t=(0, 64), z=0, y=(0, 128), x=(0, 128))
+roi_down = roi.downsample(":", 4, 4, 4, ":")
+arr = roi_down.to_numpy(dtype="float32")
+
+# 6) spectral analysis
+auto = res.fft.spectrum()                    # quick single-result spectrum
+heat = auto.plot
+
+# frequency slice + direct numeric access
+freqs = auto.frequencies
+s = auto.spectrum
+print("frequency bins:", freqs.shape, "spectrum shape:", s.shape)
+
+# 7) mode and dispersion entry points
+modes = res.fft.modes
+print(modes)
+
+disp = res.m.fft.dispersion.plot.interactive(show=False)
+print("dispersion viewer created in headless mode:", disp)
+
+# 8) transmission
+tx = res.fft.transmission(save=True)
+fig, _ = tx.plot_transmission()
+
+# 9) hysteresis helpers
+ha = res.analyze.hysteresis.from_table(field="B_extx", magnetization="mx")
+print("hysteresis points:", len(ha.data) if hasattr(ha, "data") else "n/a")
+
+# 10) batch equivalent - compute FFT spectrum for first three matching jobs
+batch = subset[:3].fft.spectrum.compute_all(dset="m", fmax=25e9)
+print("batch specs:", len(batch))
+```
+
+## Contributing and maintainability notes
+
+The library supports practical workflows across Python 3.9+ and documents interfaces in
+`mmpp/api` and `docs/`. If you contribute examples, prefer:
+
+- one concise path per snippet,
+- explicit parameter names,
+- a small amount of defensive checks (e.g., shape and state assertions),
+- compatibility with optional dependencies where needed.
