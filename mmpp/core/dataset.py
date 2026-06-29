@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import zarr
 import numpy as np
 import inspect
@@ -7,8 +9,10 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from .constants import ArraySlice, FFT_AVAILABLE, RICH_AVAILABLE
 from .dataset_geometry import (
+    IndexPlan,
     compose_index_keys,
     has_only_simple_slices,
+    make_index_plan,
     normalize_index_key,
     resolve_dataset_geometry,
     shape_after_index,
@@ -17,8 +21,6 @@ from .dataset_geometry import (
 if TYPE_CHECKING:
     from .job import ZarrJobResult
     from .mmpp import MMPP
-
-if FFT_AVAILABLE:
     from ..fft import FFT
 
 if RICH_AVAILABLE:
@@ -29,23 +31,38 @@ if RICH_AVAILABLE:
 
 from .dataset_plotting import DatasetPlotAccessor
 
+
 class DatasetSpecificFFT:
     """FFT wrapper with pre-set dataset"""
 
-    def __init__(self, job_result, dataset_name, mmpp_instance=None, slice_info=None):
+    def __init__(
+        self,
+        job_result,
+        dataset_name,
+        mmpp_instance=None,
+        slice_info=None,
+        materialized_data: Optional[np.ndarray] = None,
+        index_plan: Optional[IndexPlan] = None,
+    ):
         self.dataset_name = dataset_name
         self.slice_info = slice_info
         self._job_result = job_result  # Keep reference for path access
+        self._materialized_data = materialized_data
+        self._index_plan = index_plan
         # Create regular FFT instance
-        if FFT_AVAILABLE:
+        try:
+            from ..fft import FFT
+
             self._fft = FFT(job_result, mmpp_instance)
-        else:
+        except ImportError:
             self._fft = None
-    
+
     def __getattr__(self, name):
         """Delegate to FFT, injecting dataset context when appropriate."""
         if self._fft is None:
-             raise ImportError("FFT functionality not available. Install with: pip install mmpp[fft]")
+            raise ImportError(
+                "FFT functionality not available. Install with: pip install mmpp[fft]"
+            )
 
         attr = getattr(self._fft, name)
 
@@ -66,37 +83,53 @@ class DatasetSpecificFFT:
         if name == "spectrum" and attr is not None:
             # Wrap SpectrumHelper to inject dataset and slice_info
             class SpectrumHelperWrapper:
-                def __init__(self, spectrum_helper, dataset_name, slice_info):
+                def __init__(
+                    self,
+                    spectrum_helper,
+                    dataset_name,
+                    slice_info,
+                    materialized_data=None,
+                ):
                     self._spectrum_helper = spectrum_helper
                     self._dataset_name = dataset_name
                     self._slice_info = slice_info
-                
+                    self._materialized_data = materialized_data
+
                 def __call__(self, *args, **kwargs):
                     # Inject dataset and slice_info into kwargs
                     if "dset" not in kwargs:
                         kwargs["dset"] = self._dataset_name
                     if self._slice_info is not None and "slice_info" not in kwargs:
                         kwargs["slice_info"] = self._slice_info
+                    # Inject pre-materialized data so FFT doesn't reload from storage
+                    if (
+                        self._materialized_data is not None
+                        and "preloaded_data" not in kwargs
+                    ):
+                        kwargs["preloaded_data"] = self._materialized_data
                     return self._spectrum_helper(*args, **kwargs)
-                
+
                 @property
                 def plot(self):
                     """Quick-plot proxy with dataset context pre-injected."""
                     from ..fft.spectrum.helpers import _SpectrumQuickPlot
+
                     return _SpectrumQuickPlot(self)
-                
+
                 def __repr__(self):
                     return repr(self._spectrum_helper)
-                
+
                 def _repr_html_(self):
-                    return getattr(self._spectrum_helper, '_repr_html_', lambda: None)()
-            
-            return SpectrumHelperWrapper(attr, self.dataset_name, self.slice_info)
+                    return getattr(self._spectrum_helper, "_repr_html_", lambda: None)()
+
+            return SpectrumHelperWrapper(
+                attr, self.dataset_name, self.slice_info, self._materialized_data
+            )
 
         if callable(attr) and hasattr(attr, "__code__"):
             sig = inspect.signature(attr)
             params = sig.parameters
-            
+
             # Check if method accepts dataset (via 'dset' or 'dataset_name')
             has_dataset_param = "dset" in params or "dataset_name" in params
             has_slice_param = "slice_info" in params
@@ -106,13 +139,14 @@ class DatasetSpecificFFT:
             )
 
             if has_dataset_param or has_slice_param or has_kwargs_param:
+
                 def wrapper(*args, **kwargs):
                     # Inject dataset name
                     if "dset" in params and "dset" not in kwargs:
                         kwargs["dset"] = self.dataset_name
                     elif "dataset_name" in params and "dataset_name" not in kwargs:
                         kwargs["dataset_name"] = self.dataset_name
-                    
+
                     # Inject slice_info
                     if (
                         self.slice_info is not None
@@ -120,7 +154,7 @@ class DatasetSpecificFFT:
                         and "slice_info" not in kwargs
                     ):
                         kwargs["slice_info"] = self.slice_info
-                    
+
                     return attr(*args, **kwargs)
 
                 return wrapper
@@ -136,7 +170,9 @@ class DatasetSpecificFFT:
         >>> job[0].m_layer13.fft.filters(post={"normalize": True, "log_transform": True}).spectrum()
         """
         if self._fft is None:
-            raise ImportError("FFT functionality not available. Install with: pip install mmpp[fft]")
+            raise ImportError(
+                "FFT functionality not available. Install with: pip install mmpp[fft]"
+            )
 
         from ..fft.spectrum import SpectrumFilterChain
 
@@ -183,9 +219,9 @@ class DatasetSpecificFFT:
         """Create rich documentation display for dataset-specific FFT."""
         try:
             import io
-            
+
             if not RICH_AVAILABLE:
-                 return self._basic_dataset_fft_display()
+                return self._basic_dataset_fft_display()
 
             console = Console(file=io.StringIO(), force_terminal=True, width=100)
 
@@ -200,49 +236,61 @@ class DatasetSpecificFFT:
             # Available Modules table
             modules = Text()
             modules.append("📦 Available Modules:\n\n", style="bold yellow")
-            
+
             module_info = [
                 ("spectrum", "Compute & plot FFT power spectrum", ".fft.spectrum()"),
                 ("modes", "Interactive FMR mode visualization", ".fft.modes"),
                 ("dispersion", "Dispersion relation analysis", ".fft.dispersion"),
-                ("transmission", "Transmission/absorption analysis", ".fft.transmission"),
+                (
+                    "transmission",
+                    "Transmission/absorption analysis",
+                    ".fft.transmission",
+                ),
             ]
-            
+
             for name, desc, usage in module_info:
                 modules.append(f"  • ", style="dim")
                 modules.append(f"{name:15}", style="bold green")
                 modules.append(f" {desc}\n", style="white")
-                modules.append(f"    └─ Usage: job[0].m[...]{usage}\n", style="dim cyan")
-            
+                modules.append(
+                    f"    └─ Usage: job[0].m[...]{usage}\n", style="dim cyan"
+                )
+
             console.print(modules)
 
             # Quick methods
             quick = Text()
             quick.append("\n⚡ Quick Methods:\n\n", style="bold magenta")
             quick_methods = [
-                (".spectrum()", "→ SpectrumResult with .plot_spectrum(), .power, .frequencies"),
+                (
+                    ".spectrum()",
+                    "→ SpectrumResult with .plot_spectrum(), .power, .frequencies",
+                ),
                 (".frequencies()", "→ Frequency array (Hz)"),
                 (".power()", "→ Power spectrum |FFT|²"),
             ]
             for method, result in quick_methods:
                 quick.append(f"  job[0].m[...].fft{method} ", style="cyan")
                 quick.append(f"{result}\n", style="dim")
-            
+
             console.print(quick)
 
             # Examples
-            example = '''# Spectrum with component selection:
+            example = """# Spectrum with component selection:
 job[0].m[:200,...,1].fft.spectrum().plot_spectrum(log_scale=True)
 
 # Interactive modes:
 job[0].m[:200,...,0].fft.modes.interactive_spectrum(dpi=150)
 
 # Access modes helper:
-job[0].fft.modes  # Shows mode analysis options'''
-            
+job[0].fft.modes  # Shows mode analysis options"""
+
             from rich.syntax import Syntax
+
             syntax = Syntax(example, "python", theme="monokai", line_numbers=False)
-            console.print(Panel(syntax, title="[bold green]Examples", border_style="green"))
+            console.print(
+                Panel(syntax, title="[bold green]Examples", border_style="green")
+            )
 
             return console.file.getvalue()  # type: ignore
         except Exception:
@@ -276,117 +324,144 @@ job[0].fft.modes  # Shows mode analysis options'''
         return f"[{inner}]"
 
     def _html_dataset_fft_display(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
         job_result = self._job_result
         job_name = getattr(job_result, "name", "unknown")
-        job_path = getattr(job_result, "path", "")
         slice_label = self._format_slice_display()
-        dataset_access = self.dataset_name if isinstance(self.dataset_name, str) else str(self.dataset_name)
-        if isinstance(self.dataset_name, str) and self.dataset_name.isidentifier():
-            prefix = f"job[0].{self.dataset_name}{slice_label}.fft"
-        else:
-            prefix = f"job[0][{self.dataset_name!r}]{slice_label}.fft"
-
-        # ── method groups ───────────────────────────────────────
-        section_style = (
-            "padding:4px 8px; font-weight:600; color:#f1f5f9; "
-            "background:rgba(51,65,85,0.8); text-align:left;"
+        dataset_access = (
+            self.dataset_name
+            if isinstance(self.dataset_name, str)
+            else str(self.dataset_name)
         )
-        row_html = ""
+        if isinstance(self.dataset_name, str) and self.dataset_name.isidentifier():
+            data_prefix = f"job[0].{self.dataset_name}{slice_label}"
+        else:
+            data_prefix = f"job[0][{self.dataset_name!r}]{slice_label}"
+        fft_prefix = f"{data_prefix}.fft"
+        uid = str(_uuid.uuid4())[:8]
 
-        groups: list[tuple[str, list[tuple[str, str]]]] = [
-            ("Compute", [
-                ("spectrum()", "FFT spectrum → SpectrumResult"),
-                ("filters(**f).spectrum()", "Fluent filter chain → SpectrumResult"),
-                ("power()", "Power spectrum |FFT|²"),
-                ("frequencies()", "Frequency axis (Hz)"),
-                ("magnitude()", "Magnitude spectrum |FFT|"),
-                ("phase()", "Phase spectrum (radians)"),
-            ]),
-            ("Analysis", [
-                ("dispersion", "Dispersion relation analysis"),
-                ("modes", "FMR mode analysis interface"),
-                ("transmission", "Transmission / absorption analysis"),
-            ]),
-            ("Plotting", [
-                ("plot_spectrum()", "Quick-look power spectrum plot"),
-                ("interactive_spectrum()", "Interactive mode spectrum viewer"),
-            ]),
-        ]
+        status = metrics_section_html(
+            [
+                ("job", job_name, None),
+                ("dataset", dataset_access, "#93c5fd"),
+                (
+                    "slice",
+                    slice_label if slice_label else "full",
+                    "#fbbf24" if slice_label else None,
+                ),
+            ]
+        )
 
-        for group_name, methods in groups:
-            row_html += (
-                f"<tr><td colspan='2' style='{section_style}'>"
-                f"{_html_escape(group_name)}</td></tr>"
+        accessors = accessors_section_html(
+            [
+                (
+                    "Compute:",
+                    [
+                        ("spectrum()", NODE_COLOR_COMPUTE),
+                        ("filters(**f).spectrum()", NODE_COLOR_COMPUTE),
+                        ("power()", NODE_COLOR_COMPUTE),
+                        ("frequencies()", NODE_COLOR_COMPUTE),
+                        ("magnitude()", NODE_COLOR_COMPUTE),
+                        ("phase()", NODE_COLOR_COMPUTE),
+                    ],
+                ),
+                (
+                    "Analysis:",
+                    [
+                        ("dispersion", NODE_COLOR_ANALYSIS),
+                        ("modes", NODE_COLOR_ANALYSIS),
+                        ("transmission", NODE_COLOR_ANALYSIS),
+                    ],
+                ),
+                (
+                    "Plotting:",
+                    [
+                        ("plot_spectrum()", NODE_COLOR_PLOT),
+                        ("interactive_spectrum()", NODE_COLOR_PLOT),
+                    ],
+                ),
+            ]
+        )
+
+        examples = examples_section_html(
+            "\n".join(
+                [
+                    f"data = {data_prefix}",
+                    "",
+                    "# Compute spectrum (dataset & slice pre-set)",
+                    "result = data.fft.spectrum()",
+                    "",
+                    "# Plot power spectrum",
+                    "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
+                    "",
+                    "# Fluent filter chain",
+                    "data.fft.filters(remove_static=True).spectrum()",
+                    "",
+                    "# Frequency range & peak detection",
+                    "result = data.fft.spectrum(fmin=1e9, fmax=20e9,",
+                    "                          find_peaks={'min_prominence': 0.1})",
+                    "",
+                    "# Analysis sub-interfaces",
+                    "data.fft.modes.interactive_spectrum(dpi=150)",
+                    "data.fft.dispersion.plot_dispersion(axis='x')",
+                ]
             )
-            for name, desc in methods:
-                row_html += (
-                    "<tr>"
-                    f"<td style='padding:5px 8px 5px 16px; font-family:monospace; "
-                    f"color:#93c5fd; white-space:nowrap;'>{_html_escape(name)}</td>"
-                    f"<td style='padding:5px 8px; color:#cbd5e1;'>{_html_escape(desc)}</td>"
-                    "</tr>"
-                )
+        )
 
-        # ── context-aware examples ──────────────────────────────
-        example_code = "\n".join([
-            f"data = {prefix.rsplit('.fft', 1)[0]}",
-            "",
-            "# Compute spectrum (dataset & slice are pre-set)",
-            "result = data.fft.spectrum()",
-            "",
-            "# Plot power spectrum",
-            "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
-            "",
-            "# Fluent filter chain",
-            "data.fft.filters(remove_static=True).spectrum()",
-            "",
-            "# Frequency range",
-            "result = data.fft.spectrum(fmin=1e9, fmax=20e9)",
-            "",
-            "# Peak detection",
-            "result = data.fft.spectrum(find_peaks={'min_prominence': 0.1})",
-            "",
-            "# Analysis sub-interfaces",
-            "data.fft.modes.interactive_spectrum(dpi=150)",
-            "data.fft.dispersion.plot_dispersion(axis='x')",
-        ])
+        api = api_help_html(
+            self,
+            title="Dataset FFT API help",
+            prefix=fft_prefix,
+            subtitle="Dataset and slice context are pre-bound; all methods operate on the selected view.",
+            properties=[
+                ("spectrum", "Callable spectrum helper"),
+                ("dispersion", "Dispersion relation namespace"),
+                ("modes", "FMR mode analysis namespace"),
+                ("transmission", "Transmission / absorption namespace"),
+            ],
+            methods=[
+                "filters",
+                "power",
+                "frequencies",
+                "magnitude",
+                "phase",
+                "plot_spectrum",
+                "plot_modes",
+                "interactive_spectrum",
+            ],
+            chrome=False,
+        )
 
-        html = f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
-          <div style="margin-bottom: 12px;">
-            <div style="font-size: 1.1em; font-weight: 600; color: #f1f5f9;">Dataset FFT Interface</div>
-            <div style="color: #94a3b8; margin-top: 4px;">Job: {_html_escape(job_name)}</div>
-            <div style="color: #94a3b8; margin-top: 2px;">Path: <code style="color:#cbd5e1;">{_html_escape(job_path)}</code></div>
-          </div>
+        slice_part = (
+            f" · slice <code style='color:#fbbf24'>{_html_escape(slice_label)}</code>"
+            if slice_label
+            else ""
+        )
+        subtitle = (
+            f"Pre-bound to <code style='color:#93c5fd'>{_html_escape(dataset_access)}</code>"
+            + slice_part
+        )
 
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
-            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
-              <div><span style="color:#94a3b8;">Dataset:</span> <code style="color:#93c5fd;">{_html_escape(dataset_access)}</code></div>
-              <div><span style="color:#94a3b8;">Slice:</span> <code style="color:#93c5fd;">{_html_escape(slice_label or 'full')}</code></div>
-            </div>
-          </div>
-
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
-            <table style="width:100%; border-collapse: collapse; font-size:0.9em;">
-              <thead>
-                <tr style="text-align:left; background: rgba(51,65,85,0.6);">
-                  <th style="padding:6px 8px; color:#e2e8f0;">Method</th>
-                  <th style="padding:6px 8px; color:#e2e8f0;">Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                {row_html}
-              </tbody>
-            </table>
-          </div>
-
-          <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.2);">
-            <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">Examples</div>
-            <pre style="margin:0; background: rgba(15,23,42,0.85); padding: 10px; border-radius: 6px; color:#e2e8f0; overflow-x:auto; font-size:0.85em;"><code>{_html_escape(example_code)}</code></pre>
-          </div>
-        </div>
-        """
-        return html
+        return node_card_html(
+            "Dataset FFT Interface",
+            icon="📊",
+            subtitle=subtitle,
+            sections=[status, accessors, examples],
+            api=api,
+            uid=f"dsfft-{dataset_access}-{uid}",
+        )
 
 
 class DatasetAwareWrapper:
@@ -400,6 +475,7 @@ class DatasetAwareWrapper:
         slice_info=None,
         materialized_data: Optional[np.ndarray] = None,
         geometry_override=None,
+        index_plan: Optional[IndexPlan] = None,
     ):
         self.job_result = job_result
         self.dataset_name = dataset_name
@@ -407,10 +483,15 @@ class DatasetAwareWrapper:
         self.slice_info = slice_info  # Store slicing information
         self._materialized_data = materialized_data
         self._geometry_override = geometry_override
+        self._index_plan: Optional[IndexPlan] = index_plan
         self._fft = None
         self._solitons = None
         self._analyze = None
         self._plot = None
+
+    # ------------------------------------------------------------------ #
+    # Shape helpers                                                        #
+    # ------------------------------------------------------------------ #
 
     def _base_shape(self) -> tuple[int, ...]:
         """Shape of the immediate backing store before ``slice_info``."""
@@ -448,12 +529,185 @@ class DatasetAwareWrapper:
             return self.zarr_array[self.slice_info]
         return self.zarr_array
 
+    # ------------------------------------------------------------------ #
+    # Public shape / data properties                                       #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def analysis_shape(self) -> tuple[int, ...]:
+        """Shape with all dimensions preserved (used by .fft, .solitons, etc.)."""
+        if self._index_plan is not None:
+            return self._index_plan.analysis_shape
+        return self._current_shape()
+
+    @property
+    def numpy_shape(self) -> tuple[int, ...]:
+        """NumPy-like shape after dropping integer-indexed axes."""
+        if self._index_plan is not None:
+            return self._index_plan.numpy_shape
+        return self._current_shape()
+
+    @property
+    def is_lazy(self) -> bool:
+        """True when data has not been materialized to memory."""
+        return self._materialized_data is None
+
+    @property
+    def is_materialized(self) -> bool:
+        """True when data has been materialized (fancy index, downsample, etc.)."""
+        return self._materialized_data is not None
+
+    @property
+    def estimated_nbytes(self) -> int:
+        """Estimated byte size of the current view (lazy estimate)."""
+        shape = self.analysis_shape
+        n_elements = 1
+        for s in shape:
+            n_elements *= s
+        dtype = getattr(self.zarr_array, "dtype", np.dtype("float32"))
+        return n_elements * dtype.itemsize
+
+    def numpy(
+        self,
+        *,
+        copy: bool = True,
+        dtype: Optional[Any] = None,
+        keepdims: bool = False,
+        squeeze: bool = False,
+    ) -> np.ndarray:
+        """Materialize data as a NumPy array.
+
+        Parameters
+        ----------
+        copy:
+            Return a copy of the data (default True).
+        dtype:
+            Cast to this dtype if provided.
+        keepdims:
+            If True, preserve all dimensions (analysis shape); integer-indexed
+            axes are *not* dropped.  Use this for analysis code that needs the
+            full dimensional layout.
+        squeeze:
+            If True, remove *all* length-1 axes (standard ``np.squeeze``).
+            Takes effect after ``keepdims`` processing.
+        """
+        # Warn on large materializations
+        _LARGE_BYTES = 1 << 30  # 1 GiB
+        if self.is_lazy and self.estimated_nbytes > _LARGE_BYTES:
+            warnings.warn(
+                f"Materializing ~{self.estimated_nbytes / (1 << 30):.1f} GiB. "
+                "Consider using chunks, downsample, or .sel() first.",
+                stacklevel=2,
+            )
+
+        if self.is_lazy and self.estimated_nbytes > _LARGE_BYTES:
+            warnings.warn(
+                f"Materializing ~{self.estimated_nbytes / (1 << 30):.1f} GiB. "
+                "Consider using chunks, downsample, or .sel() first.",
+                stacklevel=2,
+            )
+
+        source = self._resolve_source()
+        # Zarr arrays and H5QuantityGroup-like objects (shape but not ndarray)
+        # must be explicitly loaded via [:] because np.asarray would misinterpret
+        # them (e.g., iterating over dict-like keys for H5 groups).
+        if (
+            not isinstance(source, np.ndarray)
+            and hasattr(source, "shape")
+            and hasattr(source, "__getitem__")
+        ):
+            source = source[:]
+        arr = np.asarray(source)
+
+        if not keepdims and self._index_plan is not None:
+            dropped = self._index_plan.dropped_axes
+            if dropped:
+                # Remove only the axes selected by integer indexing
+                for axis in sorted(dropped, reverse=True):
+                    arr = np.squeeze(arr, axis=axis)
+
+        if squeeze:
+            arr = np.squeeze(arr)
+
+        if dtype is not None:
+            arr = arr.astype(dtype, copy=False)
+
+        if copy and not arr.flags["OWNDATA"]:
+            arr = arr.copy()
+
+        return arr
+
+    @property
+    def values(self) -> np.ndarray:
+        """Materialize and return data without copying (NumPy-like shape)."""
+        return self.numpy(copy=False)
+
+    @property
+    def array(self) -> np.ndarray:
+        """Alias for :attr:`values`."""
+        return self.numpy(copy=False)
+
+    @property
+    def np(self) -> "WrapperNumpyGetter":
+        """Eager NumPy getter — returns plain ``np.ndarray`` on indexing.
+
+        This is a shorthand for chained slicing that immediately materializes
+        data with standard NumPy dimension-dropping semantics.
+
+        Examples
+        --------
+        >>> arr = job[0].m.np[0, ..., 0]        # shape (nz, ny, nx)
+        >>> arr = job[0].m[0, ...].np[..., 0]   # chained: shape (ny, nx)
+        >>> arr.shape                             # plain np.ndarray
+        """
+        return WrapperNumpyGetter(self)
+
+    def __array__(self, dtype=None, copy=None):
+        arr = self.numpy(copy=False, dtype=dtype)
+        if copy:
+            arr = arr.copy()
+        return arr
+
     def __getattr__(self, name):
         """Delegate to zarr_array for most attributes (but not our own properties)"""
         # Don't delegate properties that are defined on this class
-        if name in ("dt", "fft", "analyze", "shape", "data", "plot", "geometry", "region", "cell"):
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-        
+        if name in (
+            "dt",
+            "fft",
+            "analyze",
+            "shape",
+            "data",
+            "plot",
+            "geometry",
+            "region",
+            "cell",
+            "analysis_shape",
+            "numpy_shape",
+            "is_lazy",
+            "is_materialized",
+            "values",
+            "array",
+            "np",
+        ):
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}'"
+            )
+
+        # Never forward numpy array protocol attributes — numpy uses these before
+        # calling __array__, so forwarding them would bypass our squeezed shape.
+        if name in (
+            "__array_interface__",
+            "__array_struct__",
+            "__array_priority__",
+            "__array_finalize__",
+            "__array_wrap__",
+            "__array_ufunc__",
+            "__array_function__",
+        ):
+            raise AttributeError(
+                f"'{self.__class__.__name__}' does not expose {name!r}"
+            )
+
         if self._materialized_data is not None:
             source = self._resolve_source()
             return getattr(source, name)
@@ -467,17 +721,17 @@ class DatasetAwareWrapper:
     def _normalize_slice_to_keep_dims(key, ndim: int):
         """
         Convert integer indices to slice(i, i+1) to preserve array dimensions.
-        
+
         This ensures that indexing like arr[:,...,0] returns shape (N, M, ..., 1)
         instead of (N, M, ...) - preserving the number of axes.
-        
+
         Parameters
         ----------
         key : tuple, int, slice, or other indexing object
             The indexing key from __getitem__
         ndim : int
             Number of dimensions in the source array
-            
+
         Returns
         -------
         tuple
@@ -487,26 +741,31 @@ class DatasetAwareWrapper:
 
     def __getitem__(self, key):
         """Return new DatasetAwareWrapper with slicing info preserved.
-        
-        IMPORTANT: Integer indices are automatically converted to single-item
-        slices to preserve array dimensions. For example:
-        
-            arr[:, :, 0]  ->  arr[:, :, 0:1]
-        
-        This means the number of dimensions is always preserved after slicing.
-        Use .squeeze() or .numpy(squeeze=True) to remove singleton dimensions.
+
+        Integer indices are tracked via IndexPlan so ``.numpy()`` can drop
+        those axes (NumPy semantics) while ``.fft`` keeps full dimensionality.
         """
         source_shape = self._current_shape()
         ndim = len(source_shape)
-        
-        # Normalize the slice to keep dimensions
-        normalized_key = self._normalize_slice_to_keep_dims(key, ndim)
-        
+
+        # local_normalized_key is relative to the CURRENT view shape.
+        # It is used for (a) materialized-data slicing and (b) compose_index_keys
+        # with self.slice_info to build the new combined_slice.
+        local_key_tuple = key if isinstance(key, tuple) else (key,)
+        local_normalized_key = tuple(
+            normalize_index_key(local_key_tuple, ndim, keep_dims=True)
+        )
+
+        # Build IndexPlan — when previous_plan exists its storage_key is already
+        # fully composed relative to the ORIGINAL source, so do NOT use it in
+        # compose_index_keys below (that would double-compose).
+        new_plan = make_index_plan(key, source_shape, previous_plan=self._index_plan)
+
         if self._materialized_data is not None:
-            sliced = np.asarray(self._materialized_data[normalized_key])
+            sliced = np.asarray(self._materialized_data[local_normalized_key])
             geometry_override = None
             try:
-                geometry_override = self.geometry.sliced(normalized_key)
+                geometry_override = self.geometry.sliced(local_normalized_key)
             except Exception:
                 geometry_override = self._geometry_override
             return DatasetAwareWrapper(
@@ -516,13 +775,14 @@ class DatasetAwareWrapper:
                 slice_info=None,
                 materialized_data=sliced,
                 geometry_override=geometry_override,
+                index_plan=new_plan,
             )
 
-        if not has_only_simple_slices(normalized_key, ndim):
-            sliced = np.asarray(self._resolve_source()[normalized_key])
+        if not has_only_simple_slices(local_normalized_key, ndim):
+            sliced = np.asarray(self._resolve_source()[local_normalized_key])
             geometry_override = None
             try:
-                geometry_override = self.geometry.sliced(normalized_key)
+                geometry_override = self.geometry.sliced(local_normalized_key)
             except Exception:
                 geometry_override = self._geometry_override
             return DatasetAwareWrapper(
@@ -532,10 +792,15 @@ class DatasetAwareWrapper:
                 slice_info=None,
                 materialized_data=sliced,
                 geometry_override=geometry_override,
+                index_plan=new_plan,
             )
 
         base_shape = self._base_shape()
-        combined_slice = compose_index_keys(self.slice_info, normalized_key, base_shape)
+        # Always compose local_normalized_key (relative to current view) with
+        # self.slice_info (relative to original source) to get the new combined_slice.
+        combined_slice = compose_index_keys(
+            self.slice_info, local_normalized_key, base_shape
+        )
 
         return DatasetAwareWrapper(
             self.job_result,
@@ -544,18 +809,26 @@ class DatasetAwareWrapper:
             slice_info=combined_slice,
             materialized_data=None,
             geometry_override=self._geometry_override,
+            index_plan=new_plan,
         )
 
     @property
     def fft(self):
-        """Return FFT with this dataset pre-selected"""
+        """Return FFT with this dataset pre-selected.
+
+        When the wrapper holds materialized data (e.g. after .downsample()),
+        the FFT interface will operate on that materialized view rather than
+        re-loading the full dataset from storage.
+        """
         if self._fft is None and FFT_AVAILABLE:
-            # Create DatasetSpecificFFT with slicing info
+            # Pass materialized data through so FFT doesn't ignore it
             self._fft = DatasetSpecificFFT(
                 self.job_result,
                 self.dataset_name,
                 getattr(self.job_result, "_mmpp_ref", None),
                 slice_info=self.slice_info,
+                materialized_data=self._materialized_data,
+                index_plan=self._index_plan,
             )
         return self._fft
 
@@ -633,58 +906,58 @@ class DatasetAwareWrapper:
     def dt(self):
         """
         Get time step for this dataset.
-        
+
         Algorithm:
         1. Check if 't_sampl' exists in job_result attrs (global)
         2. Check if 't' exists in THIS dataset's attrs and calculate dt
         3. Look for 't' array in various locations (root, table, etc.)
         4. Calculate dt = t[1] - t[0]
-        
+
         Returns:
             float: Time step in seconds
         """
         # Method 1: Check for t_sampl in main attributes
-        if hasattr(self.job_result, '_z') and self.job_result._z is not None:
-            if 't_sampl' in self.job_result._z.attrs:
-                return self.job_result._z.attrs['t_sampl']
-        
+        if hasattr(self.job_result, "_z") and self.job_result._z is not None:
+            if "t_sampl" in self.job_result._z.attrs:
+                return self.job_result._z.attrs["t_sampl"]
+
         # Method 2: Check THIS dataset's attrs for 't' array (MOST SPECIFIC)
-        if hasattr(self.job_result, '_z') and self.job_result._z is not None:
+        if hasattr(self.job_result, "_z") and self.job_result._z is not None:
             try:
                 dataset = self.job_result._z[self.dataset_name]
-                if hasattr(dataset, 'attrs') and 't' in dataset.attrs:
-                    t_attr = dataset.attrs['t']
+                if hasattr(dataset, "attrs") and "t" in dataset.attrs:
+                    t_attr = dataset.attrs["t"]
                     # t_attr is a list or array in attrs
-                    if hasattr(t_attr, '__len__') and len(t_attr) >= 2:
+                    if hasattr(t_attr, "__len__") and len(t_attr) >= 2:
                         dt = float(t_attr[1] - t_attr[0])
                         return dt
             except (KeyError, NameError, AttributeError, IndexError, TypeError):
                 pass
-        
+
         # Method 3: Look for time array in various locations
         # Try common naming patterns and locations
         time_locations = [
-            ('t',),  # Root level 't'
-            ('table', 't'),  # Often in 'table' group
-            ('time',),  # Alternative name
-            (f't_{self.dataset_name}',),  # Dataset-specific time
+            ("t",),  # Root level 't'
+            ("table", "t"),  # Often in 'table' group
+            ("time",),  # Alternative name
+            (f"t_{self.dataset_name}",),  # Dataset-specific time
         ]
-        
+
         for location in time_locations:
             try:
-                if hasattr(self.job_result, '_z'):
+                if hasattr(self.job_result, "_z"):
                     # Navigate through the location path
                     t_array = self.job_result._z
                     for key in location:
                         t_array = t_array[key]
-                    
+
                     # Calculate dt from first two time points
                     if t_array.shape[0] >= 2:
                         dt = float(t_array[1] - t_array[0])
                         return dt
             except (KeyError, NameError, AttributeError, IndexError):
                 continue
-        
+
         # Method 4: Fallback - raise informative error
         raise AttributeError(
             f"Cannot determine time step for dataset '{self.dataset_name}'. "
@@ -695,18 +968,6 @@ class DatasetAwareWrapper:
     def data(self):
         """Return data as numpy array (loads into memory)."""
         return self.numpy(copy=False)
-
-    def numpy(self, *, copy: bool = True, dtype=None, squeeze: bool = False):
-        """Materialize the wrapped data as numpy array."""
-        data = self._resolve_source()
-        if isinstance(data, zarr.Array):
-            data = data[:]
-        array = np.array(data, copy=copy)
-        if dtype is not None:
-            array = array.astype(dtype, copy=copy)
-        if squeeze:
-            array = np.squeeze(array)
-        return array
 
     def to_numpy(self, **kwargs):
         """Alias for numpy() to match common API naming."""
@@ -809,7 +1070,9 @@ class DatasetAwareWrapper:
         )
 
     @staticmethod
-    def _normalize_downsample_spec(spec: tuple[Any, ...], ndim: int) -> tuple[Optional[int], ...]:
+    def _normalize_downsample_spec(
+        spec: tuple[Any, ...], ndim: int
+    ) -> tuple[Optional[int], ...]:
         if len(spec) == 1 and isinstance(spec[0], tuple):
             tokens = list(spec[0])
         elif len(spec) == 1 and isinstance(spec[0], list):
@@ -1009,7 +1272,9 @@ class DatasetAwareWrapper:
                     float(value[1]),
                 )
                 continue
-            if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+            if isinstance(
+                value, (int, float, np.integer, np.floating)
+            ) and not isinstance(value, bool):
                 key[axis_geom.index] = axis_geom.select_value(float(value))
                 continue
             raise TypeError(
@@ -1027,18 +1292,161 @@ class DatasetAwareWrapper:
             )
         return self.zarr_array
 
-    def __array__(self, dtype=None):
-        """Support implicit numpy conversions (e.g. np.asarray)."""
-        array = self.numpy(copy=False)
-        if dtype is not None:
-            array = array.astype(dtype, copy=False)
-        return array
-
     def __iter__(self):
         return iter(self.numpy(copy=False))
 
     def __len__(self):
         return len(self.numpy(copy=False))
+
+    def _repr_html_(self) -> str:
+        """Rich HTML card for Jupyter notebooks."""
+        import uuid as _uuid
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ADVANCED,
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        job_name = _html_escape(getattr(self.job_result, "name", "?"))
+        ds_name_raw = str(self.dataset_name)
+        ds_name = _html_escape(ds_name_raw)
+        ds_expr = (
+            f"job[0].{ds_name_raw}"
+            if ds_name_raw.isidentifier()
+            else f"job[0][{ds_name_raw!r}]"
+        )
+        shape_str = " &times; ".join(str(s) for s in self.analysis_shape)
+        numpy_shape_str = " &times; ".join(str(s) for s in self.numpy_shape)
+        state = "materialized" if self.is_materialized else "lazy"
+        state_color = NODE_COLOR_ANALYSIS if self.is_materialized else "#6272a4"
+        dtype = str(getattr(self.zarr_array, "dtype", "unknown"))
+
+        # Chunks info (only for zarr arrays)
+        try:
+            chunks = getattr(self.zarr_array, "chunks", None)
+            chunks_str = " &times; ".join(str(c) for c in chunks) if chunks else "n/a"
+        except Exception:
+            chunks_str = "n/a"
+
+        metrics = [
+            ("job", job_name, None),
+            ("dataset", ds_name, NODE_COLOR_COMPUTE),
+            ("analysis shape", shape_str, NODE_COLOR_UTIL),
+            ("numpy shape", numpy_shape_str, NODE_COLOR_ANALYSIS),
+            ("dtype", dtype, None),
+            ("chunks", chunks_str, None),
+            ("state", state, state_color),
+            ("estimated size", f"{self.estimated_nbytes / (1024**2):.2f} MiB", None),
+        ]
+        if self.slice_info is not None:
+            metrics.append(("slice", str(self.slice_info), NODE_COLOR_UTIL))
+
+        accessors = accessors_section_html(
+            [
+                (
+                    "Data:",
+                    [
+                        (".numpy()", NODE_COLOR_COMPUTE),
+                        (".numpy(keepdims=True)", NODE_COLOR_COMPUTE),
+                        (".values", NODE_COLOR_COMPUTE),
+                        (".np[...]", NODE_COLOR_COMPUTE),
+                    ],
+                ),
+                (
+                    "Slicing:",
+                    [
+                        ("[t, z, y, x, c]", NODE_COLOR_PLOT),
+                        (".sel(...)", NODE_COLOR_PLOT),
+                        (".downsample(...)", NODE_COLOR_PLOT),
+                        (".frame(...)", NODE_COLOR_PLOT),
+                    ],
+                ),
+                (
+                    "Analysis:",
+                    [
+                        (".fft", NODE_COLOR_ANALYSIS),
+                        (".fft.spectrum()", NODE_COLOR_ANALYSIS),
+                        (".solitons", NODE_COLOR_ANALYSIS),
+                        (".analyze", NODE_COLOR_ANALYSIS),
+                    ],
+                ),
+                (
+                    "Geometry:",
+                    [
+                        (".analysis_shape", NODE_COLOR_UTIL),
+                        (".numpy_shape", NODE_COLOR_UTIL),
+                        (".geometry", NODE_COLOR_UTIL),
+                        (".dt", NODE_COLOR_UTIL),
+                    ],
+                ),
+                (
+                    "Plot:",
+                    [
+                        (".plot.snapshot()", NODE_COLOR_ADVANCED),
+                        (".plot.mpl.magnetization()", NODE_COLOR_ADVANCED),
+                        (".plot.k3d.magnetization()", NODE_COLOR_ADVANCED),
+                    ],
+                ),
+            ]
+        )
+
+        examples = examples_section_html(
+            "\n".join(
+                [
+                    f"data = {ds_expr}",
+                    "",
+                    "# Lazy dataset view; slicing returns another wrapper",
+                    "view = data[:, 0, :, :, 2]",
+                    "",
+                    "# Materialize intentionally",
+                    "arr = view.numpy(copy=False)",
+                    "",
+                    "# Analysis and plotting stay bound to this dataset",
+                    "spec = data.fft.spectrum()",
+                    "data.plot.snapshot(t=-1, z=0)",
+                ]
+            )
+        )
+
+        api = api_help_html(
+            self,
+            title="Dataset API help",
+            prefix=ds_expr,
+            subtitle="Dataset wrapper with lazy slicing, NumPy materialization, geometry, plotting and analysis accessors.",
+            properties=[
+                ("fft", "FFT / spectrum analysis namespace"),
+                ("solitons", "Soliton and vortex analysis namespace"),
+                ("analyze", "General dataset-aware analysis namespace"),
+                ("plot", "Plotting helpers"),
+                ("np", "Eager NumPy getter"),
+                ("values", "Materialized NumPy values"),
+                ("geometry", "Physical geometry of the current view"),
+                ("dt", "Time step inferred from metadata"),
+            ],
+            methods=["numpy", "to_numpy", "frame", "downsample", "sel", "as_zarr"],
+            chrome=False,
+        )
+
+        uid = str(_uuid.uuid4())[:8]
+        return node_card_html(
+            "Dataset View",
+            icon="🧲",
+            subtitle=(
+                f"<code style='color:{NODE_COLOR_COMPUTE}'>{ds_name}</code> "
+                f"from <code>{job_name}</code>"
+            ),
+            badge=(state, state_color),
+            sections=[metrics_section_html(metrics), accessors, examples],
+            api=api,
+            uid=f"dataset-{ds_name_raw}-{uid}",
+        )
 
     def __repr__(self):
         slice_str = f"[{self.slice_info}]" if self.slice_info else ""
@@ -1047,60 +1455,103 @@ class DatasetAwareWrapper:
         )
 
 
+class WrapperNumpyGetter:
+    """Eager NumPy accessor for :class:`DatasetAwareWrapper`.
+
+    Returned by the ``.np`` property.  Indexing immediately materializes the
+    view as a plain ``np.ndarray`` with standard NumPy dimension-dropping
+    semantics (integer indices remove axes).
+
+    Examples
+    --------
+    >>> job[0].m.np[0, ..., 0]         # shape (nz, ny, nx)
+    >>> job[0].m[0, ...].np[..., 0]   # shape (ny, nx)
+    """
+
+    def __init__(self, wrapper: "DatasetAwareWrapper") -> None:
+        self._wrapper = wrapper
+
+    def __getitem__(self, key) -> np.ndarray:
+        """Index the wrapper and return a plain ``np.ndarray``."""
+        sliced = self._wrapper[key]
+        return sliced.numpy(copy=False)
+
+    @property
+    def shape(self) -> tuple:
+        """NumPy-like shape of the view (integer-indexed axes are dropped)."""
+        return self._wrapper.numpy_shape
+
+    @property
+    def dtype(self):
+        """Data type of the underlying dataset."""
+        return self._wrapper.dtype
+
+    @property
+    def ndim(self) -> int:
+        """Number of dimensions in the NumPy-like view."""
+        return len(self._wrapper.numpy_shape)
+
+    def __repr__(self) -> str:
+        return (
+            f"WrapperNumpyGetter({self._wrapper.dataset_name}, "
+            f"shape={self._wrapper.analysis_shape})"
+        )
+
+
 class NumpyDatasetWrapper:
     """Wrapper that returns numpy array directly on slicing.
-    
+
     Used by job[0].get.dataset_name[slice] to return numpy arrays directly.
-    
+
     Example
     -------
     >>> arr = job[0].get.m[:]  # Returns numpy array directly
     >>> arr = job[0].get.m[0:100, ...]  # Sliced numpy array
     """
-    
+
     def __init__(self, job_result, dataset_name: str, zarr_array):
         self._job_result = job_result
         self._dataset_name = dataset_name
         self._zarr_array = zarr_array
-    
+
     def __getitem__(self, key) -> np.ndarray:
         """Return sliced data as numpy array."""
         return np.asarray(self._zarr_array[key])
-    
+
     @property
     def shape(self):
         """Shape of the underlying dataset."""
         return self._zarr_array.shape
-    
+
     @property
     def dtype(self):
         """Data type of the underlying dataset."""
         return self._zarr_array.dtype
-    
+
     def __repr__(self):
         return f"NumpyDatasetWrapper({self._dataset_name}, shape={self.shape}, dtype={self.dtype})"
 
 
 class NumpyGetter:
     """Helper providing direct numpy access via job[0].get.dataset_name[slice].
-    
+
     This provides an explicit way to get numpy arrays directly from zarr datasets
     without returning a DatasetAwareWrapper.
-    
+
     Example
     -------
     >>> # Single job - returns numpy array
     >>> arr = job[0].get.m[:]
     >>> arr = job[0].get.m[0:100, :, :, :, 0]
-    >>> 
+    >>>
     >>> # Works with any dataset name
     >>> arr = job[0].get.m_layer13[:]
     >>> arr = job[0].get["m_layer13"][:]  # Alternative syntax for special names
     """
-    
+
     def __init__(self, job_result):
         self._job_result = job_result
-    
+
     def __getattr__(self, name: str) -> NumpyDatasetWrapper:
         """Get NumpyDatasetWrapper for dataset by attribute access."""
         self._job_result._ensure_zarr_loaded()
@@ -1108,16 +1559,18 @@ class NumpyGetter:
             member = self._job_result._get_zarr_member(name)
         except NameError:
             raise AttributeError(f"Dataset '{name}' not found in zarr file")
-        
+
         if isinstance(member, zarr.Array):
             return NumpyDatasetWrapper(self._job_result, name, member)
         raise AttributeError(f"'{name}' is not a dataset (it's a group)")
-    
+
     def __getitem__(self, key: str) -> NumpyDatasetWrapper:
         """Get NumpyDatasetWrapper for dataset by item access (for special names)."""
         return self.__getattr__(key)
-    
+
     def __repr__(self):
         self._job_result._ensure_zarr_loaded()
         datasets = list(self._job_result._z.array_keys())
-        return f"NumpyGetter(datasets={datasets[:5]}{'...' if len(datasets) > 5 else ''})"
+        return (
+            f"NumpyGetter(datasets={datasets[:5]}{'...' if len(datasets) > 5 else ''})"
+        )

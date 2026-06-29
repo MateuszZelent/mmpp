@@ -328,14 +328,57 @@ class CacheManager:
         else:
             chunks = True
         
-        # Create dataset
-        group.create_dataset(
-            name,
-            data=arr,
-            chunks=chunks,
-            compression="blosc",
-            overwrite=True,
-        )
+        # Create dataset.  Zarr 2 accepts ``compression=`` here, while Zarr 3
+        # may reject it in favor of newer codec APIs.  Keep the compressed path
+        # first for existing caches, then fall back to portable writes.
+        create_dataset = getattr(group, "create_dataset", None)
+        errors: list[Exception] = []
+        if create_dataset is not None:
+            attempts = [
+                lambda: create_dataset(
+                    name,
+                    data=arr,
+                    chunks=chunks,
+                    compression="blosc",
+                    overwrite=True,
+                ),
+                lambda: create_dataset(
+                    name,
+                    data=arr,
+                    chunks=chunks,
+                    overwrite=True,
+                ),
+                lambda: create_dataset(
+                    name,
+                    data=arr,
+                    shape=arr.shape,
+                    dtype=arr.dtype,
+                    chunks=chunks,
+                    overwrite=True,
+                ),
+            ]
+            for attempt in attempts:
+                try:
+                    attempt()
+                    return
+                except (TypeError, ValueError) as exc:
+                    errors.append(exc)
+
+        if hasattr(group, "create_array"):
+            try:
+                group.create_array(
+                    name,
+                    data=arr,
+                    chunks=chunks,
+                    overwrite=True,
+                )
+                return
+            except (TypeError, ValueError) as exc:
+                errors.append(exc)
+
+        if errors:
+            raise errors[-1]
+        raise AttributeError("zarr group has neither create_dataset nor create_array")
     
     def _serialize_for_json(self, value: Any) -> Any:
         """Serialize values for JSON context."""

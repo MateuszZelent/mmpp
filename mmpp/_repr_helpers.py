@@ -11,10 +11,519 @@ Every ``PlotAccessor`` can produce a rich Jupyter card by calling::
 
 from __future__ import annotations
 
+import inspect
+import re
+from collections.abc import Sequence
 from html import escape as _esc
-from typing import Sequence
 
-__all__ = ["plot_accessor_html"]
+__all__ = [
+    "NODE_COLOR_COMPUTE",
+    "NODE_COLOR_ANALYSIS",
+    "NODE_COLOR_PLOT",
+    "NODE_COLOR_UTIL",
+    "NODE_COLOR_ADVANCED",
+    "accessors_section_html",
+    "api_help_html",
+    "examples_section_html",
+    "helper_badge_html",
+    "helper_card_html",
+    "helper_code_chip_html",
+    "helper_code_grid_html",
+    "helper_table_html",
+    "html_tabs",
+    "metrics_section_html",
+    "node_card_html",
+    "plot_accessor_html",
+]
+
+
+_HELPER_CARD_FONT = (
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+)
+_HELPER_CARD_CHROME = (
+    "border:2px solid #6272a4;border-radius:12px;padding:18px;margin:10px 0;"
+    "background:linear-gradient(135deg,#282a36 0%,#21222c 50%,#44475a 100%);"
+    "color:#f8f8f2;box-shadow:0 10px 25px rgba(0,0,0,0.45),"
+    "0 0 0 1px rgba(98,114,164,0.15) inset;"
+)
+_HELPER_SECTION_CHROME = (
+    "background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+    "padding:12px;border-radius:8px;margin-bottom:12px;"
+    "border:1px solid rgba(98,114,164,0.35);backdrop-filter:blur(10px);"
+)
+_HELPER_CODE_CHIP = (
+    "display:inline-block;margin:3px 10px 3px 0;font-family:'Courier New',monospace;"
+    "font-size:0.88em;font-weight:600;"
+)
+# Inner-panel style: same gradient as the card but no outer chrome.
+# Used for the Overview tab body inside node_card_html().
+_HELPER_CARD_INNER = (
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;"
+    "background:linear-gradient(135deg,#282a36 0%,#21222c 50%,#44475a 100%);"
+    "color:#f8f8f2;padding:4px 0 0 0;"
+)
+
+# ── Node-card chip colour palette ──────────────────────────────────────────
+# Use these consistently across all analysis-namespace helpers so that
+# "Compute" is always blue, "Analysis" always green, etc.
+NODE_COLOR_COMPUTE = "#8be9fd"  # Dracula cyan - compute / primary actions
+NODE_COLOR_ANALYSIS = "#50fa7b"  # Dracula green - analysis sub-interfaces
+NODE_COLOR_PLOT = "#bd93f9"  # Dracula purple - plotting
+NODE_COLOR_UTIL = "#ffb86c"  # Dracula orange - utilities / cache
+NODE_COLOR_ADVANCED = "#ff79c6"  # Dracula pink - experimental / advanced
+
+_HELPER_TITLE_COLOR = "#f8f8f2"
+_HELPER_LABEL_COLOR = "#bd93f9"
+_HELPER_MUTED_COLOR = "#6272a4"
+_HELPER_VALUE_COLOR = "#f8f8f2"
+_HELPER_ACTIVE_TEXT = "#282a36"
+_HELPER_ACTIVE_BG = "#8be9fd"
+_HELPER_IDLE_TEXT = "#8be9fd"
+_HELPER_IDLE_BG = "rgba(40,42,54,0.72)"
+_HELPER_TABLE_HEAD_BG = "rgba(68,71,90,0.65)"
+_HELPER_TABLE_ROW_BORDER = "rgba(98,114,164,0.35)"
+
+
+def _helper_metric_html(label: object, value: object, color: str | None = None) -> str:
+    value_color = _esc(color) if color else _HELPER_VALUE_COLOR
+    return (
+        "<div style='display:grid;grid-template-columns:minmax(110px,0.32fr) 1fr;"
+        "gap:10px;align-items:baseline;margin:4px 0;'>"
+        f"<span style='color:{_HELPER_LABEL_COLOR};font-weight:650;'>{_esc(str(label))}</span>"
+        f'<span style=\'color:{value_color};font-family:"Courier New",monospace;'
+        f"font-size:0.92em;word-break:break-word;'>{_esc(str(value))}</span>"
+        "</div>"
+    )
+
+
+def _helper_header_html(
+    title: str,
+    *,
+    icon: str = "",
+    subtitle: str | None = None,
+    badge_html: str = "",
+) -> str:
+    prefix = f"{icon} " if icon else ""
+    subtitle_html = (
+        f"<div style='font-size:0.85em;color:{_HELPER_LABEL_COLOR};margin-bottom:12px;'>"
+        f"{subtitle}</div>"
+        if subtitle
+        else ""
+    )
+    return (
+        f"<div style='font-size:1.1em;font-weight:600;color:{_HELPER_TITLE_COLOR};margin-bottom:4px;'>"
+        f"{prefix}{_esc(title)}{badge_html}</div>"
+        f"{subtitle_html}"
+    )
+
+
+def _helper_overview_html(
+    title: str,
+    *,
+    icon: str = "",
+    subtitle: str | None = None,
+    badge_html: str = "",
+    sections: Sequence[str] | None = None,
+    leading_html: str = "",
+) -> str:
+    sections_html = "".join(sections or [])
+    return (
+        f"<div style='{_HELPER_CARD_INNER}'>"
+        f"{_helper_header_html(title, icon=icon, subtitle=subtitle, badge_html=badge_html)}"
+        f"{leading_html}{sections_html}</div>"
+    )
+
+
+def _helper_outer_card_html(
+    tabs: Sequence[tuple[str, str]],
+    *,
+    uid: str,
+    max_width: str | None = None,
+    accent: str | None = None,
+) -> str:
+    accent_style = f"border-color:{_esc(accent)};" if accent else ""
+    max_width_style = f"max-width:{_esc(max_width)};" if max_width else ""
+    title_html = "<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #6272a4; border-radius: 12px; padding: 18px; margin: 10px 0; background: linear-gradient(135deg, #282a36 0%, #21222c 50%, #44475a 100%); color: #f8f8f2; box-shadow: 0 10px 25px rgba(0,0,0,0.45), 0 0 0 1px rgba(98,114,164,0.15) inset;\">"
+    return (
+        f'{title_html[:-2]}{accent_style}{max_width_style}">'
+        f"{html_tabs(tabs, uid=uid)}</div>"
+    )
+
+
+def _helper_table_html(
+    headers: Sequence[str],
+    rows_html: str,
+    *,
+    font_size: str = "0.88em",
+) -> str:
+    head = "".join(
+        f"<th style='padding:4px 8px;color:{_HELPER_TITLE_COLOR};'>{_esc(header)}</th>"
+        for header in headers
+    )
+    return (
+        f"<table style='width:100%;border-collapse:collapse;font-size:{font_size};margin-top:6px;'>"
+        f"<thead><tr style='text-align:left;background:{_HELPER_TABLE_HEAD_BG};'>{head}</tr></thead>"
+        f"<tbody>{rows_html}</tbody></table>"
+    )
+
+
+def metrics_section_html(
+    rows: Sequence[tuple[str, str | object, str | None]],
+) -> str:
+    """Return the context/status section used inside node-card Overview panels.
+
+    Parameters
+    ----------
+    rows : [(label, value, color_or_None), ...]
+        *color_or_None* overrides the default value text colour (#f8f8f2).
+        Pass ``None`` to use the default.  Values are HTML-escaped
+        automatically.
+    """
+    if not rows:
+        return ""
+    parts = []
+    for label, value, color in rows:
+        parts.append(_helper_metric_html(label, value, color))
+    inner = "<br>".join(parts)
+    return f"<div style='{_HELPER_SECTION_CHROME}'>{inner}</div>"
+
+
+def accessors_section_html(
+    groups: Sequence[tuple[str, Sequence[tuple[str, str]]]],
+) -> str:
+    """Return the ACCESSORS & METHODS section used inside node-card Overview panels.
+
+    Parameters
+    ----------
+    groups : [(group_label, [(code, chip_color), ...]), ...]
+        *group_label* is shown as small muted text (e.g. ``"Compute:"``).
+        *chip_color* should be one of the ``NODE_COLOR_*`` constants.
+    """
+    if not groups:
+        return ""
+    rows = ""
+    for label, items in groups:
+        entries = "".join(
+            "<span style='display:inline-flex;align-items:center;margin:3px 12px 3px 0;'>"
+            f"<span style='color:{_esc(color)};font-size:0.95em;margin-right:5px;'>•</span>"
+            f"<code style='{_HELPER_CODE_CHIP}color:{_esc(color)};'>{_esc(code)}</code>"
+            "</span>"
+            for code, color in items
+        )
+        rows += (
+            "<div style='display:grid;grid-template-columns:minmax(88px,0.18fr) 1fr;"
+            "gap:10px;align-items:start;margin:5px 0;'>"
+            f"<small style='color:{_HELPER_MUTED_COLOR};font-weight:700;'>{_esc(label)}</small>"
+            f"<div>{entries}</div></div>"
+        )
+    return (
+        f"<div style='{_HELPER_SECTION_CHROME}'>"
+        f"<b style='color:{_HELPER_LABEL_COLOR};'>ACCESSORS &amp; METHODS</b><br>"
+        f"{rows}</div>"
+    )
+
+
+def examples_section_html(code: str, *, title: str = "Examples") -> str:
+    """Return the Examples section with a dark pre/code block.
+
+    Parameters
+    ----------
+    code : str
+        Raw Python source string.  HTML-escaped automatically.
+    title : str
+        Section heading (default ``"Examples"``).
+    """
+    return (
+        f"<div style='{_HELPER_SECTION_CHROME}'>"
+        f"<b style='color:{_HELPER_LABEL_COLOR};'>{_esc(title)}</b><br>"
+        "<pre style='margin:8px 0 0 0;background:transparent;padding:2px 0 2px 12px;"
+        "border-left:2px solid rgba(189,147,249,0.55);color:#f8f8f2;overflow-x:auto;"
+        f"font-size:0.86em;line-height:1.45;'><code>{_esc(code)}</code></pre>"
+        "</div>"
+    )
+
+
+def node_card_html(
+    title: str,
+    *,
+    icon: str = "",
+    subtitle: str | None = None,
+    badge: tuple[str, str] | None = None,
+    sections: Sequence[str] | None = None,
+    api: str,
+    uid: str,
+    extra_tabs: Sequence[tuple[str, str]] | None = None,
+) -> str:
+    """Return the canonical MMPP analysis-node card.
+
+    This is the **single source of truth** for the interactive helper card
+    style.  All analysis-namespace helpers (``job[0].fft``,
+    ``job[0].solitons``, ``job[0].m.fft``, ``job[:].fft``, …) must call
+    this function instead of hand-writing card HTML.
+
+    Structure
+    ---------
+    ::
+
+        outer div (gradient background + border + box-shadow)
+          html_tabs()   # always first child of the outer card
+            ├─ Overview tab
+            │    title <div>
+            │    subtitle <div>
+            │    section₁  (from metrics_section_html / accessors_section_html / …)
+            │    section₂
+            │    …
+            └─ API tab
+                 api_help_html(..., chrome=False)
+
+    Parameters
+    ----------
+    title : str
+        Card title, e.g. ``"FFT Analysis Interface"``.
+    icon : str
+        Emoji prefix for the title (e.g. ``"🔬"``).
+    subtitle : str, optional
+        Muted one-liner below the title.
+    badge : (label, bg_color), optional
+        Small coloured badge appended to the title, e.g.
+        ``("ready", "#22c55e")``.
+    sections : list[str], optional
+        Pre-built HTML section strings produced by
+        ``metrics_section_html()``, ``accessors_section_html()``,
+        ``examples_section_html()``, or any custom HTML.
+    api : str
+        Full API tab body — typically ``api_help_html(..., chrome=False)``.
+    uid : str
+        Short unique suffix for tab element IDs.  Use a fixed
+        domain-specific prefix + short ``uuid4()[:8]`` fragment to avoid
+        collisions across multiple notebook cells.
+    extra_tabs : list[(label, body)], optional
+        Additional tabs inserted after "Overview" and before "API".
+    """
+    badge_html = ""
+    if badge:
+        blabel, bcolor = badge
+        badge_html = helper_badge_html(
+            blabel,
+            color=bcolor,
+            text_color="#0f172a",
+        ).replace("<span ", "<span style='margin-left:8px;' ", 1)
+
+    overview_html = _helper_overview_html(
+        title,
+        icon=icon,
+        subtitle=subtitle,
+        badge_html=badge_html,
+        sections=sections,
+    )
+
+    tabs: list[tuple[str, str]] = [("Overview", overview_html)]
+    for label, body in extra_tabs or []:
+        tabs.append((label, body))
+    tabs.append(("API", api))
+
+    return _helper_outer_card_html(tabs, uid=uid)
+
+
+def _html_id(value: str) -> str:
+    """Return a safe HTML id fragment for inline notebook controls."""
+    safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip()).strip("-").lower()
+    return safe or "mmpp-helper"
+
+
+def helper_badge_html(
+    label: str,
+    *,
+    color: str = NODE_COLOR_COMPUTE,
+    text_color: str = "#282a36",
+) -> str:
+    """Return the compact status badge used by MMPP helper cards."""
+    return (
+        f"<span style='background:{_esc(color)};color:{_esc(text_color)};"
+        "padding:1px 6px;border-radius:10px;font-size:10px'>"
+        f"{_esc(label)}</span>"
+    )
+
+
+def helper_table_html(rows: Sequence[tuple[str, object]]) -> str:
+    """Return a compact key/value table for helper card summaries."""
+    if not rows:
+        return ""
+    body = "".join(
+        "<tr>"
+        f"<td style='color:{_HELPER_LABEL_COLOR};padding:4px 14px 4px 0;vertical-align:top;'>{_esc(str(key))}</td>"
+        "<td style='padding:4px 0;'>"
+        "<code style='background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:5px;"
+        f"font-size:0.88em;color:{_HELPER_VALUE_COLOR};border:1px solid rgba(71,85,105,0.3);'>"
+        f"{_esc(str(value))}</code></td>"
+        "</tr>"
+        for key, value in rows
+    )
+    return (
+        "<table style='border-collapse:collapse;font-size:0.88em;width:100%;margin-top:4px'>"
+        f"{body}</table>"
+    )
+
+
+def helper_code_grid_html(
+    groups: Sequence[tuple[str, Sequence[tuple[str, str, str | None]]]],
+) -> str:
+    """Return the responsive grouped accessor/action grid used by helper cards.
+
+    ``groups`` is ``[(heading, [(code, description, color), ...]), ...]``.
+    The color may be ``None`` to use the default cyan.
+    """
+    if not groups:
+        return ""
+    cards = []
+    for heading, items in groups:
+        item_html = "".join(
+            f"<code title='{_esc(desc)}' style=\"{_HELPER_CODE_CHIP}"
+            f' color: {_esc(color or NODE_COLOR_COMPUTE)};">{_esc(code)}</code>'
+            for code, desc, color in items
+        )
+        cards.append(
+            "<div style='margin-bottom:6px;'>"
+            f"<small style='color:{_HELPER_MUTED_COLOR};margin-right:6px;'>{_esc(heading)}:</small>"
+            f"{item_html}</div>"
+        )
+    return "".join(cards)
+
+
+def _helper_section_html(title: str, body: str) -> str:
+    return (
+        f"<div style='{_HELPER_SECTION_CHROME}'>"
+        f"<b style='color:{_HELPER_LABEL_COLOR};'>{_esc(title)}</b><br>"
+        f"{body}"
+        "</div>"
+    )
+
+
+def _helper_metrics_html(rows: Sequence[tuple[str, object]]) -> str:
+    if not rows:
+        return ""
+    return "<br>".join(_helper_metric_html(key, value) for key, value in rows)
+
+
+def helper_code_chip_html(code: str, *, color: str = NODE_COLOR_COMPUTE) -> str:
+    """Return the exact inline code-chip style used by the top-level job helper."""
+    return (
+        f'<code style="{_HELPER_CODE_CHIP} color: {_esc(color)};">{_esc(code)}</code>'
+    )
+
+
+def helper_card_html(
+    title: str,
+    *,
+    subtitle: str | None = None,
+    status: tuple[str, str] | None = None,
+    metrics: Sequence[tuple[str, object]] | None = None,
+    details: Sequence[tuple[str, str]] | None = None,
+    tabs: Sequence[tuple[str, str]] | None = None,
+    action_groups: Sequence[tuple[str, Sequence[tuple[str, str, str | None]]]]
+    | None = None,
+    uid: str | None = None,
+    max_width: str | None = None,
+    accent: str = "#6272a4",
+) -> str:
+    """Return the canonical rich HTML template for MMPP notebook helpers.
+
+    The template is based on ``MMPP._repr_html_``: responsive dark gradient
+    card, stat/action sections, and optional JavaScript-backed Overview/API
+    tabs.
+    """
+    badge_html = ""
+    if status:
+        label, color = status
+        badge_html = helper_badge_html(
+            label,
+            color=color,
+            text_color="#0f172a",
+        ).replace("<span ", "<span style='margin-left:8px;' ", 1)
+
+    overview_parts: list[str] = []
+    if metrics:
+        overview_parts.append(
+            _helper_section_html("Status", _helper_metrics_html(metrics))
+        )
+    if action_groups:
+        overview_parts.append(
+            _helper_section_html(
+                "ACCESSORS & METHODS",
+                helper_code_grid_html(action_groups),
+            )
+        )
+    overview_parts.extend(
+        _helper_section_html(label, body) for label, body in (details or [])
+    )
+
+    tabs_uid = uid or _html_id(title)
+    tab_items = list(tabs or [])
+    overview_extra_html = ""
+    if tab_items and tab_items[0][0].lower() == "overview":
+        _, overview_extra_html = tab_items.pop(0)
+    overview_html = _helper_overview_html(
+        title,
+        subtitle=subtitle,
+        badge_html=badge_html,
+        sections=overview_parts,
+        leading_html=overview_extra_html,
+    )
+    final_tabs: list[tuple[str, str]] = [("Overview", overview_html)]
+    final_tabs.extend(tab_items)
+
+    if not final_tabs:
+        final_tabs = [("Overview", overview_html)]
+
+    return _helper_outer_card_html(
+        final_tabs,
+        uid=tabs_uid,
+        max_width=max_width,
+        accent=accent,
+    )
+
+
+def html_tabs(tabs: Sequence[tuple[str, str]], *, uid: str) -> str:
+    """Return inline HTML tabs for notebook cards."""
+    if not tabs:
+        return ""
+    tab_button_style = (
+        f"padding:7px 12px;border:1px solid rgba(96,165,250,0.35);"
+        f"border-radius:6px;background:{_HELPER_IDLE_BG};color:{_HELPER_IDLE_TEXT};"
+        "cursor:pointer;font-size:0.85em;font-weight:600;margin-right:6px;"
+    )
+    active_tab_style = (
+        f"padding:7px 12px;border:1px solid rgba(96,165,250,0.65);"
+        f"border-radius:6px;background:{_HELPER_ACTIVE_BG};color:{_HELPER_ACTIVE_TEXT};"
+        "cursor:pointer;font-size:0.85em;font-weight:700;margin-right:6px;"
+    )
+    button_html = ""
+    panel_html = ""
+    panel_ids = [f"{uid}-panel-{idx}" for idx, _ in enumerate(tabs)]
+    button_ids = [f"{uid}-tab-{idx}" for idx, _ in enumerate(tabs)]
+    for idx, ((label, body), panel_id, button_id) in enumerate(
+        zip(tabs, panel_ids, button_ids)
+    ):
+        active = idx == 0
+        show_panels = ";".join(
+            f"document.getElementById('{pid}').style.display="
+            f"'{('block' if pid == panel_id else 'none')}';"
+            for pid in panel_ids
+        )
+        style_buttons = ";".join(
+            f"document.getElementById('{bid}').style.cssText="
+            f"'{(active_tab_style if bid == button_id else tab_button_style)}';"
+            for bid in button_ids
+        )
+        button_html += (
+            f"<button id='{button_id}' style='{active_tab_style if active else tab_button_style}' "
+            f'onclick="{show_panels}{style_buttons}">{_esc(label)}</button>'
+        )
+        panel_html += (
+            f"<div id='{panel_id}' style='display:{'block' if active else 'none'};'>"
+            f"{body}</div>"
+        )
+    return f"<div style='margin-bottom:12px;'>{button_html}</div>{panel_html}"
 
 
 def plot_accessor_html(
@@ -58,8 +567,7 @@ def plot_accessor_html(
     footer_html = ""
     if footer:
         footer_html = (
-            f"<div style='margin-top:8px;font-size:.78em;color:#475569;'>"
-            f"{footer}</div>"
+            f"<div style='margin-top:8px;font-size:.78em;color:#475569;'>{footer}</div>"
         )
     else:
         footer_html = (
@@ -79,4 +587,142 @@ def plot_accessor_html(
         f"margin-left:8px;'>(hover rows for parameter details)</span></div>"
         f"<table style='width:100%;border-collapse:collapse;'>{rows}</table>"
         f"{footer_html}</div>"
+    )
+
+
+def _public_callables(
+    obj: object, names: Sequence[str] | None = None
+) -> list[tuple[str, object]]:
+    selected = names if names is not None else dir(obj)
+    out: list[tuple[str, object]] = []
+    for name in selected:
+        if name.startswith("_"):
+            continue
+        try:
+            value = getattr(obj, name)
+        except Exception:
+            continue
+        if callable(value):
+            out.append((name, value))
+    return out
+
+
+def _signature_text(func: object) -> str:
+    try:
+        sig = str(inspect.signature(func))
+    except Exception:
+        return "(...)"
+    if len(sig) > 90:
+        sig = sig[:87] + "..."
+    return sig
+
+
+def _summary_text(func: object) -> str:
+    doc = inspect.getdoc(func) or ""
+    if not doc:
+        return "No docstring summary available."
+    first = doc.strip().splitlines()[0].strip()
+    return first or "No docstring summary available."
+
+
+def _example_for(prefix: str, name: str, func: object) -> str:
+    call_args = ""
+    params = []
+    try:
+        signature = inspect.signature(func)
+        for param in signature.parameters.values():
+            if param.name in {"self", "cls"}:
+                continue
+            if param.kind in {
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            }:
+                continue
+            if param.default is inspect.Parameter.empty:
+                params.append(f"{param.name}=...")
+        call_args = ", ".join(params[:3])
+    except Exception:
+        call_args = ""
+    return f"{prefix}.{name}({call_args})"
+
+
+def api_help_html(
+    obj: object,
+    *,
+    title: str | None = None,
+    prefix: str = "obj",
+    methods: Sequence[str] | None = None,
+    properties: Sequence[tuple[str, str]] | None = None,
+    max_methods: int | None = None,
+    subtitle: str | None = None,
+    chrome: bool = True,
+) -> str:
+    """Return an API card with methods, signatures, parameter details and examples.
+
+    The card is generated from the live object, so it stays aligned with method
+    signatures as the API evolves.
+    """
+    title = title or obj.__class__.__name__
+    callables = _public_callables(obj, methods)
+    if max_methods is not None:
+        callables = callables[: int(max_methods)]
+
+    prop_rows = ""
+    if properties:
+        prop_rows = "".join(
+            "<tr>"
+            f"<td style='padding:4px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};'>{_esc(name)}</td>"
+            f"<td style='padding:4px 8px;color:{_HELPER_VALUE_COLOR};'>{_esc(desc)}</td>"
+            f"<td style='padding:4px 8px;font-family:monospace;color:{NODE_COLOR_ANALYSIS};'>{_esc(prefix + '.' + name)}</td>"
+            "</tr>"
+            for name, desc in properties
+        )
+
+    method_rows = "".join(
+        f"<tr style='border-top:1px solid {_HELPER_TABLE_ROW_BORDER};'>"
+        f"<td style='padding:5px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};white-space:nowrap;'>"
+        f"{_esc('.' + name + _signature_text(func))}</td>"
+        f"<td style='padding:5px 8px;color:{_HELPER_VALUE_COLOR};'>{_esc(_summary_text(func))}</td>"
+        f"<td style='padding:5px 8px;font-family:monospace;color:{NODE_COLOR_ANALYSIS};'>{_esc(_example_for(prefix, name, func))}</td>"
+        "</tr>"
+        for name, func in callables
+    )
+    if not method_rows:
+        method_rows = (
+            f"<tr><td colspan='3' style='padding:6px 8px;color:{_HELPER_LABEL_COLOR};'>"
+            "No public callable methods detected.</td></tr>"
+        )
+
+    props_block = ""
+    if prop_rows:
+        props_block = (
+            f"<div style='{_HELPER_SECTION_CHROME}'>"
+            f"<b style='color:{_HELPER_LABEL_COLOR};'>Namespaces / properties</b><br>"
+            f"{_helper_table_html(['Accessor', 'Description', 'Example'], prop_rows)}"
+            "</div>"
+        )
+
+    subtitle_html = (
+        f"<div style='color:{_HELPER_LABEL_COLOR};font-size:0.85em;margin-bottom:12px;'>{_esc(subtitle)}</div>"
+        if subtitle
+        else ""
+    )
+    inner = (
+        f"<div style='font-size:1.1em;font-weight:600;color:{_HELPER_TITLE_COLOR};margin-bottom:4px;'>{_esc(title)}</div>"
+        f"{subtitle_html}"
+        f"{props_block}"
+        f"<div style='{_HELPER_SECTION_CHROME}'>"
+        f"<b style='color:{_HELPER_LABEL_COLOR};'>Methods</b><br>"
+        f"{_helper_table_html(['Signature', 'Description', 'Example'], method_rows, font_size='0.86em')}"
+        "</div>"
+    )
+    if not chrome:
+        return f"<div style='{_HELPER_CARD_INNER}'>{inner}</div>"
+
+    return (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+        "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+        "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+        'color:#e2e8f0;max-width:980px;">'
+        f"{inner}</div>"
     )

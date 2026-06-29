@@ -23,9 +23,20 @@ class _SpectrumQuickPlot:
         ``show_peaks``, ``dpi``, ``ax``), which are forwarded to
         ``result.plot.spectrum()``.
         """
-        plot_keys = {"log_scale", "freq_unit", "show_peaks", "dpi", "ax",
-                     "normalize", "figsize", "title", "save_path",
-                     "label", "xlim", "component"}
+        plot_keys = {
+            "log_scale",
+            "freq_unit",
+            "show_peaks",
+            "dpi",
+            "ax",
+            "normalize",
+            "figsize",
+            "title",
+            "save_path",
+            "label",
+            "xlim",
+            "component",
+        }
         plot_kw = {k: compute_kw.pop(k) for k in list(compute_kw) if k in plot_keys}
         result = self._helper(**compute_kw)
         return result.plot.spectrum(**plot_kw)
@@ -41,6 +52,10 @@ class _SpectrumQuickPlot:
         return "<SpectrumQuickPlot: .spectrum(), .interactive()>"
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
+
         # ── methods table ────────────────────────────────────────
         methods = [
             (".spectrum(**kw)", "Compute + plot power spectrum in one step"),
@@ -115,11 +130,11 @@ class _SpectrumQuickPlot:
         )
         tbl = "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
 
-        return (
+        html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             # Title
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:8px;'>"
             "Spectrum → Quick Plot &amp; Interactive</div>"
@@ -146,6 +161,29 @@ class _SpectrumQuickPlot:
             "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
             f"<code>{_html_escape(examples)}</code></pre></div>"
             "</div>"
+        )
+        api_card = api_help_html(
+            self,
+            title="Spectrum quick-plot API help",
+            prefix="job[0].fft.spectrum.plot",
+            methods=["spectrum", "interactive"],
+            subtitle=(
+                "Live signatures for quick one-step compute+plot methods. "
+                "Compute arguments are forwarded to spectrum(); plotting arguments "
+                "are split and forwarded to the result plot accessor."
+            ),
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"spectrum-quick-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
         )
 
 
@@ -177,6 +215,10 @@ class SpectrumHelper:
             return ""
 
     def _html_spectrum_display(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
+
         job_path = getattr(self._fft.job_result, "path", "")
         job_name = getattr(self._fft.job_result, "name", "unknown")
 
@@ -188,40 +230,73 @@ class SpectrumHelper:
         row_html = ""
 
         groups: list[tuple[str, list[tuple[str, str]]]] = [
-            ("Compute Parameters", [
-                ("method", "1: avg signal → FFT;  2: per-pixel FFT → avg |FFT|² (default: 1)"),
-                ("dset", "Dataset name (default: 'm')"),
-                ("z_layer", "Z-layer index (default: -1, last layer)"),
-                ("tmin / tmax", "Time range as indices"),
-                ("fmin / fmax", "Frequency range filter (Hz)"),
-                ("window", "Window function: hann, hamming, blackman, tukey, … (default: 'hann')"),
-                ("filter_type", "Pre-FFT filter: remove_mean, remove_static, detrend_linear, … (default: 'remove_mean')"),
-                ("scaling", "Spectrum scaling: raw, continuous_ft, amplitude, power, psd (default: 'raw')"),
-                ("engine", "FFT backend: numpy, scipy, pyfftw, auto (default: 'auto')"),
-                ("zero_padding", "Pad to next power of 2 (default: True)"),
-                ("nfft", "Explicit FFT length (default: None)"),
-                ("save / force", "Save result to zarr / force recalculation"),
-                ("find_peaks={'min_prominence': …}", "Peak detection"),
-            ]),
-            ("SpectrumResult Properties", [
-                (".frequencies / .frequencies_ghz", "Frequency axis (Hz / GHz)"),
-                (".power", "Power spectrum |FFT|²"),
-                (".magnitude", "Magnitude |FFT|"),
-                (".phase", "Phase (radians)"),
-                (".complex", "Raw complex FFT data"),
-                (".peaks_info", "Detected peaks (if find_peaks used)"),
-                (".component_label", "Magnetization component label"),
-            ]),
-            ("SpectrumResult Actions", [
-                (".plot.spectrum(**kw)", "Static matplotlib plot"),
-                (".plot.interactive(**kw)", "Jupyter interactive explorer"),
-                (".modes", "Mode analysis from this spectrum"),
-                (".filtered(**kw)", "Post-process: normalize, log, smooth, …"),
-            ]),
-            ("Quick-Plot Shortcut", [
-                ("data.fft.spectrum.plot", "Returns plot proxy (call .spectrum() or .interactive())"),
-                ("data.fft.spectrum.plot.spectrum(**kw)", "Compute + plot in one step"),
-            ]),
+            (
+                "Compute Parameters",
+                [
+                    (
+                        "method",
+                        "1: avg signal → FFT;  2: per-pixel FFT → avg |FFT|² (default: 1)",
+                    ),
+                    ("dset", "Dataset name (default: 'm')"),
+                    ("z_layer", "Z-layer index (default: -1, last layer)"),
+                    ("tmin / tmax", "Time range as indices"),
+                    ("fmin / fmax", "Frequency range filter (Hz)"),
+                    (
+                        "window",
+                        "Window function: hann, hamming, blackman, tukey, … (default: 'hann')",
+                    ),
+                    (
+                        "filter_type",
+                        "Pre-FFT filter: remove_mean, remove_static, detrend_linear, … (default: 'remove_mean')",
+                    ),
+                    (
+                        "scaling",
+                        "Spectrum scaling: raw, continuous_ft, amplitude, power, psd (default: 'raw')",
+                    ),
+                    (
+                        "engine",
+                        "FFT backend: numpy, scipy, pyfftw, auto (default: 'auto')",
+                    ),
+                    ("zero_padding", "Pad to next power of 2 (default: True)"),
+                    ("nfft", "Explicit FFT length (default: None)"),
+                    ("save / force", "Save result to zarr / force recalculation"),
+                    ("find_peaks={'min_prominence': …}", "Peak detection"),
+                ],
+            ),
+            (
+                "SpectrumResult Properties",
+                [
+                    (".frequencies / .frequencies_ghz", "Frequency axis (Hz / GHz)"),
+                    (".power", "Power spectrum |FFT|²"),
+                    (".magnitude", "Magnitude |FFT|"),
+                    (".phase", "Phase (radians)"),
+                    (".complex", "Raw complex FFT data"),
+                    (".peaks_info", "Detected peaks (if find_peaks used)"),
+                    (".component_label", "Magnetization component label"),
+                ],
+            ),
+            (
+                "SpectrumResult Actions",
+                [
+                    (".plot.spectrum(**kw)", "Static matplotlib plot"),
+                    (".plot.interactive(**kw)", "Jupyter interactive explorer"),
+                    (".modes", "Mode analysis from this spectrum"),
+                    (".filtered(**kw)", "Post-process: normalize, log, smooth, …"),
+                ],
+            ),
+            (
+                "Quick-Plot Shortcut",
+                [
+                    (
+                        "data.fft.spectrum.plot",
+                        "Returns plot proxy (call .spectrum() or .interactive())",
+                    ),
+                    (
+                        "data.fft.spectrum.plot.spectrum(**kw)",
+                        "Compute + plot in one step",
+                    ),
+                ],
+            ),
         ]
 
         for group_name, items in groups:
@@ -239,42 +314,44 @@ class SpectrumHelper:
                 )
 
         # ── examples ────────────────────────────────────────────
-        example_code = "\n".join([
-            "# Basic spectrum",
-            "result = data.fft.spectrum()",
-            "",
-            "# Method comparison (per-pixel power avg vs avg-then-FFT)",
-            "r1 = data.fft.spectrum(method=1, force=True)",
-            "r2 = data.fft.spectrum(method=2, force=True)",
-            "",
-            "# Plot both on same axes",
-            "import matplotlib.pyplot as plt",
-            "fig, ax = plt.subplots()",
-            "r1.plot.spectrum(ax=ax, log_scale=True, label='method 1 (avg signal → FFT)')",
-            "r2.plot.spectrum(ax=ax, log_scale=True, label='method 2 (per-pixel FFT → avg |FFT|²)')",
-            "ax.legend()",
-            "",
-            "# Quick one-liner plot",
-            "data.fft.spectrum.plot.spectrum(log_scale=True, freq_unit='GHz')",
-            "",
-            "# With FFT options",
-            "result = data.fft.spectrum(",
-            "    method=1, window='blackman', scaling='amplitude',",
-            "    filter_type='remove_static',",
-            "    fmin=1e9, fmax=20e9,",
-            "    find_peaks={'min_prominence': 0.1}",
-            ")",
-            "",
-            "# Tuple unpacking (backward compat)",
-            "freqs, spec = result",
-            "",
-            "# Time slicing (two equivalent ways)",
-            "result = data.fft.spectrum(tmin=0, tmax=200)",
-            "result = job[0].m[:200, ...].fft.spectrum()",
-            "",
-            "# Post-process result",
-            "result.filtered(normalize=True, smooth=True)",
-        ])
+        example_code = "\n".join(
+            [
+                "# Basic spectrum",
+                "result = data.fft.spectrum()",
+                "",
+                "# Method comparison (per-pixel power avg vs avg-then-FFT)",
+                "r1 = data.fft.spectrum(method=1, force=True)",
+                "r2 = data.fft.spectrum(method=2, force=True)",
+                "",
+                "# Plot both on same axes",
+                "import matplotlib.pyplot as plt",
+                "fig, ax = plt.subplots()",
+                "r1.plot.spectrum(ax=ax, log_scale=True, label='method 1 (avg signal → FFT)')",
+                "r2.plot.spectrum(ax=ax, log_scale=True, label='method 2 (per-pixel FFT → avg |FFT|²)')",
+                "ax.legend()",
+                "",
+                "# Quick one-liner plot",
+                "data.fft.spectrum.plot.spectrum(log_scale=True, freq_unit='GHz')",
+                "",
+                "# With FFT options",
+                "result = data.fft.spectrum(",
+                "    method=1, window='blackman', scaling='amplitude',",
+                "    filter_type='remove_static',",
+                "    fmin=1e9, fmax=20e9,",
+                "    find_peaks={'min_prominence': 0.1}",
+                ")",
+                "",
+                "# Tuple unpacking (backward compat)",
+                "freqs, spec = result",
+                "",
+                "# Time slicing (two equivalent ways)",
+                "result = data.fft.spectrum(tmin=0, tmax=200)",
+                "result = job[0].m[:200, ...].fft.spectrum()",
+                "",
+                "# Post-process result",
+                "result.filtered(normalize=True, smooth=True)",
+            ]
+        )
 
         html = f"""
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; border: 2px solid #334155; border-radius: 12px; padding: 16px; margin: 10px 0; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: #e2e8f0; box-shadow: 0 10px 22px rgba(0,0,0,0.28);">
@@ -304,4 +381,43 @@ class SpectrumHelper:
           </div>
         </div>
         """
-        return html
+        quick_plot_help = api_help_html(
+            self.plot,
+            title="FFT spectrum quick-plot API help",
+            prefix="job[0].fft.spectrum.plot",
+            methods=["spectrum", "interactive"],
+            subtitle=(
+                "Methods available under job[0].fft.spectrum.plot. "
+                "They compute the spectrum and immediately render the selected view."
+            ),
+            chrome=False,
+        )
+        callable_help = api_help_html(
+            self,
+            title="FFT spectrum namespace API help",
+            prefix="job[0].fft.spectrum",
+            properties=[
+                ("plot", "Quick plot proxy for compute+plot and interactive views")
+            ],
+            subtitle=(
+                "The spectrum namespace is callable: use job[0].fft.spectrum(...) "
+                "to compute a SpectrumResult. The manual card above lists the "
+                "forwarded compute parameters."
+            ),
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [
+                    ("Overview", html),
+                    ("Quick Plot API", quick_plot_help),
+                    ("Namespace API", callable_help),
+                ],
+                uid=f"spectrum-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )

@@ -47,7 +47,6 @@ from .fmr import (
     kittel_oop,
 )
 from .nonlinear_stno import (
-    DashboardPlotter,
     SpectrumAnalyzer,
     STNOParameters,
     run_all_sweeps_parallel,
@@ -144,3 +143,13 @@ __all__ = [
     "SpectrumAnalyzer",
     "DashboardPlotter",
 ]
+
+
+def __getattr__(name):
+    """Lazily expose plotting-only analytical helpers."""
+    if name == "DashboardPlotter":
+        from .nonlinear_stno import DashboardPlotter
+
+        globals()[name] = DashboardPlotter
+        return DashboardPlotter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

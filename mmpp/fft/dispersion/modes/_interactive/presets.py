@@ -34,6 +34,7 @@ def get_current_params(explorer: Any) -> dict:
         "f_min_ghz": float(explorer.w_fmin.value),
         "f_max_ghz": float(explorer.w_fmax.value),
         "k_direction": str(explorer.w_k_direction.value),
+        "mode_type": str(explorer.w_mode_type.value),
         "cmap_disp": str(explorer.w_cmap_disp.value),
         "cmap_mode": str(explorer.w_cmap_mode.value),
         # Live post-filters
@@ -111,6 +112,8 @@ def apply_params(explorer: Any, params: dict) -> None:
         explorer.w_fmax.value = float(params["f_max_ghz"])
     if "k_direction" in params:
         explorer.w_k_direction.value = str(params["k_direction"])
+    if "mode_type" in params:
+        explorer.w_mode_type.value = str(params["mode_type"])
     if "cmap_disp" in params:
         explorer.w_cmap_disp.value = str(params["cmap_disp"])
     if "cmap_mode" in params:

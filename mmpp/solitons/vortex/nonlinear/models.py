@@ -7,8 +7,6 @@ from typing import Any
 
 import numpy as np
 
-from mmpp._shared.repr_html import make_simple_card
-
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -41,14 +39,55 @@ class AmplitudeEquationResult:
         return AmplitudePlotAccessor(self)
 
     def _repr_html_(self) -> str:
-        return make_simple_card(
-            title=self.__class__.__name__,
-            subtitle="complex amplitude dynamics",
-            rows=[
-                ("method", str(self.method)),
-                ("n_samples", str(int(np.asarray(self.time).size))),
-                ("reference_radius", f"{float(self.reference_radius):.6g}"),
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Amplitude Equation Result",
+            icon="📐",
+            subtitle="Complex-amplitude dynamics derived from the tracked vortex orbit.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("method", self.method, None),
+                        ("n_samples", int(np.asarray(self.time).size), None),
+                        (
+                            "reference_radius",
+                            f"{float(self.reference_radius):.6g}",
+                            None,
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "amp = jobs[-1].solitons.vortex.nonlinear.amplitude_equation()\n"
+                    "amp.plt.power_vs_time()\n"
+                    "amp.plt.complex_plane()",
+                    title="Result Usage",
+                ),
             ],
+            api=api_help_html(
+                self,
+                title="Amplitude-equation result API help",
+                prefix="jobs[-1].solitons.vortex.nonlinear.amplitude_equation()",
+                properties=[
+                    ("time", "Time axis"),
+                    ("complex_amplitude", "Complex amplitude c(t)"),
+                    ("power", "Generation power p(t)"),
+                    ("phase", "Phase trajectory"),
+                    ("omega", "Instantaneous angular frequency"),
+                    ("frequency_hz", "Instantaneous frequency in Hz"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the amplitude-equation result.",
+                chrome=False,
+            ),
+            uid=f"amplitude-equation-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -80,14 +119,57 @@ class STParametersResult:
         return STPlotAccessor(self)
 
     def _repr_html_(self) -> str:
-        return make_simple_card(
-            title=self.__class__.__name__,
-            subtitle="Slavin-Tiberkevich parameters",
-            rows=[
-                ("f_0_ghz", f"{float(self.f_0_ghz):.6g}"),
-                ("N", f"{float(self.N):.6g}"),
-                ("Q_meaning", "power coefficient of variation"),
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "ST Parameters Result",
+            icon="🧮",
+            subtitle="Slavin-Tiberkevich parameters extracted from a single trajectory.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("f_0_ghz", f"{float(self.f_0_ghz):.6g}", None),
+                        ("N", f"{float(self.N):.6g}", None),
+                        ("Gamma_G", f"{float(self.Gamma_G):.6g}", None),
+                        ("linewidth_hz", f"{float(self.linewidth_hz):.6g}", None),
+                        ("Q meaning", "power coefficient of variation", None),
+                    ]
+                ),
+                examples_section_html(
+                    "st = jobs[-1].solitons.vortex.nonlinear.slavin_tiberkevich()\n"
+                    "st.quality_factor\n"
+                    "st.plt.power_vs_current()",
+                    title="Result Usage",
+                ),
             ],
+            api=api_help_html(
+                self,
+                title="ST parameters API help",
+                prefix="jobs[-1].solitons.vortex.nonlinear.slavin_tiberkevich()",
+                properties=[
+                    ("omega_0", "Auto-oscillation angular frequency"),
+                    ("f_0_ghz", "Auto-oscillation frequency in GHz"),
+                    ("N", "Nonlinear frequency shift coefficient"),
+                    ("Gamma_G", "Positive damping"),
+                    ("Q", "Power coefficient of variation"),
+                    ("sigma", "Spin-torque efficiency"),
+                    ("I_threshold", "Threshold current"),
+                    ("generation_power", "Generated power"),
+                    ("linewidth_hz", "Estimated linewidth"),
+                    ("quality_factor", "Quality factor"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the extracted Slavin-Tiberkevich parameters.",
+                chrome=False,
+            ),
+            uid=f"st-parameters-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -113,13 +195,55 @@ class STBatchResult:
         return STBatchPlotAccessor(self)
 
     def _repr_html_(self) -> str:
-        return make_simple_card(
-            title=self.__class__.__name__,
-            subtitle="batch ST summary",
-            rows=[
-                ("n_currents", str(int(np.asarray(self.currents).size))),
-                ("N", f"{float(self.N):.6g}"),
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "ST Batch Result",
+            icon="📦",
+            subtitle="Batch Slavin-Tiberkevich summary across a current sweep.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("n_currents", int(np.asarray(self.currents).size), None),
+                        ("N", f"{float(self.N):.6g}", None),
+                        (
+                            "fit_status",
+                            self.metadata.get("fit_status", "unknown"),
+                            None,
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "batch = jobs[-1].solitons.vortex.nonlinear.slavin_tiberkevich_batch(jobs, currents)\n"
+                    "batch.plt.power_vs_current()\n"
+                    "batch.plt.frequency_vs_current()",
+                    title="Result Usage",
+                ),
             ],
+            api=api_help_html(
+                self,
+                title="ST batch result API help",
+                prefix="jobs[-1].solitons.vortex.nonlinear.slavin_tiberkevich_batch()",
+                properties=[
+                    ("currents", "Sweep current values"),
+                    ("powers", "Generated powers"),
+                    ("linewidths", "Linewidth values"),
+                    ("frequencies_hz", "Dominant frequencies in Hz"),
+                    ("frequencies_ghz", "Dominant frequencies in GHz"),
+                    ("N", "Global nonlinear frequency-shift fit"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the batch Slavin-Tiberkevich sweep.",
+                chrome=False,
+            ),
+            uid=f"st-batch-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -373,14 +497,60 @@ class ThieleForceBalanceResult:
         return ThieleForcePlotAccessor(self)
 
     def _repr_html_(self) -> str:
-        return make_simple_card(
-            title=self.__class__.__name__,
-            subtitle="Thiele force balance",
-            rows=[
-                ("n_samples", str(int(np.asarray(self.time).size))),
-                ("G", f"{float(self.G):.6g}"),
-                ("residual_mean", f"{float(np.mean(self.residual_norm)):.6g}"),
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Thiele Force Balance Result",
+            icon="⚖️",
+            subtitle="Force decomposition from the Thiele equation on a tracked vortex trajectory.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("n_samples", int(np.asarray(self.time).size), None),
+                        ("G", f"{float(self.G):.6g}", None),
+                        ("D", f"{float(self.D):.6g}", None),
+                        ("kappa", f"{float(self.kappa):.6g}", None),
+                        (
+                            "residual_mean",
+                            f"{float(np.mean(self.residual_norm)):.6g}",
+                            None,
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "fb = jobs[-1].solitons.vortex.nonlinear.force_balance()\n"
+                    "fb.residual_ratio\n"
+                    "fb.plt.force_balance()",
+                    title="Result Usage",
+                ),
             ],
+            api=api_help_html(
+                self,
+                title="Thiele force-balance API help",
+                prefix="jobs[-1].solitons.vortex.nonlinear.force_balance()",
+                properties=[
+                    ("time", "Time axis"),
+                    ("gyro_force", "Gyro force vectors"),
+                    ("conservative_force", "Conservative force vectors"),
+                    ("dissipative_force", "Dissipative force vectors"),
+                    ("stt_force", "Spin-torque force vectors"),
+                    ("oersted_force", "Oersted force vectors"),
+                    ("residual_force", "Residual force vectors"),
+                    ("residual_norm", "Residual norm over time"),
+                    ("residual_ratio", "Residual-to-gyro ratio"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the Thiele force decomposition.",
+                chrome=False,
+            ),
+            uid=f"thiele-force-balance-result-{str(_uuid.uuid4())[:8]}",
         )
 
 

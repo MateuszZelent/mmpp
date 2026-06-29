@@ -71,25 +71,9 @@ except ImportError:
     Syntax = None
     Table = None
 
-try:
-    from IPython.display import HTML, display
-    IPYTHON_AVAILABLE = True
-except ImportError:
-    IPYTHON_AVAILABLE = False
+# Do not probe notebook/plotting stacks during core import. Public dependency
+# checks resolve these optional packages explicitly when requested.
+IPYTHON_AVAILABLE = False
+PLOTTING_AVAILABLE = False
 
-# Import plotting functionality
-try:
-    from ..plotting import MMPPlotter, PlotterProxy
-    PLOTTING_AVAILABLE = True
-except ImportError:
-    PLOTTING_AVAILABLE = False
-    MMPPlotter = None
-    PlotterProxy = None
-
-# Import FFT functionality
-try:
-    from ..fft import FFT
-    FFT_AVAILABLE = True
-except ImportError:
-    FFT_AVAILABLE = False
-    FFT = None
+FFT_AVAILABLE = True

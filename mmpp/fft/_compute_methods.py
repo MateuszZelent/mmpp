@@ -15,6 +15,28 @@ import numpy as np
 from ._scaling import SPECTRUM_SCALINGS, apply_spectrum_scaling, compute_window_scaling_stats
 
 
+def _spatial_axes_for_data(data: np.ndarray) -> tuple[int, ...]:
+    """Return the correct spatial axes for *data* using :func:`infer_axis_layout`.
+
+    This avoids the old ``range(1, ndim-1)`` heuristic which incorrectly treated
+    the last spatial axis as a component for scalar (no-component) datasets.
+    """
+    try:
+        from ..core.dataset_geometry import infer_axis_layout
+        layout = infer_axis_layout(data.shape)
+        return tuple(int(a) for a in layout.spatial_axes)
+    except Exception:
+        # Fallback: exclude time(0) and optionally component(-1)
+        ndim = data.ndim
+        if ndim <= 2:
+            return ()
+        if ndim >= 4 and int(data.shape[-1]) <= 4:
+            # Looks like a component axis
+            return tuple(range(1, ndim - 1))
+        # Scalar: all axes except time
+        return tuple(range(1, ndim))
+
+
 @dataclass(frozen=True)
 class MethodExecutionResult:
     """Execution output shared by FFT method implementations."""
@@ -55,8 +77,8 @@ def run_fft_method1(
 
     data_filtered = apply_filter(data, filter_type)
     if data_filtered.ndim > 2:
-        # Average over spatial axes (y, x), keep time (0) and component (-1)
-        spatial_axes = tuple(range(1, data_filtered.ndim - 1))
+        # Average over spatial axes, keep time (0) and component (if present)
+        spatial_axes = _spatial_axes_for_data(data_filtered)
         data_averaged = np.mean(data_filtered, axis=spatial_axes) if spatial_axes else data_filtered
     else:
         data_averaged = data_filtered
@@ -131,8 +153,8 @@ def run_fft_method2(
 
     spectrum = fft_data
     if spectrum.ndim > 2:
-        # Average over spatial axes (y, x), keep freq (0) and component (-1)
-        spatial_axes = tuple(range(1, spectrum.ndim - 1))
+        # Average over spatial axes, keep freq (0) and component (if present)
+        spatial_axes = _spatial_axes_for_data(data_filtered)
         if spatial_axes:
             # Average POWER spectra (|FFT|²) per pixel, then take sqrt.
             # This is physically different from method 1 (average signal, then FFT)

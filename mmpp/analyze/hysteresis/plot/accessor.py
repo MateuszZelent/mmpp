@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+from mmpp._repr_helpers import (
+    NODE_COLOR_ANALYSIS,
+    NODE_COLOR_COMPUTE,
+    NODE_COLOR_PLOT,
+    api_help_html,
+    accessors_section_html,
+    examples_section_html,
+    metrics_section_html,
+    node_card_html,
+)
+
 from .interactive import HysteresisInteractiveExplorer
 from .static import plot_loop
 
@@ -36,25 +47,53 @@ class HysteresisPlotAccessor:
         return "<HysteresisPlotAccessor: .loop(), .interactive(), .animation()>"
 
     def _repr_html_(self) -> str:
-        methods = [
-            (".loop(**kwargs)", "Static hysteresis loop plot"),
-            (".interactive(**kwargs)", "Interactive loop + snapshot explorer"),
-            (".animation(**kwargs)", "Online or exported MP4/GIF loop animation"),
-        ]
-        rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{m}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{d}</td></tr>"
-            for m, d in methods
+        example = "\n".join(
+            [
+                "plot = result.plot",
+                "plot.loop(show_hc=True)",
+                "plot.interactive(toolbar='auto')",
+                "plot.animation(writer='pillow')",
+            ]
         )
-        return (
-            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;\">"
-            "<div style='font-size:1.05em;font-weight:600;color:#f1f5f9;'>"
-            "Hysteresis Plot Accessor</div>"
-            "<table style='width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;'>"
-            f"{rows}</table></div>"
+        api = api_help_html(
+            self,
+            title="Hysteresis plot API help",
+            prefix="result.plot",
+            methods=["loop", "interactive", "animation"],
+            subtitle="Plotting methods exposed by HysteresisResult.plot.",
+            chrome=False,
+        )
+        return node_card_html(
+            "Hysteresis Plot Accessor",
+            icon="📉",
+            subtitle="Static, interactive and animated views exposed by HysteresisResult.plot.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("owner", "HysteresisResult.plot", NODE_COLOR_COMPUTE),
+                        (
+                            "modes",
+                            "static / interactive / animation",
+                            NODE_COLOR_ANALYSIS,
+                        ),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Plot:",
+                            [
+                                (".loop(**kwargs)", NODE_COLOR_COMPUTE),
+                                (".interactive(**kwargs)", NODE_COLOR_ANALYSIS),
+                                (".animation(**kwargs)", NODE_COLOR_PLOT),
+                            ],
+                        )
+                    ]
+                ),
+                examples_section_html(example),
+            ],
+            api=api,
+            uid="mmpp-hysteresis-plot",
         )
 
     def _repr_mimebundle_(self, include=None, exclude=None):

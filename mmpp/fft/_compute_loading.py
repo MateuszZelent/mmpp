@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
+import warnings
 from typing import Any
 
 import numpy as np
@@ -218,7 +219,15 @@ def _select_z_layer(
         )
 
     if source_ndim == 5:  # (t, z, y, x, comp)
+        nz = data.shape[1] if data.ndim == 5 else 1
         if z_layer == -1:
+            if nz > 1:
+                warnings.warn(
+                    f"FFT: auto-selecting the LAST z-layer (index {nz - 1}) from {nz}-layer 5D data. "
+                    "This may be unintentional. To suppress this warning explicitly select z before FFT: "
+                    f"job[i].m[:, {nz - 1}, ...].fft  or pass  z_layer={nz - 1}  to the FFT call.",
+                    stacklevel=5,
+                )
             data = data[:, -1, :, :, :]
             logger.debug("Selected last z-layer from 5D data")
         else:
@@ -365,15 +374,16 @@ def load_fft_input_data(
     pyzfn_cls: Any,
     psutil_module: Any | None,
     logger: Any,
+    preloaded_data: np.ndarray | None = None,
 ) -> tuple[np.ndarray, float]:
-    """Load FFT input data from zarr with slicing, z-layer handling, and dt detection."""
-    start_time = time.time()
-    process = None
-    initial_memory = None
+    """Load FFT input data from zarr with slicing, z-layer handling, and dt detection.
 
-    if psutil_module is not None:
-        process = psutil_module.Process()
-        initial_memory = process.memory_info().rss / 1024 / 1024
+    If *preloaded_data* is provided (e.g. from a materialized ``DatasetAwareWrapper``
+    after ``.downsample()`` or fancy indexing) the zarr store is only opened for
+    metadata (dt) resolution; the array data itself is taken from *preloaded_data*
+    so that the FFT operates on the correct materialized view.
+    """
+    start_time = time.time()
 
     if not pyzfn_available:
         raise ImportError(
@@ -391,43 +401,40 @@ def load_fft_input_data(
     data_set = _resolve_dataset(job=job, zarr_path=zarr_path, dataset=dataset, logger=logger)
     original_dataset_shape = tuple(getattr(data_set, "shape", ()) or ())
 
-    data_load_start = time.time()
-    data, apply_tmax = _apply_slice_with_time_policy(
-        data_set=data_set,
-        slice_info=slice_info,
-        tmax=tmax,
-        logger=logger,
-    )
-    data_load_time = time.time() - data_load_start
-    logger.debug("Data loading time: %.3fs", data_load_time)
+    # ------------------------------------------------------------------
+    # Use preloaded (materialized) data when available
+    # ------------------------------------------------------------------
+    if preloaded_data is not None:
+        logger.info(
+            "Using preloaded data with shape %s (skipping zarr read)",
+            preloaded_data.shape,
+        )
+        data = np.asarray(preloaded_data)
+    else:
+        data_load_start = time.time()
+        data, apply_tmax = _apply_slice_with_time_policy(
+            data_set=data_set,
+            slice_info=slice_info,
+            tmax=tmax,
+            logger=logger,
+        )
+        data_load_time = time.time() - data_load_start
+        logger.debug("Data loading time: %.3fs", data_load_time)
 
-    data = _apply_tmax(data=data, tmax=tmax, apply_tmax=apply_tmax, logger=logger)
+        data = _apply_tmax(data=data, tmax=tmax, apply_tmax=apply_tmax, logger=logger)
 
-    data_size_mb = data.nbytes / 1024 / 1024
-    loading_speed = data_size_mb / data_load_time if data_load_time > 0 else 0
-    logger.debug("Data size: %.1f MB", data_size_mb)
-    logger.debug("Loading speed: %.1f MB/s", loading_speed)
-
-    layer_select_start = time.time()
-    data = _select_z_layer(
-        data=data,
-        z_layer=z_layer,
-        slice_info=slice_info,
-        original_dataset_shape=original_dataset_shape,
-        dataset_attrs=getattr(data_set, "attrs", None),
-        logger=logger,
-    )
-    layer_select_time = time.time() - layer_select_start
-    logger.debug("Layer selection time: %.3fs", layer_select_time)
+        data = _select_z_layer(
+            data=data,
+            z_layer=z_layer,
+            slice_info=slice_info,
+            original_dataset_shape=original_dataset_shape,
+            dataset_attrs=getattr(data_set, "attrs", None),
+            logger=logger,
+        )
 
     dt = resolve_dt_from_metadata(data_set=data_set, job=job, logger=logger)
 
     total_time = time.time() - start_time
-    if process is not None and initial_memory is not None:
-        final_memory = process.memory_info().rss / 1024 / 1024
-        memory_increase = final_memory - initial_memory
-        logger.debug("Memory increase: %.1f MB", memory_increase)
-
     logger.info("Data loaded successfully in %.3fs, shape: %s", total_time, data.shape)
 
     return data, dt
@@ -444,6 +451,7 @@ def load_fft_input_data_profiled(
     pyzfn_cls: Any,
     psutil_module: Any | None,
     logger: Any,
+    preloaded_data: np.ndarray | None = None,
 ) -> tuple[np.ndarray, float, InputLoadMetrics]:
     """Load FFT input data and collect timing/memory metrics."""
     process = None
@@ -467,6 +475,7 @@ def load_fft_input_data_profiled(
         pyzfn_cls=pyzfn_cls,
         psutil_module=psutil_module,
         logger=logger,
+        preloaded_data=preloaded_data,
     )
     load_time = time.time() - load_start_time
 

@@ -18,7 +18,6 @@ class VortexInterface:
         slice_info: Any | None = None,
         config: VortexConfig | None = None,
     ):
-
         self._job = job_result
         self._dataset = dataset_name
         self._mmpp = mmpp_instance
@@ -394,7 +393,9 @@ class VortexInterface:
             "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);"
         )
         th_style = "padding:5px 8px;text-align:left;color:#e2e8f0;font-weight:600;"
-        td_mono = "padding:4px 8px;font-family:monospace;color:#93c5fd;font-size:0.85em;"
+        td_mono = (
+            "padding:4px 8px;font-family:monospace;color:#93c5fd;font-size:0.85em;"
+        )
         td_val = "padding:4px 8px;color:#e2e8f0;font-size:0.85em;font-family:monospace;"
         td_src = "padding:4px 8px;color:#94a3b8;font-size:0.8em;"
         badge = (
@@ -418,23 +419,60 @@ class VortexInterface:
 
         # Group parameters
         groups = [
-            ("🧲 Material", ["Ms", "alpha", "P", "P_raw", "P_eff", "P_model", "A",
-                             "Lambda", "epsilonprime"]),
-            ("📐 Geometry", ["R", "L", "D", "Area", "L_stt", "dx", "dy", "dz",
-                             "Nx", "Ny", "Nz"]),
-            ("⚡ Current & STT", ["current_density", "current", "current_A", "current_mA",
-                                  "current_dir", "polarizer", "p_z",
-                                  "FixedLayerPosition", "fixed_layer_position",
-                                  "slonczewski_current_sign"]),
-            ("🧭 Field", ["field", "Bx_T", "By_T", "Bz_T",
-                          "Bx_mT", "By_mT", "Bz_mT"]),
-            ("🎯 Model / Vortex", ["omega0", "N", "chi_scale", "polarity",
-                                   "domega0_dJ", "domega0_dJ_user", "domega0_dJ_stt",
-                                   "phase_polarization", "d0_scale"]),
+            (
+                "🧲 Material",
+                [
+                    "Ms",
+                    "alpha",
+                    "P",
+                    "P_raw",
+                    "P_eff",
+                    "P_model",
+                    "A",
+                    "Lambda",
+                    "epsilonprime",
+                ],
+            ),
+            (
+                "📐 Geometry",
+                ["R", "L", "D", "Area", "L_stt", "dx", "dy", "dz", "Nx", "Ny", "Nz"],
+            ),
+            (
+                "⚡ Current & STT",
+                [
+                    "current_density",
+                    "current",
+                    "current_A",
+                    "current_mA",
+                    "current_dir",
+                    "polarizer",
+                    "p_z",
+                    "FixedLayerPosition",
+                    "fixed_layer_position",
+                    "slonczewski_current_sign",
+                ],
+            ),
+            ("🧭 Field", ["field", "Bx_T", "By_T", "Bz_T", "Bx_mT", "By_mT", "Bz_mT"]),
+            (
+                "🎯 Model / Vortex",
+                [
+                    "omega0",
+                    "N",
+                    "chi_scale",
+                    "polarity",
+                    "domega0_dJ",
+                    "domega0_dJ_user",
+                    "domega0_dJ_stt",
+                    "phase_polarization",
+                    "d0_scale",
+                ],
+            ),
         ]
 
         for title, keys in groups:
-            present = [(k, resolved[k], sources.get(k, "?")) for k in keys if k in resolved]
+            present = [
+                (k, resolved[k], sources.get(k, "?")) for k in keys if k in resolved
+            ]
             if not present:
                 continue
 
@@ -512,7 +550,7 @@ class VortexInterface:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #dc2626;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#1c1917 0%,#292524 50%,#44403c 100%);"
-            "color:#fef2f2;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#fef2f2;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#fca5a5;margin-bottom:8px;'>"
             "❌ Parameter Resolution Failed</div>"
             f"<div style='font-size:0.9em;color:#fef2f2;margin-bottom:8px;'>"
@@ -551,67 +589,138 @@ class VortexInterface:
                 return "0"
             # SI formatting for common physics ranges
             if abs_val >= 1e12:
-                return f"{fval:.4g} ({fval/1e12:.4g} T·unit)"
+                return f"{fval:.4g} ({fval / 1e12:.4g} T·unit)"
             if abs_val >= 1e9:
-                return f"{fval:.4g} ({fval/1e9:.4g} G)"
+                return f"{fval:.4g} ({fval / 1e9:.4g} G)"
             if abs_val >= 1e6:
-                return f"{fval:.4g} ({fval/1e6:.4g} M)"
+                return f"{fval:.4g} ({fval / 1e6:.4g} M)"
             if abs_val >= 1e3:
-                return f"{fval:.4g} ({fval/1e3:.4g} k)"
+                return f"{fval:.4g} ({fval / 1e3:.4g} k)"
             if abs_val >= 1:
                 return f"{fval:.4g}"
             if abs_val >= 1e-3:
-                return f"{fval:.4g} ({fval*1e3:.4g} m)"
+                return f"{fval:.4g} ({fval * 1e3:.4g} m)"
             if abs_val >= 1e-6:
-                return f"{fval:.4g} ({fval*1e6:.4g} µ)"
+                return f"{fval:.4g} ({fval * 1e6:.4g} µ)"
             if abs_val >= 1e-9:
-                return f"{fval:.4g} ({fval*1e9:.4g} n)"
+                return f"{fval:.4g} ({fval * 1e9:.4g} n)"
             if abs_val >= 1e-12:
-                return f"{fval:.4g} ({fval*1e12:.4g} p)"
+                return f"{fval:.4g} ({fval * 1e12:.4g} p)"
             return f"{fval:.4g}"
         return str(value)
 
     def __repr__(self) -> str:
         dataset_label = self._dataset if self._dataset is not None else "auto"
-        return (
-            f"VortexInterface(dataset={dataset_label!r}, "
-            f"slice={self._slice_info!r})"
-        )
+        return f"VortexInterface(dataset={dataset_label!r}, slice={self._slice_info!r})"
 
     def _repr_html_(self) -> str:
         """Compact notebook card with available vortex submodules."""
         from html import escape as _esc
 
-        dataset = _esc(str(self._dataset if self._dataset is not None else "auto"))
-        slice_label = _esc(str(self._slice_info)) if self._slice_info is not None else "full"
-        namespaces = [
-            (".topology", "Topological charge & winding number detection"),
-            (".core", "Vortex core position tracking (auto, table, Gaussian, CoM, ...)"),
-            (".trajectory", "Core trajectory analysis & statistics"),
-            (".spectrum", "Gyration frequency spectrum (FFT of core motion)"),
-            (".modes", "Mode classification & identification"),
-            (".nonlinear", "Nonlinear dynamics analysis"),
-            (".events", "Event detection (switching, nucleation, ...)"),
-            (".signals", "MR/TMR, voltage and signal spectra"),
-            (".energy", "Energy channels from table (E_ex, E_demag, ...)"),
-            (".model", "Analytical models (Thiele adapters)"),
-            (".bridge", "Numerical ↔ analytical comparison/fit glue"),
-            (".autofit", "Physics-informed autofit of analytical models"),
-        ]
-        ns_rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
-            for n, d in namespaces
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ADVANCED,
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
         )
-        shortcuts = [
-            (".track(method='gaussian', **kw)", "Shortcut → core.track()"),
-            (".detect(**kw)", "Shortcut → topology.detect()"),
-            (".show_simulation_params()", "Show resolved simulation parameters"),
-        ]
-        sc_rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
-            for m, d in shortcuts
+
+        dataset = _esc(str(self._dataset if self._dataset is not None else "auto"))
+        slice_label = (
+            _esc(str(self._slice_info)) if self._slice_info is not None else "full"
+        )
+        namespace_rows = "".join(
+            [
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.topology</td><td style='padding:5px 8px;color:#f8f8f2;'>Topological charge, winding number and defect detection.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.core</td><td style='padding:5px 8px;color:#f8f8f2;'>Core tracking from magnetization or table data.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.trajectory</td><td style='padding:5px 8px;color:#f8f8f2;'>Trajectory fitting, orbit statistics and steady-state windows.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.spectrum</td><td style='padding:5px 8px;color:#f8f8f2;'>Gyration / breathing spectra and spectrogram workflows.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.modes</td><td style='padding:5px 8px;color:#f8f8f2;'>Mode classification, labeling and branch interpretation.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.nonlinear</td><td style='padding:5px 8px;color:#f8f8f2;'>Nonlinear coefficients, amplitude equations and Thiele-style reductions.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.events</td><td style='padding:5px 8px;color:#f8f8f2;'>Switching, expulsion, intermittency and regime-change detection.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.signals</td><td style='padding:5px 8px;color:#f8f8f2;'>MR/TMR, voltage traces and signal-domain power spectra.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.energy</td><td style='padding:5px 8px;color:#f8f8f2;'>Energy-channel analysis from table columns.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.model / .bridge / .autofit</td><td style='padding:5px 8px;color:#f8f8f2;'>Analytical models, numerical-analytical comparison and parameter autofit.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#8be9fd;'>.plot / .plt</td><td style='padding:5px 8px;color:#f8f8f2;'>High-level plotting shortcuts for the vortex workflow.</td></tr>",
+            ]
+        )
+        namespace_table = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Namespace Catalog</b><br>"
+            "<table style='width:100%;border-collapse:collapse;margin-top:6px;'>"
+            "<thead><tr style='text-align:left;background:rgba(68,71,90,0.4);'>"
+            "<th style='padding:4px 8px;color:#f8f8f2;'>Accessor</th>"
+            "<th style='padding:4px 8px;color:#f8f8f2;'>What it gives you</th>"
+            "</tr></thead>"
+            f"<tbody>{namespace_rows}</tbody></table></div>"
+        )
+        entry_rows = "".join(
+            [
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#ffb86c;'>Need the core trajectory first</td><td style='padding:5px 8px;color:#f8f8f2;'><code>.track(...)</code> or <code>.core.track(...)</code></td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#ffb86c;'>Need orbit metrics / steady-state window</td><td style='padding:5px 8px;color:#f8f8f2;'><code>.trajectory</code></td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#ffb86c;'>Need frequency / PSD / spectrogram</td><td style='padding:5px 8px;color:#f8f8f2;'><code>.spectrum</code></td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#ffb86c;'>Need mode identity or branch labeling</td><td style='padding:5px 8px;color:#f8f8f2;'><code>.modes</code></td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#ffb86c;'>Need switching / expulsion diagnostics</td><td style='padding:5px 8px;color:#f8f8f2;'><code>.events</code> and <code>.check_health(...)</code></td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#ffb86c;'>Need analytical fit or comparison</td><td style='padding:5px 8px;color:#f8f8f2;'><code>.model</code>, <code>.bridge</code>, <code>.autofit</code></td></tr>",
+            ]
+        )
+        entry_table = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Common Entrypoints</b><br>"
+            "<table style='width:100%;border-collapse:collapse;margin-top:6px;'>"
+            "<thead><tr style='text-align:left;background:rgba(68,71,90,0.4);'>"
+            "<th style='padding:4px 8px;color:#f8f8f2;'>If you want to...</th>"
+            "<th style='padding:4px 8px;color:#f8f8f2;'>Start here</th>"
+            "</tr></thead>"
+            f"<tbody>{entry_rows}</tbody></table></div>"
+        )
+        method_rows = "".join(
+            [
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>track(method='auto', **kwargs)</td><td style='padding:5px 8px;color:#f8f8f2;'>Top-level shortcut to <code>core.track()</code>. Typical methods: <code>'auto'</code>, <code>'gaussian'</code>, <code>'centroid'</code>, <code>'table'</code>.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>detect(**kwargs)</td><td style='padding:5px 8px;color:#f8f8f2;'>Top-level shortcut to <code>topology.detect()</code> for charge / winding analysis.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>check_health(...)</td><td style='padding:5px 8px;color:#f8f8f2;'>Inspect orbit radius, annihilation risk and boundary/core thresholds. Key args: <code>trajectory=</code>, <code>disk_radius=</code>, <code>force=</code>.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>show_simulation_params(...)</td><td style='padding:5px 8px;color:#f8f8f2;'>Resolve and render simulation parameters. Key args: <code>params=</code>, <code>model=</code>, <code>current=</code>.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>interactive(figsize=(10, 7), dpi=100)</td><td style='padding:5px 8px;color:#f8f8f2;'>Open the ipywidgets vortex dashboard that bundles tracking, topology, trajectory, spectrum and events.</td></tr>",
+            ]
+        )
+        method_table = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Top-level Methods</b><br>"
+            "<table style='width:100%;border-collapse:collapse;margin-top:6px;'>"
+            "<thead><tr style='text-align:left;background:rgba(68,71,90,0.4);'>"
+            "<th style='padding:4px 8px;color:#f8f8f2;'>Call</th>"
+            "<th style='padding:4px 8px;color:#f8f8f2;'>Use it when</th>"
+            "</tr></thead>"
+            f"<tbody>{method_rows}</tbody></table></div>"
+        )
+        workflow = examples_section_html(
+            "\n".join(
+                [
+                    "# Workflow 1: trajectory-first analysis",
+                    "vortex = job[-1].solitons.vortex",
+                    "traj = vortex.track(method='gaussian', core_threshold=0.35)",
+                    "traj.plt.trajectory()",
+                    "vortex.events.detect(trajectory=traj)",
+                    "",
+                    "# Workflow 2: spectrum and mode interpretation",
+                    "spec = vortex.spectrum.gyration(method='welch', nperseg=1024)",
+                    "spec.plt.power_spectrum()",
+                    "vortex.modes.classify()",
+                    "",
+                    "# Workflow 3: sanity / failure diagnostics",
+                    "health = vortex.check_health(boundary_fraction=0.85, force=True)",
+                    "vortex.show_simulation_params(model='thiele')",
+                ]
+            ),
+            title="Recommended Workflows",
         )
         example = (
             "# Quick vortex core tracking\n"
@@ -626,50 +735,105 @@ class VortexInterface:
             "vortex.spectrum.compute()\n"
             "vortex.spectrum.plot()"
         )
-        return (
-            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
-            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
-            "Vortex Dynamics Interface</div>"
-            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
-            "Comprehensive vortex analysis namespace</div>"
-            # Context
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='display:flex;flex-wrap:wrap;gap:12px;font-size:0.9em;'>"
-            f"<div><span style='color:#94a3b8;'>Dataset:</span> "
-            f"<code style='color:#cbd5e1;'>{dataset}</code></div>"
-            f"<div><span style='color:#94a3b8;'>Slice:</span> "
-            f"<code style='color:#cbd5e1;'>{slice_label}</code></div>"
-            "</div></div>"
-            # Namespaces
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Namespaces</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
-            "<thead><tr style='text-align:left;background:rgba(51,65,85,0.6);'>"
-            "<th style='padding:4px 8px;color:#e2e8f0;'>Accessor</th>"
-            "<th style='padding:4px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
-            f"<tbody>{ns_rows}</tbody></table></div>"
-            # Shortcuts
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Shortcuts</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
-            f"{sc_rows}</table></div>"
-            # Examples
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
-            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
-            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
-            f"<code>{example}</code></pre></div>"
-            "</div>"
+        api_card = api_help_html(
+            self,
+            title="Vortex API help",
+            prefix="job[0].vortex",
+            properties=[
+                ("config", "Mutable vortex configuration"),
+                ("topology", "Topological charge and winding number detection"),
+                ("core", "Vortex core tracking namespace"),
+                ("trajectory", "Trajectory analysis namespace"),
+                ("spectrum", "Vortex-specific spectrum analysis namespace"),
+                ("modes", "Mode classification namespace"),
+                ("nonlinear", "Nonlinear dynamics namespace"),
+                ("events", "Event detection namespace"),
+                ("signals", "MR/TMR, voltage and signal spectra namespace"),
+                ("energy", "Energy-analysis namespace"),
+                ("model", "Analytical model namespace"),
+                ("bridge", "Numerical-to-analytical comparison/fit namespace"),
+                ("autofit", "Physics-informed autofit namespace"),
+                ("plot", "High-level vortex plotting namespace"),
+                ("plt", "Alias for plot"),
+            ],
+            methods=[
+                "track",
+                "detect",
+                "check_health",
+                "show_simulation_params",
+                "interactive",
+            ],
+            subtitle="Live signatures for top-level vortex shortcuts and namespace map.",
+            chrome=False,
+        )
+        return node_card_html(
+            "Vortex Dynamics Interface",
+            icon="🌀",
+            subtitle="Comprehensive vortex analysis namespace.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("dataset", dataset, NODE_COLOR_COMPUTE),
+                        ("slice", slice_label, NODE_COLOR_PLOT),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Core:",
+                            [
+                                (".core", NODE_COLOR_COMPUTE),
+                                (".trajectory", NODE_COLOR_ANALYSIS),
+                                (".spectrum", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                        (
+                            "Physics:",
+                            [
+                                (".topology", NODE_COLOR_ANALYSIS),
+                                (".modes", NODE_COLOR_ANALYSIS),
+                                (".nonlinear", NODE_COLOR_ADVANCED),
+                                (".events", NODE_COLOR_UTIL),
+                                (".signals", NODE_COLOR_UTIL),
+                                (".energy", NODE_COLOR_UTIL),
+                            ],
+                        ),
+                        (
+                            "Models:",
+                            [
+                                (".model", NODE_COLOR_PLOT),
+                                (".bridge", NODE_COLOR_PLOT),
+                                (".autofit", NODE_COLOR_ADVANCED),
+                            ],
+                        ),
+                        (
+                            "Shortcuts:",
+                            [
+                                (".track(method='gaussian', **kw)", NODE_COLOR_COMPUTE),
+                                (".detect(**kw)", NODE_COLOR_ANALYSIS),
+                                (".show_simulation_params()", NODE_COLOR_UTIL),
+                            ],
+                        ),
+                    ]
+                ),
+                entry_table,
+                namespace_table,
+                method_table,
+                workflow,
+                examples_section_html(example),
+            ],
+            api=api_card,
+            uid="vortex-interface",
         )
 
-    def interactive(self, figsize=(10, 7), dpi=100):
+    def interactive(
+        self,
+        figsize=(10, 7),
+        dpi=100,
+        *,
+        trajectory_source: str = "magnetization",
+        center_mode: str = "auto",
+    ):
         """Open the interactive vortex dynamics dashboard.
 
         The dashboard integrates all analysis modules (core tracking, topology,
@@ -682,6 +846,12 @@ class VortexInterface:
             Figure size for plot panels (width, height in inches).
         dpi : int
             Plot resolution.
+        trajectory_source : {"magnetization", "table", "compare"}
+            Default source selected in the Trajectory tab. ``table`` uses the
+            scalar table core position, which often starts at simulation time 0,
+            while ``magnetization`` tracks saved magnetization frames.
+        center_mode : {"auto", "orbit", "disk", "raw"}
+            Default centering mode used by Core tracking and Trajectory plots.
 
         Returns
         -------
@@ -690,6 +860,12 @@ class VortexInterface:
         """
         from .ui import VortexInteractiveDashboard
 
-        dashboard = VortexInteractiveDashboard(self, figsize=figsize, dpi=dpi)
+        dashboard = VortexInteractiveDashboard(
+            self,
+            figsize=figsize,
+            dpi=dpi,
+            trajectory_source=trajectory_source,
+            center_mode=center_mode,
+        )
         dashboard.show()
         return dashboard

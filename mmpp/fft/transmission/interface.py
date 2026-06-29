@@ -20,7 +20,9 @@ log = get_mmpp_logger("mmpp.fft.transmission.interface")
 class FFTTransmissionHelpAccessor:
     """Callable helper namespace for transmission workflows."""
 
-    def __init__(self, transmission: "FFTTransmissionInterface", owner: str = "fft.transmission"):
+    def __init__(
+        self, transmission: "FFTTransmissionInterface", owner: str = "fft.transmission"
+    ):
         self._transmission = transmission
         self._owner = owner
 
@@ -474,6 +476,45 @@ class FFTTransmissionInterface:
             return self._rich_display()
         except Exception:
             return self._basic_display()
+
+    def _repr_html_(self) -> str:
+        """HTML representation for Jupyter notebooks."""
+        try:
+            from mmpp._repr_helpers import api_help_html
+
+            dataset_hint = self._job_result.get_largest_m_dataset()
+            prefix = "job[0].fft.transmission"
+            if self.dataset_name:
+                prefix = f"job[0].{self.dataset_name}.fft.transmission"
+            return api_help_html(
+                self,
+                title="FFT transmission API help",
+                prefix=prefix,
+                subtitle=(
+                    f"Transmission interface for dataset {dataset_hint!r}. "
+                    "Live signatures are generated from the callable interface."
+                ),
+                properties=[
+                    ("helpers", "Callable help namespace for transmission workflows"),
+                    ("help", "Alias for helpers"),
+                    (
+                        "dataset_name",
+                        "Dataset override carried by dataset-aware wrappers",
+                    ),
+                    ("slice_info", "Slice carried by dataset-aware wrappers"),
+                ],
+                methods=[
+                    "compute",
+                    "plot_transmission",
+                    "visualize_mode",
+                    "visualize_modes",
+                    "animate_mode",
+                    "save_mode_visualizations",
+                    "clone_for_dataset",
+                ],
+            )
+        except Exception:
+            return ""
 
     # Internal helpers -------------------------------------------------
     def _basic_display(self) -> str:

@@ -23,6 +23,69 @@ from ..cli.logging_config import get_mmpp_logger, setup_mmpp_logging
 # Get logger for FMR modes
 log = get_mmpp_logger("mmpp.fft.modes")
 
+
+def _write_zarr_array(
+    group: Any,
+    name: str,
+    data: Any,
+    *,
+    shape: Optional[tuple[int, ...]] = None,
+    dtype: Any = None,
+    chunks: Optional[tuple[int, ...]] = None,
+    overwrite: bool = True,
+) -> Any:
+    """Write an array with a Zarr v2/v3 compatible group API."""
+    array_data = (
+        np.asarray(data, dtype=dtype) if dtype is not None else np.asarray(data)
+    )
+    array_shape = shape or array_data.shape
+    array_dtype = dtype or array_data.dtype
+
+    if hasattr(group, "array"):
+        return group.array(
+            name,
+            data=array_data,
+            shape=array_shape,
+            dtype=array_dtype,
+            chunks=chunks,
+            overwrite=overwrite,
+        )
+
+    if overwrite:
+        try:
+            if name in group:
+                del group[name]
+        except Exception:
+            pass
+
+    if hasattr(group, "create_array"):
+        try:
+            return group.create_array(
+                name,
+                data=array_data,
+                shape=array_shape,
+                dtype=array_dtype,
+                chunks=chunks,
+                overwrite=overwrite,
+            )
+        except (TypeError, ValueError):
+            return group.create_array(
+                name,
+                data=array_data,
+                chunks=chunks,
+                overwrite=overwrite,
+            )
+
+    return group.create_dataset(
+        name,
+        data=array_data,
+        shape=array_shape,
+        dtype=array_dtype,
+        chunks=chunks,
+        overwrite=overwrite,
+    )
+
+
 # Import electromagnetic analysis module
 try:
     from .electromagnetic_analysis import (
@@ -3312,7 +3375,8 @@ Interactive Spectrum Controls:
             # This avoids conflicts with standard FFT data format
 
             # Save frequencies in modes group only
-            modes_group.array(
+            _write_zarr_array(
+                modes_group,
                 "freqs",
                 data=freqs,
                 shape=freqs.shape,
@@ -3323,7 +3387,8 @@ Interactive Spectrum Controls:
 
             # Save complex modes (chunked only on first dimension)
             chunks = (1,) + fft_result.shape[1:]
-            modes_group.array(
+            _write_zarr_array(
+                modes_group,
                 "arr",
                 data=fft_result.astype(np.complex64, copy=False),
                 shape=fft_result.shape,
@@ -3347,7 +3412,8 @@ Interactive Spectrum Controls:
                 if reduction_axes
                 else np.sum(power_spec, keepdims=False)
             )
-            modes_group.array(
+            _write_zarr_array(
+                modes_group,
                 "power_max",
                 data=power_max.astype(np.float32, copy=False),
                 shape=power_max.shape,
@@ -3355,7 +3421,8 @@ Interactive Spectrum Controls:
                 chunks=power_max.shape,  # Use data shape as chunk size
                 overwrite=True,
             )
-            modes_group.array(
+            _write_zarr_array(
+                modes_group,
                 "power_sum",
                 data=power_sum.astype(np.float32, copy=False),
                 shape=power_sum.shape,

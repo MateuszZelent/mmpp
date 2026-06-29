@@ -119,6 +119,9 @@ class DatasetPlotAccessor(
             (".heatmap(**kw)",
              "2-D heatmap of selected component over time",
              "component, cmap, vmin/vmax, aspect."),
+            (".interactive(remove_static=True, static_reference=0, **kw)",
+             "Notebook-friendly time browser with slider, play button, and optional static subtraction",
+             "mode='snapshot'|'heatmap', component, z, fps, toolbar, remove_static subtracts m[static_reference]."),
             (".k3d.magnetization(**kw)",
              "Micromagnetic 3-D view with voxel colouring and vectors",
              "style='hsl'|'mz'|'norm', show_vectors, voxel_opacity, quiver_density, "

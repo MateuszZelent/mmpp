@@ -111,16 +111,22 @@ def field_resolved_cpp(
         fixed_layer_position=(
             fixed_layer_position
             if fixed_layer_position is not None
-            else _resolve_optional_value(material, "fixed_layer_position", "FixedLayerPosition")
+            else _resolve_optional_value(
+                material, "fixed_layer_position", "FixedLayerPosition"
+            )
         ),
-        Lambda=Lambda if Lambda is not None else _resolve_optional_value(material, "Lambda"),
+        Lambda=Lambda
+        if Lambda is not None
+        else _resolve_optional_value(material, "Lambda"),
         epsilonprime=(
             epsilonprime
             if epsilonprime is not None
             else _resolve_optional_value(material, "epsilonprime")
         ),
     )
-    resolved_polarizer = spin_ctx.metadata.get("polarizer", polarizer or (0.0, 0.0, 1.0))
+    resolved_polarizer = spin_ctx.metadata.get(
+        "polarizer", polarizer or (0.0, 0.0, 1.0)
+    )
 
     model = FieldResolvedCPPThieleModel(
         material=spin_ctx.material,

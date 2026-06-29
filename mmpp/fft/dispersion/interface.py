@@ -5,6 +5,8 @@ Provides user-friendly interface for dispersion analysis integrated with MMPP jo
 Similar to FFTModeInterface but focused on spin-wave dispersion relations.
 """
 
+from __future__ import annotations
+
 import asyncio
 import copy
 import hashlib
@@ -21,19 +23,19 @@ from html import escape as _html_escape
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, TYPE_CHECKING, Union, cast
 
-import matplotlib.pyplot as plt
 import numpy as np
 import zarr
-from matplotlib.colors import CenteredNorm, FuncNorm, LogNorm, Normalize, PowerNorm, SymLogNorm, TwoSlopeNorm
 
 try:
     from scipy.signal import savgol_filter
     from scipy.stats import median_abs_deviation
+
     _SCIPY_AVAILABLE = True
 except ImportError:
     _SCIPY_AVAILABLE = False
 
-from .core import SpinWaveAnalyzer, DispersionConfig
+from .core import SpinWaveAnalyzer, DispersionConfig, _normalize_dispersion_scaling
+from ._interactive_viewer import split_dispersion_interactive_kwargs
 from ..method_helpers import CallableMethodHelper
 from .models import DispersionResult1D, DispersionResult2D, DispersionBranch
 from .utils import (
@@ -44,13 +46,116 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
+
     from .modes import InteractiveDispersionModes
 
 logger = logging.getLogger(__name__)
 
 # Bump this when cached dispersion results are no longer compatible due to
 # algorithmic/axis-convention changes. Included in the cache context hash.
-DISPERSION_CACHE_SCHEMA_VERSION = 2
+DISPERSION_CACHE_SCHEMA_VERSION = 4
+
+
+class _DispersionProgressReporter:
+    """Small stage-based progress reporter for notebook-facing dispersion calls."""
+
+    def __init__(
+        self,
+        *,
+        enabled: Any = True,
+        callback: Optional[Any] = None,
+        label: str = "MMPP dispersion",
+        total: int = 5,
+    ) -> None:
+        self.enabled = bool(enabled) or callback is not None
+        self._visible = bool(enabled)
+        self.callback = callback
+        self.label = label
+        self.total = max(1, int(total))
+        self.count = 0
+        self._bar: Any = None
+        self._use_print = True
+
+        if self._visible and enabled not in {False, "print"}:
+            try:
+                from tqdm.auto import tqdm
+
+                self._bar = tqdm(
+                    total=self.total,
+                    desc=self.label,
+                    leave=True,
+                    unit="stage",
+                )
+                self._use_print = False
+            except Exception:
+                self._bar = None
+                self._use_print = True
+
+    def emit(self, event: Any = None, /, **kwargs: Any) -> None:
+        """Emit one progress event to callback and visible notebook output."""
+        if isinstance(event, dict):
+            payload = dict(event)
+            payload.update(kwargs)
+        else:
+            payload = dict(kwargs)
+            if event is not None:
+                payload.setdefault("message", str(event))
+        stage = str(payload.get("stage", "progress"))
+        message = str(payload.get("message", stage))
+        payload.setdefault("stage", stage)
+        payload.setdefault("message", message)
+
+        if self.callback is not None:
+            self.callback(payload)
+
+        if not self._visible:
+            return
+
+        should_advance = self.count < self.total
+        if should_advance:
+            self.count += 1
+        if self._bar is not None:
+            self._bar.set_description(f"{self.label}: {stage}")
+            self._bar.set_postfix_str(message[:80])
+            if should_advance:
+                self._bar.update(1)
+        elif self._use_print:
+            print(
+                f"[{self.label}] {self.count}/{self.total} {stage}: {message}",
+                flush=True,
+            )
+
+    def close(self) -> None:
+        if self._bar is not None:
+            try:
+                remaining = self.total - self.count
+                if remaining > 0:
+                    self._bar.update(remaining)
+                self._bar.close()
+            except Exception:
+                pass
+
+
+def _emit_dispersion_progress(
+    callback: Optional[Any],
+    stage: str,
+    message: str,
+    **extra: Any,
+) -> None:
+    """Emit a progress callback event if one was supplied."""
+    if callback is None:
+        return
+    callback({"stage": stage, "message": message, **extra})
+
+
+def _interactive_modes_requested(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "required"}
+    return False
 
 
 def _format_slice_for_display(slice_info: Optional[Any]) -> str:
@@ -85,12 +190,10 @@ def _format_dataset_accessor(dataset_name: str) -> str:
 def _merge_dicts(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in extra.items():
-        if (
-            key in merged
-            and isinstance(merged[key], dict)
-            and isinstance(value, dict)
-        ):
-            merged[key] = _merge_dicts(cast(dict[str, Any], merged[key]), cast(dict[str, Any], value))
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _merge_dicts(
+                cast(dict[str, Any], merged[key]), cast(dict[str, Any], value)
+            )
         else:
             merged[key] = value
     return merged
@@ -99,7 +202,9 @@ def _merge_dicts(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
 class _DispersionMethodHelper:
     """Callable helper that provides rich HTML help for dispersion methods."""
 
-    def __init__(self, interface: "FFTDispersionInterface", method, label: str, kind: str):
+    def __init__(
+        self, interface: "FFTDispersionInterface", method, label: str, kind: str
+    ):
         self._interface = interface
         self._method = method
         self._label = label
@@ -127,7 +232,9 @@ class _DispersionMethodHelper:
 class FFTDispersionHelpAccessor:
     """Callable helper namespace for major dispersion-analysis stages."""
 
-    def __init__(self, dispersion: "FFTDispersionInterface", owner: str = "fft.dispersion"):
+    def __init__(
+        self, dispersion: "FFTDispersionInterface", owner: str = "fft.dispersion"
+    ):
         self._dispersion = dispersion
         self._owner = owner
 
@@ -150,8 +257,8 @@ class FFTDispersionHelpAccessor:
     def configure(self) -> CallableMethodHelper:
         return self._method(
             "configure",
-            "Configure dispersion defaults (dt, dx, component, tmax).",
-            ["job[0].fft.dispersion.help.configure(component='perp', tmax=800)"],
+            "Configure dispersion defaults (dt, dx, component, tmin/tmax).",
+            ["job[0].fft.dispersion.help.configure(component='perp', tmin=0, tmax=800)"],
         )
 
     @property
@@ -203,14 +310,238 @@ class FFTDispersionHelpAccessor:
         )
 
 
+class _DispersionPlotAccessor:
+    """Quick plotting namespace for compute-then-viewer dispersion workflows."""
+
+    def __init__(self, interface: "FFTDispersionInterface") -> None:
+        self._interface = interface
+
+    def interactive(self, **kwargs: Any) -> Any:
+        """Compute 1D dispersion and return a lightweight interactive viewer."""
+        tmin = kwargs.pop("tmin", None)
+        tmax = kwargs.pop("tmax", None)
+        cache = kwargs.pop("cache", None)
+        progress = kwargs.pop("progress", False)
+        progress_callback = kwargs.pop("progress_callback", None)
+        progress_label = str(kwargs.pop("progress_label", "MMPP dispersion"))
+        progress_reporter = _DispersionProgressReporter(
+            enabled=progress,
+            callback=progress_callback,
+            label=progress_label,
+            total=8,
+        )
+        compute_kwargs, viewer_kwargs = split_dispersion_interactive_kwargs(kwargs)
+        if _interactive_modes_requested(viewer_kwargs.get("modes", "auto")):
+            compute_kwargs.setdefault("store_complex", True)
+        else:
+            compute_kwargs.setdefault("store_complex", False)
+
+        old_tmin = getattr(self._interface, "_tmin", None)
+        old_tmax = getattr(self._interface, "_tmax", None)
+        old_analyzer = getattr(self._interface, "_analyzer", None)
+        old_cache_dir = getattr(self._interface, "_cache_dir", None)
+        try:
+            slice_label = _format_slice_for_display(
+                getattr(self._interface, "slice_info", None)
+            )
+            infer_time_length = getattr(
+                self._interface,
+                "_infer_time_length_from_slice",
+                lambda: None,
+            )
+            slice_steps = infer_time_length()
+            if slice_steps is not None:
+                time_label = f"time_steps={slice_steps} (from slice)"
+            elif tmin is not None or tmax is not None:
+                time_label = (
+                    "time_window="
+                    f"{'' if tmin is None else int(tmin)}:"
+                    f"{'' if tmax is None else int(tmax)}"
+                )
+            else:
+                determine_tmax = getattr(
+                    self._interface,
+                    "_determine_tmax",
+                    lambda default=None: default,
+                )
+                inferred_tmax = determine_tmax()
+                time_label = (
+                    "time_steps=all"
+                    if inferred_tmax is None
+                    else f"time_steps={int(inferred_tmax)}"
+                )
+            progress_reporter.emit(
+                stage="prepare",
+                message=(
+                    f"dataset={getattr(self._interface, 'dataset_name', None) or '<auto>'} "
+                    f"slice={slice_label or '[full]'} "
+                    f"{time_label} "
+                    f"axis={compute_kwargs.get('axis', 'x')} "
+                    f"store_complex={compute_kwargs.get('store_complex')}"
+                ),
+                time_steps=slice_steps,
+                requested_tmin=tmin,
+                requested_tmax=tmax,
+            )
+            if tmin is not None:
+                self._interface._tmin = int(tmin)
+            if tmax is not None:
+                self._interface._tmax = int(tmax)
+            if tmin is not None or tmax is not None:
+                self._interface._analyzer = None
+            if cache is not None:
+                self._interface._cache_dir = str(cache)
+                compute_kwargs.setdefault("disk_cache", True)
+            if progress_reporter.enabled:
+                compute_kwargs["progress_callback"] = progress_reporter.emit
+            result = self._interface.compute_1d(**compute_kwargs)
+            result_interface = self._interface
+            try:
+                result_interface = self._interface.clone_for_dataset(
+                    getattr(self._interface, "dataset_name", None),
+                    getattr(self._interface, "slice_info", None),
+                )
+                result_interface._analyzer = getattr(self._interface, "_analyzer", None)
+            except Exception:
+                result_interface = self._interface
+            result._interface = result_interface
+            progress_reporter.emit(
+                stage="result",
+                message=f"dispersion result ready shape={getattr(result, 'shape', '?')}",
+            )
+        finally:
+            self._interface._tmin = old_tmin
+            self._interface._tmax = old_tmax
+            self._interface._analyzer = old_analyzer
+            self._interface._cache_dir = old_cache_dir
+        progress_reporter.emit(stage="viewer", message="building interactive viewer")
+        show_requested = bool(viewer_kwargs.pop("show", True))
+        try:
+            viewer = result.plot.interactive(show=False, **viewer_kwargs)
+        finally:
+            progress_reporter.emit(stage="done", message="interactive dispersion ready")
+            progress_reporter.close()
+        if show_requested:
+            toolbar = viewer.options.get("toolbar", "auto")
+            return viewer.show(toolbar=toolbar)
+        return viewer
+
+    def __repr__(self) -> str:
+        return "<FFTDispersionInterface.plot: interactive>"
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        usage_prefix = self._interface._usage_prefix()
+        dataset_label = self._interface.dataset_name or "auto"
+        slice_label = _format_slice_for_display(self._interface.slice_info) or "full"
+        config_state = "custom" if self._interface._config else "default"
+        filters_label = (
+            ", ".join(self._interface._describe_filter_flags())
+            if self._interface._filters_config
+            else "none"
+        )
+        plot_prefix = f"{usage_prefix}.plot"
+
+        api = api_help_html(
+            self,
+            title="Dispersion plot helper API",
+            prefix=plot_prefix,
+            methods=["interactive"],
+            subtitle="Compute-then-view helper for the interactive dispersion explorer.",
+            chrome=False,
+        )
+        examples = examples_section_html(
+            "\n".join(
+                [
+                    f"plot = {plot_prefix}",
+                    "viewer = plot.interactive(axis='x', component='mx', fmax=800, show=False)",
+                    "",
+                    "viewer = plot.interactive(",
+                    "    axis='x',",
+                    "    component='mx',",
+                    "    fmax=800,",
+                    "    scaling='amplitude_squared',",
+                    "    toolbar='auto',",
+                    "    show=False,",
+                    ")",
+                    "viewer.show(toolbar='auto')",
+                ]
+            )
+        )
+        return node_card_html(
+            "Dispersion Plot Helper",
+            icon="📈",
+            subtitle="Compute 1D spin-wave dispersion and open the shared toolbar explorer.",
+            badge=("interactive", NODE_COLOR_PLOT),
+            sections=[
+                metrics_section_html(
+                    [
+                        ("dataset", dataset_label, NODE_COLOR_COMPUTE),
+                        ("slice", slice_label, NODE_COLOR_ANALYSIS),
+                        ("config", config_state, NODE_COLOR_UTIL),
+                        ("filters", filters_label, NODE_COLOR_UTIL),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Explorer:",
+                            [
+                                (".interactive(axis='x', show=False)", NODE_COLOR_PLOT),
+                                (".interactive(toolbar='auto')", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                        (
+                            "Compute:",
+                            [
+                                ("axis='x'|'y'", NODE_COLOR_COMPUTE),
+                                ("component='mx'|'my'|'mz'|'perp'", NODE_COLOR_COMPUTE),
+                                ("scaling='amplitude_squared'", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                        (
+                            "Runtime:",
+                            [
+                                ("disk_cache=False", NODE_COLOR_UTIL),
+                                ("store_complex=True", NODE_COLOR_UTIL),
+                                ("tmin=..., tmax=...", NODE_COLOR_UTIL),
+                            ],
+                        ),
+                    ]
+                ),
+                examples,
+            ],
+            api=api,
+            uid="fft-dispersion-plot",
+        )
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        html = self._repr_html_()
+        text = self.__repr__()
+        if html:
+            return {"text/html": html, "text/plain": text}
+        return {"text/plain": text}
+
+
 class FFTDispersionInterface:
     """
     Enhanced FFT interface with dispersion analysis capabilities.
-    
+
     Provides elegant syntax like: job[0].fft.dispersion.plot_dispersion()
     or job[0].m_layer.fft.dispersion.compute_1d()
     """
-    
+
     def __init__(
         self,
         parent_fft,
@@ -223,7 +554,8 @@ class FFTDispersionInterface:
         self.slice_info = slice_info
         self._analyzer = None
         self._config = None
-        self._tmax: Optional[int] = 100
+        self._tmin: Optional[int] = None
+        self._tmax: Optional[int] = None
         self._memory_cache: dict[str, DispersionResult1D] = {}
         self._filters_config: Optional[dict[str, Any]] = None
         self._last_plot_result: Optional[DispersionResult1D] = None
@@ -274,6 +606,7 @@ class FFTDispersionInterface:
             slice_info=slice_info,
         )
         clone._config = self._config
+        clone._tmin = self._tmin
         clone._tmax = self._tmax
         clone._memory_cache = self._memory_cache
         clone._filters_config = copy.deepcopy(self._filters_config)
@@ -293,17 +626,23 @@ class FFTDispersionInterface:
     def help(self) -> FFTDispersionHelpAccessor:
         """Alias for :attr:`helpers`."""
         return self.helpers
-    
+
+    @property
+    def plot(self) -> _DispersionPlotAccessor:
+        """Compute-then-plot accessor, e.g. ``.plot.interactive(show=False)``."""
+        return _DispersionPlotAccessor(self)
+
     @property
     def analyzer(self) -> SpinWaveAnalyzer:
         """Get or create SpinWaveAnalyzer instance."""
         if self._analyzer is None:
             zarr_path = self.parent_fft.job_result.path
             config = self._config or DispersionConfig()
-            effective_tmax = self._determine_tmax(default=100)
+            effective_tmax = self._determine_tmax()
             self._analyzer = SpinWaveAnalyzer(
                 zarr_path,
                 config=config,
+                tmin=self._determine_tmin(),
                 tmax=effective_tmax,
                 slice_info=self.slice_info,
                 dataset_name=self.dataset_name,
@@ -342,7 +681,7 @@ class FFTDispersionInterface:
     def last_plot_result(self) -> Optional[DispersionResult1D]:
         """
         Get the result from the most recent plot_dispersion call.
-        
+
         Returns
         -------
         DispersionResult1D or None
@@ -361,23 +700,23 @@ class FFTDispersionInterface:
     ) -> "InteractiveDispersionModes":
         """
         Access the interactive Brillouin zone folding and mode analysis.
-        
+
         Pre-computes or loads cached dispersion result to avoid re-computation
         when refreshing the interactive plot.
-        
+
         Provides tools for:
         - Folding dispersion to first Brillouin zone
         - Auto-detecting lattice constant
         - Interactive Jupyter widget visualization with spatial mode reconstruction m(x,y)
-        
+
         **Spatial Mode Reconstruction Algorithm (following Rychły et al.):**
         1. User selects (k, f) on dispersion plot
         2. Creates BZ mask for k_0 ± n·G (all periodic copies)
         3. FFT of raw M(t,x,y,z) data → M̃(f, k, orthogonal)
         4. Filter at f_0 with k-mask
-        5. IFFT over k → propagation axis  
+        5. IFFT over k → propagation axis
         6. Result: Spatial mode profile m(x, y)
-        
+
         Parameters
         ----------
         result : DispersionResult1D, optional
@@ -393,7 +732,7 @@ class FFTDispersionInterface:
             If True, force recomputation even if cached result exists.
         **compute_kwargs
             Additional arguments passed to compute_1d() (axis, component, etc.).
-        
+
         Usage
         -----
         >>> # Interactive widget in Jupyter with caching
@@ -401,72 +740,83 @@ class FFTDispersionInterface:
         ...     save=True, cache="/tmp/"
         ... )
         >>> modes.plot_interactive()
-        
+
         >>> # Pre-compute and reuse
         >>> modes = job[0].m_layer13[...].fft.dispersion.dispersion_modes(
         ...     lattice_constant_nm=470, save=True
         ... )
         >>> modes.plot_interactive(dpi=100)
         >>> modes.plot_interactive(dpi=150)  # No recomputation!
-        
+
         Returns
         -------
         InteractiveDispersionModes
             Interface for BZ folding and mode analysis with pre-loaded result
         """
         from .modes import InteractiveDispersionModes
-        
+
         # Create new instance each time to avoid stale state
         modes = InteractiveDispersionModes(self)
         modes._default_params["lattice_nm"] = lattice_constant_nm
-        
+
         # If result not provided, compute with caching support
         if result is None:
             # Set external cache directory if provided
             if cache is not None:
                 self._cache_dir = cache
                 logger.info("Using external cache directory: %s", cache)
-            
+
             # Build compute kwargs with caching
             final_compute_kwargs = dict(compute_kwargs)
             final_compute_kwargs["save"] = save
             final_compute_kwargs["force"] = force
             final_compute_kwargs["disk_cache"] = True  # Enable disk caching
-            
+
             # CRITICAL for mode reconstruction: keep orthogonal dimension!
             # We need S_complex(N_orth, N_k, N_f) for spatial mode m(x,y).
             # Force avg_over_orthogonal=False to preserve Y-axis.
             if "avg_over_orthogonal" not in final_compute_kwargs:
                 final_compute_kwargs["avg_over_orthogonal"] = False
-                logger.info("Mode visualization: setting avg_over_orthogonal=False to preserve spatial info")
+                logger.info(
+                    "Mode visualization: setting avg_over_orthogonal=False to preserve spatial info"
+                )
             elif final_compute_kwargs.get("avg_over_orthogonal", True):
                 logger.warning(
                     "avg_over_orthogonal=True will lose orthogonal spatial info! "
                     "Mode reconstruction requires avg_over_orthogonal=False."
                 )
-            
+
             # Compute dispersion with all settings
             # Note: Mode visualization uses raw M_data from analyzer, not S_local
             result = self.compute_1d(**final_compute_kwargs)
-            
+
             # Reset cache dir after computation to avoid affecting other operations
             if cache is not None:
                 self._cache_dir = None
-        
+
         # Store result in modes instance for reuse
+        result._interface = self
         modes.result = result
-        
+
         return modes
 
-    def _determine_tmax(self, default: int = 100) -> Optional[int]:
+    def _determine_tmin(self) -> Optional[int]:
+        """Determine first loaded time index for non-sliced data."""
+        if self.slice_info is not None:
+            return None
+        if self._tmin is None:
+            return None
+        return int(self._tmin)
+
+    def _determine_tmax(self, default: Optional[int] = None) -> Optional[int]:
         """
         Determine number of time steps to load based on config and slicing.
-        
+
         Priority order:
         1. Explicit slice from user (e.g., [:1000,...,2]) - ALWAYS respected
         2. Configured tmax via .configure(tmax=X)
-        3. Default tmax=100 (only if no slice and no config)
-        
+        3. Default behavior: use all available timesteps
+
         Returns
         -------
         int or None
@@ -474,44 +824,56 @@ class FFTDispersionInterface:
         """
         # Check if user provided explicit time slice
         slice_length = self._infer_time_length_from_slice()
-        
+
         if slice_length is not None:
             # User explicitly specified number of timesteps (e.g., [:1000])
-            logger.debug("Using EXPLICIT time slice from user: %d timesteps", slice_length)
+            logger.debug(
+                "Using EXPLICIT time slice from user: %d timesteps", slice_length
+            )
             return slice_length
-        
+
         # slice_length is None - could be two cases:
         # A) User used [:] (slice with no stop) → wants ALL timesteps → return None
-        # B) No slice at all (slice_info is None) → wants default optimization → use tmax
-        
+        # B) No slice at all (slice_info is None) → use configured tmax if set
+
         if self.slice_info is not None:
             # Case A: User DID provide a slice, but it's [:] (no stop)
             # This means "use ALL available timesteps"
-            logger.debug("User provided [:] slice - using ALL available timesteps (no tmax limit)")
+            logger.debug(
+                "User provided [:] slice - using ALL available timesteps (no tmax limit)"
+            )
             return None  # None means "don't limit timesteps"
-        
-        # Case B: No slice at all - use configured tmax or default
+
+        # Case B: No slice at all - use configured tmax when explicitly set.
         if self._tmax is not None:
-            logger.debug("No user slice - using configured tmax: %d timesteps", self._tmax)
+            logger.debug(
+                "No user slice - using configured tmax: %d timesteps", self._tmax
+            )
             return int(self._tmax)
-        
-        # No slice, no config - use default for optimization
-        logger.debug("No slice or config - using default tmax: %d timesteps", default)
+
+        # No slice, no config - use all data unless the caller explicitly supplies
+        # a compatibility default. The public notebook path should not silently
+        # trim the time axis.
+        if default is None:
+            logger.debug("No slice or config - using ALL available timesteps")
+            return None
+
+        logger.debug("No slice or config - using caller default tmax: %d timesteps", default)
         return default
 
     def _infer_time_length_from_slice(self) -> Optional[int]:
         """
         Infer desired time window length from dataset slice info.
-        
+
         Extracts the time dimension specification from user's slice.
         For 5D data (t,z,y,x,c): data[:1000,...,2] → returns 1000
-        
+
         Returns
         -------
         Optional[int]
             - None if no slice info, or slice is [:] (meaning "all timesteps")
             - Positive int if explicit time range specified (e.g., [:1000] → 1000)
-        
+
         Examples
         --------
         [:1000, ..., 2]  → 1000 (explicit: use 1000 timesteps)
@@ -534,18 +896,27 @@ class FFTDispersionInterface:
         if isinstance(candidate, slice):
             start = 0 if candidate.start is None else candidate.start
             stop = candidate.stop
-            
+
             # If stop is None → [:] or [start:] → user wants ALL timesteps
             if stop is None:
-                logger.debug("Time slice has no stop (e.g., [:] or [%s:]) - will use all available timesteps", start)
+                logger.debug(
+                    "Time slice has no stop (e.g., [:] or [%s:]) - will use all available timesteps",
+                    start,
+                )
                 return None
-            
+
             # If stop is specified → [:1000] → user wants EXACTLY that many
             step = 1 if candidate.step is None else candidate.step
             if step == 0:
                 return None
             length = math.ceil((stop - start) / step)
-            logger.debug("Explicit time slice detected: [%s:%s:%s] → %d timesteps", start, stop, step, length)
+            logger.debug(
+                "Explicit time slice detected: [%s:%s:%s] → %d timesteps",
+                start,
+                stop,
+                step,
+                length,
+            )
             return max(0, length)
 
         return None
@@ -577,7 +948,8 @@ class FFTDispersionInterface:
             "kwargs": self._serialize_for_json(extra_kwargs),
             "job_name": getattr(self.parent_fft.job_result, "name", None),
             "zarr_path": str(self.parent_fft.job_result.path),
-            "tmax": self._determine_tmax(default=100),
+            "tmin": self._determine_tmin(),
+            "tmax": self._determine_tmax(),
         }
         return context
 
@@ -606,10 +978,19 @@ class FFTDispersionInterface:
         if isinstance(value, (list, tuple, set)):
             return [self._serialize_for_json(v) for v in value]
         if isinstance(value, np.ndarray):
+            array = np.asarray(value)
+            if array.dtype.hasobject:
+                value_digest = hashlib.sha1(
+                    repr(array.tolist()).encode("utf-8")
+                ).hexdigest()
+            else:
+                contiguous = np.ascontiguousarray(array)
+                value_digest = hashlib.sha1(contiguous.tobytes(order="C")).hexdigest()
             return {
                 "type": "ndarray",
-                "shape": list(value.shape),
-                "dtype": str(value.dtype),
+                "shape": list(array.shape),
+                "dtype": str(array.dtype),
+                "value_sha1": value_digest,
             }
         try:
             return self._serialize_for_json(asdict(value))  # type: ignore[arg-type]
@@ -645,7 +1026,7 @@ class FFTDispersionInterface:
         if node is None:
             return None
         try:
-            return np.array(node[...] )
+            return np.array(node[...])
         except Exception:  # noqa: BLE001
             try:
                 return np.array(node)
@@ -657,11 +1038,12 @@ class FFTDispersionInterface:
         """Create a dataset under ``group`` with compatibility for zarr API variants."""
 
         create = getattr(group, "create_dataset")
-        
+
         # Convert data to numpy array to get shape and dtype
         import numpy as np
+
         data_array = np.asarray(data)
-        
+
         # Standard parameters all zarr versions should accept
         base_kwargs = {
             "data": data_array,
@@ -729,38 +1111,40 @@ class FFTDispersionInterface:
     def _get_external_cache_group(self, write: bool = False) -> Optional[zarr.Group]:
         """
         Get zarr group for external cache directory.
-        
+
         Creates structure: <cache_dir>/mmpp_cache_<hash>/fft/dispersion/<dataset>
         """
         if self._cache_dir is None:
             return None
-        
+
         cache_base = Path(self._cache_dir)
         if not cache_base.exists():
             if not write:
                 return None
             cache_base.mkdir(parents=True, exist_ok=True)
-        
+
         # Create unique cache directory
         cache_hash = self._get_cache_hash()
         cache_path = cache_base / f"mmpp_cache_{cache_hash}"
-        
+
         mode = "a" if write else "r"
         try:
             root = zarr.open(str(cache_path), mode=mode)
         except (OSError, PermissionError, FileNotFoundError) as exc:
             if write:
-                logger.warning("Cannot create external cache at %s: %s", cache_path, exc)
+                logger.warning(
+                    "Cannot create external cache at %s: %s", cache_path, exc
+                )
                 return None
             logger.debug("External cache not available at %s: %s", cache_path, exc)
             return None
-        
+
         if not hasattr(root, "get"):
             logger.debug("External cache root is not a group")
             return None
-        
+
         root_group = cast(Any, root)
-        
+
         # Create /fft/dispersion/<dataset> structure
         fft_node = root_group.get("fft")
         if fft_node is None:
@@ -771,7 +1155,7 @@ class FFTDispersionInterface:
             fft_group = fft_node
         else:
             return None
-        
+
         dispersion_node = fft_group.get("dispersion")
         if dispersion_node is None:
             if not write:
@@ -781,7 +1165,7 @@ class FFTDispersionInterface:
             dispersion_group = dispersion_node
         else:
             return None
-        
+
         dataset_key = self._sanitize_name(self.dataset_name or "__global__")
         dataset_node = dispersion_group.get(dataset_key)
         if dataset_node is None:
@@ -797,15 +1181,17 @@ class FFTDispersionInterface:
             dataset_group = dataset_node
         else:
             return None
-        
+
         return dataset_group
 
-    def _get_dispersion_dataset_group(self, write: bool = False) -> Optional[zarr.Group]:
+    def _get_dispersion_dataset_group(
+        self, write: bool = False
+    ) -> Optional[zarr.Group]:
         """Get dispersion cache group - uses external cache if _cache_dir is set."""
         # Priority: external cache > job zarr cache
         if self._cache_dir is not None:
             return self._get_external_cache_group(write=write)
-        
+
         # Default: use cache in job zarr
         mode = "a" if write else "r"
         try:
@@ -826,7 +1212,10 @@ class FFTDispersionInterface:
         store_obj = getattr(root_group, "store", None)
         read_only = bool(getattr(store_obj, "read_only", False))
         if write and read_only:
-            logger.warning("Dispersion cache skipped: store is read-only (%s)", getattr(store_obj, "path", self.parent_fft.job_result.path))
+            logger.warning(
+                "Dispersion cache skipped: store is read-only (%s)",
+                getattr(store_obj, "path", self.parent_fft.job_result.path),
+            )
             return None
 
         fft_node = root_group.get("fft")
@@ -852,7 +1241,9 @@ class FFTDispersionInterface:
         else:
             if write:
                 raise TypeError("Expected Zarr group at /fft/dispersion in cache")
-            logger.debug("Dispersion cache /fft/dispersion node is not a group; skipping")
+            logger.debug(
+                "Dispersion cache /fft/dispersion node is not a group; skipping"
+            )
             return None
 
         dataset_key = self._sanitize_name(self.dataset_name or "__global__")
@@ -904,7 +1295,9 @@ class FFTDispersionInterface:
                 else DispersionConfig()
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to deserialize dispersion config from cache: %s", exc)
+            logger.warning(
+                "Failed to deserialize dispersion config from cache: %s", exc
+            )
             config = DispersionConfig()
 
         notes_json_raw = entry.attrs.get("notes_json", "[]")
@@ -918,12 +1311,14 @@ class FFTDispersionInterface:
                 exc,
             )
             # If JSONDecodeError has .pos attribute, log a small snippet to help debugging
-            pos = getattr(exc, 'pos', None)
+            pos = getattr(exc, "pos", None)
             try:
                 if isinstance(pos, int):
                     start = max(0, pos - 80)
                     end = pos + 80
-                    logger.debug("notes_json snippet around error: %s", notes_json[start:end])
+                    logger.debug(
+                        "notes_json snippet around error: %s", notes_json[start:end]
+                    )
             except Exception:
                 # Best-effort only
                 pass
@@ -936,12 +1331,27 @@ class FFTDispersionInterface:
         axis = self._ensure_text(entry.attrs.get("axis")) or "x"
         component = self._ensure_text(entry.attrs.get("component")) or "perp"
         orth_axis_label = self._ensure_text(entry.attrs.get("orth_axis_label"))
+        scaling = self._ensure_text(entry.attrs.get("scaling")) or "raw_power"
+        scaling_factors: dict[str, float] = {}
+        try:
+            scaling_factors_json = entry.attrs.get("scaling_factors_json")
+            if scaling_factors_json:
+                loaded_factors = json.loads(scaling_factors_json)
+                if isinstance(loaded_factors, dict):
+                    scaling_factors = {
+                        str(key): float(value)
+                        for key, value in loaded_factors.items()
+                    }
+        except Exception:
+            logger.debug("Ignoring invalid dispersion scaling factors in cache", exc_info=True)
 
         S = self._load_group_array(entry, "S")
         k_axis = self._load_group_array(entry, "k_axis")
         f_axis = self._load_group_array(entry, "f_axis")
         if S is None or k_axis is None or f_axis is None:
-            logger.debug("Dispersion cache entry %s missing required arrays", entry_name)
+            logger.debug(
+                "Dispersion cache entry %s missing required arrays", entry_name
+            )
             return None
 
         flipx_attr = entry.attrs.get("flipx")
@@ -961,17 +1371,25 @@ class FFTDispersionInterface:
             k_folded=self._load_group_array(entry, "k_folded"),
             fold_period=float(fold_period) if fold_period is not None else None,
             S_local=self._load_group_array(entry, "S_local"),
+            S_local_raw=self._load_group_array(entry, "S_local_raw"),
+            S_local_display=self._load_group_array(entry, "S_local_display"),
             S_complex=self._load_group_array(entry, "S_complex"),
+            S_raw=self._load_group_array(entry, "S_raw"),
+            S_display=self._load_group_array(entry, "S_display"),
             orth_axis=self._load_group_array(entry, "orth_axis"),
             orth_axis_label=orth_axis_label,
             dt=self._ensure_float(entry.attrs.get("dt")) or 0.0,
             dx=self._ensure_float(entry.attrs.get("dx")) or 0.0,
             flipx=flipx_flag,
+            scaling=scaling,
+            scaling_factors=scaling_factors,
             notes=notes,
         )
         return result
 
-    def _trim_dispersion_kmax(self, result: DispersionResult1D, kmax: Any) -> DispersionResult1D:
+    def _trim_dispersion_kmax(
+        self, result: DispersionResult1D, kmax: Any
+    ) -> DispersionResult1D:
         try:
             limit = float(kmax)
         except (TypeError, ValueError):
@@ -989,10 +1407,22 @@ class FFTDispersionInterface:
 
         S_trim = result.S[mask, :]
         k_trim = result.k_axis[mask]
+        S_raw_trim = None
+        if result.S_raw is not None:
+            S_raw_trim = result.S_raw[mask, :]
+        S_display_trim = None
+        if result.S_display is not None:
+            S_display_trim = result.S_display[mask, :]
 
         S_local_trim = None
         if result.S_local is not None:
             S_local_trim = result.S_local[:, mask, :]
+        S_local_raw_trim = None
+        if result.S_local_raw is not None:
+            S_local_raw_trim = result.S_local_raw[:, mask, :]
+        S_local_display_trim = None
+        if result.S_local_display is not None:
+            S_local_display_trim = result.S_local_display[:, mask, :]
 
         S_complex_trim = None
         if result.S_complex is not None:
@@ -1026,12 +1456,18 @@ class FFTDispersionInterface:
             k_folded=k_folded_trim,
             fold_period=result.fold_period,
             S_local=S_local_trim,
+            S_local_raw=S_local_raw_trim,
+            S_local_display=S_local_display_trim,
             S_complex=S_complex_trim,
+            S_raw=S_raw_trim,
+            S_display=S_display_trim,
             orth_axis=result.orth_axis,
             orth_axis_label=result.orth_axis_label,
             dt=result.dt,
             dx=result.dx,
             flipx=result.flipx,
+            scaling=result.scaling,
+            scaling_factors=dict(result.scaling_factors or {}),
             notes=notes,
         )
 
@@ -1078,8 +1514,16 @@ class FFTDispersionInterface:
 
         if result.S_local is not None:
             self._create_dataset(entry, "S_local", result.S_local)
+        if result.S_local_raw is not None:
+            self._create_dataset(entry, "S_local_raw", result.S_local_raw)
+        if result.S_local_display is not None:
+            self._create_dataset(entry, "S_local_display", result.S_local_display)
         if result.S_complex is not None:
             self._create_dataset(entry, "S_complex", result.S_complex)
+        if result.S_raw is not None:
+            self._create_dataset(entry, "S_raw", result.S_raw)
+        if result.S_display is not None:
+            self._create_dataset(entry, "S_display", result.S_display)
         if result.orth_axis is not None:
             self._create_dataset(entry, "orth_axis", result.orth_axis)
         if result.S_folded is not None:
@@ -1092,6 +1536,8 @@ class FFTDispersionInterface:
         entry.attrs["dt"] = float(result.dt)
         entry.attrs["dx"] = float(result.dx)
         entry.attrs["flipx"] = bool(result.flipx)
+        entry.attrs["scaling"] = str(result.scaling)
+        entry.attrs["scaling_factors_json"] = json.dumps(result.scaling_factors or {})
         if result.fold_period is not None:
             entry.attrs["fold_period"] = float(result.fold_period)
         entry.attrs["orth_axis_label"] = result.orth_axis_label or ""
@@ -1100,17 +1546,25 @@ class FFTDispersionInterface:
         entry.attrs["context_json"] = context_json
         entry.attrs["context_hash"] = context_hash
         entry.attrs["dataset_name"] = self.dataset_name
-        entry.attrs["slice_info"] = json.dumps(self._serialize_for_json(self.slice_info))
+        entry.attrs["slice_info"] = json.dumps(
+            self._serialize_for_json(self.slice_info)
+        )
         entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat()
         entry.attrs["job_name"] = getattr(self.parent_fft.job_result, "name", "")
         entry.attrs["zarr_path"] = str(self.parent_fft.job_result.path)
         store = getattr(dataset_group, "store", None)
-        store_desc = getattr(store, "path", None) or getattr(store, "dir_path", None) or getattr(store, "filename", None)
+        store_desc = (
+            getattr(store, "path", None)
+            or getattr(store, "dir_path", None)
+            or getattr(store, "filename", None)
+        )
         logger.info(
             "Dispersion result saved: group=%s entry=%s store=%s",
             getattr(dataset_group, "path", dataset_group.name),
             entry_name,
-            store_desc or store.__class__.__name__ if store is not None else "<unknown>",
+            store_desc or store.__class__.__name__
+            if store is not None
+            else "<unknown>",
         )
 
     def _resolve_plot_save_path(
@@ -1126,7 +1580,9 @@ class FFTDispersionInterface:
             base_dir = Path(base) if base is not None else Path.cwd()
             if base_dir.is_file():
                 base_dir = base_dir.parent
-            job_name = self._sanitize_name(str(getattr(self.parent_fft.job_result, "name", "job")))
+            job_name = self._sanitize_name(
+                str(getattr(self.parent_fft.job_result, "name", "job"))
+            )
             dataset_part = self._sanitize_name(self.dataset_name or "global")
             component_part = self._sanitize_name(result.component or "perp")
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -1144,7 +1600,7 @@ class FFTDispersionInterface:
             return path
 
         raise TypeError("save must be bool or path-like string")
-    
+
     def configure(
         self,
         dt: Optional[float] = None,
@@ -1153,17 +1609,18 @@ class FFTDispersionInterface:
         component: str = "perp",
         time_window: str = "hann",
         detrend: str = "mean",
-        tmax: int = 100,
-        **kwargs
+        tmin: Optional[int] = None,
+        tmax: Optional[int] = None,
+        **kwargs,
     ) -> "FFTDispersionInterface":
         """
         Configure dispersion analysis parameters.
-        
+
         Parameters
         ----------
         dt : float, optional
             Time step [s] (auto-detected from zarr if not provided)
-        dx, dy : float, optional  
+        dx, dy : float, optional
             Grid spacings [m] (auto-detected from zarr if not provided)
         component : str, default="perp"
             Magnetization component to analyze ('perp', 'mx', 'my', 'mz')
@@ -1171,30 +1628,35 @@ class FFTDispersionInterface:
             Time-domain window function
         detrend : str, default="mean"
             Detrending method ('mean', 'initial', None)
-        tmax : int, default=100
-            Maximum number of time steps to load for speed
-            
+        tmin : int or None, default=None
+            First time index to load for unsliced datasets. Ignored when the
+            dataset accessor already specifies a time slice.
+        tmax : int or None, default=None
+            Maximum number of time steps to load. If None, use all available
+            timesteps unless the dataset accessor slice already limits time.
+
         Returns
         -------
         FFTDispersionInterface
             Self for method chaining
         """
         config_params: dict[str, Any] = {
-            'component': component,
-            'time_window': time_window, 
-            'detrend': detrend,
+            "component": component,
+            "time_window": time_window,
+            "detrend": detrend,
         }
-        
+
         # Add optional parameters if provided
         if dt is not None:
-            config_params['dt'] = dt
+            config_params["dt"] = dt
         if dx is not None:
-            config_params['dx'] = dx  
+            config_params["dx"] = dx
         if dy is not None:
-            config_params['dy'] = dy
-            
+            config_params["dy"] = dy
+
         config_params.update(kwargs)
         self._config = DispersionConfig(**config_params)
+        self._tmin = tmin
         self._tmax = tmax
 
         # Reset analyzer to use new config
@@ -1261,6 +1723,7 @@ class FFTDispersionInterface:
         clone = self.clone_for_dataset(self.dataset_name, self.slice_info)
         clone._filters_config = copy.deepcopy(config)
         from .filter_chain import DispersionFilterChain
+
         return DispersionFilterChain(clone)
 
     def _normalize_filters_config(
@@ -1355,16 +1818,13 @@ class FFTDispersionInterface:
         if stage_info["live_capable"]:
             labels.append(f"live[{len(stage_info['live_capable'])}]")
         return labels
-    
+
     def compute_1d(
-        self,
-        axis: str = "x",
-        component: Optional[str] = None,
-        **kwargs
+        self, axis: str = "x", component: Optional[str] = None, **kwargs
     ) -> DispersionResult1D:
         """
         Compute 1D dispersion relation S(k, f).
-        
+
         Parameters
         ----------
         axis : str, default="x"
@@ -1385,7 +1845,7 @@ class FFTDispersionInterface:
             Store complex FFT spectrum in ``result.S_complex`` (default True).
             Set to ``False`` to reduce memory when phase reconstruction is not needed.
         kmax : float, optional (via kwargs)
-            Trim returned data to |k| ≤ kmax (rad/m) without affecting cached data.
+            Trim returned data to ``abs(k) <= kmax`` (rad/m) without affecting cached data.
             Note: Input in rad/m regardless of display units (rad_um, meter, etc.)
         flipx : bool, optional (via kwargs), default True
             When True (default), mirror the dispersion result along the k-axis so that
@@ -1393,19 +1853,33 @@ class FFTDispersionInterface:
             raw FFT ordering for diagnostic purposes.
         **kwargs
             Additional parameters passed to compute_dispersion_1d
-            
+
         Returns
         -------
         DispersionResult1D
             1D dispersion analysis result
         """
         compute_kwargs = dict(kwargs)
+        progress_callback = compute_kwargs.pop("progress_callback", None)
+        _emit_dispersion_progress(
+            progress_callback,
+            "compute",
+            (
+                f"compute_1d start dataset={self.dataset_name or '<auto>'} "
+                f"slice={_format_slice_for_display(self.slice_info) or '[full]'}"
+            ),
+            axis=axis,
+            component=component,
+            dataset=self.dataset_name,
+            slice_info=self._serialize_for_json(self.slice_info),
+        )
 
         # FFT backend configuration (also available via .dispersion(backend=...))
         _backend = compute_kwargs.pop("backend", None)
         _workers = compute_kwargs.pop("workers", None)
         if _backend is not None or _workers is not None:
             from ._fft_backend import set_backend, set_workers
+
             if _backend is not None:
                 set_backend(_backend)
             if _workers is not None:
@@ -1413,7 +1887,6 @@ class FFTDispersionInterface:
 
         kmax = compute_kwargs.pop("kmax", None)
         force = bool(compute_kwargs.pop("force", False))
-
 
         filters_config = compute_kwargs.pop("filters", None)
         if filters_config is None:
@@ -1446,9 +1919,15 @@ class FFTDispersionInterface:
                 component or effective_config.component,
                 " | ".join(filter_labels) if filter_labels else "configured",
             )
-        
+
         # Extract flipx from kwargs (default True)
         flipx = compute_kwargs.pop("flipx", True)
+        store_complex = bool(compute_kwargs.pop("store_complex", True))
+        compute_kwargs["store_complex"] = store_complex
+        scaling = _normalize_dispersion_scaling(
+            compute_kwargs.pop("scaling", getattr(effective_config, "scaling", "raw_power"))
+        )
+        compute_kwargs["scaling"] = scaling
 
         save_result_flag = compute_kwargs.pop("save_result", None)
         save_alias = compute_kwargs.pop("save", None)
@@ -1467,6 +1946,13 @@ class FFTDispersionInterface:
 
         context_payload = dict(compute_kwargs)
         context_payload["flipx"] = bool(flipx)
+        from ._fft_backend import get_info as _get_fft_backend_info
+
+        backend_info = _get_fft_backend_info()
+        context_payload["fft_backend"] = {
+            "backend": backend_info.get("backend"),
+            "workers": backend_info.get("workers"),
+        }
         if filters_config is not None:
             context_payload["filters"] = filters_config
         context = self._build_cache_context(
@@ -1477,6 +1963,14 @@ class FFTDispersionInterface:
         )
         context_json, context_hash = self._context_signature(context)
         memory_key = self._memory_key("dispersion_1d", context_hash)
+        entry_name = f"dispersion1d_{context_hash}"
+        _emit_dispersion_progress(
+            progress_callback,
+            "cache",
+            f"cache key prepared {entry_name}",
+            context_hash=context_hash,
+            entry_name=entry_name,
+        )
 
         base_result: Optional[DispersionResult1D] = None
 
@@ -1485,13 +1979,24 @@ class FFTDispersionInterface:
                 "Force recompute requested; skipping caches for %s",
                 memory_key,
             )
+            _emit_dispersion_progress(
+                progress_callback,
+                "cache",
+                "force=True; skipping dispersion caches",
+                memory_key=memory_key,
+            )
         elif use_cache:
             cached = self._memory_cache.get(memory_key)
             if cached is not None:
                 logger.info("Using in-memory dispersion cache for %s", memory_key)
                 base_result = cached
+                _emit_dispersion_progress(
+                    progress_callback,
+                    "cache",
+                    "loaded dispersion from in-memory cache",
+                    memory_key=memory_key,
+                )
 
-        entry_name = f"dispersion1d_{context_hash}"
         disk_group: Optional[zarr.Group] = None
 
         if base_result is None and disk_cache_flag and not force:
@@ -1502,8 +2007,16 @@ class FFTDispersionInterface:
                 context_hash,
             )
             if cached_disk is not None:
-                logger.info("Loaded dispersion1d result from on-disk cache (%s)", entry_name)
+                logger.info(
+                    "Loaded dispersion1d result from on-disk cache (%s)", entry_name
+                )
                 base_result = cached_disk
+                _emit_dispersion_progress(
+                    progress_callback,
+                    "cache",
+                    f"loaded dispersion from disk cache {entry_name}",
+                    entry_name=entry_name,
+                )
                 if use_cache:
                     self._memory_cache[memory_key] = cached_disk
 
@@ -1522,6 +2035,14 @@ class FFTDispersionInterface:
 
         if base_result is None:
             logger.info("Computing dispersion1d from scratch (force=%s)", force)
+            _emit_dispersion_progress(
+                progress_callback,
+                "compute",
+                "cache miss; computing dispersion1d from raw data",
+                force=force,
+                store_complex=store_complex,
+                scaling=scaling,
+            )
             base_result = self.analyzer.compute_dispersion_1d(
                 axis=axis,
                 component=component,
@@ -1531,8 +2052,22 @@ class FFTDispersionInterface:
             )
             if use_cache:
                 self._memory_cache[memory_key] = base_result
+            _emit_dispersion_progress(
+                progress_callback,
+                "compute",
+                f"raw dispersion compute finished shape={getattr(base_result, 'shape', '?')}",
+                shape=list(getattr(base_result, "shape", []) or []),
+            )
             if persist_result:
-                disk_group = disk_group or self._get_dispersion_dataset_group(write=True)
+                disk_group = disk_group or self._get_dispersion_dataset_group(
+                    write=True
+                )
+                _emit_dispersion_progress(
+                    progress_callback,
+                    "cache",
+                    f"saving dispersion result {entry_name}",
+                    entry_name=entry_name,
+                )
                 self._save_dispersion_result(
                     disk_group,
                     entry_name,
@@ -1543,7 +2078,9 @@ class FFTDispersionInterface:
                 )
         else:
             if persist_result:
-                disk_group = disk_group or self._get_dispersion_dataset_group(write=True)
+                disk_group = disk_group or self._get_dispersion_dataset_group(
+                    write=True
+                )
                 self._save_dispersion_result(
                     disk_group,
                     entry_name,
@@ -1607,12 +2144,14 @@ class FFTDispersionInterface:
             include_live=True,
         )
 
-        filtered_local = result.S_local
-        if apply_to_local and result.S_local is not None:
-            local_out = np.empty_like(result.S_local, dtype=float)
-            for idx in range(result.S_local.shape[0]):
+        filtered_local = result.S_local_display
+        if filtered_local is None:
+            filtered_local = result.S_local
+        if apply_to_local and filtered_local is not None:
+            local_out = np.empty_like(filtered_local, dtype=float)
+            for idx in range(filtered_local.shape[0]):
                 local_out[idx] = apply_dispersion_post_filters(
-                    result.S_local[idx],
+                    filtered_local[idx],
                     k_axis=result.k_axis,
                     f_axis=result.f_axis,
                     filters=merged,
@@ -1623,7 +2162,9 @@ class FFTDispersionInterface:
         notes = list(result.notes or [])
         stage_info = classify_filter_execution(merged)
         if stage_info["post_stage"]:
-            notes.append(f"Live post-filters applied: {', '.join(stage_info['post_stage'])}")
+            notes.append(
+                f"Live post-filters applied: {', '.join(stage_info['post_stage'])}"
+            )
 
         return DispersionResult1D(
             S=filtered_S,
@@ -1636,50 +2177,51 @@ class FFTDispersionInterface:
             k_folded=result.k_folded,
             fold_period=result.fold_period,
             S_local=filtered_local,
+            S_local_raw=result.S_local_raw,
+            S_local_display=filtered_local,
             orth_axis=result.orth_axis,
             orth_axis_label=result.orth_axis_label,
             S_complex=result.S_complex,
+            S_raw=result.S_raw,
+            S_display=filtered_S,
             dt=result.dt,
             dx=result.dx,
             flipx=result.flipx,
+            scaling=result.scaling,
+            scaling_factors=dict(result.scaling_factors or {}),
             notes=notes,
         )
-    
+
     def compute_2d(
-        self,
-        component: Optional[str] = None,
-        **kwargs
+        self, component: Optional[str] = None, **kwargs
     ) -> DispersionResult2D:
         """
         Compute 2D dispersion relation S(kx, ky, f).
-        
+
         Parameters
         ----------
         component : str, optional
             Override default component setting
         **kwargs
             Additional parameters passed to compute_dispersion_2d
-            
+
         Returns
         -------
         DispersionResult2D
             2D dispersion analysis result
         """
-        return self.analyzer.compute_dispersion_2d(
-            component=component,
-            **kwargs
-        )
-    
+        return self.analyzer.compute_dispersion_2d(component=component, **kwargs)
+
     def track_branch(
         self,
         dispersion_result: DispersionResult1D,
         k_path: np.ndarray,
         f_seed: float,
-        **kwargs
+        **kwargs,
     ) -> DispersionBranch:
         """
         Track dispersion branch along k-path.
-        
+
         Parameters
         ----------
         dispersion_result : DispersionResult1D
@@ -1690,27 +2232,18 @@ class FFTDispersionInterface:
             Initial frequency guess [Hz]
         **kwargs
             Additional parameters passed to track_branch
-            
+
         Returns
         -------
         DispersionBranch
             Tracked dispersion branch
         """
-        return self.analyzer.track_branch(
-            dispersion_result,
-            k_path,
-            f_seed,
-            **kwargs
-        )
-    
-    def find_peaks(
-        self,
-        dispersion_result: DispersionResult1D,
-        **kwargs
-    ) -> list:
+        return self.analyzer.track_branch(dispersion_result, k_path, f_seed, **kwargs)
+
+    def find_peaks(self, dispersion_result: DispersionResult1D, **kwargs) -> list:
         """
         Find spectral peaks in dispersion relation.
-        
+
         Parameters
         ----------
         dispersion_result : DispersionResult1D
@@ -1724,7 +2257,6 @@ class FFTDispersionInterface:
         """
         return self.analyzer.find_all_peaks(dispersion_result, **kwargs)
 
-
     def _resolve_colornorm(
         self,
         spectrum: np.ndarray,
@@ -1737,18 +2269,24 @@ class FFTDispersionInterface:
         context: str,
     ) -> Optional[Normalize]:
         """Return a matplotlib Normalize instance based on user settings."""
+        from matplotlib.colors import Normalize
+
         kwargs = dict(colornorm_kwargs or {})
 
         if isinstance(colornorm, Normalize):
             if lognorm_flag:
-                logger.info("%s: custom Normalize provided; ignoring lognorm flag", context)
+                logger.info(
+                    "%s: custom Normalize provided; ignoring lognorm flag", context
+                )
             return colornorm
 
         norm_name = None
         if colornorm is not None:
             norm_name = str(colornorm).strip().lower()
             if lognorm_flag:
-                logger.info("%s: colornorm=%s overrides lognorm flag", context, norm_name)
+                logger.info(
+                    "%s: colornorm=%s overrides lognorm flag", context, norm_name
+                )
 
         normalized_key = None
         if norm_name:
@@ -1798,6 +2336,8 @@ class FFTDispersionInterface:
         context: str,
     ) -> Optional[Normalize]:
         """Construct a standard Normalize."""
+        from matplotlib.colors import Normalize
+
         norm_vmin = kwargs.pop("vmin", None)
         norm_vmax = kwargs.pop("vmax", None)
         if vmin is not None:
@@ -1847,6 +2387,8 @@ class FFTDispersionInterface:
         context: str,
     ) -> Optional[Normalize]:
         """Construct a LogNorm based on spectrum values."""
+        from matplotlib.colors import LogNorm
+
         norm_vmin = kwargs.pop("vmin", None)
         norm_vmax = kwargs.pop("vmax", None)
         if vmin is not None:
@@ -1858,7 +2400,9 @@ class FFTDispersionInterface:
         if norm_vmin is None or norm_vmax is None:
             limits = self._auto_limits(data, positive_only=True)
             if limits is None:
-                logger.warning("%s: Cannot apply lognorm; spectrum has no positive values", context)
+                logger.warning(
+                    "%s: Cannot apply lognorm; spectrum has no positive values", context
+                )
                 return None
 
         if norm_vmin is None:
@@ -1899,6 +2443,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Optional[Normalize]:
+        from matplotlib.colors import PowerNorm
+
         gamma = kwargs.pop("gamma", kwargs.pop("power", 0.5))
         if gamma is None:
             gamma = 0.5
@@ -1936,6 +2482,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Optional[Normalize]:
+        from matplotlib.colors import SymLogNorm
+
         norm_vmin = kwargs.pop("vmin", None)
         norm_vmax = kwargs.pop("vmax", None)
         if vmin is not None:
@@ -1970,8 +2518,15 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Normalize:
+        from matplotlib.colors import CenteredNorm
+
         vcenter = kwargs.pop("vcenter", 0.0)
-        logger.info("%s: Applying centered normalization (vcenter=%s, extra=%s)", context, vcenter, kwargs)
+        logger.info(
+            "%s: Applying centered normalization (vcenter=%s, extra=%s)",
+            context,
+            vcenter,
+            kwargs,
+        )
         return CenteredNorm(vcenter=vcenter, **kwargs)
 
     def _build_two_slope_norm(
@@ -1982,6 +2537,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Normalize:
+        from matplotlib.colors import TwoSlopeNorm
+
         vcenter = kwargs.pop("vcenter", 0.0)
         norm_vmin = kwargs.pop("vmin", None)
         norm_vmax = kwargs.pop("vmax", None)
@@ -2013,6 +2570,8 @@ class FFTDispersionInterface:
         kwargs: dict[str, Any],
         context: str,
     ) -> Normalize:
+        from matplotlib.colors import FuncNorm
+
         functions = kwargs.pop("functions", None)
         if functions is None:
             raise ValueError(
@@ -2027,7 +2586,9 @@ class FFTDispersionInterface:
         logger.info("%s: Applying FuncNorm", context)
         return FuncNorm(functions=functions, vmin=norm_vmin, vmax=norm_vmax, **kwargs)
 
-    def _auto_limits(self, data: np.ndarray, positive_only: bool = False) -> Optional[tuple[float, float]]:
+    def _auto_limits(
+        self, data: np.ndarray, positive_only: bool = False
+    ) -> Optional[tuple[float, float]]:
         """Infer data limits while ignoring NaNs and infs."""
         arr = np.asarray(data, dtype=float)
         mask = np.isfinite(arr)
@@ -2045,7 +2606,6 @@ class FFTDispersionInterface:
         if arr.size == 0:
             return 1e-9
         return float(np.nanpercentile(arr, 5))
-
 
     def _apply_k0_normalization(
         self,
@@ -2104,7 +2664,6 @@ class FFTDispersionInterface:
             k0_normalization_width=k0_normalization_width,
         )
 
-
     def _k0_dynamic_filter(
         self,
         PSD_fk: np.ndarray,
@@ -2134,7 +2693,9 @@ class FFTDispersionInterface:
             logger.debug("k≈0 dynamic filter ratio cap set to %.3f", ratio_val)
 
         if kwargs:
-            logger.debug("Unused k0 dynamic filter kwargs: %s", ", ".join(sorted(kwargs)))
+            logger.debug(
+                "Unused k0 dynamic filter kwargs: %s", ", ".join(sorted(kwargs))
+            )
 
         if PSD_fk.ndim == 1:
             PSD_compressed, _, _ = self._k0_dynamic_filter_linear(
@@ -2168,7 +2729,6 @@ class FFTDispersionInterface:
             smooth_poly=smooth_poly,
         )
         return PSD_compressed.T
-
 
     def _k0_dynamic_filter_linear(
         self,
@@ -2235,6 +2795,7 @@ class FFTDispersionInterface:
         base = np.median(PSD[:, other], axis=1)
         if _SCIPY_AVAILABLE:
             from scipy.stats import median_abs_deviation as mad
+
             scale = mad(PSD[:, other], axis=1, scale="normal") + eps
         else:
             q75 = np.percentile(PSD[:, other], 75, axis=1)
@@ -2245,6 +2806,7 @@ class FFTDispersionInterface:
 
         if _SCIPY_AVAILABLE and smooth_win is not None and 5 <= smooth_win < F:
             from scipy.signal import savgol_filter
+
             T = savgol_filter(T, _odd(smooth_win), smooth_poly, mode="interp")
 
         T = T[:, None]
@@ -2273,7 +2835,6 @@ class FFTDispersionInterface:
             return PSD[0, :], idx0, full_gain[0, :]
         return PSD, idx0, full_gain
 
-
     def _compress_above_threshold(
         self,
         V: np.ndarray,
@@ -2288,7 +2849,7 @@ class FFTDispersionInterface:
         Y = T + s * np.arcsinh(over / s)
         Y = np.minimum(Y, ratio * T)
         return np.where(V > T, Y, V)
-    
+
     def plot_dispersion(
         self,
         ax: Optional[plt.Axes] = None,
@@ -2323,7 +2884,7 @@ class FFTDispersionInterface:
     ) -> tuple:
         """
         Plot 1D dispersion relation S(k, f).
-        
+
         Parameters
         ----------
         ax : matplotlib.axes.Axes, optional
@@ -2340,7 +2901,7 @@ class FFTDispersionInterface:
             Colormap for dispersion plot (uses crameri davos colormap by default)
         kscale : str, default="rad_um"
             Wave-vector units: "rad_um" for rad/μm (default), "rad" for rad/m, "meter" for 1/m (cycles per meter)
-        f_units : str, default="GHz" 
+        f_units : str, default="GHz"
             Units for frequency axis ('Hz', 'GHz')
         title : str, optional
             Plot title (auto-generated if None)
@@ -2382,10 +2943,10 @@ class FFTDispersionInterface:
             - "aggressive": Strong suppression for very prominent k≈0 modes
             - "preserve_peaks": Maintains relative peak intensities while reducing background
         vmin : float, optional
-            Minimum value for color scale normalization. When provided, overrides automatic 
+            Minimum value for color scale normalization. When provided, overrides automatic
             scaling for the colorbar lower bound.
         vmax : float, optional
-            Maximum value for color scale normalization. When provided, overrides automatic 
+            Maximum value for color scale normalization. When provided, overrides automatic
             scaling for the colorbar upper bound.
         trim_0f : int, optional
             Remove N lowest frequency points from plot (useful when f≈0 has strong artifacts)
@@ -2403,13 +2964,15 @@ class FFTDispersionInterface:
             Keyword arguments forwarded to ``ax.scatter`` for the COMSOL overlay (e.g. color, size).
         **kwargs
             Additional parameters for compute_1d and plotting
-            
+
         Returns
         -------
         tuple
             (figure, axis) matplotlib objects. The dispersion result is stored
             in self._last_plot_result for programmatic access if needed.
         """
+        import matplotlib.pyplot as plt
+
         # Extract figure-related kwargs if provided dynamically
         if "figsize" in kwargs:
             figsize_override = kwargs.pop("figsize")
@@ -2447,11 +3010,14 @@ class FFTDispersionInterface:
         compute_kwargs = dict(kwargs)
         # k0_normalization_width is handled in plot_dispersion, not compute_dispersion_1d
         compute_kwargs.pop("k0_normalization_width", None)  # Safe removal
-        
-        if save is True and "save_result" not in compute_kwargs and "save" not in compute_kwargs:
+
+        if (
+            save is True
+            and "save_result" not in compute_kwargs
+            and "save" not in compute_kwargs
+        ):
             compute_kwargs["save_result"] = True
         result = self.compute_1d(axis=axis, component=component, **compute_kwargs)
-
 
         comsol_style = comsol_style or {}
         colornorm_kwargs = dict(colornorm_kwargs or {})
@@ -2484,9 +3050,13 @@ class FFTDispersionInterface:
 
         if orth_index is not None:
             if result.S_local is None:
-                raise ValueError("Result does not contain local spectra; recompute with avg_over_orthogonal=False")
+                raise ValueError(
+                    "Result does not contain local spectra; recompute with avg_over_orthogonal=False"
+                )
             if orth_index < 0 or orth_index >= result.S_local.shape[0]:
-                raise ValueError(f"orth_index {orth_index} out of range (0..{result.S_local.shape[0]-1})")
+                raise ValueError(
+                    f"orth_index {orth_index} out of range (0..{result.S_local.shape[0] - 1})"
+                )
             spectrum = result.S_local[orth_index]
             if title is None:
                 if result.orth_axis is not None and orth_index < len(result.orth_axis):
@@ -2514,11 +3084,15 @@ class FFTDispersionInterface:
         # Trim lowest frequency points if requested
         if trim_0f is not None and trim_0f > 0:
             if f_axis.ndim == 1 and trim_0f < f_axis.shape[0]:
-                logger.info(f"Trimming {trim_0f} lowest frequency points from dispersion plot")
+                logger.info(
+                    f"Trimming {trim_0f} lowest frequency points from dispersion plot"
+                )
                 spectrum = spectrum[:, trim_0f:]
                 f_axis = f_axis[trim_0f:]
             else:
-                logger.warning(f"trim_0f={trim_0f} exceeds available frequency points ({f_axis.shape[0]}), ignoring")
+                logger.warning(
+                    f"trim_0f={trim_0f} exceeds available frequency points ({f_axis.shape[0]}), ignoring"
+                )
 
         # Trim frequencies above fmax if requested (applied BEFORE unit conversion)
         if fmax is not None and fmax > 0:
@@ -2528,15 +3102,19 @@ class FFTDispersionInterface:
                     fmax_hz = fmax * 1e9
                 else:  # Hz
                     fmax_hz = fmax
-                
+
                 fmax_mask = f_axis <= fmax_hz
                 n_above = (~fmax_mask).sum()
                 if np.any(fmax_mask):
                     spectrum = spectrum[:, fmax_mask]
                     f_axis = f_axis[fmax_mask]
-                    logger.info(f"Trimmed {n_above} frequency points above fmax={fmax} {f_units}")
+                    logger.info(
+                        f"Trimmed {n_above} frequency points above fmax={fmax} {f_units}"
+                    )
                 else:
-                    logger.warning(f"fmax={fmax} {f_units} is below all frequencies, ignoring")
+                    logger.warning(
+                        f"fmax={fmax} {f_units} is below all frequencies, ignoring"
+                    )
 
         # Convert units if requested
         if kscale == "meter":
@@ -2623,15 +3201,13 @@ class FFTDispersionInterface:
         # Colorbar
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label(r"Power Spectral Density [arb. units]")
-        
-        
-        
+
         if comsol_data is not None:
             k_points = np.asarray(comsol_data.k_values, dtype=float).copy()
             f_points = np.asarray(comsol_data.f_values, dtype=float).copy()
-            
+
             # Apply flipx if it was used in dispersion computation
-            if getattr(result, 'flipx', True):
+            if getattr(result, "flipx", True):
                 k_points = -k_points
                 logger.info("COMSOL k-values flipped (flipx=True in dispersion result)")
 
@@ -2687,7 +3263,6 @@ class FFTDispersionInterface:
                     )
 
                 ax.scatter(k_points, f_points, label="COMSOL", **scatter_kwargs)
-                
 
         try:
             fig.tight_layout()
@@ -2715,11 +3290,11 @@ class FFTDispersionInterface:
         k_units: str = "rad/m",
         f_units: str = "GHz",
         title: Optional[str] = None,
-    save: Optional[str] = None,
+        save: Optional[str] = None,
     ) -> tuple:
         """
         Plot dispersion branch with group velocity.
-        
+
         Parameters
         ----------
         branch : DispersionBranch
@@ -2727,69 +3302,73 @@ class FFTDispersionInterface:
         figsize : tuple, default=(10, 6)
             Figure size
         k_units, f_units : str
-            Axis units 
+            Axis units
         title : str, optional
             Plot title
         save : str, optional
             Save path
-            
+
         Returns
         -------
         tuple
             (figure, (ax1, ax2)) with dispersion and group velocity plots
         """
+        import matplotlib.pyplot as plt
+
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True)
-        
+
         # Prepare data
         k_data = np.asarray(branch.k_path)
         f_data = np.asarray(branch.f_values)
         if branch.group_velocity is None:
             branch.compute_group_velocity()
         vg_data = np.asarray(branch.group_velocity)
-        
+
         # Convert units
         if k_units == "1/m":
             k_data = k_data / (2 * np.pi)
             k_label = r"$k$ [m$^{-1}$]"
         else:
             k_label = r"$k$ [rad/m]"
-            
+
         if f_units == "GHz":
             f_data = f_data / 1e9
             f_label = "Frequency [GHz]"
         else:
             f_label = "Frequency [Hz]"
-        
+
         # Plot dispersion branch
-        ax1.plot(k_data, f_data, 'o-', linewidth=2, markersize=4)
+        ax1.plot(k_data, f_data, "o-", linewidth=2, markersize=4)
         ax1.set_ylabel(f_label)
         ax1.grid(True, alpha=0.3)
         if title:
             ax1.set_title(title)
         else:
             ax1.set_title("Dispersion Branch")
-        
-        # Plot group velocity  
-        ax2.plot(k_data, vg_data / 1e3, 's-', color='red', linewidth=2, markersize=4)
+
+        # Plot group velocity
+        ax2.plot(k_data, vg_data / 1e3, "s-", color="red", linewidth=2, markersize=4)
         ax2.set_xlabel(k_label)
         ax2.set_ylabel(r"Group Velocity [km/s]")
         ax2.grid(True, alpha=0.3)
-        ax2.axhline(0, color='black', linestyle='--', alpha=0.5)
-        
+        ax2.axhline(0, color="black", linestyle="--", alpha=0.5)
+
         try:
             fig.tight_layout()
         except Exception:
             pass  # Skip tight_layout if it conflicts with existing elements
-        
+
         if save:
-            plt.savefig(save, dpi=300, bbox_inches='tight')
-            
+            plt.savefig(save, dpi=300, bbox_inches="tight")
+
         return fig, (ax1, ax2)
-    
+
     @property
     def plot_result(self) -> _DispersionMethodHelper:
         """Return callable helper for plotting pre-computed dispersion results."""
-        return _DispersionMethodHelper(self, self._plot_result_impl, "plot_result", "plot_result")
+        return _DispersionMethodHelper(
+            self, self._plot_result_impl, "plot_result", "plot_result"
+        )
 
     def _plot_result_impl(
         self,
@@ -2823,12 +3402,12 @@ class FFTDispersionInterface:
     ) -> tuple:
         """
         Plot a pre-computed dispersion result without recomputation.
-        
+
         This method separates plotting from computation, allowing you to:
         - Compute once with compute_1d(), then plot multiple times with different settings
         - Plot the same result on different axes or in different styles
         - Avoid expensive recomputation when only visual parameters change
-        
+
         Parameters
         ----------
         result : DispersionResult1D
@@ -2843,7 +3422,7 @@ class FFTDispersionInterface:
             Colormap for dispersion plot
         kscale : str, default="rad_um"
             Wave-vector units: "rad_um" for rad/μm, "rad" for rad/m, "meter" for 1/m
-        f_units : str, default="GHz" 
+        f_units : str, default="GHz"
             Frequency axis units ('Hz', 'GHz')
         title : str, optional
             Plot title (auto-generated if None)
@@ -2884,21 +3463,21 @@ class FFTDispersionInterface:
             Additional COMSOL columns to parse
         comsol_style : dict, optional
             Scatter plot style for COMSOL overlay
-            
+
         Returns
         -------
         tuple
             (figure, axis) matplotlib objects
-            
+
         Examples
         --------
         >>> # Compute once
         >>> result = job[0].fft.dispersion.compute_1d(axis="x", save_result=True)
-        >>> 
+        >>>
         >>> # Plot multiple times with different settings
         >>> fig1, ax1 = job[0].fft.dispersion.plot_result(result, lognorm=False)
         >>> fig2, ax2 = job[0].fft.dispersion.plot_result(result, lognorm=True, vmax=0.01)
-        >>> 
+        >>>
         >>> # Or plot on custom axes
         >>> fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(16, 6))
         >>> job[0].fft.dispersion.plot_result(result, ax=ax_left, k0_normalization=10)
@@ -2906,7 +3485,8 @@ class FFTDispersionInterface:
         """
         # This method uses the same plotting logic as plot_dispersion but skips compute_1d
         # We'll extract and reuse the plotting code from plot_dispersion
-        
+        import matplotlib.pyplot as plt
+
         comsol_style = comsol_style or {}
         colornorm_kwargs = dict(colornorm_kwargs or {})
         comsol_data = None
@@ -2939,9 +3519,13 @@ class FFTDispersionInterface:
 
         if orth_index is not None:
             if result.S_local is None:
-                raise ValueError("Result does not contain local spectra; recompute with avg_over_orthogonal=False")
+                raise ValueError(
+                    "Result does not contain local spectra; recompute with avg_over_orthogonal=False"
+                )
             if orth_index < 0 or orth_index >= result.S_local.shape[0]:
-                raise ValueError(f"orth_index {orth_index} out of range (0..{result.S_local.shape[0]-1})")
+                raise ValueError(
+                    f"orth_index {orth_index} out of range (0..{result.S_local.shape[0] - 1})"
+                )
             spectrum = result.S_local[orth_index]
             if title is None:
                 if result.orth_axis is not None and orth_index < len(result.orth_axis):
@@ -2969,11 +3553,15 @@ class FFTDispersionInterface:
         # Trim lowest frequency points if requested
         if trim_0f is not None and trim_0f > 0:
             if f_axis.ndim == 1 and trim_0f < f_axis.shape[0]:
-                logger.info(f"Trimming {trim_0f} lowest frequency points from dispersion plot")
+                logger.info(
+                    f"Trimming {trim_0f} lowest frequency points from dispersion plot"
+                )
                 spectrum = spectrum[:, trim_0f:]
                 f_axis = f_axis[trim_0f:]
             else:
-                logger.warning(f"trim_0f={trim_0f} exceeds available frequency points ({f_axis.shape[0]}), ignoring")
+                logger.warning(
+                    f"trim_0f={trim_0f} exceeds available frequency points ({f_axis.shape[0]}), ignoring"
+                )
 
         # Trim frequencies above fmax if requested (applied BEFORE unit conversion)
         if fmax is not None and fmax > 0:
@@ -2983,15 +3571,19 @@ class FFTDispersionInterface:
                     fmax_hz = fmax * 1e9
                 else:  # Hz
                     fmax_hz = fmax
-                
+
                 fmax_mask = f_axis <= fmax_hz
                 n_above = (~fmax_mask).sum()
                 if np.any(fmax_mask):
                     spectrum = spectrum[:, fmax_mask]
                     f_axis = f_axis[fmax_mask]
-                    logger.info(f"Trimmed {n_above} frequency points above fmax={fmax} {f_units}")
+                    logger.info(
+                        f"Trimmed {n_above} frequency points above fmax={fmax} {f_units}"
+                    )
                 else:
-                    logger.warning(f"fmax={fmax} {f_units} is below all frequencies, ignoring")
+                    logger.warning(
+                        f"fmax={fmax} {f_units} is below all frequencies, ignoring"
+                    )
 
         # Convert units if requested
         kscale = kscale.lower()
@@ -3079,7 +3671,7 @@ class FFTDispersionInterface:
         # Colorbar
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label(r"Power Spectral Density [arb. units]")
-        
+
         if comsol_data is not None:
             k_points = np.asarray(comsol_data.k_values, dtype=float).copy()
             f_points = np.asarray(comsol_data.f_values, dtype=float).copy()
@@ -3145,18 +3737,11 @@ class FFTDispersionInterface:
             logger.info("Dispersion plot saved to %s", save_path)
 
         return fig, ax
-    
-    def interactive_analysis(self):
-        """
-        Launch interactive dispersion analysis (future implementation).
-        
-        Similar to interactive_spectrum() for modes.
-        """
-        raise NotImplementedError(
-            "Interactive dispersion analysis not yet implemented. "
-            "Use plot_dispersion() for now."
-        )
-    
+
+    def interactive_analysis(self, **kwargs: Any) -> Any:
+        """Backward-compatible alias for ``.plot.interactive(...)``."""
+        return self.plot.interactive(**kwargs)
+
     def __repr__(self) -> str:
         """Rich documentation display for dispersion interface."""
         try:
@@ -3192,7 +3777,9 @@ class FFTDispersionInterface:
 
         summary = Text()
         summary.append("🌊 FFT Dispersion Interface\n", style="bold cyan")
-        summary.append(f"📁 Job: {getattr(job_result, 'name', 'unknown')}\n", style="dim")
+        summary.append(
+            f"📁 Job: {getattr(job_result, 'name', 'unknown')}\n", style="dim"
+        )
         if dataset:
             summary.append(f"📊 Dataset: {dataset}{slice_str}\n", style="bold green")
         if self.slice_info:
@@ -3223,10 +3810,16 @@ class FFTDispersionInterface:
                 "filters(remove_static=False, average=False, window=None, pre=None, post=None, live=None)",
                 "Clone interface with compute/post/live filter configuration",
             ),
-            ("track_branch(result, k_path, f_seed, **opts)", "Follow dispersion branch"),
+            (
+                "track_branch(result, k_path, f_seed, **opts)",
+                "Follow dispersion branch",
+            ),
             ("plot_branch(branch, **opts)", "Plot branch with group velocity"),
             ("find_peaks(result, min_prominence=0.0, **opts)", "Detect spectral peaks"),
-            ("configure(dt=..., dx=..., dy=..., component='perp', **opts)", "Set defaults once"),
+            (
+                "configure(dt=..., dx=..., dy=..., component='perp', **opts)",
+                "Set defaults once",
+            ),
         ]
         for signature, desc in methods:
             core_methods.append("  • ", style="dim")
@@ -3236,7 +3829,9 @@ class FFTDispersionInterface:
         analyzer_info = Text()
         analyzer_info.append("🧪 Analyzer Settings:\n", style="bold magenta")
         analyzer_info.append("  • analyzer property → SpinWaveAnalyzer\n", style="dim")
-        analyzer_info.append("  • configure(...) overrides dt/dx/dy/component\n", style="dim")
+        analyzer_info.append(
+            "  • configure(...) overrides dt/dx/dy/component\n", style="dim"
+        )
         analyzer_info.append("  • avg_over_orthogonal toggle via kwargs\n", style="dim")
         if dataset:
             analyzer_info.append(
@@ -3259,24 +3854,54 @@ class FFTDispersionInterface:
         compute_table.add_column("default", style="green")
         compute_table.add_column("description", style="white")
         compute_table.add_row("axis", "'x'", "Propagation axis ('x' | 'y')")
-        compute_table.add_row("component", "config.component", "Magnetization component ('perp', 'mx', ...)")
-        compute_table.add_row("avg_over_orthogonal", "config.avg_over_orthogonal", "Average orthogonal plane (False keeps slices)")
+        compute_table.add_row(
+            "component",
+            "config.component",
+            "Magnetization component ('perp', 'mx', ...)",
+        )
+        compute_table.add_row(
+            "avg_over_orthogonal",
+            "config.avg_over_orthogonal",
+            "Average orthogonal plane (False keeps slices)",
+        )
         compute_table.add_row(
             "orthogonal_avg_mode",
             "config.orthogonal_avg_mode",
             "Collapse strategy: 'magnetization', 'fft_power', 'fft_abs', ...",
         )
-        compute_table.add_row("time_window", "config.time_window", "Time-domain window ('hann', None, ...)")
-        compute_table.add_row("space_window", "config.space_window", "Spatial window before FFT")
-        compute_table.add_row("detrend", "config.detrend", "Detrend strategy ('mean', 'initial', None)")
-        compute_table.add_row("fold_period", "config.fold_period", "Real-space period for Brillouin folding")
-        compute_table.add_row("fold_agg", "config.fold_agg", "Folding aggregation ('sum' | 'max')")
-        compute_table.add_row("force", "False", "Force recomputation and overwrite caches")
-        compute_table.add_row("save_result", "False", "Persist dispersion to zarr (alias: save)")
+        compute_table.add_row(
+            "time_window",
+            "config.time_window",
+            "Time-domain window ('hann', None, ...)",
+        )
+        compute_table.add_row(
+            "space_window", "config.space_window", "Spatial window before FFT"
+        )
+        compute_table.add_row(
+            "detrend", "config.detrend", "Detrend strategy ('mean', 'initial', None)"
+        )
+        compute_table.add_row(
+            "fold_period",
+            "config.fold_period",
+            "Real-space period for Brillouin folding",
+        )
+        compute_table.add_row(
+            "fold_agg", "config.fold_agg", "Folding aggregation ('sum' | 'max')"
+        )
+        compute_table.add_row(
+            "force", "False", "Force recomputation and overwrite caches"
+        )
+        compute_table.add_row(
+            "save_result", "False", "Persist dispersion to zarr (alias: save)"
+        )
         compute_table.add_row("use_cache", "True", "Use in-memory cache when available")
         compute_table.add_row("disk_cache", "True", "Allow loading from on-disk cache")
-        compute_table.add_row("kmax", "None", "Trim |k| beyond limit (rad/m) after compute")
-        compute_table.add_row("**kwargs", "", "Forward extra options to SpinWaveAnalyzer")
+        compute_table.add_row(
+            "kmax", "None", "Trim |k| beyond limit (rad/m) after compute"
+        )
+        compute_table.add_row(
+            "**kwargs", "", "Forward extra options to SpinWaveAnalyzer"
+        )
 
         filters_table = Table(
             show_header=True,
@@ -3287,17 +3912,35 @@ class FFTDispersionInterface:
         filters_table.add_column("argument", style="yellow", no_wrap=True)
         filters_table.add_column("default", style="green")
         filters_table.add_column("description", style="white")
-        filters_table.add_row("remove_static", "False", "Subtract first time frame from all samples")
-        filters_table.add_row("average", "False", "Remove temporal mean per spatial point")
+        filters_table.add_row(
+            "remove_static", "False", "Subtract first time frame from all samples"
+        )
+        filters_table.add_row(
+            "average", "False", "Remove temporal mean per spatial point"
+        )
         filters_table.add_row(
             "window",
             "None",
             "Hann window selection: 'time', 'space'/'2d', 'both'/'hann'",
         )
-        filters_table.add_row("pre", "None", "Advanced compute-stage filters dict (envelope, wavelet, Wiener, ...)")
-        filters_table.add_row("post", "None", "Post-FFT filters dict for S(k,f) (bandpass, SNR, 2D Wiener, ...)")
-        filters_table.add_row("live", "None", "Fast post-filters recomputable from cached S(k,f)")
-        filters_table.add_row("advanced", "None", "Merged convenience config; supports root-level shorthand keys")
+        filters_table.add_row(
+            "pre",
+            "None",
+            "Advanced compute-stage filters dict (envelope, wavelet, Wiener, ...)",
+        )
+        filters_table.add_row(
+            "post",
+            "None",
+            "Post-FFT filters dict for S(k,f) (bandpass, SNR, 2D Wiener, ...)",
+        )
+        filters_table.add_row(
+            "live", "None", "Fast post-filters recomputable from cached S(k,f)"
+        )
+        filters_table.add_row(
+            "advanced",
+            "None",
+            "Merged convenience config; supports root-level shorthand keys",
+        )
 
         plot_table = Table(
             show_header=True,
@@ -3309,26 +3952,62 @@ class FFTDispersionInterface:
         plot_table.add_column("default", style="green")
         plot_table.add_column("description", style="white")
         plot_table.add_row("axis", "'x'", "Propagation axis for compute_1d fallback")
-        plot_table.add_row("component", "None", "Overrides component when auto-computing")
-        plot_table.add_row("result", "None", "Use existing DispersionResult1D when provided")
+        plot_table.add_row(
+            "component", "None", "Overrides component when auto-computing"
+        )
+        plot_table.add_row(
+            "result", "None", "Use existing DispersionResult1D when provided"
+        )
         plot_table.add_row("figsize", "(12, 8)", "Matplotlib figure size (inches)")
         plot_table.add_row("dpi", "None", "Figure resolution override")
-        plot_table.add_row("cmap", "'cmc.davos'", "Colormap for heatmap plot (crameri davos)")
+        plot_table.add_row(
+            "cmap", "'cmc.davos'", "Colormap for heatmap plot (crameri davos)"
+        )
         plot_table.add_row("lognorm", "False", "Use logarithmic color scaling")
-        plot_table.add_row("colornorm", "None", "Advanced normalization: lognorm, symlognorm, powernorm, ...")
-        plot_table.add_row("colornorm_kwargs", "None", "Extra kwargs for selected normalization")
-        plot_table.add_row("vmin", "None", "Manual minimum for color scale normalization")
-        plot_table.add_row("vmax", "None", "Manual maximum for color scale normalization")
-        plot_table.add_row("k0_normalization", "0", "k≈0 compression strength: 0=off, 1-10=increasing suppression")
-        plot_table.add_row("live_filters", "None", "Fast post-filters from cached S(k,f) at plot time")
-        plot_table.add_row("kscale", "'rad_um'", "Wave-vector units: 'rad_um' (rad/μm) | 'rad' | 'meter'")
+        plot_table.add_row(
+            "colornorm",
+            "None",
+            "Advanced normalization: lognorm, symlognorm, powernorm, ...",
+        )
+        plot_table.add_row(
+            "colornorm_kwargs", "None", "Extra kwargs for selected normalization"
+        )
+        plot_table.add_row(
+            "vmin", "None", "Manual minimum for color scale normalization"
+        )
+        plot_table.add_row(
+            "vmax", "None", "Manual maximum for color scale normalization"
+        )
+        plot_table.add_row(
+            "k0_normalization",
+            "0",
+            "k≈0 compression strength: 0=off, 1-10=increasing suppression",
+        )
+        plot_table.add_row(
+            "live_filters", "None", "Fast post-filters from cached S(k,f) at plot time"
+        )
+        plot_table.add_row(
+            "kscale",
+            "'rad_um'",
+            "Wave-vector units: 'rad_um' (rad/μm) | 'rad' | 'meter'",
+        )
         plot_table.add_row("f_units", "'GHz'", "Frequency axis units ('Hz' | 'GHz')")
-        plot_table.add_row("orth_index", "None", "Select orthogonal slice when available")
+        plot_table.add_row(
+            "orth_index", "None", "Select orthogonal slice when available"
+        )
         plot_table.add_row("k_xlim", "None", "Manual x-limit tuple (k_min, k_max)")
-        plot_table.add_row("save", "None", "Path/PathLike or True for auto-named PNG, False disables")
-        plot_table.add_row("save_result", "None", "Forwarded to compute_1d → persist dispersion cache")
+        plot_table.add_row(
+            "save", "None", "Path/PathLike or True for auto-named PNG, False disables"
+        )
+        plot_table.add_row(
+            "save_result", "None", "Forwarded to compute_1d → persist dispersion cache"
+        )
         plot_table.add_row("title", "None", "Custom plot title")
-        plot_table.add_row("**kwargs", "", "Forwarded to compute_1d (supports kmax, force, save_result, ...)")
+        plot_table.add_row(
+            "**kwargs",
+            "",
+            "Forwarded to compute_1d (supports kmax, force, save_result, ...)",
+        )
 
         if dataset:
             obj_name = f"job[0]{_format_dataset_accessor(dataset)}{_format_slice_for_display(self.slice_info)}.fft"
@@ -3347,7 +4026,9 @@ class FFTDispersionInterface:
             "disp.plot_branch(branch)",
         ]
         example_code = "\n".join(example_lines)
-        syntax = Syntax(example_code, "python", theme="monokai", background_color="default")
+        syntax = Syntax(
+            example_code, "python", theme="monokai", background_color="default"
+        )
 
         with console.capture() as capture:
             console.print(
@@ -3411,7 +4092,9 @@ class FFTDispersionInterface:
     def _basic_dispersion_display(self) -> str:
         """Fallback plain-text description."""
         dataset_line = (
-            f"Dataset: {self.dataset_name}\n" if self.dataset_name else "Dataset: default\n"
+            f"Dataset: {self.dataset_name}\n"
+            if self.dataset_name
+            else "Dataset: default\n"
         )
         slice_line = (
             f"Slice: {self.slice_info}\n" if self.slice_info is not None else ""
@@ -3458,22 +4141,37 @@ class FFTDispersionInterface:
         return base
 
     def _html_dispersion_display(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
+
         job_result = self.parent_fft.job_result
         job_name = getattr(job_result, "name", "unknown")
         job_path = getattr(job_result, "path", "")
         dataset_label = self.dataset_name or "auto"
         slice_label = _format_slice_for_display(self.slice_info)
         config_state = "custom" if self._config else "default"
-        filters_label = ", ".join(self._describe_filter_flags()) if self._filters_config else "none"
+        filters_label = (
+            ", ".join(self._describe_filter_flags()) if self._filters_config else "none"
+        )
         last_plot = "yes" if self._last_plot_result is not None else "no"
         usage_prefix = self._usage_prefix()
 
         methods = [
-            ("compute_1d(axis='x', component=None, **opts)", "Compute 1D dispersion S(k,f)"),
-            ("compute_2d(component=None, **opts)", "Compute 2D dispersion S(kx, ky, f)"),
+            (
+                "compute_1d(axis='x', component=None, **opts)",
+                "Compute 1D dispersion S(k,f)",
+            ),
+            (
+                "compute_2d(component=None, **opts)",
+                "Compute 2D dispersion S(kx, ky, f)",
+            ),
             ("plot_dispersion(axis='x', **opts)", "Compute + plot dispersion"),
             ("plot_result(result, **opts)", "Plot pre-computed dispersion result"),
-            ("filters(remove_static=False, average=False, window=None, pre=None, post=None, live=None)", "Clone interface with compute/post/live filter configuration"),
+            (
+                "filters(remove_static=False, average=False, window=None, pre=None, post=None, live=None)",
+                "Clone interface with compute/post/live filter configuration",
+            ),
             ("track_branch(result, k_path, f_seed, **opts)", "Track dispersion branch"),
             ("plot_branch(branch, **opts)", "Plot branch and group velocity"),
             ("find_peaks(result, min_prominence=0.0, **opts)", "Find spectral peaks"),
@@ -3521,7 +4219,7 @@ class FFTDispersionInterface:
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
             <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
               <div><span style="color:#94a3b8;">Dataset:</span> <span style="color:#cbd5e1;">{_html_escape(dataset_label)}</span></div>
-              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or 'full')}</span></div>
+              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or "full")}</span></div>
               <div><span style="color:#94a3b8;">Config:</span> <span style="color:#cbd5e1;">{_html_escape(config_state)}</span></div>
               <div><span style="color:#94a3b8;">Filters:</span> <span style="color:#cbd5e1;">{_html_escape(filters_label)}</span></div>
               <div><span style="color:#94a3b8;">Last Plot:</span> <span style="color:#cbd5e1;">{_html_escape(last_plot)}</span></div>
@@ -3549,7 +4247,42 @@ class FFTDispersionInterface:
           </div>
         </div>
         """
-        return html
+        api_card = api_help_html(
+            self,
+            title="FFT dispersion API help",
+            prefix=usage_prefix,
+            subtitle="Live signatures generated from the dispersion interface.",
+            properties=[
+                ("analyzer", "Lazy SpinWaveAnalyzer instance"),
+                ("helpers", "Callable help namespace for major dispersion methods"),
+                ("help", "Alias for helpers"),
+                ("last_plot_result", "Last DispersionResult1D plotted"),
+                ("filters", "Callable filter helper / fluent filter entrypoint"),
+            ],
+            methods=[
+                "configure",
+                "compute_1d",
+                "compute_2d",
+                "plot_dispersion",
+                "plot_result",
+                "track_branch",
+                "dispersion_modes",
+                "release_memory",
+                "interactive_analysis",
+            ],
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"dispersion-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )
 
     def _html_plot_result_help(self) -> str:
         usage_prefix = self._usage_prefix()
@@ -3612,7 +4345,7 @@ class FFTDispersionInterface:
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
             <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
               <div><span style="color:#94a3b8;">Dataset:</span> <span style="color:#cbd5e1;">{_html_escape(dataset_label)}</span></div>
-              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or 'full')}</span></div>
+              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or "full")}</span></div>
             </div>
           </div>
 
@@ -3688,7 +4421,7 @@ class FFTDispersionInterface:
           <div style="background: rgba(15,23,42,0.6); padding: 10px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(148,163,184,0.2);">
             <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:0.9em;">
               <div><span style="color:#94a3b8;">Dataset:</span> <span style="color:#cbd5e1;">{_html_escape(dataset_label)}</span></div>
-              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or 'full')}</span></div>
+              <div><span style="color:#94a3b8;">Slice:</span> <span style="color:#cbd5e1;">{_html_escape(slice_label or "full")}</span></div>
             </div>
           </div>
 

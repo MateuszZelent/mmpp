@@ -65,7 +65,12 @@ class NonlinearInterface:
         force: bool = False,
     ) -> AmplitudeEquationResult:
         """Compute nonlinear amplitude equation variables ``c(t)``, ``p(t)``, ``omega(t)``."""
-        if not force and self._last_amplitude is not None and trajectory is None and reference_radius is None:
+        if (
+            not force
+            and self._last_amplitude is not None
+            and trajectory is None
+            and reference_radius is None
+        ):
             return self._last_amplitude
 
         cfg = self._config.nonlinear
@@ -117,7 +122,9 @@ class NonlinearInterface:
                 if steady_state_fraction is None
                 else float(steady_state_fraction)
             ),
-            reference_radius=(cfg.reference_radius if reference_radius is None else reference_radius),
+            reference_radius=(
+                cfg.reference_radius if reference_radius is None else reference_radius
+            ),
             current_a=current_a,
         )
         self._last_st = result
@@ -207,61 +214,143 @@ class NonlinearInterface:
         return NonlinearInterfacePlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
         from html import escape as _esc
 
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+            plot_accessor_html,
+        )
+
+        context_rows = [
+            ("dataset", self._dataset_name or "auto-detect", NODE_COLOR_COMPUTE),
+            (
+                "slice",
+                "custom" if self._slice_info is not None else "full geometry",
+                None,
+            ),
+            (
+                "ST spectrum method",
+                self._config.nonlinear.spectrum_method,
+                NODE_COLOR_ANALYSIS,
+            ),
+            ("phase method", self._config.nonlinear.phase_method, NODE_COLOR_ANALYSIS),
+            ("steady fraction", self._config.nonlinear.steady_state_fraction, None),
+        ]
+        accessors = [
+            (
+                "Compute:",
+                [
+                    (".amplitude_equation(...)", NODE_COLOR_COMPUTE),
+                    (".slavin_tiberkevich(...)", NODE_COLOR_COMPUTE),
+                    (
+                        ".slavin_tiberkevich_batch(jobs, currents, ...)",
+                        NODE_COLOR_COMPUTE,
+                    ),
+                ],
+            ),
+            (
+                "Thiele:",
+                [
+                    (".thiele", NODE_COLOR_ANALYSIS),
+                    (".force_balance(...)", NODE_COLOR_ANALYSIS),
+                    (".interactive_dashboard(...)", NODE_COLOR_ANALYSIS),
+                ],
+            ),
+            (
+                "Plotting:",
+                [
+                    (".plt.power_vs_current()", NODE_COLOR_PLOT),
+                    (".plt.linewidth_vs_current()", NODE_COLOR_PLOT),
+                    (".plt.force_balance(...)", NODE_COLOR_PLOT),
+                ],
+            ),
+        ]
         methods = [
             (".amplitude_equation()", "Compute c(t), p(t), ω(t) from orbit"),
             (".slavin_tiberkevich()", "Extract ST parameters (Q, Γ+, Γ−, N)"),
-            (".slavin_tiberkevich_batch(jobs, currents)", "ST parameters across current sweep"),
+            (
+                ".slavin_tiberkevich_batch(jobs, currents)",
+                "ST parameters across current sweep",
+            ),
             (".thiele", "Thiele equation analysis namespace"),
             (".force_balance(**kw)", "Shortcut → thiele.force_balance()"),
-            (".interactive_dashboard(**kw)", "Shortcut → thiele.interactive_dashboard()"),
+            (
+                ".interactive_dashboard(**kw)",
+                "Shortcut → thiele.interactive_dashboard()",
+            ),
             (".plt.power_vs_current()", "Plot P(I) from batch results"),
             (".plt.linewidth_vs_current()", "Plot Δf(I) from batch results"),
             (".plt.force_balance()", "Plot Thiele force decomposition"),
         ]
         method_rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
+            "<tr>"
+            f"<td style='padding:6px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};vertical-align:top;'>{_esc(m)}</td>"
+            f"<td style='padding:6px 8px;color:#f8f8f2;'>{_esc(d)}</td>"
+            "</tr>"
             for m, d in methods
         )
         example = (
             "# Slavin-Tiberkevich parameters\n"
-            "st = vortex.nonlinear.slavin_tiberkevich()\n"
+            "st = jobs[-1].solitons.vortex.nonlinear.slavin_tiberkevich()\n"
             "print(f'Q={st.Q:.1f}, N={st.N:.2e}')\n"
             "\n"
             "# Batch across current sweep\n"
-            "batch = vortex.nonlinear.slavin_tiberkevich_batch(\n"
+            "batch = jobs[-1].solitons.vortex.nonlinear.slavin_tiberkevich_batch(\n"
             "    jobs=[job1, job2, job3],\n"
             "    currents=[1e-3, 2e-3, 3e-3]\n"
             ")\n"
-            "vortex.nonlinear.plt.power_vs_current()\n"
+            "jobs[-1].solitons.vortex.nonlinear.plt.power_vs_current()\n"
             "\n"
             "# Thiele force balance\n"
-            "vortex.nonlinear.force_balance()\n"
-            "vortex.nonlinear.thiele.interactive_dashboard()"
+            "jobs[-1].solitons.vortex.nonlinear.force_balance()\n"
+            "jobs[-1].solitons.vortex.nonlinear.thiele.interactive_dashboard()"
         )
-        return (
-            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
-            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
-            "Nonlinear Dynamics Interface</div>"
-            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
-            "Slavin-Tiberkevich, Thiele equation, and amplitude analysis</div>"
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
+        methods_html = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Nonlinear Workflows</b>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;margin-top:8px;'>"
             f"{method_rows}</table></div>"
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
-            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
-            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
-            f"<code>{example}</code></pre></div>"
-            "</div>"
+        )
+        api = api_help_html(
+            self,
+            title="Nonlinear dynamics API help",
+            prefix="jobs[-1].solitons.vortex.nonlinear",
+            properties=[
+                ("thiele", "Thiele-force analysis and analytical simulation helpers"),
+                ("plt", "Convenience plotting namespace"),
+            ],
+            methods=[
+                "amplitude_equation",
+                "slavin_tiberkevich",
+                "slavin_tiberkevich_batch",
+                "force_balance",
+                "interactive_dashboard",
+            ],
+            subtitle="Live public API for Slavin-Tiberkevich, Thiele, and amplitude analysis.",
+            chrome=False,
+        )
+        return node_card_html(
+            "Nonlinear Dynamics Interface",
+            icon="📉",
+            subtitle="Slavin-Tiberkevich, Thiele-equation, and amplitude-equation analysis for nonlinear vortex dynamics.",
+            sections=[
+                metrics_section_html(context_rows),
+                accessors_section_html(accessors),
+                methods_html,
+                examples_section_html(example, title="Nonlinear Examples"),
+            ],
+            api=api,
+            uid=f"mmpp-vortex-nonlinear-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -342,15 +431,43 @@ class NonlinearInterfacePlotAccessor:
         return result.plt.force_balance(**plot_kwargs)
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("NonlinearInterfacePlotAccessor", [
-            (".power_vs_current()",
-             "Generation power P(I) from batch or single ST result",
-             "Uses latest batch if available, else single-point."),
-            (".linewidth_vs_current(as_mhz=True)",
-             "Linewidth Δf(I) from batch or single-point",
-             "as_mhz: convert to MHz."),
-            (".force_balance(as_norm=True)",
-             "Thiele force decomposition vs time",
-             "as_norm: True for |F| norms. Accepts compute_kwargs dict."),
-        ])
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, node_card_html, plot_accessor_html
+
+        overview = plot_accessor_html(
+            "NonlinearInterfacePlotAccessor",
+            [
+                (
+                    ".power_vs_current()",
+                    "Generation power P(I) from batch or single ST result",
+                    "Uses latest batch if available, else single-point.",
+                ),
+                (
+                    ".linewidth_vs_current(as_mhz=True)",
+                    "Linewidth Δf(I) from batch or single-point",
+                    "as_mhz: convert to MHz.",
+                ),
+                (
+                    ".force_balance(as_norm=True)",
+                    "Thiele force decomposition vs time",
+                    "as_norm: True for |F| norms. Accepts compute_kwargs dict.",
+                ),
+            ],
+        )
+        api = api_help_html(
+            self,
+            title="Nonlinear plot API help",
+            prefix="jobs[-1].solitons.vortex.nonlinear.plt",
+            methods=["power_vs_current", "linewidth_vs_current", "force_balance"],
+            subtitle="Plot helpers for latest nonlinear results or on-demand calculations.",
+            chrome=False,
+        )
+        return node_card_html(
+            "Nonlinear Plot Accessor",
+            icon="🎨",
+            subtitle="Plot shortcuts for nonlinear current sweeps and force-balance diagnostics.",
+            sections=[overview],
+            api=api,
+            uid=f"mmpp-vortex-nonlinear-plot-{str(_uuid.uuid4())[:8]}",
+        )

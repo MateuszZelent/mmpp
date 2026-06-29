@@ -28,7 +28,7 @@ def _make_job(tmp_path):
     for i in range(nt):
         radius = np.hypot(xx - x0[i], yy - y0[i])
         phi = np.arctan2(yy - y0[i], xx - x0[i])
-        mz = np.exp(-(radius / 3.0) ** 2)
+        mz = np.exp(-((radius / 3.0) ** 2))
         mperp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
         data[i, 0, :, :, 0] = -mperp * np.sin(phi)
         data[i, 0, :, :, 1] = mperp * np.cos(phi)

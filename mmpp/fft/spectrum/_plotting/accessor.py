@@ -23,9 +23,16 @@ class SpectrumPlotAccessor:
         return "<SpectrumPlotAccessor: .spectrum(), .interactive()>"
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, html_tabs
+
         methods = [
             (".spectrum(**kwargs)", "Static matplotlib spectrum plot"),
-            (".interactive(**kwargs)", "Interactive spectrum explorer (Jupyter widget)"),
+            (
+                ".interactive(**kwargs)",
+                "Interactive spectrum explorer (Jupyter widget)",
+            ),
         ]
         method_rows = "".join(
             f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{m}</td>"
@@ -55,15 +62,15 @@ class SpectrumPlotAccessor:
             "# Interactive explorer\n"
             "spec.plot.interactive(component='z')"
         )
-        return (
+        html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "Spectrum Plot Accessor</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
-            "Plotting namespace available via <code style=\"color:#a5b4fc;\">spec.plot</code></div>"
+            'Plotting namespace available via <code style="color:#a5b4fc;">spec.plot</code></div>'
             # Methods
             "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
             "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
@@ -90,4 +97,25 @@ class SpectrumPlotAccessor:
             f"<code>{example}</code></pre></div>"
             "</div>"
         )
-
+        api_card = api_help_html(
+            self,
+            title="Spectrum plot accessor API help",
+            prefix="spec.plot",
+            methods=["spectrum", "interactive"],
+            subtitle=(
+                "Live signatures for the plotting namespace returned by "
+                "SpectrumResult.plot."
+            ),
+            chrome=False,
+        )
+        return (
+            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            'color:#e2e8f0;">'
+            + html_tabs(
+                [("Overview", html), ("API", api_card)],
+                uid=f"spectrum-plot-{str(_uuid.uuid4())[:8]}",
+            )
+            + "</div>"
+        )

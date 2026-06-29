@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -63,6 +63,11 @@ if TYPE_CHECKING:
     from .detection import BrillouinZoneDetector
 
 from .mode_profile import ModeProfile
+from .._json import json_safe
+from .._interactive_viewer import (
+    normalize_dispersion_interactive_options,
+    split_dispersion_interactive_kwargs,
+)
 from ._interactive import (
     apply_params as _apply_params_impl,
     base_default_params as _base_default_params_impl,
@@ -122,6 +127,7 @@ class InteractiveDispersionModes:
         # Widget state
         self._widgets_created = False
         self._output: widgets.Output | None = None
+        self._display_handle = None
         self._fig: Figure | None = None
         self._ax_disp: Axes | None = None
         self._ax_mode: Axes | None = None
@@ -137,6 +143,10 @@ class InteractiveDispersionModes:
         self._animation = None  # FuncAnimation object
         self._is_animating = False
         self._last_compute_kwargs: dict[str, object] = {}
+        self._interactive_viewer_options: dict[str, object] = {}
+        self._mode_components: list[str] | None = None
+        self._spectrum_components: list[str] | None = None
+        self._analytical_options: dict[str, object] = {}
 
         # Default parameters
         self._default_params = self._base_default_params()
@@ -244,6 +254,189 @@ class InteractiveDispersionModes:
         """
         return _list_presets_impl(self, logger)
 
+    @property
+    def state(self) -> dict[str, Any]:
+        """Return a lightweight state compatible with the new dispersion viewer."""
+        self._ensure_runtime_state()
+        return {
+            "modes": True,
+            "mode_components": self._mode_components,
+            "spectrum_components": self._spectrum_components,
+            "can_reconstruct_modes": (
+                self.result is not None
+                and getattr(self.result, "S_complex", None) is not None
+            ),
+            "options": json_safe(self._interactive_viewer_options),
+            "analytical": json_safe(self._analytical_options),
+            "selected_k": self._selected_k,
+            "selected_f": self._selected_f,
+            "default_params": json_safe(self._default_params),
+        }
+
+    def _selection_payload(self, selection: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = dict(selection or {})
+        if not payload and (self._selected_k is not None or self._selected_f is not None):
+            payload["source"] = "legacy_modes"
+        if (
+            "k_rad_per_m" not in payload
+            and "k_rad_um" in payload
+            and payload["k_rad_um"] is not None
+        ):
+            payload["k_rad_per_m"] = float(payload["k_rad_um"]) * 1e6
+        if (
+            "k_rad_um" not in payload
+            and "k_rad_per_m" in payload
+            and payload["k_rad_per_m"] is not None
+        ):
+            payload["k_rad_um"] = float(payload["k_rad_per_m"]) / 1e6
+        if (
+            "f_hz" not in payload
+            and "f_ghz" in payload
+            and payload["f_ghz"] is not None
+        ):
+            payload["f_hz"] = float(payload["f_ghz"]) * 1e9
+        if (
+            "f_ghz" not in payload
+            and "f_hz" in payload
+            and payload["f_hz"] is not None
+        ):
+            payload["f_ghz"] = float(payload["f_hz"]) / 1e9
+        if "k_rad_per_m" not in payload and self._selected_k is not None:
+            payload["k_rad_per_m"] = float(self._selected_k)
+            payload["k_rad_um"] = float(self._selected_k) / 1e6
+        if "f_hz" not in payload and self._selected_f is not None:
+            payload["f_hz"] = float(self._selected_f)
+            payload["f_ghz"] = float(self._selected_f) / 1e9
+        return payload
+
+    def _mode_request(self, selection: dict[str, Any]) -> dict[str, Any]:
+        k_rad_um = selection.get("k_rad_um")
+        f_ghz = selection.get("f_ghz")
+        component = selection.get(
+            "component",
+            getattr(self.result, "component", None) if self.result is not None else None,
+        )
+        request = {
+            "available": False,
+            "k_rad_um": None,
+            "f_ghz": None,
+            "z_layer": int(selection.get("z_layer", 0)),
+            "component": component,
+            "reason": "",
+        }
+        if k_rad_um is None or f_ghz is None:
+            request["reason"] = "Select a dispersion point with k and f first."
+            return request
+        request["k_rad_um"] = float(k_rad_um)
+        request["f_ghz"] = float(f_ghz)
+        if self.result is None:
+            request["reason"] = "Mode reconstruction requires a dispersion result."
+            return request
+        if getattr(self.result, "S_complex", None) is None:
+            request["reason"] = "Mode reconstruction requires S_complex."
+            return request
+        request["available"] = True
+        return request
+
+    def export_selection(self, **selection: Any) -> dict[str, Any]:
+        """Export selected ``(k, f)`` using the same shape as the new viewer."""
+        payload = self._selection_payload(selection)
+        return {
+            "viewer": json_safe(self.state),
+            "selection": json_safe(payload),
+            "mode_request": json_safe(self._mode_request(payload)),
+        }
+
+    def collect_preset(self) -> dict[str, Any]:
+        """Collect a shared interactive preset compatible with the new viewer."""
+        self._ensure_runtime_state()
+        selection = self._selection_payload()
+        return {
+            "schema_version": "dispersion-interactive-preset/v1",
+            "viewer": json_safe(self.state),
+            "selection": json_safe(selection),
+            "mode_request": json_safe(self._mode_request(selection)),
+            "legacy_modes": {
+                "params": json_safe(self._get_current_params()),
+            },
+        }
+
+    def apply_preset(self, payload: dict[str, Any]) -> "InteractiveDispersionModes":
+        """Apply a shared interactive preset from legacy or new viewer state."""
+        self._ensure_runtime_state()
+        if not isinstance(payload, dict):
+            return self
+
+        viewer_state = payload.get("viewer")
+        if not isinstance(viewer_state, dict):
+            viewer_state = payload
+
+        self._mode_components = viewer_state.get(
+            "mode_components",
+            self._mode_components,
+        )
+        self._spectrum_components = viewer_state.get(
+            "spectrum_components",
+            self._spectrum_components,
+        )
+        options = viewer_state.get("options")
+        if isinstance(options, dict):
+            self._interactive_viewer_options = dict(options)
+        analytical = viewer_state.get("analytical")
+        if isinstance(analytical, dict):
+            self._analytical_options = dict(analytical)
+
+        legacy_modes = payload.get("legacy_modes")
+        if isinstance(legacy_modes, dict) and isinstance(
+            legacy_modes.get("params"),
+            dict,
+        ):
+            self._apply_params(dict(legacy_modes["params"]))
+        elif isinstance(viewer_state.get("default_params"), dict):
+            self._apply_params(dict(viewer_state["default_params"]))
+
+        if isinstance(payload.get("selection"), dict):
+            self.apply_selection(payload)
+        elif isinstance(payload.get("explorer"), dict):
+            explorer = payload["explorer"]
+            self.apply_selection(
+                k_rad_per_m=explorer.get("selected_k"),
+                f_hz=explorer.get("selected_f"),
+            )
+        return self
+
+    def apply_selection(
+        self,
+        payload: dict[str, Any] | None = None,
+        **selection: Any,
+    ) -> "InteractiveDispersionModes":
+        """Apply a selection exported by this object or ``DispersionInteractiveViewer``."""
+        merged = dict(selection)
+        if payload:
+            if isinstance(payload.get("selection"), dict):
+                merged.update(payload["selection"])
+            else:
+                merged.update(payload)
+        normalized = self._selection_payload(merged)
+        if "k_rad_per_m" in normalized and normalized["k_rad_per_m"] is not None:
+            self._selected_k = float(normalized["k_rad_per_m"])
+        if "f_hz" in normalized and normalized["f_hz"] is not None:
+            self._selected_f = float(normalized["f_hz"])
+        return self
+
+    def mode_at_selection(self, **selection: Any) -> Any:
+        """Extract a mode at the current or supplied selection."""
+        payload = self._selection_payload(selection)
+        request = self._mode_request(payload)
+        if not request.get("available", False):
+            raise ValueError(str(request.get("reason") or "Mode selection unavailable."))
+        return self.result.modes.at(
+            k_rad_um=float(request["k_rad_um"]),
+            f_ghz=float(request["f_ghz"]),
+            z_layer=int(request.get("z_layer", 0)),
+            component=request.get("component"),
+        )
+
     def fold(
         self,
         result: DispersionResult1D | None = None,
@@ -272,6 +465,9 @@ class InteractiveDispersionModes:
         figsize: tuple[float, float] = (10, 10),
         dpi: int = 150,
         lattice_constant_nm: float | None = None,
+        fmax: float | None = None,
+        f_units: str = "GHz",
+        lognorm: bool | None = None,
         add_contour: np.ndarray | None = None,
         **compute_kwargs,
     ):
@@ -288,6 +484,13 @@ class InteractiveDispersionModes:
             Figure DPI (default 150)
         lattice_constant_nm : float, optional
             Initial lattice constant in nm. If None, uses default from dispersion_modes().
+        fmax : float, optional
+            Initial maximum displayed frequency. Interpreted according to *f_units*.
+        f_units : {"GHz", "Hz"}
+            Units for *fmax*.
+        lognorm : bool, optional
+            Compatibility option from dispersion heatmaps. Enables the widget's
+            non-destructive log display filter when True.
         add_contour : np.ndarray, optional
             2D geometry array (0/1) to overlay as contour on mode visualization.
             This is useful for showing material boundaries (e.g., oscillators, antidots).
@@ -296,6 +499,20 @@ class InteractiveDispersionModes:
         """
 
         self._ensure_runtime_state()
+        compute_kwargs, viewer_kwargs = split_dispersion_interactive_kwargs(
+            dict(compute_kwargs)
+        )
+        (
+            mode_components,
+            spectrum_components,
+            _modes_requested,
+            viewer_options,
+            analytical_options,
+        ) = normalize_dispersion_interactive_options(**viewer_kwargs)
+        self._interactive_viewer_options = dict(viewer_options)
+        self._mode_components = mode_components
+        self._spectrum_components = spectrum_components
+        self._analytical_options = dict(analytical_options)
 
         if not _HAS_WIDGETS:
             raise ImportError(
@@ -324,6 +541,26 @@ class InteractiveDispersionModes:
         # Set initial parameters from result
         f_max_ghz = self.result.f_axis.max() / 1e9
         self._default_params["f_max_ghz"] = min(f_max_ghz, 20.0)
+        if fmax is not None:
+            units = f_units.lower()
+            if units == "ghz":
+                fmax_ghz = float(fmax)
+            elif units == "hz":
+                fmax_ghz = float(fmax) / 1e9
+            else:
+                raise ValueError("f_units must be 'GHz' or 'Hz'")
+            if fmax_ghz <= 0.0:
+                raise ValueError("fmax must be positive")
+            self._default_params["f_max_ghz"] = fmax_ghz
+        if lognorm is not None:
+            self._default_params["live_log_enabled"] = bool(lognorm)
+            self._default_params.setdefault("live_log_method", "log1p")
+        if "n_bz" in viewer_options:
+            self._default_params["n_bz_mask"] = int(viewer_options["n_bz"])
+        if "mode_type" in viewer_options:
+            self._default_params["mode_type"] = str(viewer_options["mode_type"])
+        if "cmap" in viewer_options:
+            self._default_params["cmap_disp"] = str(viewer_options["cmap"])
 
         # Store geometry contour for mode overlay
         if add_contour is not None:
@@ -344,12 +581,41 @@ class InteractiveDispersionModes:
         # Create the main layout
         main_layout = self._create_layout()
 
-        # Display
-        display(main_layout)
+        # Display once and update the same output on repeated calls.
+        if self._display_handle is None:
+            self._display_handle = display(main_layout, display_id=True)
+        else:
+            self._display_handle.update(main_layout)
 
         # Initial plot
         self._initialize_figure()
         self._update_dispersion_plot()
+
+    def close(self) -> None:
+        """Best-effort cleanup for notebook display, animation, and figure state."""
+        self._ensure_runtime_state()
+
+        animation = getattr(self, "_animation", None)
+        event_source = getattr(animation, "event_source", None)
+        if event_source is not None and hasattr(event_source, "stop"):
+            event_source.stop()
+        self._animation = None
+        self._is_animating = False
+
+        if self._display_handle is not None and hasattr(self._display_handle, "update"):
+            self._display_handle.update(None)
+        self._display_handle = None
+
+        fig = getattr(self, "_fig", None)
+        plt_module = globals().get("plt")
+        if fig is not None and plt_module is not None and hasattr(plt_module, "close"):
+            plt_module.close(fig)
+        self._fig = None
+        self._ax_disp = None
+        self._ax_mode = None
+        self._colorbar_disp = None
+        self._colorbar_mode = None
+        self._mask_markers = []
 
     def _create_widgets(self):
         """Create all interactive widgets."""
@@ -464,7 +730,7 @@ class InteractiveDispersionModes:
                 ("Phase φ[M]", "phase"),
                 ("Ampl×Phase", "ampl_phase"),
             ],
-            value="real",
+            value=params.get("mode_type", "real"),
             description="Mode type:",
             layout=widgets.Layout(width="95%"),
             style={"description_width": "70px"},

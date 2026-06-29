@@ -71,6 +71,8 @@ tests/**
 !tests/notebooks/vortex/
 !tests/notebooks/vortex/vortex_dynamics.ipynb
 !tests/test_dispersion_mode_extraction.py
+!tests/test_dispersion_benchmark.py
+!tests/test_dispersion_release_gate.py
 !tests/test_vortex_topology.py
 !tests/test_vortex_tracking.py
 !tests/test_vortex_trajectory.py
@@ -85,10 +87,12 @@ tests/**
 !tests/test_vortex_html_helpers.py
 !tests/test_fft_vortex_classifier_wrapper.py
 !tests/test_spectrum_modes_bridge.py
+!tests/test_import_hygiene.py
 !tests/test_imports_vortex.py
 !tests/test_imports_hysteresis.py
 !tests/test_xy_convention_contract.py
 !tests/test_dataset_plotting_accessors.py
+!tests/test_mmpp_notebook_progress.py
 !tests/test_field_resolved_thiele.py
 !tests/test_solitons_report_recommendations.py
 
@@ -189,6 +193,7 @@ results/
 temp/
 *.ipynb
 !tests/notebooks/vortex/vortex_dynamics.ipynb
+!output/jupyter-notebook/fft-dispersion-interactive-smoke.ipynb
 *.png
 *.jpg
 *.jpeg
@@ -208,6 +213,7 @@ mmpp/fft/transmission/experiment/
 *.pdf
 docs/HYSTERESIS_IMPLEMENTATION_AUDIT.md
 *.md
+!docs/analysis/RAPORT_AUDYT_FFT_DISPERSION_INTERACTIVE_2026-06-28.md
 !docs/development/VORTEX_ANALYTICAL_AUTOFIT_IMPLEMENTATION_PLAN.md
 tests/notebooks/vortex/vortex_dynamics.ipynb
 tests/test.ipynb

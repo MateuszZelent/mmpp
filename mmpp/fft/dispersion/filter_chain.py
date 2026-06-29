@@ -21,6 +21,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
 
+from mmpp._repr_helpers import (
+    NODE_COLOR_ANALYSIS,
+    NODE_COLOR_COMPUTE,
+    NODE_COLOR_PLOT,
+    NODE_COLOR_UTIL,
+    api_help_html,
+    accessors_section_html,
+    examples_section_html,
+    metrics_section_html,
+    node_card_html,
+)
+
 if TYPE_CHECKING:
     from ..models import DispersionResult1D, DispersionResult2D
     from ..interface import FFTDispersionInterface
@@ -208,69 +220,61 @@ class DispersionFilterChain:
         return f"<DispersionFilterChain [{summary}] → .compute_1d(axis='x') → DispersionResult1D>"
 
     def _repr_html_(self) -> str:
-        from html import escape as _esc
-
         iface = object.__getattribute__(self, "_iface")
         fc = getattr(iface, "_filters_config", None) or {}
-
-        HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
-
-        methods = [
-            (".compute_1d(axis='x', save=True)",
-             "→ DispersionResult1D",
-             "Compute S(k,f) along propagation axis. Returns DispersionResult1D with .plot, .analyze, .modes. "
-             "save=True caches to zarr; force=True bypasses cache."),
-            (".compute_1d(axis='x', avg_over_orthogonal=False)",
-             "→ DispersionResult1D with S_local",
-             "avg_over_orthogonal=False preserves all y-slices in S_local — required for mode inspection per y position."),
-            (".compute_2d(save=True)",
-             "→ DispersionResult2D",
-             "Compute full 2D dispersion S(kx, ky, f)."),
-            (".filters(live={...})",
-             "→ new DispersionFilterChain",
-             "Chain additional filters non-destructively. Uses deepcopy — original chain is unchanged."),
-        ]
-        row_html = "".join(
-            f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
-            f"<td style='padding:4px 10px;font-family:monospace;color:#93c5fd;font-size:.88em;width:55%;'>{_esc(sig)}</td>"
-            f"<td style='padding:4px 10px;color:#94a3b8;font-size:.85em;'>{_esc(desc)}</td>"
-            f"</tr>"
-            for sig, desc, tip in methods
-        )
-
-        # Render active filters as expandable section
         filters_keys = list(fc.keys()) if fc else []
         fc_summary = ", ".join(filters_keys) if filters_keys else "none"
-        fc_detail = (
-            "<details style='margin:6px 0;'>"
-            "<summary style='cursor:pointer;font-size:.8em;color:#94a3b8;list-style:none;' "
-            f"title='Expand to see full filter configuration'>"
-            f"&#9654; active filters: <code style='color:#a5b4fc;'>{_esc(fc_summary)}</code></summary>"
-            "<pre style='margin:4px 0 0 12px;font-size:.78em;color:#a5b4fc;"
-            "background:#1e293b;padding:6px;border-radius:6px;'>"
-            + _esc(str(fc) if fc else "{}")
-            + "</pre></details>"
+        fc_detail = examples_section_html(
+            str(fc) if fc else "{}",
+            title=f"Active Filters: {fc_summary}",
         )
-
-        breadcrumb = (
-            "<div style='font-size:.78em;color:#475569;margin-bottom:8px;font-family:monospace;'>"
-            "fft.dispersion "
-            "<span style='color:#334155;'>›</span> "
-            "<span style='color:#7dd3fc;font-weight:600;'>.filters()</span>"
-            "</div>"
+        api = api_help_html(
+            self,
+            title="Dispersion filter-chain API help",
+            prefix="job[0].fft.dispersion.filters(...)",
+            methods=["compute_1d", "compute_2d", "filters"],
+            subtitle="Live signatures for the fluent dispersion filter-chain stage.",
+            chrome=False,
         )
-
-        return (
-            "<div style='font-family:-apple-system,sans-serif;border:2px solid #334155;"
-            "border-radius:10px;padding:12px;margin:6px 0;"
-            "background:linear-gradient(135deg,#0f172a,#1e293b);"
-            "color:#e2e8f0;max-width:680px;'>"
-            + breadcrumb
-            + "<div style='font-weight:700;color:#7dd3fc;margin-bottom:6px;'>"
-            + "DispersionFilterChain"
-            + "<span style='font-size:.75em;color:#475569;font-weight:400;margin-left:8px;'>"
-            + "(hover rows for parameter details)</span></div>"
-            + fc_detail
-            + f"<table style='margin-top:4px;width:100%;border-collapse:collapse;'>{row_html}</table>"
-            + "</div>"
+        return node_card_html(
+            "Dispersion Filter Chain",
+            icon="🧵",
+            subtitle="Fluent filter configuration stage before dispersion computation.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("active filters", fc_summary, NODE_COLOR_UTIL),
+                        ("result 1D", "compute_1d(...)", NODE_COLOR_COMPUTE),
+                        ("result 2D", "compute_2d(...)", NODE_COLOR_ANALYSIS),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Compute:",
+                            [
+                                (
+                                    ".compute_1d(axis='x', save=True)",
+                                    NODE_COLOR_COMPUTE,
+                                ),
+                                (
+                                    ".compute_1d(axis='x', avg_over_orthogonal=False)",
+                                    NODE_COLOR_COMPUTE,
+                                ),
+                                (".compute_2d(save=True)", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                        (
+                            "Chain:",
+                            [
+                                (".filters(live={...})", NODE_COLOR_PLOT),
+                                ("__call__(axis='x')", NODE_COLOR_UTIL),
+                            ],
+                        ),
+                    ]
+                ),
+                fc_detail,
+            ],
+            api=api,
+            uid="dispersion-filter-chain",
         )

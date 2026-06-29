@@ -65,58 +65,148 @@ class TrajectoryInterface:
         return PhaseAnalyzer(self.raw)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
         from html import escape as _esc
 
-        methods = [
-            (".raw", "Raw tracked trajectory (TrajectoryResult)"),
-            (".filtered(method=..., window=...)", "Low-pass / smoothed trajectory"),
-            (".steady_state(threshold=...)", "Extract steady-state portion"),
-            (".orbit", "Orbit fitting namespace (ellipse, radius, etc.)"),
-            (".phase", "Phase analysis namespace (instantaneous φ(t))"),
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        context_rows = [
+            ("dataset", self._dataset_name or "auto-detect", None),
+            (
+                "slice",
+                "custom" if self._slice_info is not None else "full geometry",
+                None,
+            ),
+            (
+                "filter method",
+                self._config.trajectory.filter_method,
+                NODE_COLOR_COMPUTE,
+            ),
+            (
+                "steady threshold",
+                self._config.trajectory.steady_state_threshold,
+                NODE_COLOR_ANALYSIS,
+            ),
+            (
+                "steady window",
+                self._config.trajectory.steady_state_window,
+                None,
+            ),
         ]
-        method_rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
-            for m, d in methods
+        accessors = [
+            (
+                "Data:",
+                [
+                    (".raw", NODE_COLOR_COMPUTE),
+                    (".filtered(method='savgol', ...)", NODE_COLOR_COMPUTE),
+                    (".steady_state(threshold=..., ...)", NODE_COLOR_COMPUTE),
+                ],
+            ),
+            (
+                "Analysis:",
+                [
+                    (".orbit.fit(...)", NODE_COLOR_ANALYSIS),
+                    (".phase.frequency_hz", NODE_COLOR_ANALYSIS),
+                ],
+            ),
+            (
+                "Plots:",
+                [
+                    (".raw.plt.trajectory()", NODE_COLOR_PLOT),
+                    (".raw.plt.orbit()", NODE_COLOR_PLOT),
+                    (".phase.plt.frequency_vs_time()", NODE_COLOR_PLOT),
+                ],
+            ),
+        ]
+        namespace_rows = [
+            (
+                "raw",
+                "Tracked core trajectory result. This is the source object for most downstream orbit and phase diagnostics.",
+            ),
+            (
+                "filtered(...)",
+                "Smoothed / filtered trajectory using config defaults or explicit method/window overrides.",
+            ),
+            (
+                "steady_state(...)",
+                "Returns the portion of the trajectory after transient decay using amplitude thresholding.",
+            ),
+            (
+                "orbit",
+                "Orbit fitting namespace for ellipse geometry, radius extraction, and residual analysis.",
+            ),
+            (
+                "phase",
+                "Instantaneous phase and angular frequency diagnostics derived from the tracked orbit.",
+            ),
+        ]
+        namespace_body = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};vertical-align:top;'>{_esc(name)}</td>"
+            f"<td style='padding:6px 8px;color:#f8f8f2;'>{_esc(desc)}</td>"
+            "</tr>"
+            for name, desc in namespace_rows
         )
         example = (
-            "# Get raw trajectory\n"
-            "traj = vortex.trajectory.raw\n"
+            "# Get tracked core trajectory\n"
+            "traj = jobs[-1].solitons.vortex.trajectory.raw\n"
             "traj.plt.trajectory()  # x(t), y(t)\n"
             "traj.plt.orbit()       # x vs y\n"
             "\n"
             "# Filtered trajectory\n"
-            "smooth = vortex.trajectory.filtered(method='savgol')\n"
+            "smooth = jobs[-1].solitons.vortex.trajectory.filtered(method='savgol')\n"
             "\n"
             "# Steady-state extraction\n"
-            "ss = vortex.trajectory.steady_state()\n"
+            "ss = jobs[-1].solitons.vortex.trajectory.steady_state()\n"
             "\n"
             "# Orbit fitting\n"
-            "orbit = vortex.trajectory.orbit\n"
-            "orbit.fit()  # fit elliptical orbit\n"
+            "orbit = jobs[-1].solitons.vortex.trajectory.orbit\n"
+            "fit = orbit.fit()\n"
             "\n"
             "# Phase analysis\n"
-            "phase = vortex.trajectory.phase"
+            "phase = jobs[-1].solitons.vortex.trajectory.phase\n"
+            "phase.plt.frequency_vs_time(unit='ghz')"
         )
-        return (
-            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
-            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
-            "Trajectory Interface</div>"
-            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
-            "Orbit, phase, and filtering tools for tracked core trajectory</div>"
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods &amp; Properties</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
-            f"{method_rows}</table></div>"
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
-            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
-            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
-            f"<code>{example}</code></pre></div>"
-            "</div>"
+        namespace_html = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Namespace Catalog</b>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;margin-top:8px;'>"
+            f"{namespace_body}</table></div>"
+        )
+        api_card = api_help_html(
+            self,
+            title="Vortex trajectory API help",
+            prefix="jobs[-1].solitons.vortex.trajectory",
+            properties=[
+                ("raw", "Raw tracked trajectory"),
+                ("orbit", "Orbit fitting namespace"),
+                ("phase", "Phase analysis namespace"),
+            ],
+            methods=["filtered", "steady_state"],
+            subtitle="Live signatures for trajectory filtering and steady-state extraction.",
+            chrome=False,
+        )
+        return node_card_html(
+            "Vortex Trajectory Interface",
+            icon="🧭",
+            subtitle="Tracking-derived orbit, filtering, steady-state, and phase diagnostics for a single vortex run.",
+            sections=[
+                metrics_section_html(context_rows),
+                accessors_section_html(accessors),
+                namespace_html,
+                examples_section_html(example, title="Trajectory Workflows"),
+            ],
+            api=api_card,
+            uid=f"trajectory-{str(_uuid.uuid4())[:8]}",
         )

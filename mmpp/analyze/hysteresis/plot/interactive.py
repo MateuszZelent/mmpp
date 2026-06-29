@@ -73,6 +73,7 @@ class HysteresisInteractiveExplorer:
 
         self._controls: dict[str, Any] = {}
         self._widget_root = None
+        self._display_handle = None
         self._status_history: list[str] = []
         self._presets_dir = None
         self._syncing_controls = False
@@ -336,9 +337,8 @@ class HysteresisInteractiveExplorer:
         if is_widget_backend:
             if not self._canvas_mounted:
                 output.clear_output(wait=False)
-                with output:
-                    if self._fig is not None:
-                        display(self._fig.canvas)
+                if self._fig is not None:
+                    output.append_display_data(self._fig.canvas)
                 self._canvas_mounted = True
             if self._fig is not None:
                 self._fig.canvas.draw_idle()
@@ -346,14 +346,9 @@ class HysteresisInteractiveExplorer:
 
         # Non-widget fallback (mainly non-interactive diagnostics).
         output.clear_output(wait=False)
-        with output:
-            try:
-                clear_output(wait=False)
-            except Exception:
-                pass
-            if self._fig is not None:
-                self._fig.canvas.draw()
-            display(self._fig)
+        if self._fig is not None:
+            self._fig.canvas.draw()
+            output.append_display_data(self._fig)
 
     def _set_index(self, idx: int, *, redraw: bool = True) -> None:
         n_points = int(self.result.field.size)
@@ -524,7 +519,10 @@ class HysteresisInteractiveExplorer:
             set_status(self, "Interactive toolbar ready", color="#0F766E")
 
             if show:
-                display(self._widget_root)
+                if self._display_handle is None:
+                    self._display_handle = display(self._widget_root, display_id=True)
+                else:
+                    self._display_handle.update(self._widget_root)
                 return None
             return self._widget_root
 

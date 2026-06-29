@@ -208,7 +208,9 @@ class FieldResolvedCalibration:
     lambda_z_fieldlike_per_J_per_m: float = 0.0
 
     min_omega_factor: float = 0.02
-    saturation: SaturationCalibration = field(default_factory=lambda: SaturationCalibration())
+    saturation: SaturationCalibration = field(
+        default_factory=lambda: SaturationCalibration()
+    )
     oersted: OerstedCalibration = field(default_factory=lambda: OerstedCalibration())
     thermal: ThermalCalibration = field(default_factory=lambda: ThermalCalibration())
     current_drive: CurrentDrive = field(default_factory=lambda: CurrentDrive())
@@ -226,7 +228,9 @@ class CurrentDrive:
 
     def area(self, geom: DiskGeometry) -> float:
         """Return effective current area [m^2]."""
-        return float(math.pi * geom.R * geom.R if self.area_m2 is None else self.area_m2)
+        return float(
+            math.pi * geom.R * geom.R if self.area_m2 is None else self.area_m2
+        )
 
     def J_from_I(self, I_A: float, geom: DiskGeometry) -> float:
         """Convert electrical current [A] into signed current density [A/m^2]."""
@@ -479,7 +483,7 @@ class FieldResolvedCPPThieleModel:
         if I_A is not None:
             th = self.cal.thermal
             if th.thermal_sat_I is not None and th.thermal_sat_I > 0.0:
-                scale = 1.0 - math.exp(-(float(I_A) / float(th.thermal_sat_I)) ** 2)
+                scale = 1.0 - math.exp(-((float(I_A) / float(th.thermal_sat_I)) ** 2))
                 dT = float(th.dT_dI2) * float(th.thermal_sat_I) ** 2 * scale
             else:
                 dT = float(th.dT_dI2) * float(I_A) * float(I_A)
@@ -613,7 +617,9 @@ class FieldResolvedCPPThieleModel:
         """Sixth-order stiffness coefficient ``K6`` [N/m]."""
         G = self.G_mag(X, J, B)
         _, _, K6_oe = self.oersted_stiffness_terms(J)
-        return float(G * self.omega0_eff(J, B, I_A) * float(self.cal.saturation.N4) + K6_oe)
+        return float(
+            G * self.omega0_eff(J, B, I_A) * float(self.cal.saturation.N4) + K6_oe
+        )
 
     def lambda_H(self, J: float, B: ExternalFieldLike | ExternalField = 0.0) -> float:  # noqa: ARG002
         """In-plane field force coefficient [N/T]."""
@@ -1032,11 +1038,17 @@ class FieldResolvedCPPThieleModel:
             h = float(t_eval[idx] - t_eval[idx - 1])
             y0 = values[-1]
             k1 = self.rhs(t, y0, J_func, B_func, polarizer_func, I_func)
-            k2 = self.rhs(t + 0.5 * h, y0 + 0.5 * h * k1, J_func, B_func, polarizer_func, I_func)
-            k3 = self.rhs(t + 0.5 * h, y0 + 0.5 * h * k2, J_func, B_func, polarizer_func, I_func)
+            k2 = self.rhs(
+                t + 0.5 * h, y0 + 0.5 * h * k1, J_func, B_func, polarizer_func, I_func
+            )
+            k3 = self.rhs(
+                t + 0.5 * h, y0 + 0.5 * h * k2, J_func, B_func, polarizer_func, I_func
+            )
             k4 = self.rhs(t + h, y0 + h * k3, J_func, B_func, polarizer_func, I_func)
             y_next = y0 + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-            if clamp_u is not None and np.linalg.norm(y_next) / self.geom.R >= float(clamp_u):
+            if clamp_u is not None and np.linalg.norm(y_next) / self.geom.R >= float(
+                clamp_u
+            ):
                 break
             values.append(np.asarray(y_next, dtype=float))
             times.append(float(t_eval[idx]))
@@ -1091,7 +1103,9 @@ class FieldResolvedCPPThieleModel:
                 return self.equilibrium_conservative()
             if mode_norm == "disk" or mode_norm == "origin":
                 return np.zeros(2, dtype=float)
-            raise ValueError("center mode must be 'mean', 'conservative_equilibrium', or 'disk'")
+            raise ValueError(
+                "center mode must be 'mean', 'conservative_equilibrium', or 'disk'"
+            )
         center = np.asarray(mode, dtype=float).reshape(2)
         return center
 
@@ -1211,7 +1225,9 @@ class FieldResolvedCPPThieleModel:
                 **kwargs,
             )
             mask = self._time_mask(result, transient_fraction=transient_fraction)
-            center = self.orbit_center(result, "mean", t_min=result.t[mask][0] if np.any(mask) else None)
+            center = self.orbit_center(
+                result, "mean", t_min=result.t[mask][0] if np.any(mask) else None
+            )
             u = result.u[mask] if np.any(mask) else np.array([], dtype=float)
             f_geom = self.frequency_geometric(
                 result,

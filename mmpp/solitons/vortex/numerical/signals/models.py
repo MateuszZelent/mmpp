@@ -13,7 +13,6 @@ from ..._plotting import (
     pop_axes_style_kwargs,
     pop_figure_kwargs,
 )
-from mmpp._shared.repr_html import make_simple_card
 
 
 @dataclass
@@ -38,18 +37,58 @@ class MagnetoresistanceResult:
         return MagnetoresistancePlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
         n = int(np.asarray(self.time).size)
-        rows = [
-            ("samples", str(n)),
-            ("method", str(self.method)),
-            ("mean_resistance_ohm", f"{self.mean_resistance_ohm:.6g}"),
-            ("peak_to_peak_ohm", f"{(np.ptp(self.resistance_ohm) if n else float('nan')):.6g}"),
-            (".plt.time_trace()", "Plot R(t)"),
-        ]
-        return make_simple_card(
-            title="MagnetoresistanceResult",
-            subtitle="Reconstructed resistance trace",
-            rows=rows,
+        return node_card_html(
+            "Magnetoresistance Result",
+            icon="🧲",
+            subtitle="Reconstructed resistance trace from vortex motion.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("samples", n, None),
+                        ("method", self.method, None),
+                        (
+                            "mean_resistance_ohm",
+                            f"{self.mean_resistance_ohm:.6g}",
+                            None,
+                        ),
+                        (
+                            "peak_to_peak_ohm",
+                            f"{(np.ptp(self.resistance_ohm) if n else float('nan')):.6g}",
+                            None,
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "mr = jobs[-1].solitons.vortex.signals.magnetoresistance()\n"
+                    "mr.plt.time_trace()",
+                    title="Result Usage",
+                ),
+            ],
+            api=api_help_html(
+                self,
+                title="Magnetoresistance result API help",
+                prefix="jobs[-1].solitons.vortex.signals.magnetoresistance()",
+                properties=[
+                    ("time", "Time axis"),
+                    ("resistance_ohm", "Resistance trace"),
+                    ("projection", "Projected magnetization signal"),
+                    ("mean_resistance_ohm", "Mean resistance"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the reconstructed resistance trace.",
+                chrome=False,
+            ),
+            uid=f"magnetoresistance-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -75,20 +114,54 @@ class VoltageResult:
         return VoltagePlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
         n = int(np.asarray(self.time).size)
-        rows = [
-            ("samples", str(n)),
-            ("rms_voltage_v", f"{self.rms_voltage_v:.6g}"),
-            (
-                "current_mean_a",
-                f"{(np.mean(self.current_a) if n else float('nan')):.6g}",
+        return node_card_html(
+            "Voltage Result",
+            icon="⚡",
+            subtitle="Voltage reconstructed from current and magnetoresistance.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("samples", n, None),
+                        ("rms_voltage_v", f"{self.rms_voltage_v:.6g}", None),
+                        (
+                            "current_mean_a",
+                            f"{(np.mean(self.current_a) if n else float('nan')):.6g}",
+                            None,
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "v = jobs[-1].solitons.vortex.signals.voltage(current_a=1e-3)\n"
+                    "v.plt.time_trace(as_mv=True)",
+                    title="Result Usage",
+                ),
+            ],
+            api=api_help_html(
+                self,
+                title="Voltage result API help",
+                prefix="jobs[-1].solitons.vortex.signals.voltage()",
+                properties=[
+                    ("time", "Time axis"),
+                    ("voltage_v", "Voltage trace"),
+                    ("current_a", "Current trace"),
+                    ("resistance_ohm", "Resistance trace"),
+                    ("rms_voltage_v", "RMS voltage"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the reconstructed voltage trace.",
+                chrome=False,
             ),
-            (".plt.time_trace()", "Plot V(t)"),
-        ]
-        return make_simple_card(
-            title="VoltageResult",
-            subtitle="Voltage reconstructed from current and resistance",
-            rows=rows,
+            uid=f"voltage-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -122,18 +195,51 @@ class SignalSpectrumResult:
         return SignalSpectrumPlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
         n = int(np.asarray(self.frequencies_hz).size)
-        rows = [
-            ("samples", str(n)),
-            ("quantity", str(self.quantity)),
-            ("peak_frequency_ghz", f"{self.peak_frequency_ghz:.6g}"),
-            ("method", str(self.metadata.get("method", "unknown"))),
-            (".plt.power_spectrum()", "Plot one-sided PSD"),
-        ]
-        return make_simple_card(
-            title="SignalSpectrumResult",
-            subtitle="Electrical signal power spectrum",
-            rows=rows,
+        return node_card_html(
+            "Signal Spectrum Result",
+            icon="📈",
+            subtitle="One-sided power spectrum of a reconstructed electrical trace.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("samples", n, None),
+                        ("quantity", self.quantity, None),
+                        ("peak_frequency_ghz", f"{self.peak_frequency_ghz:.6g}", None),
+                        ("method", str(self.metadata.get("method", "unknown")), None),
+                    ]
+                ),
+                examples_section_html(
+                    "psd = jobs[-1].solitons.vortex.signals.power_spectrum(signal='voltage')\n"
+                    "psd.plt.power_spectrum()",
+                    title="Result Usage",
+                ),
+            ],
+            api=api_help_html(
+                self,
+                title="Signal spectrum result API help",
+                prefix="jobs[-1].solitons.vortex.signals.power_spectrum()",
+                properties=[
+                    ("frequencies_hz", "Frequency axis in Hz"),
+                    ("power", "One-sided power spectrum"),
+                    ("quantity", "Source quantity name"),
+                    ("peak_frequency_hz", "Dominant peak frequency in Hz"),
+                    ("peak_frequency_ghz", "Dominant peak frequency in GHz"),
+                    ("plt", "Plotting accessor"),
+                ],
+                subtitle="Live attributes of the electrical power spectrum.",
+                chrome=False,
+            ),
+            uid=f"signal-spectrum-result-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -165,11 +271,17 @@ class MagnetoresistancePlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("MagnetoresistancePlotAccessor", [
-            (".time_trace(as_mohm=False)",
-             "Resistance R(t) vs time",
-             "as_mohm: convert to mOhm. Accepts matplotlib kwargs."),
-        ])
+
+        return plot_accessor_html(
+            "MagnetoresistancePlotAccessor",
+            [
+                (
+                    ".time_trace(as_mohm=False)",
+                    "Resistance R(t) vs time",
+                    "as_mohm: convert to mOhm. Accepts matplotlib kwargs.",
+                ),
+            ],
+        )
 
 
 class VoltagePlotAccessor:
@@ -200,11 +312,17 @@ class VoltagePlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("VoltagePlotAccessor", [
-            (".time_trace(as_mv=False)",
-             "Voltage V(t) vs time",
-             "as_mv: convert to mV. Accepts matplotlib kwargs."),
-        ])
+
+        return plot_accessor_html(
+            "VoltagePlotAccessor",
+            [
+                (
+                    ".time_trace(as_mv=False)",
+                    "Voltage V(t) vs time",
+                    "as_mv: convert to mV. Accepts matplotlib kwargs.",
+                ),
+            ],
+        )
 
 
 class SignalSpectrumPlotAccessor:
@@ -236,11 +354,17 @@ class SignalSpectrumPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("SignalSpectrumPlotAccessor", [
-            (".power_spectrum(as_ghz=True)",
-             "One-sided power spectrum",
-             "as_ghz: frequency in GHz. Accepts matplotlib kwargs."),
-        ])
+
+        return plot_accessor_html(
+            "SignalSpectrumPlotAccessor",
+            [
+                (
+                    ".power_spectrum(as_ghz=True)",
+                    "One-sided power spectrum",
+                    "as_ghz: frequency in GHz. Accepts matplotlib kwargs.",
+                ),
+            ],
+        )
 
 
 __all__ = [

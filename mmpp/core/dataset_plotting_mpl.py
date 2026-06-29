@@ -1007,6 +1007,8 @@ class DatasetPlotMplMixin:
         multiplier: Optional[float] = None,
         repeat: int = 1,
         zero: Optional[int] = None,
+        remove_static: bool = False,
+        static_reference: int = 0,
         cmap: str = "viridis",
         quiver_density: int = 20,
         fps: int = 20,
@@ -1014,15 +1016,21 @@ class DatasetPlotMplMixin:
     ):
         import matplotlib.pyplot as plt
         from matplotlib import animation as mpl_animation
-        from matplotlib.widgets import Button, Slider
+        from matplotlib.widgets import Button, CheckButtons, Slider
 
-        sequence = self._extract_sequence(z=z, zero=zero)
+        sequence = self._extract_sequence(z=z, zero=None)
         n_frames = int(sequence.shape[0])
+        reference_index = self._normalize_index(
+            static_reference if zero is None else zero,
+            n_frames,
+        )
+        static_frame = np.asarray(sequence[reference_index], dtype=np.float32)
         fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
         if toolbar:
             plt.subplots_adjust(bottom=0.18)
             slider_ax = fig.add_axes([0.15, 0.07, 0.55, 0.04])
             button_ax = fig.add_axes([0.74, 0.065, 0.12, 0.05])
+            static_ax = fig.add_axes([0.88, 0.065, 0.08, 0.05])
             frame_slider = Slider(
                 slider_ax,
                 "Frame",
@@ -1032,18 +1040,33 @@ class DatasetPlotMplMixin:
                 valstep=1,
             )
             play_btn = Button(button_ax, "Play", color="#e5e7eb", hovercolor="#d1d5db")
+            static_check = CheckButtons(
+                static_ax,
+                [r"$\Delta m_0$"],
+                [bool(remove_static or zero is not None)],
+            )
         else:
             frame_slider = None
             play_btn = None
+            static_check = None
 
-        state = {"index": 0, "playing": False}
+        state = {
+            "index": 0,
+            "playing": False,
+            "remove_static": bool(remove_static or zero is not None),
+            "static_reference": reference_index,
+        }
         render_mode = self._normalize_mode(mode)
 
         def _draw(index: int) -> None:
             idx = int(np.clip(int(index), 0, max(n_frames - 1, 0)))
             state["index"] = idx
             frame = np.asarray(sequence[idx], dtype=np.float32)
+            if state["remove_static"]:
+                frame = frame - static_frame
             title = f"{self._dataset.dataset_name} [{idx + 1}/{n_frames}]"
+            if state["remove_static"]:
+                title += f" - static removed t={reference_index}"
             self._render_frame(
                 frame,
                 ax=ax,
@@ -1071,6 +1094,10 @@ class DatasetPlotMplMixin:
                 play_btn.label.set_text("Pause" if state["playing"] else "Play")
                 fig.canvas.draw_idle()
 
+        def _on_static_toggle(_label):
+            state["remove_static"] = not bool(state["remove_static"])
+            _draw(state["index"])
+
         def _tick(_frame):
             if not state["playing"]:
                 return ()
@@ -1081,6 +1108,8 @@ class DatasetPlotMplMixin:
             frame_slider.on_changed(_on_slider)
         if play_btn is not None:
             play_btn.on_clicked(_on_toggle)
+        if static_check is not None:
+            static_check.on_clicked(_on_static_toggle)
 
         anim = mpl_animation.FuncAnimation(
             fig,
@@ -1092,8 +1121,10 @@ class DatasetPlotMplMixin:
         fig._mmpp_interactive = {
             "slider": frame_slider,
             "play_button": play_btn,
+            "remove_static_check": static_check,
             "animation": anim,
             "state": state,
+            "draw": _draw,
         }
         _draw(0)
         return fig

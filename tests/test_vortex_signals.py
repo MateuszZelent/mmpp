@@ -10,14 +10,16 @@ import zarr
 from mmpp.core.job import ZarrJobResult
 
 
-def _make_vortex_snapshot(nx: int, ny: int, cx: float, cy: float, core_radius_px: float = 3.5) -> np.ndarray:
+def _make_vortex_snapshot(
+    nx: int, ny: int, cx: float, cy: float, core_radius_px: float = 3.5
+) -> np.ndarray:
     x = np.arange(nx, dtype=float) - float(cx)
     y = np.arange(ny, dtype=float) - float(cy)
     xg, yg = np.meshgrid(x, y)
 
     radius = np.hypot(xg, yg)
     phi = np.arctan2(yg, xg)
-    mz = np.exp(-(radius / core_radius_px) ** 2)
+    mz = np.exp(-((radius / core_radius_px) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
     mx = -m_perp * np.sin(phi)
     my = m_perp * np.cos(phi)
@@ -61,7 +63,17 @@ def _create_job(tmp_path, *, nt: int = 80):
 
 def test_signals_pipeline_from_tracked_trajectory(tmp_path):
     job = _create_job(tmp_path, nt=96)
-    assert "Vortex Signals Interface" in job.m.vortex.signals._repr_html_()
+    signals_html = job.m.vortex.signals._repr_html_()
+    signals_plot_html = job.m.vortex.signals.plt._repr_html_()
+    assert "Vortex Signals Interface" in signals_html
+    assert "Vortex signals API help" in signals_html
+    assert ".magnetoresistance(" in signals_html
+    assert ">Overview</button>" in signals_html
+    assert ">API</button>" in signals_html
+    assert "Vortex signals plot API help" in signals_plot_html
+    assert ".power_spectrum(" in signals_plot_html
+    assert ">Overview</button>" in signals_plot_html
+    assert ">API</button>" in signals_plot_html
 
     mr = job.m.vortex.signals.magnetoresistance(
         resistance_parallel_ohm=120.0,

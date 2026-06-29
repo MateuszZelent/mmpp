@@ -1,114 +1,63 @@
 """
 Spin-Wave Dispersion Analysis Module
 
-Provides comprehensive analysis of spin-wave dispersion relations S(k,f) 
+Provides comprehensive analysis of spin-wave dispersion relations S(k,f)
 from micromagnetic simulation data, similar to FMR mode analysis but focused
 on wave propagation and k-space dynamics.
-
-Main Features:
-- 1D and 2D dispersion relation computation
-- Branch tracking and characterization  
-- Brillouin zone folding and analysis
-- Peak detection and group velocity calculation
-- Integration with MMPP job results and visualization
-- Interactive BZ-folded dispersion exploration
-
-Usage Examples:
---------------
-# Basic dispersion analysis
->>> job[0].fft.dispersion.plot_dispersion()
->>> job[0].m_layer.fft.dispersion.compute_1d(axis="x")
-
-# Advanced analysis
->>> analyzer = job[0].fft.dispersion.analyzer
->>> result = analyzer.compute_dispersion_1d(axis="x")
->>> branch = analyzer.track_branch(result, k_path, f_seed=5e9)
-
-# Interactive BZ-folded dispersion
->>> job[0].fft.dispersion.dispersion_modes.plot_interactive()
->>> folded = job[0].fft.dispersion.dispersion_modes.fold(lattice_constant=470e-9)
 """
 
+from __future__ import annotations
 
-from .core import SpinWaveAnalyzer
-from .interface import FFTDispersionInterface
-from .models import (
-    DispersionConfig,
-    DispersionResult1D,
-    DispersionResult2D,
-    DispersionBranch,
-)
-from .utils import (
-    fftfreq_axis,
-    fold_k_to_bz,
-    fold_spectrum_1d,
-    k_axis_from_grid,
-    find_peaks_1d,
-    group_velocity_1d,
-)
-from .comsol import read_data_from_comsol, ComsolDispersionData
-from .filter_chain import DispersionFilterChain
-from .analyze import (
-    DispersionAnalyzeAccessor,
-    LowestFrequencyResult,
-    LowestFrequencyPlotAccessor,
-)
-from .bulk import (
-    BulkMinimumFrequencyResult,
-    BulkMinimumPlotAccessor,
-    scan_minimum_frequency,
-)
-from ._plotting.accessor import DispersionPlotAccessor
+from importlib import import_module
+from typing import Any
 
-# BZ folding and mode analysis module
-from .modes import (
-    BrillouinZoneConfig,
-    DispersionMode,
-    FoldedDispersionResult,
-    BrillouinZoneFolding,
-    BrillouinZoneDetector,
-    InteractiveDispersionModes,
-    # Animation
-    SpinWaveModeAnimator,
-    extract_amplitude_phase,
-)
-
-__all__ = [
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     # Core
-    "SpinWaveAnalyzer",
-    "FFTDispersionInterface",
-    "DispersionConfig",
-    "DispersionResult1D",
-    "DispersionResult2D",
-    "DispersionBranch",
+    "SpinWaveAnalyzer": (".core", "SpinWaveAnalyzer"),
+    "FFTDispersionInterface": (".interface", "FFTDispersionInterface"),
+    "DispersionConfig": (".models", "DispersionConfig"),
+    "DispersionResult1D": (".models", "DispersionResult1D"),
+    "DispersionResult2D": (".models", "DispersionResult2D"),
+    "DispersionBranch": (".models", "DispersionBranch"),
     # Utils
-    "fftfreq_axis",
-    "fold_k_to_bz",
-    "fold_spectrum_1d",
-    "k_axis_from_grid",
-    "find_peaks_1d",
-    "group_velocity_1d",
+    "fftfreq_axis": (".utils", "fftfreq_axis"),
+    "fold_k_to_bz": (".utils", "fold_k_to_bz"),
+    "fold_spectrum_1d": (".utils", "fold_spectrum_1d"),
+    "k_axis_from_grid": (".utils", "k_axis_from_grid"),
+    "find_peaks_1d": (".utils", "find_peaks_1d"),
+    "group_velocity_1d": (".utils", "group_velocity_1d"),
     # COMSOL
-    "ComsolDispersionData",
-    "read_data_from_comsol",
-    # BZ Folding & Modes
-    "BrillouinZoneConfig",
-    "DispersionMode",
-    "FoldedDispersionResult",
-    "BrillouinZoneFolding",
-    "BrillouinZoneDetector",
-    "InteractiveDispersionModes",
-    # Animation
-    "SpinWaveModeAnimator",
-    "extract_amplitude_phase",
-    # New fluent API
-    "DispersionFilterChain",
-    "DispersionPlotAccessor",
-    "DispersionAnalyzeAccessor",
-    "LowestFrequencyResult",
-    "LowestFrequencyPlotAccessor",
+    "ComsolDispersionData": (".comsol", "ComsolDispersionData"),
+    "read_data_from_comsol": (".comsol", "read_data_from_comsol"),
+    # Filtering, plotting, analysis
+    "DispersionFilterChain": (".filter_chain", "DispersionFilterChain"),
+    "DispersionPlotAccessor": ("._plotting.accessor", "DispersionPlotAccessor"),
+    "DispersionAnalyzeAccessor": (".analyze", "DispersionAnalyzeAccessor"),
+    "LowestFrequencyResult": (".analyze", "LowestFrequencyResult"),
+    "LowestFrequencyPlotAccessor": (".analyze", "LowestFrequencyPlotAccessor"),
     # Bulk scanning
-    "BulkMinimumFrequencyResult",
-    "BulkMinimumPlotAccessor",
-    "scan_minimum_frequency",
-]
+    "BulkMinimumFrequencyResult": (".bulk", "BulkMinimumFrequencyResult"),
+    "BulkMinimumPlotAccessor": (".bulk", "BulkMinimumPlotAccessor"),
+    "scan_minimum_frequency": (".bulk", "scan_minimum_frequency"),
+    # BZ folding and modes
+    "BrillouinZoneConfig": (".modes", "BrillouinZoneConfig"),
+    "DispersionMode": (".modes", "DispersionMode"),
+    "FoldedDispersionResult": (".modes", "FoldedDispersionResult"),
+    "BrillouinZoneFolding": (".modes", "BrillouinZoneFolding"),
+    "BrillouinZoneDetector": (".modes", "BrillouinZoneDetector"),
+    "InteractiveDispersionModes": (".modes", "InteractiveDispersionModes"),
+    "SpinWaveModeAnimator": (".modes", "SpinWaveModeAnimator"),
+    "extract_amplitude_phase": (".modes", "extract_amplitude_phase"),
+}
+
+__all__ = sorted(_LAZY_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    """Load public dispersion exports only when they are accessed."""
+    if name in _LAZY_EXPORTS:
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        value = getattr(import_module(module_name, __name__), attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

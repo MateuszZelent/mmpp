@@ -49,7 +49,9 @@ class EventsInterface:
         self._last_states: tuple[list[StateSwitchEvent], np.ndarray] | None = None
         self._last_expulsions: list[CoreExpulsionEvent] | None = None
 
-    def _resolve_trajectory(self, trajectory: TrajectoryResult | None = None) -> TrajectoryResult:
+    def _resolve_trajectory(
+        self, trajectory: TrajectoryResult | None = None
+    ) -> TrajectoryResult:
         if trajectory is not None:
             return trajectory
         return self._core.track()
@@ -162,8 +164,14 @@ class EventsInterface:
         ):
             return self._last_expulsions
 
-        radius = self._infer_disk_radius() if disk_radius is None else float(disk_radius)
-        center_xy = self._infer_disk_center() if center is None else (float(center[0]), float(center[1]))
+        radius = (
+            self._infer_disk_radius() if disk_radius is None else float(disk_radius)
+        )
+        center_xy = (
+            self._infer_disk_center()
+            if center is None
+            else (float(center[0]), float(center[1]))
+        )
         result = detect_core_expulsions(
             self._resolve_trajectory(trajectory),
             disk_radius=radius,
@@ -206,60 +214,131 @@ class EventsInterface:
         return EventsPlotAccessor(self)
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
         from html import escape as _esc
 
-        methods = [
-            (".polarity_switches(threshold=0.5)", "Detect p=+1 ↔ −1 switching events"),
-            (".state_switches(radius_threshold=0.6)", "Detect G-state ↔ C-state transitions"),
-            (".core_expulsions(expulsion_ratio=0.95)", "Detect core expulsion near disk boundary"),
-            (".dwell_times(state='G-state')", "Dwell-time statistics for selected state"),
-            (".plt.event_timeline()", "Plot trajectory with event markers"),
-            (".plt.dwell_histogram(state=...)", "Plot dwell-time histogram"),
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        context_rows = [
+            ("dataset", self._dataset_name or "auto-detect", NODE_COLOR_COMPUTE),
+            (
+                "slice",
+                "custom" if self._slice_info is not None else "full geometry",
+                None,
+            ),
+            ("polarity threshold", 0.5, NODE_COLOR_ANALYSIS),
+            ("expulsion ratio", 0.95, NODE_COLOR_ANALYSIS),
         ]
-        method_rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
-            for m, d in methods
+        accessors = [
+            (
+                "Detect:",
+                [
+                    (".polarity_switches(threshold=0.5, ...)", NODE_COLOR_COMPUTE),
+                    (".state_switches(radius_threshold=0.6, ...)", NODE_COLOR_COMPUTE),
+                    (".core_expulsions(expulsion_ratio=0.95, ...)", NODE_COLOR_COMPUTE),
+                    (".dwell_times(state='G-state', ...)", NODE_COLOR_COMPUTE),
+                ],
+            ),
+            (
+                "Plotting:",
+                [
+                    (".plt.event_timeline(...)", NODE_COLOR_PLOT),
+                    (".plt.dwell_histogram(state='G-state', ...)", NODE_COLOR_PLOT),
+                ],
+            ),
+        ]
+        method_rows = [
+            (
+                "polarity_switches(...)",
+                "Returns a list of PolaritySwitchEvent objects with transition sign, time, sample index, and confidence.",
+            ),
+            (
+                "state_switches(...)",
+                "Detects G-state/C-state transitions using orbit-radius criteria and dwell/refractory filters.",
+            ),
+            (
+                "core_expulsions(...)",
+                "Detects intervals where the vortex approaches or crosses the disk boundary using inferred or explicit geometry.",
+            ),
+            (
+                "dwell_times(...)",
+                "Aggregates dwell intervals into DwellTimeResult for histogramming and characteristic-time estimation.",
+            ),
+            (
+                "plt",
+                "Plot shortcuts for timeline overlays and dwell-time histograms.",
+            ),
+        ]
+        method_body = "".join(
+            "<tr>"
+            f"<td style='padding:6px 8px;font-family:monospace;color:{NODE_COLOR_COMPUTE};vertical-align:top;'>{_esc(name)}</td>"
+            f"<td style='padding:6px 8px;color:#f8f8f2;'>{_esc(desc)}</td>"
+            "</tr>"
+            for name, desc in method_rows
         )
         example = (
             "# Detect polarity switches\n"
-            "switches = vortex.events.polarity_switches()\n"
+            "switches = jobs[-1].solitons.vortex.events.polarity_switches()\n"
             "print(f'{len(switches)} polarity switches detected')\n"
             "\n"
             "# Detect state transitions\n"
-            "states = vortex.events.state_switches()\n"
+            "states = jobs[-1].solitons.vortex.events.state_switches()\n"
             "\n"
             "# Core expulsion events\n"
-            "expulsions = vortex.events.core_expulsions()\n"
+            "expulsions = jobs[-1].solitons.vortex.events.core_expulsions()\n"
             "\n"
             "# Dwell-time statistics\n"
-            "dwell = vortex.events.dwell_times(state='G-state')\n"
+            "dwell = jobs[-1].solitons.vortex.events.dwell_times(state='G-state')\n"
             "\n"
             "# Plot event timeline\n"
-            "vortex.events.plt.event_timeline()\n"
-            "vortex.events.plt.dwell_histogram()"
+            "jobs[-1].solitons.vortex.events.plt.event_timeline()\n"
+            "jobs[-1].solitons.vortex.events.plt.dwell_histogram()"
         )
-        return (
-            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
-            "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
-            "Events Interface</div>"
-            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
-            "Polarity switches, state transitions, core expulsion, dwell times</div>"
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Methods</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
-            f"{method_rows}</table></div>"
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
-            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
-            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
-            f"<code>{example}</code></pre></div>"
-            "</div>"
+        method_html = (
+            "<div style='background:linear-gradient(135deg,rgba(68,71,90,0.55) 0%,rgba(40,42,54,0.55) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(98,114,164,0.35);'>"
+            "<b style='color:#bd93f9;'>Event Detection Methods</b>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;margin-top:8px;'>"
+            f"{method_body}</table></div>"
+        )
+        api_card = api_help_html(
+            self,
+            title="Vortex events API help",
+            prefix="jobs[-1].solitons.vortex.events",
+            properties=[
+                ("plt", "Plot accessor for event timeline and dwell histogram")
+            ],
+            methods=[
+                "polarity_switches",
+                "state_switches",
+                "core_expulsions",
+                "dwell_times",
+            ],
+            subtitle="Live signatures for vortex event detection methods.",
+            chrome=False,
+        )
+        return node_card_html(
+            "Vortex Events Interface",
+            icon="🚨",
+            subtitle="Detection of polarity flips, state transitions, core expulsions, and dwell-time statistics.",
+            sections=[
+                metrics_section_html(context_rows),
+                accessors_section_html(accessors),
+                method_html,
+                examples_section_html(example, title="Event Workflows"),
+            ],
+            api=api_card,
+            uid=f"vortex-events-{str(_uuid.uuid4())[:8]}",
         )
 
 
@@ -269,7 +348,9 @@ class EventsPlotAccessor:
     def __init__(self, interface: EventsInterface):
         self._interface = interface
 
-    def event_timeline(self, *, trajectory: TrajectoryResult | None = None, ax=None, **kwargs):
+    def event_timeline(
+        self, *, trajectory: TrajectoryResult | None = None, ax=None, **kwargs
+    ):
         """Plot trajectory with event markers."""
         plot_kwargs = dict(kwargs)
         style_kwargs = pop_axes_style_kwargs(plot_kwargs)
@@ -315,12 +396,38 @@ class EventsPlotAccessor:
         return result.plt.dwell_histogram(ax=ax, **kwargs)
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("EventsPlotAccessor", [
-            (".event_timeline()",
-             "Trajectory + event markers (polarity, state, expulsion)",
-             "trajectory: optional pre-computed TrajectoryResult."),
-            (".dwell_histogram(state='G-state')",
-             "Dwell-time distribution histogram",
-             "state: 'G-state' or 'C-state'. bins, as_ns kwargs."),
-        ])
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import api_help_html, node_card_html, plot_accessor_html
+
+        html = plot_accessor_html(
+            "EventsPlotAccessor",
+            [
+                (
+                    ".event_timeline()",
+                    "Trajectory + event markers (polarity, state, expulsion)",
+                    "trajectory: optional pre-computed TrajectoryResult.",
+                ),
+                (
+                    ".dwell_histogram(state='G-state')",
+                    "Dwell-time distribution histogram",
+                    "state: 'G-state' or 'C-state'. bins, as_ns kwargs.",
+                ),
+            ],
+        )
+        api_card = api_help_html(
+            self,
+            title="Vortex events plot API help",
+            prefix="jobs[-1].solitons.vortex.events.plt",
+            methods=["event_timeline", "dwell_histogram"],
+            subtitle="Live signatures for event plotting shortcuts.",
+            chrome=False,
+        )
+        return node_card_html(
+            "Vortex Events Plot Accessor",
+            icon="🎨",
+            subtitle="Plot shortcuts for event timelines and dwell-time distributions.",
+            sections=[html],
+            api=api_card,
+            uid=f"vortex-events-plot-{str(_uuid.uuid4())[:8]}",
+        )

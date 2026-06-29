@@ -254,14 +254,18 @@ class BatchSpectrum:
                     for i, r in enumerate(self.results)
                 }
                 try:
+                    from mmpp.core.mmpp import _running_in_ipython_kernel
                     from tqdm import tqdm
 
-                    iterator = tqdm(
-                        as_completed(futures),
-                        total=len(self.results),
-                        desc="Computing spectra",
-                        unit="result",
-                    )
+                    if _running_in_ipython_kernel():
+                        iterator = as_completed(futures)
+                    else:
+                        iterator = tqdm(
+                            as_completed(futures),
+                            total=len(self.results),
+                            desc="Computing spectra",
+                            unit="result",
+                        )
                 except ImportError:
                     iterator = as_completed(futures)
 
@@ -286,14 +290,18 @@ class BatchSpectrum:
         else:
             log.info("Using sequential execution")
             try:
+                from mmpp.core.mmpp import _running_in_ipython_kernel
                 from tqdm import tqdm
 
-                iterator = tqdm(
-                    enumerate(self.results),
-                    total=len(self.results),
-                    desc="Computing spectra",
-                    unit="result",
-                )
+                if _running_in_ipython_kernel():
+                    iterator = enumerate(self.results)
+                else:
+                    iterator = tqdm(
+                        enumerate(self.results),
+                        total=len(self.results),
+                        desc="Computing spectra",
+                        unit="result",
+                    )
             except ImportError:
                 iterator = enumerate(self.results)
 

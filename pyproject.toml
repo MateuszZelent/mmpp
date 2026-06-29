@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Physics",
 ]
@@ -28,7 +29,8 @@ dependencies = [
     "numpy>=1.20.0",
     "pandas>=1.3.0",
     "matplotlib>=3.5.0",
-    "zarr>=3.0.0",
+    "zarr>=2.18.0,<3.0.0; python_version < '3.11'",
+    "zarr>=3.0.0; python_version >= '3.11'",
     "h5py>=3.0.0",
     "rich",
     "tqdm",
@@ -47,6 +49,8 @@ dev = [
     "sphinx-rtd-theme",
     "sphinx-autodoc-typehints",
     "myst-parser",
+    "linkify-it-py",
+    "scipy",
 ]
 interactive = [
     "itables",
@@ -59,9 +63,25 @@ interactive = [
 ]
 plotting = [
     "cmocean",
+    "cmcrameri",
     "k3d",
     "holoviews",
     "pyvista",
+]
+fft = [
+    "scipy",
+    "pyfftw",
+]
+wavelets = [
+    "PyWavelets",
+]
+image = [
+    "scikit-image",
+    "imageio",
+]
+ml = [
+    "scikit-learn",
+    "joblib",
 ]
 tui = [
     "textual>=0.40.0",
@@ -69,6 +89,7 @@ tui = [
 full = [
     "textual>=0.40.0",
     "cmocean",
+    "cmcrameri",
     "k3d",
     "holoviews",
     "pyvista",
@@ -76,6 +97,15 @@ full = [
     "IPython",
     "jupyter",
     "ipywidgets",
+    "scipy",
+    "pyfftw",
+    "PyWavelets",
+    "scikit-image",
+    "imageio",
+    "scikit-learn",
+    "joblib",
+    "numba",
+    "psutil",
 ]
 
 [project.urls]
@@ -155,4 +185,5 @@ minversion = "6.0"
 addopts = "-ra -q --strict-markers --strict-config"
 testpaths = [
     "tests",
+    "mmpp/tests",
 ]

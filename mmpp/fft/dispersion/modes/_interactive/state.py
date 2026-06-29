@@ -16,6 +16,7 @@ def base_default_params() -> dict[str, object]:
         "f_min_ghz": 0.0,
         "f_max_ghz": 10.0,
         "k_direction": "both",
+        "mode_type": "real",
         "cmap_disp": "viridis",
         "cmap_mode": "RdBu_r",
         # Live post-filter defaults
@@ -76,6 +77,14 @@ def ensure_runtime_state(explorer: Any) -> None:
         explorer._is_animating = False
     if not hasattr(explorer, "_last_compute_kwargs"):
         explorer._last_compute_kwargs = {}
+    if not hasattr(explorer, "_interactive_viewer_options"):
+        explorer._interactive_viewer_options = {}
+    if not hasattr(explorer, "_mode_components"):
+        explorer._mode_components = None
+    if not hasattr(explorer, "_spectrum_components"):
+        explorer._spectrum_components = None
+    if not hasattr(explorer, "_analytical_options"):
+        explorer._analytical_options = {}
     if not hasattr(explorer, "_default_params") or not isinstance(
         explorer._default_params, dict
     ):

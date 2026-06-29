@@ -6,8 +6,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from mmpp._shared.repr_html import make_simple_card
-
 
 @dataclass
 class TopologyResult:
@@ -36,20 +34,81 @@ class TopologyResult:
         return False
 
     def _repr_html_(self) -> str:
-        rows = [
-            ("state", str(self.state)),
-            ("method", str(self.method)),
-            ("polarity", str(int(self.polarity))),
-            ("vorticity", str(int(self.vorticity))),
-            ("chirality", str(int(self.chirality))),
-            ("Q", f"{float(self.Q):.6g}"),
-            ("confidence", f"{float(self.confidence):.6g}"),
-            ("is_consistent", str(bool(self.is_consistent))),
-        ]
-        return make_simple_card(
-            title="TopologyResult",
-            subtitle="Detected topology invariants for a single snapshot",
-            rows=rows,
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        return node_card_html(
+            "Topology Result",
+            icon="🧲",
+            subtitle="Detected topology invariants for a single magnetization snapshot.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("state", self.state, NODE_COLOR_ANALYSIS),
+                        ("method", self.method, NODE_COLOR_COMPUTE),
+                        ("polarity", int(self.polarity), None),
+                        ("vorticity", int(self.vorticity), None),
+                        ("chirality", int(self.chirality), None),
+                        ("Q", f"{float(self.Q):.6g}", NODE_COLOR_ANALYSIS),
+                        (
+                            "confidence",
+                            f"{float(self.confidence):.6g}",
+                            NODE_COLOR_COMPUTE,
+                        ),
+                        ("is_consistent", bool(self.is_consistent), None),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Fields:",
+                            [
+                                (".core_position", NODE_COLOR_COMPUTE),
+                                (".topological_density", NODE_COLOR_ANALYSIS),
+                                (".chirality_confidence", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "top = jobs[-1].solitons.vortex.topology.detect()\n"
+                    "top.state\n"
+                    "top.core_position\n"
+                    "top.is_consistent",
+                    title="Result Usage",
+                ),
+            ],
+            api=api_help_html(
+                self,
+                title="Topology result API help",
+                prefix="jobs[-1].solitons.vortex.topology.detect()",
+                properties=[
+                    ("polarity", "Detected core polarity"),
+                    ("vorticity", "Detected winding sign"),
+                    ("chirality", "Detected in-plane chirality"),
+                    ("Q", "Topological charge"),
+                    ("core_position", "Estimated core position"),
+                    ("topological_density", "Local density map"),
+                    ("state", "Classified topology label"),
+                    ("method", "Detection backend"),
+                    ("confidence", "Detection confidence"),
+                    ("chirality_confidence", "Confidence of chirality estimate"),
+                    ("convention", "Applied topology convention"),
+                    ("is_consistent", "Checks expected relation between invariants"),
+                ],
+                subtitle="Live attributes of the detected topology snapshot.",
+                chrome=False,
+            ),
+            uid=f"topology-result-{str(_uuid.uuid4())[:8]}",
         )
 
 

@@ -34,10 +34,6 @@ except (ImportError, AttributeError):
     sync = None
     StoreLike = None
 
-from .calc_modes import inner_calc_modes
-from .ispec import inner_ispec
-from .snapshot import inner_snapshot
-
 warnings.filterwarnings(
     "ignore",
     message="Object at .* is not recognized as a component of a Zarr hierarchy.",
@@ -47,6 +43,27 @@ warnings.filterwarnings(
 T = TypeVar("T", bound=np.generic)
 IndexLike = int | slice | Sequence[int] | NDArray[np.int_]
 SliceTuple = tuple[IndexLike, ...]
+
+
+def inner_calc_modes(self: "Pyzfn", *args, **kwargs):
+    """Lazy wrapper for mode extraction helpers."""
+    from .calc_modes import inner_calc_modes as _inner_calc_modes
+
+    return _inner_calc_modes(self, *args, **kwargs)
+
+
+def inner_ispec(self: "Pyzfn", *args, **kwargs):
+    """Lazy wrapper for interactive spectrum plotting helpers."""
+    from .ispec import inner_ispec as _inner_ispec
+
+    return _inner_ispec(self, *args, **kwargs)
+
+
+def inner_snapshot(self: "Pyzfn", *args, **kwargs):
+    """Lazy wrapper for snapshot plotting helpers."""
+    from .snapshot import inner_snapshot as _inner_snapshot
+
+    return _inner_snapshot(self, *args, **kwargs)
 
 
 class Pyzfn:
@@ -103,6 +120,10 @@ class Pyzfn:
     
     def __len__(self):
         return len(self._group)
+
+    def __delitem__(self, key: str) -> None:
+        """Delete a dataset or group from the Zarr store."""
+        del self._group[key]
     
     def keys(self):
         return self._group.keys()
@@ -112,6 +133,48 @@ class Pyzfn:
     
     def items(self):
         return self._group.items()
+
+    def members(self, max_depth: int | None = None):
+        """Return (name, node) pairs for all immediate members of the group.
+
+        Compatible with both Zarr v2 and v3.
+        """
+        if hasattr(self._group, "members"):
+            return self._group.members() if max_depth is None else self._group.members(max_depth=max_depth)
+        # Zarr v3 uses .items() as the equivalent
+        return list(self._group.items())
+
+    def create_array(
+        self,
+        name: str,
+        *,
+        shape,
+        chunks=None,
+        dtype=None,
+        overwrite: bool = True,
+        **kwargs,
+    ) -> zarr.Array:
+        """Create a new Zarr array in the group.
+
+        Delegates to the underlying group with compatibility for Zarr v2 and v3.
+        """
+        if hasattr(self._group, "create_array"):
+            return self._group.create_array(
+                name,
+                shape=shape,
+                chunks=chunks,
+                dtype=dtype,
+                overwrite=overwrite,
+                **kwargs,
+            )
+        # Zarr v2 uses require_dataset / open_array
+        return self._group.require_dataset(
+            name,
+            shape=shape,
+            chunks=chunks,
+            dtype=dtype,
+            overwrite=overwrite,
+        )
     
     @property
     def attrs(self):
@@ -175,8 +238,8 @@ class Pyzfn:
 
         """
 
-        def add_to_tree(group: Group, tree_node: Tree, prefix: str = "") -> None:
-            for key, node in sorted(group.members()):
+        def add_to_tree(node_group, tree_node: Tree, prefix: str = "") -> None:
+            for key, node in sorted(self.members() if node_group is self else list(node_group.items())):
                 full_key = f"{prefix}/{key}" if prefix else key
                 if isinstance(node, Group):
                     label = f"[bold]{key}[/bold]"
@@ -199,12 +262,24 @@ class Pyzfn:
 
         Raises:
             KeyError: If the specified name does not exist in the group.
+            ValueError: If ``name`` would escape the group directory.
 
         """
+        # Security: reject paths that escape the base directory
+        import shutil
+        base = Path(self.clean_path).resolve()
+        target = (base / name).resolve()
+        if not str(target).startswith(str(base) + "/") and target != base:
+            msg = f"Refusing to delete path outside job directory: {name!r}"
+            raise ValueError(msg)
+
         if name not in self:
             msg = f"Dataset '{name}' not found in group '{self.name}'."
             raise KeyError(msg)
         del self[name]
+        # Also clean up the filesystem entry if it still exists
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
 
     def add_ndarray(
         self,

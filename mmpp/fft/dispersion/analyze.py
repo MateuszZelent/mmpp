@@ -18,6 +18,18 @@ from pathlib import Path
 
 import numpy as np
 
+from mmpp._repr_helpers import (
+    NODE_COLOR_ANALYSIS,
+    NODE_COLOR_COMPUTE,
+    NODE_COLOR_PLOT,
+    NODE_COLOR_UTIL,
+    api_help_html,
+    accessors_section_html,
+    examples_section_html,
+    metrics_section_html,
+    node_card_html,
+)
+
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
     from matplotlib.axes import Axes
@@ -28,6 +40,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Result object
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class LowestFrequencyResult:
@@ -93,108 +106,92 @@ class LowestFrequencyResult:
             f"LowestFrequencyResult(\n"
             f"  f_min     = {self.f_min_ghz:.4f} GHz  at  k* = {self.k_at_f_min_um:.3f} rad/μm\n"
             f"  f(k=0)   = {self.f_at_k0_ghz:.4f} GHz\n"
-            f"  vg(k*)   = {self.group_velocity_at_min/1e3:.2f} km/s\n"
-            f"  Δf       = {(self.f_at_k0_ghz - self.f_min_ghz)*1e3:.2f} MHz  "
+            f"  vg(k*)   = {self.group_velocity_at_min / 1e3:.2f} km/s\n"
+            f"  Δf       = {(self.f_at_k0_ghz - self.f_min_ghz) * 1e3:.2f} MHz  "
             f"(k=0 is {'higher' if self.f_at_k0_ghz > self.f_min_ghz else 'lower'} than f_min)\n"
             f")"
         )
 
     def _repr_html_(self) -> str:
-        from html import escape as _esc
-
-        HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
         delta_mhz = (self.f_at_k0_ghz - self.f_min_ghz) * 1e3
-        delta_sign = "⬆" if delta_mhz > 0 else "⬇"
 
         if abs(delta_mhz) < 10:
-            interpretation = "Flat branch near k=0 — likely forward-volume or DEI geometry"
+            interpretation = (
+                "Flat branch near k=0 — likely forward-volume or DEI geometry"
+            )
             badge_color = "#a3e635"
         elif delta_mhz > 0:
-            interpretation = "Backward-volume: minimum at k>0 (negative group velocity region)"
+            interpretation = (
+                "Backward-volume: minimum at k>0 (negative group velocity region)"
+            )
             badge_color = "#fb923c"
         else:
             interpretation = "Forward-volume: f increases with k from k=0"
             badge_color = "#34d399"
-
-        stat_rows = [
-            ("f_min", f"{self.f_min_ghz:.4f} GHz",
-             "Minimum frequency on the branch",
-             "True minimum — lowest frequency at which spin waves propagate in this geometry."),
-            ("k* (at f_min)", f"{self.k_at_f_min_um:.4f} rad/μm",
-             "Wave-vector where f is minimum",
-             "For backward-volume SW, k* > 0. At this k, group velocity changes sign."),
-            ("f(k≈0)", f"{self.f_at_k0_ghz:.4f} GHz",
-             "Frequency at k≈0 (FMR / uniform mode)",
-             "Spectral peak at the smallest k-bin — effectively the Kittel / FMR frequency."),
-            ("v_g(k*)", f"{self.group_velocity_at_min/1e3:.3f} km/s",
-             "Group velocity at the minimum",
-             "dω/dk estimated via numpy.gradient. Should be ~0 at the true minimum."),
-            (f"Δf = f(k=0)−f_min  {delta_sign}",
-             f"{delta_mhz:.2f} MHz",
-             "Frequency shift between k=0 and the minimum",
-             interpretation),
-            ("branch points", f"{len(self.branch_k)}",
-             "k-bins used in the search",
-             f"side={self.side!r} search over {len(self.branch_k)} k-bins after SNR gating."),
-        ]
-        stat_html = "".join(
-            f"<tr {HV} title=\"{_esc(tip2)}\" style='cursor:help;'>"
-            f"<td style='padding:3px 10px;font-family:monospace;color:#93c5fd;font-size:.86em;'>{_esc(k)}</td>"
-            f"<td style='padding:3px 10px;color:#a5b4fc;font-weight:700;font-size:.9em;'>{_esc(v)}</td>"
-            f"<td style='padding:3px 10px;color:#64748b;font-size:.8em;'>{_esc(desc)}</td>"
-            f"</tr>"
-            for k, v, desc, tip2 in stat_rows
+        api = api_help_html(
+            self,
+            title="Lowest frequency result API help",
+            prefix="lowest",
+            properties=[("plot", "Plotting accessor for heatmap and branch views")],
+            methods=[],
+            subtitle="Derived result object describing the minimum reachable frequency on the tracked dispersion branch.",
+            chrome=False,
         )
-
-        plot_methods = [
-            (".plot()", "Alias → .plot.heatmap()",
-             "Shortcut: calling the result object directly renders the heatmap."),
-            (".plot.heatmap(lognorm=True)",
-             "S(k,f) with f_min marked",
-             "S(k,f) heatmap with red star at (k*, f_min) and dashed line at f_min. Cyan diamond = f(k=0)."),
-            (".plot.branch(kscale='rad_um')",
-             "f_peak(k) curve with min marker",
-             "Shows extracted branch f_peak(k) with minimum highlighted. Useful to verify k* identification."),
-        ]
-        plot_rows = "".join(
-            f"<tr {HV} title=\"{_esc(tip2)}\" style='cursor:pointer;'>"
-            f"<td style='padding:3px 10px;font-family:monospace;color:#f9a8d4;font-size:.85em;'>{_esc(sig)}</td>"
-            f"<td style='padding:3px 10px;color:#cbd5e1;font-size:.83em;'>{_esc(desc)}</td>"
-            f"</tr>"
-            for sig, desc, tip2 in plot_methods
-        )
-        plot_section = (
-            "<details style='margin-top:8px;'>"
-            "<summary style='cursor:pointer;font-size:.83em;color:#f9a8d4;list-style:none;"
-            "padding:3px 6px;background:#1e293b;border-radius:5px;' "
-            "title='Expand to see plot methods'>"
-            "▶ <code>.plot</code> — LowestFrequencyPlotAccessor</summary>"
-            "<div style='margin-left:12px;margin-top:4px;'>"
-            f"<table style='width:100%;border-collapse:collapse;'>{plot_rows}</table>"
-            "</div></details>"
-        )
-
-        return (
-            "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;"
-            "border:2px solid #1e3a5f;border-left:4px solid "
-            + badge_color
-            + ";border-radius:10px;padding:14px;margin:6px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#0c1a35 100%);"
-            "color:#e2e8f0;max-width:680px;'>"
-            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px;'>"
-            "<span style='font-weight:700;font-size:1.0em;color:#f1f5f9;'>LowestFrequencyResult</span>"
-            f"<span style='background:{badge_color}22;color:{badge_color};border-radius:4px;"
-            f"padding:1px 8px;font-size:.72em;font-weight:600;'>{_esc(interpretation)}</span>"
-            "</div>"
-            f"<table style='width:100%;border-collapse:collapse;margin-bottom:4px;'>{stat_html}</table>"
-            + plot_section
-            + "</div>"
+        return node_card_html(
+            "LowestFrequencyResult",
+            icon="📉",
+            subtitle=interpretation,
+            badge=(self.side, badge_color),
+            sections=[
+                metrics_section_html(
+                    [
+                        ("f_min", f"{self.f_min_ghz:.4f} GHz", NODE_COLOR_COMPUTE),
+                        (
+                            "k* (at f_min)",
+                            f"{self.k_at_f_min_um:.4f} rad/μm",
+                            NODE_COLOR_ANALYSIS,
+                        ),
+                        ("f(k≈0)", f"{self.f_at_k0_ghz:.4f} GHz", NODE_COLOR_PLOT),
+                        (
+                            "v_g(k*)",
+                            f"{self.group_velocity_at_min / 1e3:.3f} km/s",
+                            NODE_COLOR_UTIL,
+                        ),
+                        ("Δf = f(k=0)-f_min", f"{delta_mhz:.2f} MHz", badge_color),
+                        ("branch points", str(len(self.branch_k)), NODE_COLOR_UTIL),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Plot:",
+                            [
+                                (".plot()", NODE_COLOR_COMPUTE),
+                                (".plot.heatmap(lognorm=True)", NODE_COLOR_ANALYSIS),
+                                (".plot.branch(kscale='rad_um')", NODE_COLOR_PLOT),
+                            ],
+                        )
+                    ]
+                ),
+                examples_section_html(
+                    "\n".join(
+                        [
+                            "lowest = result.analyze.find_lowest_possible_frequency()",
+                            "lowest.plot.heatmap(lognorm=True)",
+                            "lowest.plot.branch(kscale='rad_um')",
+                        ]
+                    )
+                ),
+            ],
+            api=api,
+            uid="lowest-frequency-result",
         )
 
 
 # ---------------------------------------------------------------------------
 # Plot accessor for LowestFrequencyResult
 # ---------------------------------------------------------------------------
+
 
 class LowestFrequencyPlotAccessor:
     """Plotting namespace for :class:`LowestFrequencyResult`.
@@ -273,7 +270,7 @@ class LowestFrequencyPlotAccessor:
             k_min_plot /= 1e6
             k0_plot = 0.0
         elif kscale == "meter":
-            k_min_plot /= (2 * np.pi)
+            k_min_plot /= 2 * np.pi
 
         if f_units == "GHz":
             f_min_plot /= 1e9
@@ -366,8 +363,10 @@ class LowestFrequencyPlotAccessor:
             f_k0_plot = lowest.f_at_k0_hz
 
         k_min_plot = (
-            lowest.k_at_f_min / 1e6 if kscale == "rad_um"
-            else lowest.k_at_f_min / (2 * np.pi) if kscale == "meter"
+            lowest.k_at_f_min / 1e6
+            if kscale == "rad_um"
+            else lowest.k_at_f_min / (2 * np.pi)
+            if kscale == "meter"
             else lowest.k_at_f_min
         )
 
@@ -388,7 +387,9 @@ class LowestFrequencyPlotAccessor:
             zorder=10,
             label=f"f_min = {lowest.f_min_ghz:.3f} GHz",
         )
-        ax.axhline(f_min_plot, color=marker_color, linestyle="--", linewidth=1.0, alpha=0.5)
+        ax.axhline(
+            f_min_plot, color=marker_color, linestyle="--", linewidth=1.0, alpha=0.5
+        )
 
         # k=0 marker
         ax.scatter(
@@ -421,20 +422,57 @@ class LowestFrequencyPlotAccessor:
         return "<LowestFrequencyPlotAccessor: .heatmap(), .branch()>"
 
     def _repr_html_(self) -> str:
-        from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("LowestFrequencyPlotAccessor", [
-            (".heatmap(lognorm=True, show_k0=True)",
-             "S(k,f) heatmap with f_min marker",
-             "marker_color, marker_size, show_k0 (mark FMR point), fmax, lognorm, kscale, cmap, k_xlim, save."),
-            (".branch(kscale='rad_um')",
-             "f_peak(k) dispersion branch with minimum highlighted",
-             "Shows the extracted branch and marks (k*, f_min). kscale, f_units, marker_color, save."),
-        ])
+        api = api_help_html(
+            self,
+            title="Lowest-frequency plot API help",
+            prefix="lowest.plot",
+            methods=["heatmap", "branch"],
+            subtitle="Plotting helpers for the lowest-frequency analysis result.",
+            chrome=False,
+        )
+        return node_card_html(
+            "LowestFrequency Plot Accessor",
+            icon="🖼️",
+            subtitle="Heatmap and branch views focused on the minimum-frequency point of the tracked dispersion branch.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("owner", "LowestFrequencyResult.plot", NODE_COLOR_COMPUTE),
+                        ("views", "heatmap / branch", NODE_COLOR_ANALYSIS),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Plot:",
+                            [
+                                (
+                                    ".heatmap(lognorm=True, show_k0=True)",
+                                    NODE_COLOR_COMPUTE,
+                                ),
+                                (".branch(kscale='rad_um')", NODE_COLOR_PLOT),
+                            ],
+                        )
+                    ]
+                ),
+                examples_section_html(
+                    "\n".join(
+                        [
+                            "lowest.plot.heatmap(lognorm=True, show_k0=True)",
+                            "lowest.plot.branch(kscale='rad_um')",
+                        ]
+                    )
+                ),
+            ],
+            api=api,
+            uid="lowest-frequency-plot",
+        )
 
 
 # ---------------------------------------------------------------------------
 # Analyze accessor  (attached to DispersionResult1D as .analyze)
 # ---------------------------------------------------------------------------
+
 
 class DispersionAnalyzeAccessor:
     """Analytical accessor on :class:`~mmpp.fft.dispersion.models.DispersionResult1D`.
@@ -504,14 +542,16 @@ class DispersionAnalyzeAccessor:
         LowestFrequencyResult
         """
         result = self._result
-        S = result.S          # (Nk, Nf)
+        S = result.S  # (Nk, Nf)
         k_axis = result.k_axis  # rad/m
         f_axis = result.f_axis  # Hz
 
         # Restrict to positive frequencies. Prefer slice-based selection to
         # avoid materializing an (Nk, Nf_pos) copy via boolean indexing.
         if np.all(np.diff(f_axis) >= 0):
-            f_selector: slice | np.ndarray = slice(int(np.searchsorted(f_axis, 0.0, side="left")), None)
+            f_selector: slice | np.ndarray = slice(
+                int(np.searchsorted(f_axis, 0.0, side="left")), None
+            )
             f_axis_pos = f_axis[f_selector]
         else:
             pos_idx = np.flatnonzero(f_axis >= 0)
@@ -526,7 +566,9 @@ class DispersionAnalyzeAccessor:
                 f_axis_pos = f_axis[pos_idx]
 
         if f_axis_pos.size == 0:
-            raise ValueError("No non-negative frequencies available for branch extraction.")
+            raise ValueError(
+                "No non-negative frequencies available for branch extraction."
+            )
         f_axis_monotonic = bool(np.all(np.diff(f_axis_pos) >= 0))
 
         # Apply fmin cutoff to avoid DC artifacts
@@ -548,7 +590,9 @@ class DispersionAnalyzeAccessor:
                 f_axis_pos = f_axis_pos[start_idx:]
                 if isinstance(f_selector, slice):
                     base_start = int(f_selector.start or 0)
-                    f_selector = slice(base_start + start_idx, f_selector.stop, f_selector.step)
+                    f_selector = slice(
+                        base_start + start_idx, f_selector.stop, f_selector.step
+                    )
                 else:
                     f_selector = f_selector[start_idx:]
             else:
@@ -565,7 +609,6 @@ class DispersionAnalyzeAccessor:
                     f_selector = f_selector[f_keep]
 
         S_pos = S[:, f_selector]
-
 
         # Convert search window to rad/m
         k_min_rm = k_min_rad_um * 1e6
@@ -601,7 +644,9 @@ class DispersionAnalyzeAccessor:
         # Extract f_peak per k-bin
         if peak_method == "centroid":
             total_power = S_search.sum(axis=1, keepdims=True) + 1e-30
-            f_peak_hz = (S_search * f_axis_pos[np.newaxis, :]).sum(axis=1) / total_power[:, 0]
+            f_peak_hz = (S_search * f_axis_pos[np.newaxis, :]).sum(
+                axis=1
+            ) / total_power[:, 0]
         else:  # argmax
             f_peak_idx = np.argmax(S_search, axis=1)
             f_peak_hz = f_axis_pos[f_peak_idx]
@@ -610,7 +655,10 @@ class DispersionAnalyzeAccessor:
         if smooth_sigma and smooth_sigma > 0:
             try:
                 from scipy.ndimage import gaussian_filter1d
-                f_peak_hz = gaussian_filter1d(f_peak_hz.astype(float), sigma=smooth_sigma)
+
+                f_peak_hz = gaussian_filter1d(
+                    f_peak_hz.astype(float), sigma=smooth_sigma
+                )
             except ImportError:
                 # simple box smooth fallback
                 w = max(1, int(smooth_sigma * 2))
@@ -664,6 +712,8 @@ class DispersionAnalyzeAccessor:
         fmin_hz: float | str | None = "auto",
         k_min_rad_um: float = 0.0,
         k_max_rad_um: Optional[float] = None,
+        analysis_source: str = "raw",
+        positive_frequencies: bool = True,
     ) -> "BranchesResult":
         """Detect multiple dispersion branches via Hungarian peak linking.
 
@@ -695,6 +745,12 @@ class DispersionAnalyzeAccessor:
             Lower frequency cutoff.
         k_min_rad_um, k_max_rad_um : float
             k-window [rad/μm].
+        analysis_source : ``"raw"`` | ``"display"``
+            Spectrum source used for branch extraction. Defaults to raw data so
+            display filters do not change quantitative analysis unless asked.
+        positive_frequencies : bool
+            Restrict branch extraction to f >= 0. Set False for signed-frequency
+            analysis when that is physically intended.
 
         Returns
         -------
@@ -724,6 +780,8 @@ class DispersionAnalyzeAccessor:
             fmin_hz=fmin_hz,
             k_min_rad_um=k_min_rad_um,
             k_max_rad_um=k_max_rad_um,
+            analysis_source=analysis_source,
+            positive_frequencies=positive_frequencies,
         )
 
     def scan(
@@ -796,9 +854,9 @@ class DispersionAnalyzeAccessor:
 
         # Inherit config from current result where not overridden
         res = self._result
-        _filters     = filters       or {}
-        _find_kwargs = find_kwargs   or {}
-        _compute_kw  = compute_kwargs or {"axis": getattr(res, "axis", "x")}
+        _filters = filters or {}
+        _find_kwargs = find_kwargs or {}
+        _compute_kw = compute_kwargs or {"axis": getattr(res, "axis", "x")}
 
         return scan_minimum_frequency(
             sources,
@@ -824,23 +882,33 @@ class DispersionAnalyzeAccessor:
         HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
 
         methods = [
-            (".find_lowest_possible_frequency()",
-             "→ LowestFrequencyResult",
-             "Default: side='positive', smooth_sigma=2.0, peak_method='argmax'. "
-             "Finds k* where f(k) is minimum on the dispersion branch."),
-            (".find_lowest_possible_frequency(side='both')",
-             "Search full k-axis",
-             "side='both' searches k<0 and k>0. Use for isotropic or symmetric systems."),
-            (".find_lowest_possible_frequency(smooth_sigma=None, peak_method='centroid')",
-             "No smoothing, centroid peak",
-             "smooth_sigma=None disables Gaussian smoothing. peak_method='centroid' uses power-weighted "
-             "centroid frequency instead of argmax — more robust for broad peaks."),
-            (".find_lowest_possible_frequency(k_min_rad_um=0.5, k_max_rad_um=8.0)",
-             "Restrict k search window",
-             "k_min_rad_um / k_max_rad_um restrict the search range in rad/\u03bcm. Useful to exclude the k=0 region."),
-            (".find_lowest_possible_frequency(fmin_hz=2e9)",
-             "Explicit fmin cutoff (Hz)",
-             "fmin_hz='auto' (default) skips lowest 5% of spectrum. Set explicit Hz value, or None to disable."),
+            (
+                ".find_lowest_possible_frequency()",
+                "→ LowestFrequencyResult",
+                "Default: side='positive', smooth_sigma=2.0, peak_method='argmax'. "
+                "Finds k* where f(k) is minimum on the dispersion branch.",
+            ),
+            (
+                ".find_lowest_possible_frequency(side='both')",
+                "Search full k-axis",
+                "side='both' searches k<0 and k>0. Use for isotropic or symmetric systems.",
+            ),
+            (
+                ".find_lowest_possible_frequency(smooth_sigma=None, peak_method='centroid')",
+                "No smoothing, centroid peak",
+                "smooth_sigma=None disables Gaussian smoothing. peak_method='centroid' uses power-weighted "
+                "centroid frequency instead of argmax — more robust for broad peaks.",
+            ),
+            (
+                ".find_lowest_possible_frequency(k_min_rad_um=0.5, k_max_rad_um=8.0)",
+                "Restrict k search window",
+                "k_min_rad_um / k_max_rad_um restrict the search range in rad/\u03bcm. Useful to exclude the k=0 region.",
+            ),
+            (
+                ".find_lowest_possible_frequency(fmin_hz=2e9)",
+                "Explicit fmin cutoff (Hz)",
+                "fmin_hz='auto' (default) skips lowest 5% of spectrum. Set explicit Hz value, or None to disable.",
+            ),
         ]
         rows = "".join(
             f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"

@@ -1,0 +1,347 @@
+"""Interactive dispersion explorer engine."""
+
+from __future__ import annotations
+
+from html import escape
+from typing import TYPE_CHECKING, Any
+
+from .callbacks import on_canvas_click, sync_analytical_options
+from .frequency import normalize_frequency_window_ghz
+from .presets import apply_preset_state, collect_preset_state
+from .rendering import draw_dispersion_panel, refresh_output_widget
+from .state import DispersionExplorerState
+from .status import set_status
+from .widgets import build_toolbar
+
+if TYPE_CHECKING:
+    from mmpp.fft.dispersion.models import DispersionResult1D
+
+
+class DispersionHeatmapWidget:
+    """Notebook explorer for ``DispersionResult1D`` using the shared toolbar pattern."""
+
+    def __init__(self, result: "DispersionResult1D", options: dict[str, Any]):
+        self.result = result
+        self.options = dict(options)
+        self.state = self._initial_state()
+        self.widget: Any = None
+        self.figure: Any = None
+        self.axes: Any = None
+        self.controls: dict[str, Any] = {}
+        self._status_history: list[str] = []
+        self._presets_dir = None
+        self._click_connection = None
+        self._image = None
+        self.last_mode: Any = None
+
+    def build(
+        self,
+        display_func: Any,
+        *,
+        toolbar: bool | str = "auto",
+        defer_initial_render: bool = True,
+    ) -> Any:
+        """Create controls lazily; render the heatmap only on explicit request."""
+        toolbar_enabled = self._resolve_toolbar(toolbar)
+
+        if toolbar_enabled:
+            import ipywidgets as widgets
+
+            build_toolbar(
+                self,
+                widgets,
+                render_initial=not bool(defer_initial_render),
+            )
+            if not defer_initial_render:
+                self._warn_for_inline_backend()
+            return self.widget
+
+        self.ensure_figure()
+        draw_dispersion_panel(self)
+        display_func(self.figure)
+        set_status(self, "Matplotlib dispersion figure ready", color="#0F766E")
+        self._warn_for_inline_backend()
+        return self.figure
+
+    def ensure_figure(self) -> None:
+        """Create the Matplotlib figure lazily, only when rendering is requested."""
+        if self.figure is not None and self.axes is not None:
+            return
+
+        import matplotlib.pyplot as plt
+
+        figsize = tuple(self.options.get("figsize", (8.0, 5.2)))
+        dpi = self.options.get("dpi", 100)
+        if hasattr(plt, "ioff"):
+            plt.ioff()
+        self.figure, self.axes = plt.subplots(figsize=figsize, dpi=dpi)
+        if hasattr(self.figure, "canvas") and hasattr(self.figure.canvas, "mpl_connect"):
+            self._click_connection = self.figure.canvas.mpl_connect(
+                "button_press_event",
+                lambda event: on_canvas_click(self, event),
+            )
+
+    def close(self) -> None:
+        """Release owned widgets and Matplotlib figure."""
+        if self.figure is not None and self._click_connection is not None:
+            try:
+                self.figure.canvas.mpl_disconnect(self._click_connection)
+            except Exception:
+                pass
+        for control in list(self.controls.values()):
+            if hasattr(control, "close"):
+                try:
+                    control.close()
+                except Exception:
+                    pass
+        if self.widget is not None and hasattr(self.widget, "close"):
+            try:
+                self.widget.close()
+            except Exception:
+                pass
+        if self.figure is not None:
+            try:
+                import matplotlib.pyplot as plt
+
+                plt.close(self.figure)
+            except Exception:
+                pass
+        self.widget = None
+        self.figure = None
+        self.axes = None
+        self.controls = {}
+        self._click_connection = None
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Return runtime diagnostics for notebook/backend troubleshooting."""
+        backend = "not-created"
+        interactive_backend = False
+        if self.figure is not None:
+            try:
+                import matplotlib
+
+                backend = str(matplotlib.get_backend())
+                interactive_backend = any(
+                    kw in backend.lower()
+                    for kw in ("widget", "ipympl", "nbagg", "notebook")
+                )
+            except Exception:
+                backend = "unknown"
+        return {
+            "backend": backend,
+            "interactive_backend": interactive_backend,
+            "click_connected": bool(self._click_connection is not None),
+            "toolbar_enabled": bool(self.widget is not None and self.controls),
+            "selected": {
+                "k_rad_per_m": self.state.selected_k,
+                "f_hz": self.state.selected_f,
+                "power": self.state.selected_power,
+            },
+        }
+
+    def apply_state_to_controls(self) -> None:
+        """Synchronize state into toolbar controls."""
+        if not self.controls:
+            return
+        mapping = {
+            "fmin": self.state.fmin_ghz,
+            "fmax": self.state.fmax_ghz,
+            "source": self.state.source,
+            "kscale": self.state.kscale,
+            "cmap": self.state.cmap,
+            "positive": self.state.positive_frequencies,
+            "lognorm": self.state.lognorm,
+            "mode_type": self.state.mode_type,
+        }
+        for key, value in mapping.items():
+            if key in self.controls:
+                self.controls[key].value = value
+        for key, value in (self.state.show_flags or {}).items():
+            if key in self.controls:
+                self.controls[key].value = bool(value)
+        analytical = self.state.analytical or {}
+        analytical_mapping = {
+            "analytical_enabled": bool(analytical.get("enabled", False)),
+            "analytical_model": analytical.get("model", "kalinikos"),
+            "analytical_sw_config": analytical.get("sw_config", "DE"),
+            "analytical_n_modes": analytical.get("n_modes", 1),
+            "analytical_k_points": analytical.get("k_points", 500),
+        }
+        for material_key in ("B", "Ms", "Aex", "d", "phi", "D"):
+            control_key = f"analytical_{material_key}"
+            if material_key in analytical:
+                analytical_mapping[control_key] = str(analytical[material_key])
+        for key, value in analytical_mapping.items():
+            if key in self.controls:
+                self.controls[key].value = value
+        sync_analytical_options(self)
+        live_filters = self.state.live_filters or {}
+        snr_cfg = dict(live_filters.get("snr_filter") or {})
+        gaussian_cfg = dict(live_filters.get("gaussian_morph") or {})
+        percentile_cfg = dict(live_filters.get("percentile_autoscale") or {})
+        soft_cfg = dict(live_filters.get("soft_threshold") or {})
+        log_cfg = dict(live_filters.get("log_transform") or {})
+        gamma_cfg = dict(live_filters.get("gamma") or {})
+        filter_mapping = {
+            "filter_snr_enabled": bool(snr_cfg.get("enabled", False)),
+            "filter_snr_threshold": float(snr_cfg.get("threshold_snr", 3.0)),
+            "filter_gaussian_enabled": bool(gaussian_cfg.get("enabled", False)),
+            "filter_gaussian_sigma_f": float(gaussian_cfg.get("sigma_f", 1.0)),
+            "filter_gaussian_sigma_k": float(gaussian_cfg.get("sigma_k", 1.0)),
+            "filter_gaussian_threshold": float(
+                gaussian_cfg.get("threshold_std", 1.5)
+            ),
+            "filter_percentile_enabled": bool(percentile_cfg.get("enabled", False)),
+            "filter_percentile_low": float(
+                percentile_cfg.get("low_percentile", 2.0)
+            ),
+            "filter_percentile_high": float(
+                percentile_cfg.get("high_percentile", 99.0)
+            ),
+            "filter_soft_enabled": bool(soft_cfg.get("enabled", False)),
+            "filter_soft_percentile": float(
+                soft_cfg.get("threshold_percentile", 50.0)
+            ),
+            "filter_soft_smoothness": float(soft_cfg.get("smoothness", 5.0)),
+            "filter_log_enabled": bool(log_cfg.get("enabled", False)),
+            "filter_log_method": str(log_cfg.get("method", "log1p")),
+            "filter_gamma_enabled": bool(gamma_cfg.get("enabled", False)),
+            "filter_gamma_value": float(gamma_cfg.get("gamma", 0.5)),
+        }
+        for key, value in filter_mapping.items():
+            if key in self.controls:
+                control = self.controls[key]
+                if key == "filter_log_method" and hasattr(control, "options"):
+                    options = list(control.options)
+                    if value not in options:
+                        control.options = options + [value]
+                control.value = value
+
+    def collect_preset(self) -> dict[str, Any]:
+        """Return serializable preset state."""
+        return collect_preset_state(self)
+
+    def apply_preset(self, payload: dict[str, Any]) -> None:
+        """Apply serializable preset state and redraw."""
+        apply_preset_state(self, payload)
+        self.apply_state_to_controls()
+        self.render()
+
+    def status_html(self) -> str:
+        """Return compact note block for fallback/status displays."""
+        notes = list(getattr(self.result, "notes", None) or [])
+        rows = "".join(f"<li>{escape(str(note))}</li>" for note in notes[:6])
+        notes_html = (
+            f"<ul style='margin:4px 0 0 16px;padding:0;'>{rows}</ul>"
+            if rows
+            else ""
+        )
+        diagnostics = self.diagnostics()
+        backend = escape(str(diagnostics.get("backend", "unknown")))
+        backend_warning = ""
+        if not diagnostics.get("interactive_backend", False):
+            backend_warning = (
+                "<div style='margin-top:6px;color:#fbbf24;'>"
+                f"Matplotlib backend: <code>{backend}</code>. "
+                "For a live widget use <code>%matplotlib widget</code> with ipympl "
+                "installed, then restart the kernel and rerun the first cell."
+                "</div>"
+            )
+        return (
+            "<div style='font-family:monospace;color:#cbd5e1;'>"
+            "<b>Dispersion interactive</b>"
+            f"{notes_html}"
+            f"{backend_warning}"
+            "</div>"
+        )
+
+    def render(self) -> None:
+        """Redraw the heatmap and output widget."""
+        self.ensure_figure()
+        draw_dispersion_panel(self)
+        refresh_output_widget(self)
+        self._has_rendered_dispersion = True
+
+    def _resolve_toolbar(self, toolbar: bool | str) -> bool:
+        if isinstance(toolbar, str):
+            if toolbar.lower() == "auto":
+                return True
+            return toolbar.lower() in {"1", "true", "yes", "on"}
+        return bool(toolbar)
+
+    def _initial_state(self) -> DispersionExplorerState:
+        fmin, fmax = normalize_frequency_window_ghz(
+            self.options,
+            getattr(self.result, "f_axis", None),
+        )
+        return DispersionExplorerState(
+            fmin_ghz=float(fmin),
+            fmax_ghz=float(fmax),
+            source=str(self.options.get("source", "display")),
+            kscale=str(self.options.get("kscale", "rad_um")),
+            cmap=str(self.options.get("cmap", "viridis")),
+            positive_frequencies=bool(self.options.get("positive_frequencies", True)),
+            lognorm=bool(self.options.get("lognorm", False)),
+            f_units=str(self.options.get("f_units", "GHz")),
+            mode_type=str(self.options.get("mode_type") or "abs"),
+            analytical=self._initial_analytical_state(),
+            live_filters=dict(self.options.get("live_filters") or {}) or None,
+        )
+
+    def _initial_analytical_state(self) -> dict[str, Any]:
+        raw = self.options.get("analytical", False)
+        raw_options = dict(raw) if isinstance(raw, dict) else {}
+        enabled = bool(raw)
+        sw_config = raw_options.get("sw_config") or self.options.get("analytical_sw_config")
+        if sw_config is None and isinstance(raw, str):
+            sw_config = raw
+        if sw_config is None:
+            sw_config = "DE"
+        analytical = {
+            "enabled": enabled,
+            "model": str(
+                raw_options.get("model")
+                or self.options.get("analytical_model")
+                or "kalinikos"
+            ),
+            "sw_config": str(sw_config),
+            "n_modes": int(
+                raw_options.get("n_modes")
+                or self.options.get("analytical_n_modes")
+                or 1
+            ),
+            "k_points": int(
+                raw_options.get("k_points")
+                or self.options.get("analytical_k_points")
+                or 500
+            ),
+        }
+        for key in ("B", "Ms", "Aex", "d", "Ku", "Kc1", "Kc2", "phi_ani", "g"):
+            if key in raw_options:
+                analytical[key] = raw_options[key]
+            elif key in self.options:
+                analytical[key] = self.options[key]
+        for key, option_key in {"phi": "analytical_phi", "D": "analytical_D"}.items():
+            if key in raw_options:
+                analytical[key] = raw_options[key]
+            elif option_key in self.options:
+                analytical[key] = self.options[option_key]
+        return analytical
+
+    def _warn_for_inline_backend(self) -> None:
+        """Surface non-interactive Matplotlib backends inside the widget status."""
+        diagnostics = self.diagnostics()
+        if diagnostics.get("backend") == "not-created":
+            return
+        if diagnostics.get("interactive_backend", False):
+            return
+        backend = str(diagnostics.get("backend", "unknown"))
+        set_status(
+            self,
+            (
+                f"Matplotlib backend is {backend}; figure may render inline. "
+                "Use %matplotlib widget with ipympl, restart the kernel, and rerun "
+                "the first cell for live pan/zoom/click callbacks."
+            ),
+            color="#B45309",
+        )
