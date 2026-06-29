@@ -18,6 +18,17 @@ def _scaled_k_axis(k_axis: Any, kscale: str) -> tuple[Any, str]:
     return k_axis, "k [rad/m]"
 
 
+def _default_k_window_for_scale(kscale: str) -> tuple[float, float] | None:
+    """Return a notebook-friendly default k-window in display units."""
+    if kscale == "rad_um":
+        return -10.0, 10.0
+    if kscale == "rad":
+        return -10.0e6, 10.0e6
+    if kscale in {"cycles_m", "meter"}:
+        return -10.0e6 / (2 * np.pi), 10.0e6 / (2 * np.pi)
+    return None
+
+
 def _display_k_xlim(explorer: Any, k_plot: Any) -> tuple[float, float] | None:
     """Return display-space k limits for the interactive heatmap."""
     explicit = getattr(explorer, "options", {}).get("k_xlim")
@@ -28,7 +39,8 @@ def _display_k_xlim(explorer: Any, k_plot: Any) -> tuple[float, float] | None:
         except (TypeError, ValueError):
             logger.debug("Ignoring invalid k_xlim=%r", explicit)
 
-    if str(explorer.state.kscale) != "rad_um":
+    default_window = _default_k_window_for_scale(str(explorer.state.kscale))
+    if default_window is None:
         return None
 
     try:
@@ -39,8 +51,9 @@ def _display_k_xlim(explorer: Any, k_plot: Any) -> tuple[float, float] | None:
     if not np.isfinite(data_lo) or not np.isfinite(data_hi) or data_lo >= data_hi:
         return None
 
-    lo = max(data_lo, -10.0)
-    hi = min(data_hi, 10.0)
+    default_lo, default_hi = default_window
+    lo = max(data_lo, default_lo)
+    hi = min(data_hi, default_hi)
     if lo >= hi:
         return None
     return lo, hi
