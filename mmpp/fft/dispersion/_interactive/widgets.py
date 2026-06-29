@@ -545,7 +545,7 @@ def build_toolbar(
         "Initial heatmap render is starting after the toolbar appears."
         if initial_render_enabled
         else (
-            "Press <b>Render / refresh dispersion</b> to draw S(k, f). "
+            "Press <b>Render heatmap</b> to draw S(k, f). "
             "Manual first render is enabled for this viewer."
         )
     )
@@ -853,7 +853,7 @@ def build_toolbar(
         _show_dispersion_placeholder(explorer)
         set_status(
             explorer,
-            "Interactive toolbar ready; press Render / refresh dispersion to draw the heatmap",
+            "Interactive toolbar ready; press Render heatmap to draw the heatmap",
             color="#334155",
         )
 

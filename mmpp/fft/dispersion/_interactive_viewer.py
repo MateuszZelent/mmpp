@@ -647,6 +647,11 @@ class DispersionInteractiveViewer:
     def _widget_options(self) -> dict[str, Any]:
         """Translate stable viewer state into options consumed by the widget engine."""
         options = dict(self.options)
+        # The first heatmap render remains automatic, but later control changes
+        # should not block the notebook event loop by redrawing S(k, f) after
+        # every widget value update.  The visible Render heatmap button is the
+        # explicit refresh point unless callers opt back into live redraws.
+        options.setdefault("auto_render", False)
         analytical = dict(self.analytical or {})
         if not analytical:
             return options
