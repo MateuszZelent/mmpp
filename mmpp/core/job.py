@@ -28,6 +28,7 @@ from .constants import (
 from .attributes import AttributesView
 from .dataset import DatasetAwareWrapper
 from .dataset_geometry import AxisGeometry, DatasetGeometry
+from .table import TableAwareWrapper
 
 if RICH_AVAILABLE:
     from rich.console import Console
@@ -231,6 +232,18 @@ class ZarrJobResult:
                 "The store may contain corrupted or non-Zarr objects."
             ) from exc
 
+    def _wrap_zarr_member(self, name: str, member: Any) -> Any:
+        """Return the public notebook wrapper for a zarr member when needed."""
+        if isinstance(member, zarr.Array) or _is_array_like_dataset(member):
+            return DatasetAwareWrapper(self, name, member)
+        if (
+            name == "table"
+            and hasattr(member, "array_keys")
+            and hasattr(member, "__getitem__")
+        ):
+            return TableAwareWrapper(self, name, member)
+        return member
+
     @property
     def z(self) -> zarr.Group:
         """Get the zarr group (lazy loaded)."""
@@ -317,9 +330,7 @@ class ZarrJobResult:
         self._ensure_zarr_loaded()
         try:
             member = self._get_zarr_member(item)
-            if isinstance(member, zarr.Array) or _is_array_like_dataset(member):
-                return DatasetAwareWrapper(self, item, member)
-            return member
+            return self._wrap_zarr_member(item, member)
         except NameError:
             if item in self._z.attrs:
                 warnings.warn(
@@ -364,9 +375,7 @@ class ZarrJobResult:
             zarr_item = None
 
         if zarr_item is not None:
-            if isinstance(zarr_item, zarr.Array) or _is_array_like_dataset(zarr_item):
-                return DatasetAwareWrapper(self, name, zarr_item)
-            return zarr_item
+            return self._wrap_zarr_member(name, zarr_item)
 
         # Backward-compatible access to attributes (deprecated)
         if name in self._z.attrs:
