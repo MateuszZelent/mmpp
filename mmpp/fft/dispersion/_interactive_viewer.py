@@ -253,15 +253,13 @@ class DispersionInteractiveViewer:
 
         try:
             # Notebook backends can deadlock the kernel when Matplotlib draws
-            # synchronously during ``show()``.  Keep the default startup path
-            # lightweight: display the toolbar first and let the user trigger
-            # the heatmap with the visible Render / refresh dispersion button.
-            # Callers that accept the backend risk can still request the old
-            # eager behavior with ``initial_render=True``.
+            # synchronously before the widget shell is visible.  Always build a
+            # lightweight toolbar first, display it, then perform the optional
+            # first render exactly once from ``_render_widget_after_display``.
             initial_render = bool(self.options.get("initial_render", True))
             widget = self._build_widget(
                 display,
-                defer_initial_render=not initial_render,
+                defer_initial_render=True,
             )
         except Exception as exc:
             self._widget_status = "fallback"

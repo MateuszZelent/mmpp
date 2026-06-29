@@ -31,6 +31,11 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
+def _float_or_default(value: Any, default: float) -> float:
+    converted = _optional_float(value)
+    return float(default) if converted is None else float(converted)
+
+
 def sync_analytical_options(explorer: Any) -> None:
     """Mirror analytical overlay state into renderer options."""
     analytical = dict(getattr(explorer.state, "analytical", None) or {})
@@ -125,8 +130,10 @@ def _update_live_filter_state_from_controls(explorer: Any) -> None:
     ):
         live["snr_filter"] = {
             "enabled": True,
-            "threshold_snr": _optional_float(controls["filter_snr_threshold"].value)
-            or 3.0,
+            "threshold_snr": _float_or_default(
+                controls["filter_snr_threshold"].value,
+                3.0,
+            ),
             "method": "percentile",
             "noise_percentile": 5.0,
         }
@@ -136,14 +143,18 @@ def _update_live_filter_state_from_controls(explorer: Any) -> None:
     ):
         live["gaussian_morph"] = {
             "enabled": True,
-            "sigma_f": _optional_float(controls["filter_gaussian_sigma_f"].value)
-            or 1.0,
-            "sigma_k": _optional_float(controls["filter_gaussian_sigma_k"].value)
-            or 1.0,
-            "threshold_std": _optional_float(
-                controls["filter_gaussian_threshold"].value
-            )
-            or 1.5,
+            "sigma_f": _float_or_default(
+                controls["filter_gaussian_sigma_f"].value,
+                1.0,
+            ),
+            "sigma_k": _float_or_default(
+                controls["filter_gaussian_sigma_k"].value,
+                1.0,
+            ),
+            "threshold_std": _float_or_default(
+                controls["filter_gaussian_threshold"].value,
+                1.5,
+            ),
             "opening_size": 3,
         }
 
@@ -152,10 +163,14 @@ def _update_live_filter_state_from_controls(explorer: Any) -> None:
     ):
         live["percentile_autoscale"] = {
             "enabled": True,
-            "low_percentile": _optional_float(controls["filter_percentile_low"].value)
-            or 2.0,
-            "high_percentile": _optional_float(controls["filter_percentile_high"].value)
-            or 99.0,
+            "low_percentile": _float_or_default(
+                controls["filter_percentile_low"].value,
+                2.0,
+            ),
+            "high_percentile": _float_or_default(
+                controls["filter_percentile_high"].value,
+                99.0,
+            ),
         }
 
     if controls.get("filter_soft_enabled") is not None and bool(
@@ -163,12 +178,14 @@ def _update_live_filter_state_from_controls(explorer: Any) -> None:
     ):
         live["soft_threshold"] = {
             "enabled": True,
-            "threshold_percentile": _optional_float(
-                controls["filter_soft_percentile"].value
-            )
-            or 50.0,
-            "smoothness": _optional_float(controls["filter_soft_smoothness"].value)
-            or 5.0,
+            "threshold_percentile": _float_or_default(
+                controls["filter_soft_percentile"].value,
+                50.0,
+            ),
+            "smoothness": _float_or_default(
+                controls["filter_soft_smoothness"].value,
+                5.0,
+            ),
         }
 
     if controls.get("filter_log_enabled") is not None and bool(
@@ -186,7 +203,7 @@ def _update_live_filter_state_from_controls(explorer: Any) -> None:
     ):
         live["gamma"] = {
             "enabled": True,
-            "gamma": _optional_float(controls["filter_gamma_value"].value) or 0.5,
+            "gamma": _float_or_default(controls["filter_gamma_value"].value, 0.5),
         }
 
     explorer.state.live_filters = live or None

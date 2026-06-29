@@ -606,7 +606,7 @@ def test_dispersion_viewer_passes_analytical_overlay_to_heatmap_widget(monkeypat
             self.axes = None
             self.controls = {}
 
-        def build(self, display_func, toolbar="auto"):
+        def build(self, display_func, toolbar="auto", **kwargs):
             captured["toolbar"] = toolbar
             return "fake-widget"
 
@@ -3893,9 +3893,8 @@ def test_dispersion_interactive_display_change_syncs_analytical_overlay_options(
     assert explorer.options["analytical_D"] == 1.2e-3
 
 
-def test_dispersion_interactive_display_change_does_not_auto_render_by_default(
-    monkeypatch,
-):
+def test_dispersion_interactive_display_change_auto_renders_by_default(monkeypatch):
+    """Auto-render is enabled by default so toolbar changes update the plot."""
     import types
 
     from mmpp.fft.dispersion._interactive import callbacks
@@ -3938,7 +3937,7 @@ def test_dispersion_interactive_display_change_does_not_auto_render_by_default(
 
     on_display_change(explorer)
 
-    assert calls == []
+    assert calls == ["draw", "refresh"]
 
 
 def test_dispersion_interactive_display_change_can_auto_render(monkeypatch):

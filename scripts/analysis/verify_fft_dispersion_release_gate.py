@@ -152,12 +152,20 @@ def _run_viewer_display_lifecycle_smoke() -> dict[str, Any]:
         fmax=8,
         f_units="GHz",
         kscale="rad_um",
+        live_filters={
+            "percentile_autoscale": {
+                "enabled": True,
+                "low_percentile": 0.0,
+                "high_percentile": 100.0,
+            }
+        },
     )
     lifecycle.show()
     shown = lifecycle.show_requested is True
     figure_after_show = getattr(lifecycle, "_figure", None) is not None
     axes_after_show = getattr(lifecycle, "_axes", None) is not None
     widget_status_after_show = getattr(lifecycle, "_widget_status", "")
+    state_after_show = lifecycle.state
     rendered_xlim = None
     rendered_ylim = None
     axes = getattr(lifecycle, "_axes", None)
@@ -176,6 +184,10 @@ def _run_viewer_display_lifecycle_smoke() -> dict[str, Any]:
         "figure_after_show": figure_after_show,
         "axes_after_show": axes_after_show,
         "widget_status_after_show": widget_status_after_show,
+        "live_filters_after_show": state_after_show.get("live_filters"),
+        "live_filter_error": (
+            getattr(getattr(lifecycle, "_widget_engine", None), "_last_filter_error", "")
+        ),
         "rendered_xlim": rendered_xlim,
         "rendered_ylim": rendered_ylim,
     }
@@ -187,6 +199,7 @@ def _viewer_status(viewer_state: dict[str, Any]) -> dict[str, Any]:
     widget_ready = lifecycle.get("widget_status_after_show") == "ready"
     rendered_xlim = lifecycle.get("rendered_xlim") or []
     rendered_ylim = lifecycle.get("rendered_ylim") or []
+    live_filters = lifecycle.get("live_filters_after_show") or {}
     checks = {
         "viewer_headless": viewer_state.get("show") is False,
         "positive_frequencies": viewer_state.get("positive_frequencies") is True,
@@ -211,6 +224,12 @@ def _viewer_status(viewer_state: dict[str, Any]) -> dict[str, Any]:
             len(rendered_ylim) == 2
             and min(rendered_ylim) >= -1e-9
             and max(rendered_ylim) <= 8.0
+        ),
+        "live_filters_state": (not widget_ready)
+        or (
+            isinstance(live_filters, dict)
+            and "percentile_autoscale" in live_filters
+            and not lifecycle.get("live_filter_error")
         ),
         "export_selection": selection.get("source") == "release_gate"
         and selection.get("marker") == [1.0, 2.0],

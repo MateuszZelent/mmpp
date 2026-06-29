@@ -121,6 +121,7 @@ def _analysis_summary_payload(explorer: Any) -> dict[str, Any]:
     k_min, k_max = _axis_range(getattr(result, "k_axis", []), scale=1e6)
     f_min, f_max = _axis_range(getattr(result, "f_axis", []), scale=1e9)
     selection = _selection_payload(explorer)
+    live_filters = getattr(explorer.state, "live_filters", None) or {}
     return {
         "shape": list(getattr(result, "shape", [])),
         "axis": getattr(result, "axis", None),
@@ -132,6 +133,8 @@ def _analysis_summary_payload(explorer: Any) -> dict[str, Any]:
             float(getattr(explorer.state, "fmax_ghz", 0.0)),
         ],
         "selection": selection,
+        "live_filters": sorted(str(key) for key in live_filters.keys()),
+        "live_filter_error": getattr(explorer, "_last_filter_error", ""),
         "has_complex_modes": getattr(result, "S_complex", None) is not None,
         "rendered": bool(getattr(explorer, "_has_rendered_dispersion", False)),
         "backend": (
@@ -258,6 +261,111 @@ def build_toolbar(
         description="log scale",
         indent=False,
         **_maybe_layout(widgets, width="100%"),
+    )
+    live_filters = dict(getattr(explorer.state, "live_filters", None) or {})
+    snr_cfg = dict(live_filters.get("snr_filter") or {})
+    gaussian_cfg = dict(live_filters.get("gaussian_morph") or {})
+    percentile_cfg = dict(live_filters.get("percentile_autoscale") or {})
+    soft_cfg = dict(live_filters.get("soft_threshold") or {})
+    log_cfg = dict(live_filters.get("log_transform") or {})
+    gamma_cfg = dict(live_filters.get("gamma") or {})
+    controls["filter_snr_enabled"] = widgets.Checkbox(
+        value=bool(snr_cfg.get("enabled", False)),
+        description="SNR filter",
+        indent=False,
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_snr_threshold"] = widgets.FloatText(
+        value=float(snr_cfg.get("threshold_snr", 3.0)),
+        description="SNR",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_gaussian_enabled"] = widgets.Checkbox(
+        value=bool(gaussian_cfg.get("enabled", False)),
+        description="gaussian enhance",
+        indent=False,
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_gaussian_sigma_f"] = widgets.FloatText(
+        value=float(gaussian_cfg.get("sigma_f", 1.0)),
+        description="sigma f",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_gaussian_sigma_k"] = widgets.FloatText(
+        value=float(gaussian_cfg.get("sigma_k", 1.0)),
+        description="sigma k",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_gaussian_threshold"] = widgets.FloatText(
+        value=float(gaussian_cfg.get("threshold_std", 1.5)),
+        description="threshold",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_percentile_enabled"] = widgets.Checkbox(
+        value=bool(percentile_cfg.get("enabled", False)),
+        description="percentile autoscale",
+        indent=False,
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_percentile_low"] = widgets.FloatText(
+        value=float(percentile_cfg.get("low_percentile", 2.0)),
+        description="low %",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_percentile_high"] = widgets.FloatText(
+        value=float(percentile_cfg.get("high_percentile", 99.0)),
+        description="high %",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_soft_enabled"] = widgets.Checkbox(
+        value=bool(soft_cfg.get("enabled", False)),
+        description="soft threshold",
+        indent=False,
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_soft_percentile"] = widgets.FloatText(
+        value=float(soft_cfg.get("threshold_percentile", 50.0)),
+        description="percentile",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_soft_smoothness"] = widgets.FloatText(
+        value=float(soft_cfg.get("smoothness", 5.0)),
+        description="smooth",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_log_enabled"] = widgets.Checkbox(
+        value=bool(log_cfg.get("enabled", False)),
+        description="log transform",
+        indent=False,
+        **_maybe_layout(widgets, width="100%"),
+    )
+    log_method_value = str(log_cfg.get("method", "log1p"))
+    log_method_options = ["log1p", "log10", "asinh", "log"]
+    if log_method_value not in log_method_options:
+        log_method_options.append(log_method_value)
+    controls["filter_log_method"] = widgets.Dropdown(
+        options=log_method_options,
+        value=log_method_value,
+        description="log",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_gamma_enabled"] = widgets.Checkbox(
+        value=bool(gamma_cfg.get("enabled", False)),
+        description="gamma",
+        indent=False,
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_gamma_value"] = widgets.FloatText(
+        value=float(gamma_cfg.get("gamma", 0.5)),
+        description="gamma",
+        **_maybe_layout(widgets, width="100%"),
+    )
+    controls["filter_info"] = widgets.HTML(
+        value=(
+            "<small>Live filters are non-destructive and render from cached "
+            "S(k, f); compute-stage filters still belong to "
+            "<code>disp.filters(...)</code>.</small>"
+        )
     )
     controls["grid"] = widgets.Checkbox(
         value=bool((explorer.state.show_flags or {}).get("grid", True)),
@@ -394,13 +502,22 @@ def build_toolbar(
     controls["output"] = widgets.Output(
         **_maybe_layout(widgets, border="1px solid #e2e8f0", width="100%")
     )
+    initial_render_enabled = bool(
+        getattr(explorer, "options", {}).get("initial_render", True)
+    )
+    placeholder_body = (
+        "Initial heatmap render is starting after the toolbar appears."
+        if initial_render_enabled
+        else (
+            "Press <b>Render / refresh dispersion</b> to draw S(k, f). "
+            "Manual first render is enabled for this viewer."
+        )
+    )
     controls["output_placeholder"] = widgets.HTML(
         value=(
             "<div style='padding:18px;font-family:monospace;color:#334155;'>"
             "<b>Dispersion viewer ready.</b><br>"
-            "Press <b>Render / refresh dispersion</b> to draw S(k, f). "
-            "The first render is explicit so notebook backends cannot block "
-            "the toolbar startup."
+            f"{placeholder_body}"
             "</div>"
         )
     )
@@ -485,6 +602,22 @@ def build_toolbar(
         "analytical_d",
         "analytical_phi",
         "analytical_D",
+        "filter_snr_enabled",
+        "filter_snr_threshold",
+        "filter_gaussian_enabled",
+        "filter_gaussian_sigma_f",
+        "filter_gaussian_sigma_k",
+        "filter_gaussian_threshold",
+        "filter_percentile_enabled",
+        "filter_percentile_low",
+        "filter_percentile_high",
+        "filter_soft_enabled",
+        "filter_soft_percentile",
+        "filter_soft_smoothness",
+        "filter_log_enabled",
+        "filter_log_method",
+        "filter_gamma_enabled",
+        "filter_gamma_value",
         "mode_type",
     ]:
         if hasattr(controls[key], "observe"):
@@ -547,6 +680,28 @@ def build_toolbar(
         ],
         **_maybe_layout(widgets, width="100%"),
     )
+    filters_tab = widgets.VBox(
+        [
+            controls["filter_info"],
+            controls["filter_snr_enabled"],
+            controls["filter_snr_threshold"],
+            controls["filter_gaussian_enabled"],
+            controls["filter_gaussian_sigma_f"],
+            controls["filter_gaussian_sigma_k"],
+            controls["filter_gaussian_threshold"],
+            controls["filter_percentile_enabled"],
+            controls["filter_percentile_low"],
+            controls["filter_percentile_high"],
+            controls["filter_soft_enabled"],
+            controls["filter_soft_percentile"],
+            controls["filter_soft_smoothness"],
+            controls["filter_log_enabled"],
+            controls["filter_log_method"],
+            controls["filter_gamma_enabled"],
+            controls["filter_gamma_value"],
+        ],
+        **_maybe_layout(widgets, width="100%"),
+    )
     modes_tab = widgets.VBox(
         [
             controls["mode_component"],
@@ -588,6 +743,7 @@ def build_toolbar(
                 display_tab,
                 overlays_tab,
                 analytical_tab,
+                filters_tab,
                 modes_tab,
                 analysis_tab,
                 export_tab,
@@ -598,12 +754,21 @@ def build_toolbar(
         tabs.set_title(0, "Display")
         tabs.set_title(1, "Overlays")
         tabs.set_title(2, "Analytical")
-        tabs.set_title(3, "Modes")
-        tabs.set_title(4, "Analysis")
-        tabs.set_title(5, "Export")
+        tabs.set_title(3, "Filters")
+        tabs.set_title(4, "Modes")
+        tabs.set_title(5, "Analysis")
+        tabs.set_title(6, "Export")
     else:
         tabs = widgets.VBox(
-            [display_tab, overlays_tab, analytical_tab, modes_tab, analysis_tab, export_tab]
+            [
+                display_tab,
+                overlays_tab,
+                analytical_tab,
+                filters_tab,
+                modes_tab,
+                analysis_tab,
+                export_tab,
+            ]
         )
     controls["tabs"] = tabs
 
@@ -642,7 +807,11 @@ def build_toolbar(
 
     sync_analytical_options(explorer)
     if render_initial:
-        set_status(explorer, "Interactive toolbar ready; initial render pending", color="#334155")
+        set_status(
+            explorer,
+            "Interactive toolbar ready; initial render scheduled",
+            color="#334155",
+        )
     else:
         _show_dispersion_placeholder(explorer)
         set_status(

@@ -148,6 +148,26 @@ stdout compact while `--output` still writes the full JSON report. The
 must render the first heatmap, keep `fmax` and the default `rad_um` k-window
 honest, and still close cleanly after the widget lifecycle smoke.
 
+## Spatial Slicing
+
+Integer indexing is convenient, but for FFT-facing workflows it is usually
+clearer to preserve dimensions explicitly:
+
+```python
+plane = result.m[:, 0:1, :, :, :]  # keeps (t, z, y, x, component)
+region = plane[:, :, y0:y1, x0:x1, :]
+viewer = region.fft.dispersion.plot.interactive(axis="x")
+```
+
+If a selected `x` or `y` range leaves fewer than two cells along the propagation
+axis, dispersion raises a direct error. Widen that range or switch `axis` to the
+spatial direction that still has at least two cells. Physical coordinate
+selection remains available through `.sel(...)`:
+
+```python
+region = result.m.sel("z", x=(xmin, xmax), y=(ymin, ymax))
+```
+
 ## Filtering Pipeline
 
 ```python
@@ -164,6 +184,12 @@ disp.filters(
 
 fig, ax = disp.plot_dispersion(axis="x", live_filters={"live": {"gaussian_morph": {"enabled": True}}})
 ```
+
+In Toolbar v3, the `Filters` tab exposes the same non-destructive live-display
+idea for already computed `S(k, f)`: SNR, gaussian enhancement, percentile
+autoscale, soft threshold, log transform, and gamma. These controls update the
+viewer state and presets without recomputing FFT. Compute-stage filters that
+touch raw `m(t, ...)` data still belong in `disp.filters(...)`.
 
 ## Branch Tracking
 

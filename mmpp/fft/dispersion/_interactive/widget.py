@@ -175,6 +175,47 @@ class DispersionHeatmapWidget:
             if key in self.controls:
                 self.controls[key].value = value
         sync_analytical_options(self)
+        live_filters = self.state.live_filters or {}
+        snr_cfg = dict(live_filters.get("snr_filter") or {})
+        gaussian_cfg = dict(live_filters.get("gaussian_morph") or {})
+        percentile_cfg = dict(live_filters.get("percentile_autoscale") or {})
+        soft_cfg = dict(live_filters.get("soft_threshold") or {})
+        log_cfg = dict(live_filters.get("log_transform") or {})
+        gamma_cfg = dict(live_filters.get("gamma") or {})
+        filter_mapping = {
+            "filter_snr_enabled": bool(snr_cfg.get("enabled", False)),
+            "filter_snr_threshold": float(snr_cfg.get("threshold_snr", 3.0)),
+            "filter_gaussian_enabled": bool(gaussian_cfg.get("enabled", False)),
+            "filter_gaussian_sigma_f": float(gaussian_cfg.get("sigma_f", 1.0)),
+            "filter_gaussian_sigma_k": float(gaussian_cfg.get("sigma_k", 1.0)),
+            "filter_gaussian_threshold": float(
+                gaussian_cfg.get("threshold_std", 1.5)
+            ),
+            "filter_percentile_enabled": bool(percentile_cfg.get("enabled", False)),
+            "filter_percentile_low": float(
+                percentile_cfg.get("low_percentile", 2.0)
+            ),
+            "filter_percentile_high": float(
+                percentile_cfg.get("high_percentile", 99.0)
+            ),
+            "filter_soft_enabled": bool(soft_cfg.get("enabled", False)),
+            "filter_soft_percentile": float(
+                soft_cfg.get("threshold_percentile", 50.0)
+            ),
+            "filter_soft_smoothness": float(soft_cfg.get("smoothness", 5.0)),
+            "filter_log_enabled": bool(log_cfg.get("enabled", False)),
+            "filter_log_method": str(log_cfg.get("method", "log1p")),
+            "filter_gamma_enabled": bool(gamma_cfg.get("enabled", False)),
+            "filter_gamma_value": float(gamma_cfg.get("gamma", 0.5)),
+        }
+        for key, value in filter_mapping.items():
+            if key in self.controls:
+                control = self.controls[key]
+                if key == "filter_log_method" and hasattr(control, "options"):
+                    options = list(control.options)
+                    if value not in options:
+                        control.options = options + [value]
+                control.value = value
 
     def collect_preset(self) -> dict[str, Any]:
         """Return serializable preset state."""
@@ -219,6 +260,7 @@ class DispersionHeatmapWidget:
         self.ensure_figure()
         draw_dispersion_panel(self)
         refresh_output_widget(self)
+        self._has_rendered_dispersion = True
 
     def _resolve_toolbar(self, toolbar: bool | str) -> bool:
         if isinstance(toolbar, str):
@@ -243,6 +285,7 @@ class DispersionHeatmapWidget:
             f_units=str(self.options.get("f_units", "GHz")),
             mode_type=str(self.options.get("mode_type") or "abs"),
             analytical=self._initial_analytical_state(),
+            live_filters=dict(self.options.get("live_filters") or {}) or None,
         )
 
     def _initial_analytical_state(self) -> dict[str, Any]:

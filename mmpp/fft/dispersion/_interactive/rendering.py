@@ -271,6 +271,8 @@ def draw_dispersion_panel(explorer: Any) -> None:
         except Exception as exc:
             explorer._last_filter_error = f"{type(exc).__name__}: {exc}"
             logger.warning("Interactive live filters failed: %s", exc)
+    else:
+        explorer._last_filter_error = ""
 
     f_mask = np.ones_like(f_axis, dtype=bool)
     if explorer.state.positive_frequencies:
@@ -374,9 +376,25 @@ def refresh_output_widget(explorer: Any) -> None:
         pass
 
     if interactive_backend:
-        # Interactive backend — canvas display works correctly
-        explorer.figure.canvas.draw()
-        output.append_display_data(explorer.figure)
+        # Interactive backend: keep the live ipympl/nbagg canvas inside the
+        # output area and avoid a blocking synchronous draw during widget
+        # startup.  Displaying the figure object itself can fall back to a
+        # static repr in some notebook frontends.
+        try:
+            from IPython.display import display
+
+            canvas = explorer.figure.canvas
+            if hasattr(canvas, "draw_idle"):
+                canvas.draw_idle()
+            with output:
+                display(canvas)
+        except Exception:
+            try:
+                if hasattr(explorer.figure.canvas, "draw_idle"):
+                    explorer.figure.canvas.draw_idle()
+                output.append_display_data(explorer.figure)
+            except Exception:
+                pass
     else:
         # Inline / non-interactive backend — render to PNG and embed as Image
         try:
