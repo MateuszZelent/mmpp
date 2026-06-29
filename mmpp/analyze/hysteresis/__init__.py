@@ -303,6 +303,8 @@ class HysteresisInterface:
         # ── source="table" ────────────────────────────────────────────────
         field: str | None = None,
         magnetization: str | None = None,
+        # ── source="magnetization" ────────────────────────────────────────
+        dset: str | None = None,
         # ── source="zarr_keys" ────────────────────────────────────────────
         key_prefix: str = "B",
         component: str = "x",
@@ -325,6 +327,10 @@ class HysteresisInterface:
             snapshots where the field value is encoded in the array name
             (e.g. ``B-0.025000.6`` → B = −0.025 T) and magnetization is
             computed as a spatial mean of the chosen component.
+
+            ``"magnetization"`` — build loop from a time/field series dataset
+            such as ``m(t, z, y, x, c)`` by spatially averaging the chosen
+            component and pairing it with a field column or explicit field array.
 
         source="table" specific
         -----------------------
@@ -350,6 +356,15 @@ class HysteresisInterface:
         min_spatial_size : int
             Skip arrays with fewer spatial pixels (skip debug snapshots).
 
+        source="magnetization" specific
+        --------------------------------
+        dset : str
+            Magnetization dataset name, e.g. ``"m"``.
+        component : str
+            Which magnetization component to spatially average. Accepts
+            ``"x"``, ``"y"``, ``"z"``, ``"mx"``, ``"my"``, ``"mz"`` or
+            ``"norm"``.
+
         Examples
         --------
         Table source — field and magnetization from scalar columns::
@@ -366,6 +381,16 @@ class HysteresisInterface:
                 source="zarr_keys",
                 key_prefix="B-",
                 component="y",
+                z_layer=0,
+            )
+
+        Magnetization source — field from table, magnetization from snapshots::
+
+            result = job[0].analyze.hysteresis.load(
+                source="magnetization",
+                dset="m",
+                field="B_exty",
+                component="my",
                 z_layer=0,
             )
         """
@@ -396,8 +421,21 @@ class HysteresisInterface:
                 cloneflip=cloneflip,
             )
 
+        if source_norm == "magnetization":
+            return self.from_magnetization(
+                dset=dset,
+                component=component,
+                z_layer=z_layer,
+                roi=roi,
+                roi_units=roi_units,
+                field=field,
+                metadata=metadata,
+                cloneflip=cloneflip,
+            )
+
         raise ValueError(
-            f"Unknown source={source!r}. Use source='table' or source='zarr_keys'."
+            f"Unknown source={source!r}. Use source='table', "
+            "source='magnetization', or source='zarr_keys'."
         )
 
     def _resolve_for_plot(
