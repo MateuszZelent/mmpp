@@ -2223,7 +2223,7 @@ def _hsv_to_rgb_array(hsv: np.ndarray) -> np.ndarray:
     
     # Convert using standard HSV→RGB algorithm
     c = v * s  # Chroma
-    h_prime = h * 6.0  # Scale to [0, 6]
+    h_prime = (h * 6.0) % 6.0  # Scale to [0, 6) wrapping 6.0 to 0.0
     x = c * (1 - np.abs(h_prime % 2 - 1))
     m = v - c
     

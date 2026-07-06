@@ -606,12 +606,13 @@ class SpinWaveAnalyzer:
         if indexer is not None:
             try:
                 dummy = np.empty(0, dtype=dtype)
-                # Create a fake array with just shape info to compute output shape
                 sliced_shape = []
-                for i, (s, idx) in enumerate(zip(shape, indexer if isinstance(indexer, tuple) else (indexer,))):
+                idx_tuple = indexer if isinstance(indexer, tuple) else (indexer,)
+                full_indexer = list(idx_tuple) + [slice(None)] * (len(shape) - len(idx_tuple))
+                for i, (s, idx) in enumerate(zip(shape, full_indexer)):
                     if isinstance(idx, slice):
                         sliced_shape.append(len(range(*idx.indices(s))))
-                    elif isinstance(idx, int):
+                    elif isinstance(idx, (int, np.integer)):
                         pass  # dimension dropped
                     else:
                         sliced_shape.append(s)

@@ -277,6 +277,10 @@ def extract_mode_2d(
         M_mode = np.fft.ifft(S_k)  # (N_prop,)
         M_mode = M_mode[np.newaxis, :]  # (1, N_prop)
 
+    # Correct mirroring along the propagation axis if flipx convention correction was applied.
+    if getattr(result, "flipx", False):
+        M_mode = M_mode[:, ::-1]
+
     # Axes in real space.
     n_prop = int(M_mode.shape[1])
     dx = float(getattr(result, "dx", 0.0) or 0.0)

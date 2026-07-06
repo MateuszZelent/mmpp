@@ -192,7 +192,7 @@ class DispersionPlotAccessor:
             k_plot = k_axis / 1e6
             k_label = r"$k$ [rad/μm]"
             default_xlim: Optional[tuple[float, float]] = (-10.0, 10.0)
-        elif kscale == "meter":
+        elif kscale in {"meter", "cycles_m"}:
             k_plot = k_axis / (2 * np.pi)
             k_label = r"$k$ [m$^{-1}$]"
             default_xlim = (-20.0, 20.0)

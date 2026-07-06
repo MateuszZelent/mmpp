@@ -538,8 +538,9 @@ def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
         "dataset_first_headless": docs_example.get("dataset_first_viewer_show")
         is False,
         "dataset_first_uses_m": docs_example.get("dataset_first_dataset") == "m",
-        "dataset_first_slice": "slice(None, 4" in str(
-            docs_example.get("dataset_first_slice")
+        "dataset_first_slice": (
+            "slice(None, 4" in str(docs_example.get("dataset_first_slice"))
+            or "slice(0, 4" in str(docs_example.get("dataset_first_slice"))
         ),
         "dataset_first_shape": (
             docs_example.get("dataset_first_shape") or [None, None]

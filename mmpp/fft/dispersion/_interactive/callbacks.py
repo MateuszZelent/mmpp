@@ -240,7 +240,7 @@ def on_display_change(explorer: Any) -> None:
     _update_live_filter_state_from_controls(explorer)
     if hasattr(explorer, "refresh_auxiliary_panels"):
         explorer.refresh_auxiliary_panels()
-    if bool(getattr(explorer, "options", {}).get("auto_render", False)):
+    if bool(getattr(explorer, "options", {}).get("auto_render", True)):
         if hasattr(explorer, "ensure_figure"):
             explorer.ensure_figure()
         draw_dispersion_panel(explorer)

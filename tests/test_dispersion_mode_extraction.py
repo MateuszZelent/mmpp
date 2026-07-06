@@ -642,6 +642,7 @@ def test_dispersion_viewer_passes_analytical_overlay_to_heatmap_widget(monkeypat
     assert captured["result"] is result
     assert captured["options"]["analytical"] == "BV"
     assert captured["options"]["analytical_model"] == "kalinikos"
+    assert captured["options"]["analytical_sw_config"] == "BV"
     assert captured["options"]["analytical_n_modes"] == 2
     assert captured["options"]["analytical_k_points"] == 800
     assert captured["options"]["B"] == 0.08
@@ -941,6 +942,15 @@ def test_dispersion_interactive_viewer_show_builds_heatmap_widget(monkeypatch):
 
         def set_ylabel(self, value):
             self.ylabel = value
+
+        def set_xlim(self, *args, **kwargs):
+            pass
+
+        def set_ylim(self, *args, **kwargs):
+            pass
+
+        def grid(self, *args, **kwargs):
+            pass
 
     fake_pyplot = types.ModuleType("matplotlib.pyplot")
     fake_fig = FakeFigure()

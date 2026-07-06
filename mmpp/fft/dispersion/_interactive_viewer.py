@@ -324,7 +324,7 @@ class DispersionInteractiveViewer:
             "mode_unavailable_reason": self.mode_unavailable_reason,
             "analytical": json_safe(self.analytical),
             "live_filters": json_safe(
-                getattr(getattr(self, "_widget_engine", None), "state", None).live_filters
+                getattr(getattr(getattr(self, "_widget_engine", None), "state", None), "live_filters", None)
                 if getattr(self, "_widget_engine", None) is not None
                 else self.options.get("live_filters")
             ),
