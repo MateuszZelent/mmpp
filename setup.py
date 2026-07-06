@@ -8,7 +8,7 @@ long_description = (this_directory / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="mmpp",
-    version="0.5.3",
+    version="0.5.4",
     author="Mateusz Zelent",
     author_email="mateusz.zelent@amu.edu.pl",
     description="A library for mmpp (Micro Magnetic Post Processing) simulation and analysis",
