@@ -4,18 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mmpp"
-version = "0.5.4"
+dynamic = ["version"]
 authors = [
     {name = "Mateusz Zelent", email = "mateusz.zelent@amu.edu.pl"}
 ]
 description = "A library for MMPP (Micro Magnetic Post Processing) simulation and analysis"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -119,7 +119,9 @@ mmpp-tui = "mmpp.tui:main"
 mmpp-classic = "mmpp.cli.main:main"
 
 [tool.setuptools]
-license-files = []
+
+[tool.setuptools.dynamic]
+version = {attr = "mmpp.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]

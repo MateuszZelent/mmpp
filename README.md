@@ -42,6 +42,16 @@ with current, consistent APIs.
 pip install mmpp
 ```
 
+The same project metadata works with `uv`:
+
+```bash
+uv add mmpp
+uv add "mmpp[fft]"
+```
+
+For development from a checkout, use `uv sync --extra dev` or the equivalent
+`python -m pip install -e ".[dev]"`. The supported Python range is 3.9–3.12.
+
 Optional extras are available for optional workflows:
 
 ```bash

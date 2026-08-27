@@ -8,10 +8,20 @@ default:
 install-dev:
     pip install -e ".[dev]"
 
+# Install the locked development environment with uv
+install-dev-uv:
+    uv sync --extra dev
+
 # Build the package
 build:
     @echo "🔨 Building package..."
     python -m build --sdist --wheel
+    @echo "✅ Build complete!"
+
+# Build with uv's PEP 517 frontend
+build-uv:
+    @echo "🔨 Building package with uv..."
+    uv build
     @echo "✅ Build complete!"
 
 # Clean build artifacts
