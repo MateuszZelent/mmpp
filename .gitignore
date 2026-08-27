@@ -95,6 +95,8 @@ tests/**
 !tests/test_mmpp_notebook_progress.py
 !tests/test_field_resolved_thiele.py
 !tests/test_solitons_report_recommendations.py
+!tests/fixtures/synthetic_skyrmion.py
+!tests/test_skyrmion_analysis.py
 
 # Translations
 *.mo
@@ -215,6 +217,8 @@ docs/HYSTERESIS_IMPLEMENTATION_AUDIT.md
 *.md
 !docs/analysis/RAPORT_AUDYT_FFT_DISPERSION_INTERACTIVE_2026-06-28.md
 !docs/development/VORTEX_ANALYTICAL_AUTOFIT_IMPLEMENTATION_PLAN.md
+!docs/api/solitons.md
+!docs/tutorials/soliton_analysis.md
 tests/notebooks/vortex/vortex_dynamics.ipynb
 tests/test.ipynb
 vortex_analytical_model.zip

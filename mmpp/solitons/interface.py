@@ -20,6 +20,7 @@ class SolitonInterface:
         self._dataset_name = dataset_name
         self._slice_info = slice_info
         self._vortex = None
+        self._skyrmion = None
 
     @property
     def dataset_name(self) -> str | None:
@@ -49,6 +50,20 @@ class SolitonInterface:
                 slice_info=self._slice_info,
             )
         return self._vortex
+
+    @property
+    def skyrmion(self):
+        """Skyrmion analysis namespace, loaded only when first accessed."""
+        if self._skyrmion is None:
+            from .skyrmion import SkyrmionInterface
+
+            self._skyrmion = SkyrmionInterface(
+                self._job,
+                dataset_name=self._dataset_name,
+                mmpp_instance=self._mmpp,
+                slice_info=self._slice_info,
+            )
+        return self._skyrmion
 
     def __repr__(self) -> str:
         dataset_label = self._dataset_name if self._dataset_name is not None else "auto"
@@ -83,6 +98,7 @@ class SolitonInterface:
         # ── namespaces (table inside a section block) ─────────────
         namespaces = [
             (".vortex", "Vortex dynamics: topology, core, trajectory, spectrum, modes, nonlinear, events"),
+            (".skyrmion", "Skyrmion topology, centre, radial profile, and size fitting"),
         ]
         ns_rows = "".join(
             f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
@@ -146,8 +162,20 @@ class SolitonInterface:
             "# 5. Nonlinear analysis\n"
             "st = vortex.nonlinear.slavin_tiberkevich()\n"
             "vortex.nonlinear.thiele.force_balance()"
+            "\n"
+            "# Dedicated skyrmion workflow\n"
+            "sk = job[0].skyrmion\n"
+            "topology = sk.detect(frame=0)\n"
+            "size = sk.fit_size(method='auto', frame=0)\n"
+            "analysis = sk.analyze(method='auto', frame=0)"
         )
         examples = examples_section_html(example_code)
+        skyrmion_workflow = examples_section_html(
+            "Skyrmion Workflow\n"
+            "skyrmion.detect() -> charge and centre\n"
+            "skyrmion.fit_size() -> physical radius\n"
+            "skyrmion.analyze() -> combined observable"
+        )
 
         # ── api card ──────────────────────────────────────────────
         api_card = api_help_html(
@@ -156,6 +184,7 @@ class SolitonInterface:
             prefix="job[0].solitons",
             properties=[
                 ("vortex", "Vortex dynamics analysis namespace"),
+                ("skyrmion", "Skyrmion topology and physical-size analysis namespace"),
                 ("dataset_name", "Dataset name used by this soliton interface"),
             ],
             subtitle="Top-level soliton namespace. Use nested accessors for concrete analysis methods.",
@@ -166,7 +195,7 @@ class SolitonInterface:
             "Soliton Analysis Interface 2",
             icon="🌀",
             subtitle="Comprehensive soliton dynamics analysis",
-            sections=[status, ns_section, wf_section, examples],
+            sections=[status, ns_section, wf_section, skyrmion_workflow, examples],
             api=api_card,
             uid=f"solitons-{str(_uuid.uuid4())[:8]}",
         )

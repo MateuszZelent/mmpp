@@ -6,6 +6,7 @@ Task-oriented guides for everyday `mmpp` usage.
 :maxdepth: 2
 
 getting_started
+soliton_analysis
 fft_spectrum_analysis
 dispersion_analysis
 batch_operations
@@ -17,6 +18,7 @@ hysteresis_analysis
 ## Recommended Order
 
 1. `getting_started`
-2. `fft_spectrum_analysis`
-3. `dispersion_analysis`
-4. `batch_operations`
+2. `soliton_analysis`
+3. `fft_spectrum_analysis`
+4. `dispersion_analysis`
+5. `batch_operations`

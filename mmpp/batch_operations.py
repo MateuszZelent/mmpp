@@ -924,6 +924,11 @@ class BatchOperations:
         """Shortcut alias for ``self.solitons.vortex``."""
         return self.solitons.vortex
 
+    @property
+    def skyrmion(self):
+        """Shortcut alias for self.solitons.skyrmion."""
+        return self.solitons.skyrmion
+
     def __getattr__(self, name: str):
         """Intercept dataset names to enable dataset-aware batch operations.
 

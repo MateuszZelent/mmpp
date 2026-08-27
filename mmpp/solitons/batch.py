@@ -1128,6 +1128,7 @@ class BatchSolitonsInterface:
         self._results = list(results)
         self._mmpp = mmpp_instance
         self._vortex = None
+        self._skyrmion = None
 
     @property
     def vortex(self):
@@ -1136,15 +1137,29 @@ class BatchSolitonsInterface:
             self._vortex = BatchVortexInterface(self._results, self._mmpp)
         return self._vortex
 
+    @property
+    def skyrmion(self):
+        """Batch skyrmion analysis namespace."""
+        if self._skyrmion is None:
+            from .skyrmion.batch import BatchSkyrmionInterface
+
+            self._skyrmion = BatchSkyrmionInterface(self._results, self._mmpp)
+        return self._skyrmion
+
     def __repr__(self) -> str:
         return f"BatchSolitonsInterface({len(self._results)} results)"
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
         api = api_help_html(
             self,
             title="Batch solitons API help",
             prefix="job[:].solitons",
-            properties=[("vortex", "Batch vortex analysis namespace")],
+            properties=[
+                ("vortex", "Batch vortex analysis namespace"),
+                ("skyrmion", "Batch skyrmion analysis namespace"),
+            ],
             methods=[],
             subtitle="Top-level batch entry point for soliton-related analysis namespaces.",
             chrome=False,
@@ -1158,11 +1173,11 @@ class BatchSolitonsInterface:
                     [("n_results", str(len(self._results)), NODE_COLOR_COMPUTE)]
                 ),
                 accessors_section_html(
-                    [("Namespaces:", [(".vortex", NODE_COLOR_ANALYSIS)])]
+                    [("Namespaces:", [(".vortex", NODE_COLOR_ANALYSIS), (".skyrmion", NODE_COLOR_ANALYSIS)])]
                 ),
             ],
             api=api,
-            uid="batch-solitons-interface",
+            uid=f"batch-solitons-interface-{_uuid.uuid4().hex[:8]}",
         )
 
 

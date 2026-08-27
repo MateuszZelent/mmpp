@@ -26,6 +26,7 @@ api/index
 ## Fast Entry Points
 
 - New users: start with `tutorials/getting_started`.
+- Skyrmion topology and size: `tutorials/soliton_analysis`.
 - FMR spectrum and modes: `tutorials/fft_spectrum_analysis`.
 - Dispersion and folded-mode extraction: `tutorials/dispersion_analysis`.
 - Batch processing across many jobs: `tutorials/batch_operations`.

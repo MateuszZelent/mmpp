@@ -1015,6 +1015,11 @@ class ZarrJobResult:
         return self.solitons.vortex
 
     @property
+    def skyrmion(self):
+        """Shortcut alias for self.solitons.skyrmion."""
+        return self.solitons.skyrmion
+
+    @property
     def analyze(self):
         """Get unified analysis namespace for this result."""
         if self._analyze is None:

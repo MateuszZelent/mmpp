@@ -880,6 +880,11 @@ class DatasetAwareWrapper:
         return self.solitons.vortex
 
     @property
+    def skyrmion(self):
+        """Shortcut alias for self.solitons.skyrmion."""
+        return self.solitons.skyrmion
+
+    @property
     def shape(self):
         """Shape accounting for slicing"""
         return self._current_shape()
