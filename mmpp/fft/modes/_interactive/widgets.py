@@ -23,8 +23,8 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         "x": "m_x",
         "y": "m_y",
         "z": "m_z",
-        "+": "m+ (RCP)",
-        "-": "m- (LCP)",
+        "+": "m+ (mx + i·my)",
+        "-": "m- (mx - i·my)",
         "rho": "m_rho",
         "phi": "m_phi",
     }
@@ -50,7 +50,9 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         mode_default = tuple(mode_component_keys[: min(3, len(mode_component_keys))])
 
     spectrum_default = tuple(
-        comp for comp in explorer._spectrum_components if comp in spectrum_component_keys
+        comp
+        for comp in explorer._spectrum_components
+        if comp in spectrum_component_keys
     )
     if not spectrum_default and spectrum_component_keys:
         spectrum_default = tuple(spectrum_component_keys)
@@ -226,9 +228,7 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
             ("combined", "combined"),
         ],
         value=(
-            "all"
-            if len(explorer._mode_row_types) > 1
-            else explorer._mode_row_types[0]
+            "all" if len(explorer._mode_row_types) > 1 else explorer._mode_row_types[0]
         ),
         description="rows:",
         layout=widgets.Layout(width="100%"),
@@ -258,7 +258,9 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
     )
     controls["aspect"] = widgets.Dropdown(
         options=["equal", "auto", "0.5", "1.0", "2.0"],
-        value=explorer._mode_aspect if explorer._mode_aspect in ["equal", "auto"] else "equal",
+        value=explorer._mode_aspect
+        if explorer._mode_aspect in ["equal", "auto"]
+        else "equal",
         description="aspect:",
         layout=widgets.Layout(width="100%"),
         style={"description_width": "55px"},

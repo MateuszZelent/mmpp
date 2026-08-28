@@ -13,8 +13,8 @@ Usage::
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Union
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -23,18 +23,19 @@ from mmpp._repr_helpers import (
     NODE_COLOR_COMPUTE,
     NODE_COLOR_PLOT,
     NODE_COLOR_UTIL,
-    api_help_html,
     accessors_section_html,
+    api_help_html,
     examples_section_html,
     metrics_section_html,
     node_card_html,
 )
 
 if TYPE_CHECKING:
-    import matplotlib.pyplot as plt
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
+
     from ..models import DispersionResult1D
+    from ._branch_linker import BranchesResult
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ class LowestFrequencyResult:
     group_velocity_at_min: float
     branch_f: np.ndarray
     branch_k: np.ndarray
-    result: "DispersionResult1D"
+    result: DispersionResult1D
     side: str = "positive"
 
     # ------------------------------------------------------------------
@@ -93,7 +94,7 @@ class LowestFrequencyResult:
     # ------------------------------------------------------------------
 
     @property
-    def plot(self) -> "LowestFrequencyPlotAccessor":
+    def plot(self) -> LowestFrequencyPlotAccessor:
         """Plotting namespace for this result."""
         return LowestFrequencyPlotAccessor(self)
 
@@ -210,29 +211,29 @@ class LowestFrequencyPlotAccessor:
         self._lowest = lowest
 
     # convenience __call__ → heatmap
-    def __call__(self, **kwargs) -> tuple["Figure", "Axes"]:
+    def __call__(self, **kwargs) -> tuple[Figure, Axes]:
         return self.heatmap(**kwargs)
 
     def heatmap(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (12, 8),
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         cmap: str = "cmc.davos",
         kscale: str = "rad_um",
         f_units: str = "GHz",
-        fmax: Optional[float] = None,
+        fmax: float | None = None,
         lognorm: bool = True,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        k_xlim: Optional[tuple[float, float]] = None,
-        title: Optional[str] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        k_xlim: tuple[float, float] | None = None,
+        title: str | None = None,
         marker_color: str = "red",
         marker_size: int = 120,
         show_k0: bool = True,
-        save: Union[str, "Path", bool, None] = None,
-    ) -> tuple["Figure", "Axes"]:
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """S(k,f) heatmap with the frequency minimum highlighted.
 
         Parameters
@@ -243,6 +244,12 @@ class LowestFrequencyPlotAccessor:
             Also mark the k≈0 (FMR/uniform mode) point.
         """
         lowest = self._lowest
+        if kscale not in {"rad_um", "rad_m", "rad", "cycles_m", "meter"}:
+            raise ValueError(
+                "kscale must be 'rad_um', 'rad_m'/'rad', or 'cycles_m'/'meter'"
+            )
+        if f_units not in {"GHz", "Hz"}:
+            raise ValueError("f_units must be 'GHz' or 'Hz'")
 
         # Delegate base heatmap to DispersionPlotAccessor
         fig, ax = lowest.result.plot.heatmap(
@@ -260,6 +267,8 @@ class LowestFrequencyPlotAccessor:
             title=title,
         )
 
+        if ax is None:
+            raise RuntimeError("Heatmap plotting did not return an axes object")
         # Convert coordinates to plot units
         k_min_plot = lowest.k_at_f_min
         f_min_plot = lowest.f_min_hz
@@ -269,7 +278,7 @@ class LowestFrequencyPlotAccessor:
         if kscale == "rad_um":
             k_min_plot /= 1e6
             k0_plot = 0.0
-        elif kscale == "meter":
+        elif kscale in {"meter", "cycles_m"}:
             k_min_plot /= 2 * np.pi
 
         if f_units == "GHz":
@@ -321,16 +330,16 @@ class LowestFrequencyPlotAccessor:
 
     def branch(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (10, 5),
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         kscale: str = "rad_um",
         f_units: str = "GHz",
-        title: Optional[str] = None,
+        title: str | None = None,
         marker_color: str = "red",
-        save: Union[str, "Path", bool, None] = None,
-    ) -> tuple["Figure", "Axes"]:
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plot f_peak(k) vs k with the minimum highlighted.
 
         This shows the extracted dispersion branch (one frequency per k)
@@ -339,6 +348,12 @@ class LowestFrequencyPlotAccessor:
         import matplotlib.pyplot as plt
 
         lowest = self._lowest
+        if kscale not in {"rad_um", "rad_m", "rad", "cycles_m", "meter"}:
+            raise ValueError(
+                "kscale must be 'rad_um', 'rad_m'/'rad', or 'cycles_m'/'meter'"
+            )
+        if f_units not in {"GHz", "Hz"}:
+            raise ValueError("f_units must be 'GHz' or 'Hz'")
 
         k_data = lowest.branch_k.copy()
         f_data = lowest.branch_f.copy()
@@ -346,7 +361,7 @@ class LowestFrequencyPlotAccessor:
         if kscale == "rad_um":
             k_data = k_data / 1e6
             k_label = r"$k$ [rad/μm]"
-        elif kscale == "meter":
+        elif kscale in {"meter", "cycles_m"}:
             k_data = k_data / (2 * np.pi)
             k_label = r"$k$ [m$^{-1}$]"
         else:
@@ -366,14 +381,17 @@ class LowestFrequencyPlotAccessor:
             lowest.k_at_f_min / 1e6
             if kscale == "rad_um"
             else lowest.k_at_f_min / (2 * np.pi)
-            if kscale == "meter"
+            if kscale in {"meter", "cycles_m"}
             else lowest.k_at_f_min
         )
 
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+            fig, ax = cast(Any, plt.subplots)(
+                figsize=figsize, **({"dpi": dpi} if dpi else {})
+            )
         else:
-            fig = ax.get_figure()
+            fig = cast(Figure, ax.get_figure())
+        assert ax is not None
 
         ax.plot(k_data, f_data, linewidth=1.8, color="#60a5fa", label="f_peak(k)")
 
@@ -486,19 +504,20 @@ class DispersionAnalyzeAccessor:
         for spin waves with negative group velocity lies at k ≠ 0.
     """
 
-    def __init__(self, result: "DispersionResult1D") -> None:
+    def __init__(self, result: DispersionResult1D) -> None:
         self._result = result
 
     def find_lowest_possible_frequency(
         self,
         *,
         side: str = "positive",
-        smooth_sigma: Optional[float] = 2.0,
+        smooth_sigma: float | None = 2.0,
         min_snr: float = 0.05,
         k_min_rad_um: float = 0.0,
-        k_max_rad_um: Optional[float] = None,
+        k_max_rad_um: float | None = None,
         peak_method: str = "argmax",
         fmin_hz: float | str | None = "auto",
+        analysis_source: str = "raw",
     ) -> LowestFrequencyResult:
         """Find the lowest frequency reachable on the spin-wave dispersion.
 
@@ -536,13 +555,48 @@ class DispersionAnalyzeAccessor:
               frequency axis.  Equivalent to ``fmin_hz = 0.05 * f_axis.max()``.
             * ``None`` or ``0`` – no cutoff, use all positive frequencies.
             * Explicit ``float`` – use that value as the lower bound (Hz).
+        analysis_source : ``"raw"`` | ``"display"``
+            Spectrum used for quantitative extraction. Defaults to raw power;
+            select ``"display"`` only when post-filtered values are intended
+            to change the reported branch.
 
         Returns
         -------
         LowestFrequencyResult
         """
         result = self._result
-        S = result.S  # (Nk, Nf)
+        if side not in {"positive", "negative", "both"}:
+            raise ValueError("side must be 'positive', 'negative', or 'both'")
+        if peak_method not in {"argmax", "centroid"}:
+            raise ValueError("peak_method must be 'argmax' or 'centroid'")
+        snr_value = float(min_snr)
+        if not np.isfinite(snr_value) or not 0.0 <= snr_value <= 1.0:
+            raise ValueError("min_snr must be finite and in [0, 1]")
+        k_min_value = float(k_min_rad_um)
+        if not np.isfinite(k_min_value) or k_min_value < 0:
+            raise ValueError("k_min_rad_um must be finite and non-negative")
+        if k_max_rad_um is not None:
+            k_max_value = float(k_max_rad_um)
+            if not np.isfinite(k_max_value) or k_max_value < k_min_value:
+                raise ValueError(
+                    "k_max_rad_um must be finite and not smaller than k_min_rad_um"
+                )
+        else:
+            k_max_value = np.inf
+        if smooth_sigma is not None:
+            smooth_value = float(smooth_sigma)
+            if not np.isfinite(smooth_value) or smooth_value < 0:
+                raise ValueError("smooth_sigma must be finite and non-negative")
+        else:
+            smooth_value = 0.0
+
+        S = np.asarray(result.spectrum_for(analysis_source), dtype=float)
+        if not np.all(np.isfinite(S)):
+            raise ValueError("Selected dispersion spectrum contains non-finite values")
+        if np.any(S < 0):
+            raise ValueError(
+                "Quantitative branch extraction requires non-negative power"
+            )
         k_axis = result.k_axis  # rad/m
         f_axis = result.f_axis  # Hz
 
@@ -574,10 +628,15 @@ class DispersionAnalyzeAccessor:
         # Apply fmin cutoff to avoid DC artifacts
         if fmin_hz == "auto":
             fmin_cutoff = 0.05 * float(f_axis_pos.max())
-        elif fmin_hz is not None and fmin_hz > 0:
-            fmin_cutoff = float(fmin_hz)
-        else:
+        elif fmin_hz is None:
             fmin_cutoff = 0.0
+        else:
+            try:
+                fmin_cutoff = float(fmin_hz)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("fmin_hz must be 'auto', None, or a number") from exc
+            if not np.isfinite(fmin_cutoff) or fmin_cutoff < 0:
+                raise ValueError("fmin_hz must be finite and non-negative")
 
         if fmin_cutoff > 0:
             if f_axis_monotonic:
@@ -611,15 +670,15 @@ class DispersionAnalyzeAccessor:
         S_pos = S[:, f_selector]
 
         # Convert search window to rad/m
-        k_min_rm = k_min_rad_um * 1e6
-        k_max_rm = (k_max_rad_um * 1e6) if k_max_rad_um is not None else np.inf
+        k_min_rm = k_min_value * 1e6
+        k_max_rm = k_max_value * 1e6
 
         # Build k-side mask
         if side == "positive":
             k_mask = (k_axis > k_min_rm) & (k_axis <= k_max_rm)
         elif side == "negative":
             k_mask = (k_axis < -k_min_rm) & (k_axis >= -k_max_rm)
-        else:  # "both"
+        else:
             k_mask = (np.abs(k_axis) >= k_min_rm) & (np.abs(k_axis) <= k_max_rm)
 
         if not np.any(k_mask):
@@ -630,20 +689,23 @@ class DispersionAnalyzeAccessor:
 
         # SNR gate: exclude k-bins with very low total power
         global_max = float(S_pos.max())
+        if global_max <= 0:
+            raise ValueError("Dispersion spectrum has no positive spectral power")
         row_max = S_pos.max(axis=1)  # (Nk,)
-        snr_mask = row_max >= min_snr * global_max
+        snr_mask = (row_max > 0) & (row_max >= snr_value * global_max)
         combined_mask = k_mask & snr_mask
 
         if not np.any(combined_mask):
-            # fall back without SNR gate
-            combined_mask = k_mask
+            raise ValueError(
+                "No k-bin in the requested window passes the min_snr threshold"
+            )
 
         k_search = k_axis[combined_mask]
         S_search = S_pos[combined_mask, :]
 
         # Extract f_peak per k-bin
         if peak_method == "centroid":
-            total_power = S_search.sum(axis=1, keepdims=True) + 1e-30
+            total_power = S_search.sum(axis=1, keepdims=True)
             f_peak_hz = (S_search * f_axis_pos[np.newaxis, :]).sum(
                 axis=1
             ) / total_power[:, 0]
@@ -652,18 +714,28 @@ class DispersionAnalyzeAccessor:
             f_peak_hz = f_axis_pos[f_peak_idx]
 
         # Smooth the branch
-        if smooth_sigma and smooth_sigma > 0:
+        if smooth_value > 0:
             try:
                 from scipy.ndimage import gaussian_filter1d
 
                 f_peak_hz = gaussian_filter1d(
-                    f_peak_hz.astype(float), sigma=smooth_sigma
+                    f_peak_hz.astype(float), sigma=smooth_value
                 )
             except ImportError:
-                # simple box smooth fallback
-                w = max(1, int(smooth_sigma * 2))
+                # Edge-padded box fallback with output length preserved.
+                w = min(
+                    f_peak_hz.size,
+                    max(1, int(round(smooth_value * 2))),
+                )
+                if w % 2 == 0 and w > 1:
+                    w -= 1
                 kernel = np.ones(w) / w
-                f_peak_hz = np.convolve(f_peak_hz, kernel, mode="same")
+                pad = w // 2
+                f_peak_hz = np.convolve(
+                    np.pad(f_peak_hz, pad, mode="edge"),
+                    kernel,
+                    mode="valid",
+                )
 
         # Find minimum
         idx_min = int(np.argmin(f_peak_hz))
@@ -672,13 +744,21 @@ class DispersionAnalyzeAccessor:
 
         # f at k≈0 (use full k-axis)
         idx_k0 = int(np.argmin(np.abs(k_axis)))
-        f_k0 = float(f_axis_pos[np.argmax(S_pos[idx_k0, :])])
+        k0_power = S_pos[idx_k0, :]
+        k0_max = float(np.max(k0_power))
+        if k0_max <= 0 or k0_max < snr_value * global_max:
+            raise ValueError(
+                "The k≈0 spectrum does not pass min_snr; lower min_snr if this "
+                "weak uniform-mode estimate is intentional"
+            )
+        if peak_method == "centroid":
+            f_k0 = float(np.sum(k0_power * f_axis_pos) / np.sum(k0_power))
+        else:
+            f_k0 = float(f_axis_pos[np.argmax(k0_power)])
 
         # Group velocity at k* via gradient on smoothed branch
         if k_search.size > 2:
-            dk = np.gradient(k_search)
-            df = np.gradient(f_peak_hz)
-            vg_arr = 2 * np.pi * (df / (dk + 1e-30))
+            vg_arr = 2 * np.pi * np.gradient(f_peak_hz, k_search)
             vg_at_min = float(vg_arr[idx_min])
         else:
             vg_at_min = 0.0
@@ -708,13 +788,13 @@ class DispersionAnalyzeAccessor:
         min_branch_length: int = 20,
         noise_floor_percentile: float = 5.0,
         min_quality: float = 0.10,
-        smooth_sigma: Optional[float] = 3.0,
+        smooth_sigma: float | None = 3.0,
         fmin_hz: float | str | None = "auto",
         k_min_rad_um: float = 0.0,
-        k_max_rad_um: Optional[float] = None,
+        k_max_rad_um: float | None = None,
         analysis_source: str = "raw",
         positive_frequencies: bool = True,
-    ) -> "BranchesResult":
+    ) -> BranchesResult:
         """Detect multiple dispersion branches via Hungarian peak linking.
 
         Peak detection works in **log₁₀(S)** space to handle the wide

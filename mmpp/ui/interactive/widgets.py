@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 
-def create_int_slider(*, min_value: int, max_value: int, value: int = 0, description: str = "Frame"):
+def create_int_slider(
+    *, min_value: int, max_value: int, value: int = 0, description: str = "Frame"
+):
     """Create an IntSlider when ipywidgets is available, else return None."""
     try:
         import ipywidgets as widgets

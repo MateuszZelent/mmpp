@@ -230,7 +230,9 @@ def test_fft_dispersion_release_gate_can_require_widget_smoke(tmp_path):
     assert report["widget_smoke"]["required"] is True
     if report["widget_smoke"]["status"] == "failed":
         assert report["status"] == "failed"
-        assert report["widget_smoke"].get("missing") or report["widget_smoke"].get("error")
+        assert report["widget_smoke"].get("missing") or report["widget_smoke"].get(
+            "error"
+        )
     else:
         assert report["status"] == "ok"
         assert report["widget_smoke"]["status"] == "ok"
@@ -418,8 +420,8 @@ def test_fft_dispersion_release_gate_fails_on_main_viewer_regression(monkeypatch
 def test_fft_dispersion_release_gate_headless_imports_ignore_display_lifecycle(
     monkeypatch,
 ):
-    from scripts.analysis import verify_fft_dispersion_release_gate as release_gate
     from mmpp.fft.dispersion._interactive_viewer import DispersionInteractiveViewer
+    from scripts.analysis import verify_fft_dispersion_release_gate as release_gate
 
     monkeypatch.delitem(sys.modules, "IPython", raising=False)
     monkeypatch.delitem(sys.modules, "IPython.display", raising=False)
@@ -499,7 +501,10 @@ def test_release_workflow_installs_built_artifacts_before_publish():
     assert "name: dist" in extras_smoke
     assert "Install built wheel extra" in extras_smoke
     assert 'f"{wheel}[${{ matrix.extra }}]"' in extras_smoke
-    assert 'python -c "import mmpp; import mmpp.fft; import mmpp.fft.dispersion"' not in extras_smoke
+    assert (
+        'python -c "import mmpp; import mmpp.fft; import mmpp.fft.dispersion"'
+        not in extras_smoke
+    )
     assert "Required widget smoke" in workflow
     assert "Required pyFFTW backend smoke" in workflow
     assert "matrix.extra == 'fft' || matrix.extra == 'full'" in workflow
@@ -509,7 +514,9 @@ def test_release_workflow_installs_built_artifacts_before_publish():
     assert "needs: verify" in build_job
     assert "Smoke installed wheel" in workflow
     assert "python -m pip install --force-reinstall dist/*.whl" in workflow
-    assert "python -m pip install --force-reinstall --no-deps dist/*.whl" not in workflow
+    assert (
+        "python -m pip install --force-reinstall --no-deps dist/*.whl" not in workflow
+    )
     assert (
         "python scripts/analysis/verify_fft_dispersion_release_gate.py "
         "--import-mode installed "
@@ -523,9 +530,18 @@ def test_release_workflow_installs_built_artifacts_before_publish():
         "--output /tmp/mmpp-fft-dispersion-${{ matrix.extra }}-smoke.json"
     ) in workflow
     assert "Smoke installed sdist" in workflow
-    assert "python -m pip wheel --wheel-dir /tmp/mmpp-sdist-wheel dist/*.tar.gz" in workflow
-    assert "python -m pip wheel --no-deps --wheel-dir /tmp/mmpp-sdist-wheel" not in workflow
-    assert "python -m pip install --force-reinstall /tmp/mmpp-sdist-wheel/*.whl" in workflow
+    assert (
+        "python -m pip wheel --wheel-dir /tmp/mmpp-sdist-wheel dist/*.tar.gz"
+        in workflow
+    )
+    assert (
+        "python -m pip wheel --no-deps --wheel-dir /tmp/mmpp-sdist-wheel"
+        not in workflow
+    )
+    assert (
+        "python -m pip install --force-reinstall /tmp/mmpp-sdist-wheel/*.whl"
+        in workflow
+    )
     assert (
         "python -m pip install --force-reinstall --no-deps /tmp/mmpp-sdist-wheel/*.whl"
         not in workflow

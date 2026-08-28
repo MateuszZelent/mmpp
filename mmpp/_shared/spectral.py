@@ -12,7 +12,7 @@ try:  # pragma: no cover - backend availability is environment-dependent
 
     FFT_BACKEND_AVAILABLE = True
 except Exception:  # pragma: no cover
-    _central_fft_backend = None
+    _central_fft_backend: Any = None  # type: ignore[no-redef]
     FFT_BACKEND_AVAILABLE = False
 
 try:  # pragma: no cover - optional dependency fallback is tested indirectly
@@ -21,8 +21,8 @@ try:  # pragma: no cover - optional dependency fallback is tested indirectly
 
     SCIPY_AVAILABLE = True
 except Exception:  # pragma: no cover
-    _scipy_spectrogram = None
-    _scipy_welch = None
+    _scipy_spectrogram: Any = None  # type: ignore[no-redef]
+    _scipy_welch: Any = None  # type: ignore[no-redef]
     SCIPY_AVAILABLE = False
 
 

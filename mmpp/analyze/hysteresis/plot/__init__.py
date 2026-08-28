@@ -47,6 +47,7 @@ def loop(
         **kwargs,
     )
 
+
 def animation(
     job_result,
     *,
@@ -70,9 +71,15 @@ __all__ = ["HysteresisPlotAccessor", "interactive", "loop", "animation"]
 
 def _repr_html_() -> str:
     methods = [
-        ("interactive(job_result, ...)", "Functional entrypoint for 2-panel interactive explorer"),
+        (
+            "interactive(job_result, ...)",
+            "Functional entrypoint for 2-panel interactive explorer",
+        ),
         ("loop(job_result, ...)", "Functional entrypoint for static hysteresis loop"),
-        ("animation(job_result, ...)", "Functional entrypoint for MP4/GIF or online animation"),
+        (
+            "animation(job_result, ...)",
+            "Functional entrypoint for MP4/GIF or online animation",
+        ),
     ]
     rows = "".join(
         f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(name)}</td>"
@@ -90,7 +97,7 @@ def _repr_html_() -> str:
         "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
         "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
         "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-        "color:#e2e8f0;\">"
+        'color:#e2e8f0;">'
         "<div style='font-size:1.03em;font-weight:600;color:#f1f5f9;'>"
         "Hysteresis Plot Module</div>"
         "<table style='width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;'>"

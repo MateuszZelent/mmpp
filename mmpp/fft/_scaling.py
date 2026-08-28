@@ -22,12 +22,21 @@ class WindowScalingStats:
     sum_window_squared: float
 
 
-def compute_window_scaling_stats(window_type: str, n_samples: int) -> WindowScalingStats:
+def compute_window_scaling_stats(
+    window_type: str, n_samples: int
+) -> WindowScalingStats:
     """Compute window sums used for FFT scaling corrections."""
     if n_samples <= 0:
         raise ValueError("n_samples must be positive for FFT scaling")
 
     window = np.asarray(get_window(window_type, n_samples), dtype=float)
+    if window.shape != (int(n_samples),):
+        raise ValueError(
+            f"Window {window_type!r} returned shape {window.shape}, expected "
+            f"({int(n_samples)},)"
+        )
+    if not np.all(np.isfinite(window)):
+        raise ValueError(f"Window {window_type!r} contains non-finite values")
     return WindowScalingStats(
         n_samples=int(n_samples),
         sum_window=float(np.sum(window)),
@@ -53,8 +62,18 @@ def apply_spectrum_scaling(
     spectrum_kind_hint: SPECTRUM_KINDS,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Apply requested scaling to an FFT spectrum."""
-    if dt <= 0:
-        raise ValueError(f"dt must be positive, got {dt}")
+    if not np.isfinite(dt) or dt <= 0:
+        raise ValueError(f"dt must be finite and positive, got {dt}")
+    if isinstance(fft_length, (bool, np.bool_)) or not isinstance(
+        fft_length, (int, np.integer)
+    ):
+        raise TypeError(f"fft_length must be an integer, got {fft_length!r}")
+    fft_length = int(fft_length)
+    if fft_length < int(window_stats.n_samples):
+        raise ValueError(
+            f"fft_length ({fft_length}) cannot be smaller than the number of "
+            f"windowed samples ({window_stats.n_samples})"
+        )
 
     arr = np.asarray(spectrum)
     if arr.ndim == 0:
@@ -62,12 +81,18 @@ def apply_spectrum_scaling(
 
     sum_window = float(window_stats.sum_window)
     sum_window_squared = float(window_stats.sum_window_squared)
-    if sum_window <= 0:
+    if not np.isfinite(sum_window) or sum_window <= 0:
         raise ValueError("Window sum must be positive for amplitude/power scaling")
-    if sum_window_squared <= 0:
+    if not np.isfinite(sum_window_squared) or sum_window_squared <= 0:
         raise ValueError("Window energy must be positive for PSD scaling")
 
     n_bins = int(arr.shape[0])
+    expected_bins = fft_length // 2 + 1
+    if n_bins != expected_bins:
+        raise ValueError(
+            f"One-sided spectrum has {n_bins} bins, expected {expected_bins} "
+            f"for fft_length={fft_length}"
+        )
     interior = _onesided_interior_slice(int(fft_length), n_bins)
     one_sided_bin_factor = np.ones(n_bins, dtype=float)
     one_sided_bin_factor[interior] = 2.0

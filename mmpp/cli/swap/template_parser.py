@@ -2,10 +2,9 @@
 Template parser for extracting parameters from .mx3 template files.
 """
 
-import os
 import re
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 
 class TemplateParser:

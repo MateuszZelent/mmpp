@@ -5,13 +5,14 @@ import os
 import re
 import subprocess
 import time
-from typing import Any, Optional, Union
-import yaml
+from typing import Any
 
+import yaml  # type: ignore[import-untyped]
 import zarr
 
 # Import shared logging configuration optimized for dark themes
 from mmpp.cli.logging_config import get_mmpp_logger
+
 # Get logger for simulation module with dark theme optimization
 log = get_mmpp_logger("mmpp.simulation")
 
@@ -55,7 +56,7 @@ class SimulationManager:
         return False
 
     @staticmethod
-    def find_status_file(path: str, sim_name: str, status: str) -> Optional[str]:
+    def find_status_file(path: str, sim_name: str, status: str) -> str | None:
         """Locate a status file based on its name and type."""
         pattern = re.compile(rf"{sim_name}\.mx3_status\.{status}.*")
         for file in os.listdir(path):
@@ -116,13 +117,13 @@ class SimulationManager:
     def submit_python_code(
         self,
         code_to_execute: str,
-        last_param_name: Optional[str] = None,
+        last_param_name: str | None = None,
         cleanup: bool = False,
         sbatch: bool = True,
         check: bool = False,
         force: bool = False,
         full_name: bool = False,
-        **kwargs: Union[str, float, int],
+        **kwargs: str | float | int,
     ) -> None:
         """
         Submit a Python simulation based on provided parameters.
@@ -334,13 +335,13 @@ fi
 
     @staticmethod
     def replace_variables_in_template(
-        file_path: Union[str, list], variables: dict[str, Union[str, float, int]]
+        file_path: str | list, variables: dict[str, str | float | int]
     ) -> str:
         """Replace placeholders in a template file with actual values."""
         # Jeśli file_path jest listą, weź pierwszy element
         if isinstance(file_path, list):
             file_path = file_path[0] if file_path else "template.mx3"
-        
+
         with open(file_path) as file:
             content = file.read()
         for key, value in variables.items():
@@ -348,7 +349,7 @@ fi
         return content
 
     @staticmethod
-    def raw_code(*args: Any, **kwargs: Union[str, float, int]) -> str:
+    def raw_code(*args: Any, **kwargs: str | float | int) -> str:
         """Generate the raw code by filling in a template with parameters."""
         import os
 
@@ -361,7 +362,7 @@ fi
         params: dict[str, Any],  # Changed from np.ndarray to Any to accept numpy arrays
         last_param_name: str,
         minsim: int = 0,
-        maxsim: Optional[int] = None,
+        maxsim: int | None = None,
         sbatch: bool = True,
         remote_run: bool = False,
         cleanup: bool = False,
@@ -384,11 +385,11 @@ fi
             if len(set(param_lengths)) != 1:
                 raise ValueError(
                     "When using pairs=True, all parameter arrays must have the same length. "
-                    f"Found lengths: {dict(zip(param_names, param_lengths))}"
+                    f"Found lengths: {dict(zip(param_names, param_lengths, strict=False))}"
                 )
 
             # Zip parameter values instead of computing product
-            value_sets = zip(*[params[name] for name in param_names])
+            value_sets: Any = zip(*[params[name] for name in param_names], strict=False)
         else:
             # Original behavior - compute Cartesian product
             value_sets = itertools.product(*params.values())
@@ -399,20 +400,24 @@ fi
             if maxsim is not None and i >= maxsim:
                 break
 
-            kwargs = {"prefix": self.prefix, "i": i, "template": template}
-            for name, value in zip(param_names, values):
+            kwargs: dict[str, Any] = {
+                "prefix": self.prefix,
+                "i": i,
+                "template": template,
+            }
+            for name, value in zip(param_names, values, strict=False):
                 kwargs[name] = value
 
             time.sleep(1)
 
             self.submit_python_code(
-                self.raw_code(**kwargs),
+                self.raw_code(**kwargs),  # type: ignore[arg-type]
                 last_param_name=last_param_name,
                 sbatch=sbatch,
                 cleanup=cleanup,
                 check=check,
                 force=force,
-                **kwargs,
+                **kwargs,  # type: ignore[arg-type]
             )
 
     def submit_all_simulations_with_progress(
@@ -420,7 +425,7 @@ fi
         params: dict[str, Any],
         last_param_name: str,
         minsim: int = 0,
-        maxsim: Optional[int] = None,
+        maxsim: int | None = None,
         sbatch: bool = True,
         remote_run: bool = False,
         submission_method: str = "auto",
@@ -429,11 +434,11 @@ fi
         check: bool = False,
         force: bool = False,
         pairs: bool = False,
-        progress_callback: Optional[Any] = None,
+        progress_callback: Any | None = None,
     ) -> None:
         """Submit all simulations with progress tracking and folder structure like original swapper."""
-        import os
         import itertools
+        import os
 
         param_names = list(params.keys())
 
@@ -443,10 +448,10 @@ fi
             if len(set(param_lengths)) != 1:
                 raise ValueError(
                     "When using pairs=True, all parameter arrays must have the same length. "
-                    f"Found lengths: {dict(zip(param_names, param_lengths))}"
+                    f"Found lengths: {dict(zip(param_names, param_lengths, strict=False))}"
                 )
             # Zip parameter values instead of computing product
-            value_sets = zip(*[params[name] for name in param_names])
+            value_sets: Any = zip(*[params[name] for name in param_names], strict=False)
         else:
             # Original behavior - compute Cartesian product
             value_sets = itertools.product(*params.values())
@@ -457,14 +462,19 @@ fi
             if maxsim is not None and i >= maxsim:
                 break
 
-            kwargs = {"prefix": self.prefix, "i": i, "template": template, "submission_method": submission_method}
-            for name, value in zip(param_names, values):
+            kwargs: dict[str, Any] = {
+                "prefix": self.prefix,
+                "i": i,
+                "template": template,
+                "submission_method": submission_method,
+            }
+            for name, value in zip(param_names, values, strict=False):
                 kwargs[name] = value
 
             # Create folder structure like original swapper: prefix/param1_val1/param2_val2/.../
             val_sep = "_"
             path = (
-                os.path.join(self.main_path, kwargs["prefix"])
+                os.path.join(self.main_path, str(kwargs["prefix"]))
                 + "/"
                 + "/".join(
                     [
@@ -488,7 +498,7 @@ fi
             mx3_file_path = f"{path}{sim_name}.mx3"
 
             # Generate MX3 content by replacing variables in template
-            mx3_content = self.replace_variables_in_template(template, kwargs)
+            mx3_content = self.replace_variables_in_template(template, kwargs)  # type: ignore[arg-type]
 
             # Write MX3 file
             with open(mx3_file_path, "w") as f:
@@ -502,12 +512,16 @@ fi
             # Handle submission based on remote_run and sbatch settings
             if remote_run:
                 # Force remote execution via MMPP Run
-                success = self._submit_via_mmpp_run(sim_name, mx3_file_path, require_auth=True)
+                success = self._submit_via_mmpp_run(
+                    sim_name, mx3_file_path, require_auth=True
+                )
                 if not success:
-                    log.error(f"Failed to submit {sim_name} via MMPP Run (remote_run=True)")
+                    log.error(
+                        f"Failed to submit {sim_name} via MMPP Run (remote_run=True)"
+                    )
             elif sbatch:
-                submission_method = kwargs.get('submission_method', 'auto')
-                
+                submission_method = str(kwargs.get("submission_method", "auto"))
+
                 if submission_method == "slurm":
                     # Force SLURM submission
                     self._submit_via_slurm(kwargs, sim_name, path)
@@ -522,45 +536,52 @@ fi
 
             time.sleep(0.01)  # Small delay to see progress
 
-    def _submit_via_mmpp_run(self, sim_name: str, mx3_file_path: str, require_auth: bool = False) -> bool:
+    def _submit_via_mmpp_run(
+        self, sim_name: str, mx3_file_path: str, require_auth: bool = False
+    ) -> bool:
         """Submit simulation via MMPP Run system.
-        
+
         Args:
             sim_name: Name of the simulation
-            mx3_file_path: Path to the MX3 file  
+            mx3_file_path: Path to the MX3 file
             require_auth: If True, fail if authentication is not available
-        
+
         Returns:
             True if successful, False otherwise
         """
         try:
             # Try to import MMPP run system
-            from mmpp.cli.run import _submit_single_file
-            from mmpp.auth import AuthManager
             import argparse
-            
+
+            from mmpp.auth import AuthManager
+            from mmpp.cli.run import _submit_single_file
+
             # Check if authentication is available
             auth_manager = AuthManager()
             token = auth_manager.get_token()
             base_url = auth_manager.get_base_url()
-            
+
             if not (token and base_url):
                 if require_auth:
-                    log.error(f"Authentication required for remote_run but not available. Please run 'mmpp auth login' first.")
+                    log.error(
+                        "Authentication required for remote_run but not available. Please run 'mmpp auth login' first."
+                    )
                     # Try to refresh token from saved credentials
                     try:
                         auth_manager.load_credentials()
                         token = auth_manager.get_token()
                         base_url = auth_manager.get_base_url()
                         if not (token and base_url):
-                            log.error("Failed to refresh authentication. Please run 'mmpp auth login'.")
+                            log.error(
+                                "Failed to refresh authentication. Please run 'mmpp auth login'."
+                            )
                             return False
                     except Exception as e:
                         log.error(f"Failed to load saved credentials: {e}")
                         return False
                 else:
                     return False
-                
+
             # Create args object for submission
             args = argparse.Namespace()
             args.file = mx3_file_path
@@ -572,7 +593,7 @@ fi
             args.partition = "proxima"
             args.priority = 0
             args.name = sim_name
-            
+
             # Submit via MMPP Run
             task_id = _submit_single_file(args)
             if task_id:
@@ -580,7 +601,7 @@ fi
                 return True
             else:
                 return False
-                
+
         except ImportError:
             if require_auth:
                 log.error("MMPP Run module not available but required for remote_run")
@@ -591,23 +612,23 @@ fi
 
     def _submit_via_slurm(self, kwargs: dict, sim_name: str, path: str) -> None:
         """Submit simulation via traditional SLURM sbatch."""
-        import subprocess
         import os
-        
+        import subprocess
+
         sim_sbatch_path = os.path.join(
             self.main_path, kwargs["prefix"], "sbatch", f"{sim_name}.sb"
         )
         self.create_path_if_not_exists(sim_sbatch_path)
         with open(sim_sbatch_path, "w") as f:
             f.write(self.gen_sbatch_script(sim_name, path + sim_name))
-        
+
         # Submit to SLURM
         try:
             result = subprocess.run(
-                f"sbatch < {sim_sbatch_path}", 
-                shell=True, 
-                capture_output=True, 
-                text=True
+                f"sbatch < {sim_sbatch_path}",
+                shell=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 log.info(f"Submitted {sim_name} via SLURM sbatch")
@@ -666,38 +687,38 @@ class SimulationSwapper:
         - mathematical expressions with basic functions
         - list comprehensions
         """
-        import numpy as np
         import math
-        import re
+
+        import numpy as np
 
         # Create safe namespace for eval
         safe_namespace = {
-            'np': np,
-            'numpy': np,
-            'math': math,
-            'pi': math.pi,
-            'e': math.e,
+            "np": np,
+            "numpy": np,
+            "math": math,
+            "pi": math.pi,
+            "e": math.e,
             # Safe mathematical functions
-            'sin': math.sin,
-            'cos': math.cos,
-            'tan': math.tan,
-            'exp': math.exp,
-            'log': math.log,
-            'log10': math.log10,
-            'sqrt': math.sqrt,
-            'abs': abs,
-            'min': min,
-            'max': max,
-            'sum': sum,
-            'len': len,
-            'range': range,
-            'list': list,
-            'float': float,
-            'int': int,
+            "sin": math.sin,
+            "cos": math.cos,
+            "tan": math.tan,
+            "exp": math.exp,
+            "log": math.log,
+            "log10": math.log10,
+            "sqrt": math.sqrt,
+            "abs": abs,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "len": len,
+            "range": range,
+            "list": list,
+            "float": float,
+            "int": int,
             # YAML boolean keywords
-            'true': True,
-            'false': False,
-            'null': None,
+            "true": True,
+            "false": False,
+            "null": None,
         }
 
         # Znajdź wszystkie linie z parametrami
@@ -715,7 +736,7 @@ class SimulationSwapper:
                 try:
                     key_part, value_part = line.split(":", 1)
                     value_part = value_part.strip()
-                    
+
                     # Usuń komentarz na końcu jeśli istnieje
                     comment = ""
                     if "#" in value_part:
@@ -726,46 +747,87 @@ class SimulationSwapper:
                     processed = False
 
                     # Obsługa format: (min,max,count) - prosta składnia linspace
-                    if value_part.startswith("(") and value_part.endswith(")") and value_part.count(",") == 2:
+                    if (
+                        value_part.startswith("(")
+                        and value_part.endswith(")")
+                        and value_part.count(",") == 2
+                    ):
                         try:
                             params_str = value_part[1:-1]  # usuń nawiasy
                             parts = [p.strip() for p in params_str.split(",")]
-                            
+
                             if len(parts) == 3:
                                 # Ewaluuj każdy parametr (może być wyrażeniem matematycznym)
-                                min_val = eval(parts[0], {"__builtins__": {}}, safe_namespace)
-                                max_val = eval(parts[1], {"__builtins__": {}}, safe_namespace)
-                                count = int(eval(parts[2], {"__builtins__": {}}, safe_namespace))
+                                min_val = eval(
+                                    parts[0], {"__builtins__": {}}, safe_namespace
+                                )
+                                max_val = eval(
+                                    parts[1], {"__builtins__": {}}, safe_namespace
+                                )
+                                count = int(
+                                    eval(parts[2], {"__builtins__": {}}, safe_namespace)
+                                )
 
                                 # Wygeneruj linspace
                                 result = np.linspace(min_val, max_val, count)
                                 result_list = result.tolist()
 
-                                processed_lines.append(f"{key_part}: {result_list}{comment}")
+                                processed_lines.append(
+                                    f"{key_part}: {result_list}{comment}"
+                                )
                                 processed = True
                         except (ValueError, SyntaxError, NameError) as e:
-                            log.warning(f"Error processing range syntax in line '{line}': {e}")
+                            log.warning(
+                                f"Error processing range syntax in line '{line}': {e}"
+                            )
 
                     # Obsługa list comprehensions i wyrażeń zaczynających się od [
-                    if not processed and value_part.startswith("[") and "for" in value_part:
+                    if (
+                        not processed
+                        and value_part.startswith("[")
+                        and "for" in value_part
+                    ):
                         try:
-                            result = eval(value_part, {"__builtins__": {}}, safe_namespace)
+                            result = eval(
+                                value_part, {"__builtins__": {}}, safe_namespace
+                            )
                             processed_lines.append(f"{key_part}: {result}{comment}")
                             processed = True
                         except (ValueError, SyntaxError, NameError, TypeError) as e:
-                            log.warning(f"Error evaluating list comprehension in line '{line}': {e}")
+                            log.warning(
+                                f"Error evaluating list comprehension in line '{line}': {e}"
+                            )
 
                     # Obsługa wyrażeń numpy/math - sprawdź czy zawiera funkcje numpy lub operatory
-                    if not processed and any(pattern in value_part for pattern in [
-                        'np.', 'numpy.', 'linspace', 'arange', 'logspace', 'geomspace',
-                        'math.', 'sin', 'cos', 'tan', 'exp', 'log', 'sqrt', 'pi', 'e', '**'
-                    ]):
+                    if not processed and any(
+                        pattern in value_part
+                        for pattern in [
+                            "np.",
+                            "numpy.",
+                            "linspace",
+                            "arange",
+                            "logspace",
+                            "geomspace",
+                            "math.",
+                            "sin",
+                            "cos",
+                            "tan",
+                            "exp",
+                            "log",
+                            "sqrt",
+                            "pi",
+                            "e",
+                            "**",
+                        ]
+                    ):
                         try:
                             # Bezpieczna ewaluacja wyrażenia numpy/math
-                            result = eval(value_part, {"__builtins__": {}}, safe_namespace)
-                            
+                            result = eval(
+                                value_part, {"__builtins__": {}}, safe_namespace
+                            )
+
                             # Konwertuj wynik na listę jeśli to numpy array
-                            if hasattr(result, 'tolist'):
+                            if hasattr(result, "tolist"):
                                 result_list = result.tolist()
                             elif isinstance(result, (list, tuple)):
                                 result_list = list(result)
@@ -774,10 +836,14 @@ class SimulationSwapper:
                             else:
                                 result_list = [result]
 
-                            processed_lines.append(f"{key_part}: {result_list}{comment}")
+                            processed_lines.append(
+                                f"{key_part}: {result_list}{comment}"
+                            )
                             processed = True
                         except (ValueError, SyntaxError, NameError, TypeError) as e:
-                            log.warning(f"Error evaluating expression in line '{line}': {e}")
+                            log.warning(
+                                f"Error evaluating expression in line '{line}': {e}"
+                            )
 
                     # Jeśli nie zostało przetworzone, zostaw oryginalną linię
                     if not processed:
@@ -837,16 +903,24 @@ class SimulationSwapper:
         if "config" in self.config_data:
             user_config = self.config_data["config"]
             default_config.update(user_config)
-            
+
             # Fix: Convert list values to proper types for boolean fields
-            boolean_fields = ["pairs", "remote_run", "sbatch", "cleanup", "check", "force", "full_name"]
+            boolean_fields = [
+                "pairs",
+                "remote_run",
+                "sbatch",
+                "cleanup",
+                "check",
+                "force",
+                "full_name",
+            ]
             for field in boolean_fields:
                 if field in default_config:
                     value = default_config[field]
                     if isinstance(value, list) and len(value) > 0:
                         # Take first element from list
                         default_config[field] = value[0]
-                        
+
             # Fix: Convert list values for string fields
             string_fields = ["template_name", "prefix", "last_param_name"]
             for field in string_fields:
@@ -863,11 +937,17 @@ class SimulationSwapper:
         # Debug: sprawdź typ template_name
         if "template_name" in default_config:
             template_name = default_config["template_name"]
-            print(f"DEBUG: template_name type: {type(template_name)}, value: {template_name}")
+            print(
+                f"DEBUG: template_name type: {type(template_name)}, value: {template_name}"
+            )
             # Upewnij się, że template_name jest stringiem
             if isinstance(template_name, list):
-                default_config["template_name"] = template_name[0] if template_name else "template.mx3"
-                print(f"DEBUG: Fixed template_name to: {default_config['template_name']}")
+                default_config["template_name"] = (
+                    template_name[0] if template_name else "template.mx3"
+                )
+                print(
+                    f"DEBUG: Fixed template_name to: {default_config['template_name']}"
+                )
 
         # Debug: sprawdź typ prefix
         if "prefix" in default_config:
@@ -913,18 +993,25 @@ class SimulationSwapper:
         if self.config_options.get("remote_run", False):
             try:
                 from mmpp.auth import AuthManager
+
                 auth_manager = AuthManager()
                 token = auth_manager.get_token()
                 base_url = auth_manager.get_base_url()
-                
+
                 if not (token and base_url):
-                    console.print("❌ [red]Authentication required for remote_run but not available[/red]")
-                    console.print("💡 [yellow]Please run 'mmpp auth login' first to configure remote server access[/yellow]")
+                    console.print(
+                        "❌ [red]Authentication required for remote_run but not available[/red]"
+                    )
+                    console.print(
+                        "💡 [yellow]Please run 'mmpp auth login' first to configure remote server access[/yellow]"
+                    )
                     return
-                    
+
                 console.print(f"✅ [green]Remote server configured: {base_url}[/green]")
             except ImportError:
-                console.print("❌ [red]MMPP Run module not available for remote execution[/red]")
+                console.print(
+                    "❌ [red]MMPP Run module not available for remote execution[/red]"
+                )
                 return
 
         # Sprawdź czy last_param_name jest ustawione
@@ -1163,7 +1250,7 @@ class TemplateParser:
 
     def generate_yaml_template(
         self,
-        last_param: Optional[str] = None,
+        last_param: str | None = None,
         prefix: str = "v1",
         template_name: str = "template.mx3",
     ) -> str:
@@ -1196,25 +1283,37 @@ class TemplateParser:
                 swap_section += f"  {param}: [1, 2, 3]  # Material type\n"
             elif param in ["xsize", "ysize"]:
                 swap_section += f"  {param}: [100.0, 200.0, 300.0]  # Size in nm\n"
-                swap_section += f"  # {param}: (100, 600, 5)  # Range: 5 sizes from 100 to 600 nm\n"
-                swap_section += f"  # {param}: np.linspace(100, 600, 5)  # Numpy alternative\n"
+                swap_section += (
+                    f"  # {param}: (100, 600, 5)  # Range: 5 sizes from 100 to 600 nm\n"
+                )
+                swap_section += (
+                    f"  # {param}: np.linspace(100, 600, 5)  # Numpy alternative\n"
+                )
             elif param == "Tx":
                 swap_section += f"  {param}: [6000e-9]  # Thickness in m\n"
             elif param == "rotation":
                 swap_section += f"  {param}: [0, 45, 90]  # Rotation in degrees\n"
-                swap_section += f"  # {param}: (0, 90, 5)  # Range: 5 values from 0 to 90 degrees\n"
-                swap_section += f"  # {param}: np.arange(0, 91, 15)  # Every 15 degrees\n"
+                swap_section += (
+                    f"  # {param}: (0, 90, 5)  # Range: 5 values from 0 to 90 degrees\n"
+                )
+                swap_section += (
+                    f"  # {param}: np.arange(0, 91, 15)  # Every 15 degrees\n"
+                )
             elif param in ["B0", "Bx", "By", "Bz"]:
                 swap_section += (
                     f"  {param}: [0.001, 0.01, 0.1]  # Magnetic field in T\n"
                 )
                 swap_section += f"  # {param}: (0.005, 0.05, 10)  # Range: 10 values from 0.005 to 0.05\n"
-                swap_section += f"  # {param}: np.logspace(-3, -1, 10)  # Logarithmic spacing\n"
+                swap_section += (
+                    f"  # {param}: np.logspace(-3, -1, 10)  # Logarithmic spacing\n"
+                )
             elif param == "sq_parm":
                 swap_section += f"  {param}: [0.5, 1.0, 1.5]  # Squircle parameter\n"
             elif param in ["alpha", "alpha0"]:
                 swap_section += f"  {param}: [0.001, 0.01, 0.1]  # Damping parameter\n"
-                swap_section += f"  # {param}: np.logspace(-3, -1, 5)  # Logarithmic spacing\n"
+                swap_section += (
+                    f"  # {param}: np.logspace(-3, -1, 5)  # Logarithmic spacing\n"
+                )
             elif param in ["msat", "Ms_1"]:
                 swap_section += (
                     f"  {param}: [800e3, 1000e3, 1200e3]  # Saturation magnetization\n"
@@ -1224,7 +1323,9 @@ class TemplateParser:
                 swap_section += (
                     f"  {param}: [10e-12, 15e-12, 20e-12]  # Exchange constant\n"
                 )
-                swap_section += f"  # {param}: np.linspace(10e-12, 20e-12, 5)  # Linear spacing\n"
+                swap_section += (
+                    f"  # {param}: np.linspace(10e-12, 20e-12, 5)  # Linear spacing\n"
+                )
             elif param == "anetnna":
                 swap_section += f"  {param}: [0, 1]  # Antenna parameter\n"
             else:
@@ -1238,11 +1339,11 @@ config:
   last_param_name: "{last_param}"     # Parameter for last iteration
   prefix: "{prefix}"                  # Simulation prefix/version
   template_name: "{template_name}"    # Template file name
-  
+
   # Execution modes (choose one)
-  sbatch: true                        # Use SLURM batch system locally 
+  sbatch: true                        # Use SLURM batch system locally
   remote_run: false                   # Use remote MMPP server for execution
-  
+
   full_name: false                    # Use full parameter names in paths
 
   # Execution control

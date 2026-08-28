@@ -30,7 +30,9 @@ def make_synthetic_loop(
 
     if float(noise_std) > 0.0:
         rng = np.random.default_rng(int(seed))
-        magnetization = magnetization + rng.normal(0.0, float(noise_std), size=magnetization.size)
+        magnetization = magnetization + rng.normal(
+            0.0, float(noise_std), size=magnetization.size
+        )
 
     return np.asarray(field, dtype=float), np.asarray(magnetization, dtype=float)
 

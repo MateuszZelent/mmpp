@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -17,8 +18,15 @@ from .classifier import VortexModesClassifier
 from .models import VortexModeResult
 
 
-class VortexModesInterface:
+class VortexModesInterface(InteractiveNodeMixin):
     """Mode-classification namespace."""
+
+    _interactive_owner = "job[0].vortex.modes"
+    _interactive_nodes = frozenset({"classify", "classify_all"})
+    _interactive_examples = {
+        "classify": ["mode = job[0].vortex.modes.classify(f=0.5, unit='ghz')"],
+        "classify_all": ["modes = job[0].vortex.modes.classify_all(max_modes=6)"],
+    }
 
     def __init__(
         self,
@@ -114,7 +122,6 @@ class VortexModesInterface:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
-
         from html import escape as _esc
 
         from mmpp._repr_helpers import (
@@ -126,7 +133,6 @@ class VortexModesInterface:
             examples_section_html,
             metrics_section_html,
             node_card_html,
-            plot_accessor_html,
         )
 
         context_rows = [
@@ -247,8 +253,11 @@ class VortexModesInterface:
         )
 
 
-class VortexModesPlotAccessor:
+class VortexModesPlotAccessor(InteractiveNodeMixin):
     """Plotting facade for :class:`VortexModesInterface`."""
+
+    _interactive_owner = "job[0].vortex.modes.plt"
+    _interactive_nodes = frozenset({"mode_map", "mode_table"})
 
     def __init__(self, interface: VortexModesInterface):
         self._interface = interface
@@ -276,7 +285,7 @@ class VortexModesPlotAccessor:
         width = float(max((np.max(freqs) - np.min(freqs)) * 0.03, 0.01))
         bar_kwargs.setdefault("width", width)
         ax.bar(freqs, power, **bar_kwargs)
-        for fx, py, label in zip(freqs, power, labels):
+        for fx, py, label in zip(freqs, power, labels, strict=False):
             ax.text(fx, py, label, rotation=45, ha="left", va="bottom", fontsize=8)
 
         if f is not None:

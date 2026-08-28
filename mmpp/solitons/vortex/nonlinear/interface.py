@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -20,12 +21,34 @@ from .models import (
     STParametersResult,
     ThieleForceBalanceResult,
 )
-from .slavin_tiberkevich import extract_st_parameters
 from .nonliniearthiele import ThieleAnalyzer
+from .slavin_tiberkevich import extract_st_parameters
 
 
-class NonlinearInterface:
+class NonlinearInterface(InteractiveNodeMixin):
     """Nonlinear analysis namespace (ST, amplitude equation, and Thiele tools)."""
+
+    _interactive_owner = "job[0].vortex.nonlinear"
+    _interactive_nodes = frozenset(
+        {
+            "amplitude_equation",
+            "slavin_tiberkevich",
+            "slavin_tiberkevich_batch",
+            "force_balance",
+            "interactive_dashboard",
+        }
+    )
+    _interactive_examples = {
+        "amplitude_equation": [
+            "amplitude = job[0].vortex.nonlinear.amplitude_equation()"
+        ],
+        "slavin_tiberkevich": ["st = job[0].vortex.nonlinear.slavin_tiberkevich()"],
+        "slavin_tiberkevich_batch": [
+            "batch = job[0].vortex.nonlinear.slavin_tiberkevich_batch(jobs, currents)"
+        ],
+        "force_balance": ["forces = job[0].vortex.nonlinear.force_balance()"],
+        "interactive_dashboard": ["job[0].vortex.nonlinear.interactive_dashboard()"],
+    }
 
     def __init__(
         self,
@@ -151,7 +174,7 @@ class NonlinearInterface:
         linewidths: list[float] = []
         frequencies: list[float] = []
 
-        for job_item, current in zip(job_list, current_values):
+        for job_item, current in zip(job_list, current_values, strict=False):
             if dataset_name is None:
                 vortex = job_item.solitons.vortex
             else:
@@ -215,7 +238,6 @@ class NonlinearInterface:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
-
         from html import escape as _esc
 
         from mmpp._repr_helpers import (
@@ -227,7 +249,6 @@ class NonlinearInterface:
             examples_section_html,
             metrics_section_html,
             node_card_html,
-            plot_accessor_html,
         )
 
         context_rows = [
@@ -354,8 +375,18 @@ class NonlinearInterface:
         )
 
 
-class NonlinearInterfacePlotAccessor:
+class NonlinearInterfacePlotAccessor(InteractiveNodeMixin):
     """Plotting facade for :class:`NonlinearInterface`."""
+
+    _interactive_owner = "job[0].vortex.nonlinear.plt"
+    _interactive_nodes = frozenset(
+        {"power_vs_current", "linewidth_vs_current", "force_balance"}
+    )
+    _interactive_examples = {
+        "power_vs_current": ["job[0].vortex.nonlinear.plt.power_vs_current()"],
+        "linewidth_vs_current": ["job[0].vortex.nonlinear.plt.linewidth_vs_current()"],
+        "force_balance": ["job[0].vortex.nonlinear.plt.force_balance()"],
+    }
 
     def __init__(self, interface: NonlinearInterface):
         self._interface = interface

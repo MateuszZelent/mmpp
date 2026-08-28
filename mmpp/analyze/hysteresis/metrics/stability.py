@@ -31,7 +31,9 @@ def _cycle_ranges(result: HysteresisResult) -> list[tuple[int, int, int]]:
     return out
 
 
-def _make_cycle_result(result: HysteresisResult, cid: int, start: int, stop: int) -> HysteresisResult:
+def _make_cycle_result(
+    result: HysteresisResult, cid: int, start: int, stop: int
+) -> HysteresisResult:
     cycle_branches: list[Branch] = []
     for branch in result.branches:
         if int(branch.cycle_id) != cid:
@@ -60,7 +62,9 @@ def _make_cycle_result(result: HysteresisResult, cid: int, start: int, stop: int
     return HysteresisResult(
         field=np.asarray(result.field[start:stop], dtype=float),
         magnetization=np.asarray(result.magnetization[start:stop], dtype=float),
-        branches=cycle_branches if cycle_branches else [Branch("ascending", 0, stop - start, 0, True)],
+        branches=cycle_branches
+        if cycle_branches
+        else [Branch("ascending", 0, stop - start, 0, True)],
         frame_index=frame_idx,
         config=result.config,
         metadata=meta,
@@ -123,11 +127,15 @@ def analyze_cycle_stability(result: HysteresisResult) -> CycleStabilityAnalysis:
     if not ranges:
         ranges = [(0, 0, int(result.field.size))]
 
-    cycles = [_make_cycle_result(result, cid, start, stop) for cid, start, stop in ranges]
+    cycles = [
+        _make_cycle_result(result, cid, start, stop) for cid, start, stop in ranges
+    ]
 
     hc = np.array([float(c.metrics.coercive_field.mean) for c in cycles], dtype=float)
     mr = np.array([float(c.metrics.remanence.mean) for c in cycles], dtype=float)
-    ms = np.array([float(c.metrics.saturation_points.ms_mean) for c in cycles], dtype=float)
+    ms = np.array(
+        [float(c.metrics.saturation_points.ms_mean) for c in cycles], dtype=float
+    )
 
     hc_drift = hc - hc[0]
     mr_drift = mr - mr[0]

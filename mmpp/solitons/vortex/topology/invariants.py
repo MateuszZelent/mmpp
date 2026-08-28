@@ -22,7 +22,7 @@ def winding_number(phi_ring: np.ndarray) -> float:
 
     closed = np.concatenate([phi_ring, phi_ring[:1]])
     unwrapped = np.unwrap(closed)
-    total_rotation = np.sum(np.diff(unwrapped))
+    total_rotation: float = float(np.sum(np.diff(unwrapped)))
     return float(total_rotation / (2.0 * np.pi))
 
 

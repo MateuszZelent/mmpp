@@ -24,6 +24,7 @@ from mmpp.analytical import (
 )
 from mmpp.analytical.constants import GAMMA_E, MU0
 
+from ..._method_helpers import InteractiveNodeMixin
 from ..core.models import TrajectoryResult
 from .interactive import (
     build_thiele_dashboard,
@@ -48,7 +49,9 @@ def _attr_float(attrs: Any, keys: tuple[str, ...], default: float) -> float:
     return float(default)
 
 
-def _infer_dataset_nx_ny(job_result: Any, dataset_name: str | None) -> tuple[int, int] | None:
+def _infer_dataset_nx_ny(
+    job_result: Any, dataset_name: str | None
+) -> tuple[int, int] | None:
     if dataset_name is None:
         return None
     try:
@@ -101,15 +104,59 @@ def _coerce_force_series(
     raise ValueError("force must be None, callable, shape (2,), or shape (Nt,2)")
 
 
-class ThieleAnalyzer:
+class ThieleAnalyzer(InteractiveNodeMixin):
     """Thiele-force diagnostics and analytical trajectory wrappers."""
+
+    _interactive_owner = "job[0].vortex.nonlinear.thiele"
+    _interactive_nodes = frozenset(
+        {
+            "force_balance",
+            "simulate_cpp",
+            "simulate_cpp_sde",
+            "threshold_current_dc",
+            "predict_frequency_dc",
+            "fit_omega0_N_to_fJ",
+            "optimize_current_for_target_frequency",
+            "proxy_signal",
+            "proxy_psd",
+            "interactive_dashboard",
+            "simulate_cip",
+        }
+    )
+    _interactive_examples = {
+        "force_balance": ["forces = job[0].vortex.nonlinear.thiele.force_balance()"],
+        "simulate_cpp": ["trajectory = job[0].vortex.nonlinear.thiele.simulate_cpp()"],
+        "simulate_cpp_sde": [
+            "trajectory = job[0].vortex.nonlinear.thiele.simulate_cpp_sde()"
+        ],
+        "threshold_current_dc": [
+            "job[0].vortex.nonlinear.thiele.threshold_current_dc()"
+        ],
+        "predict_frequency_dc": [
+            "job[0].vortex.nonlinear.thiele.predict_frequency_dc()"
+        ],
+        "fit_omega0_N_to_fJ": [
+            "fit = job[0].vortex.nonlinear.thiele.fit_omega0_N_to_fJ()"
+        ],
+        "optimize_current_for_target_frequency": [
+            "job[0].vortex.nonlinear.thiele.optimize_current_for_target_frequency()"
+        ],
+        "proxy_signal": ["signal = job[0].vortex.nonlinear.thiele.proxy_signal()"],
+        "proxy_psd": ["psd = job[0].vortex.nonlinear.thiele.proxy_psd()"],
+        "interactive_dashboard": [
+            "job[0].vortex.nonlinear.thiele.interactive_dashboard()"
+        ],
+        "simulate_cip": ["trajectory = job[0].vortex.nonlinear.thiele.simulate_cip()"],
+    }
 
     def __init__(self, job_result, dataset_name: str | None, core_interface):
         self._job = job_result
         self._dataset_name = dataset_name
         self._core = core_interface
 
-    def _resolve_trajectory(self, trajectory: TrajectoryResult | None) -> TrajectoryResult:
+    def _resolve_trajectory(
+        self, trajectory: TrajectoryResult | None
+    ) -> TrajectoryResult:
         if trajectory is not None:
             return trajectory
         return self._core.track()
@@ -128,7 +175,9 @@ class ThieleAnalyzer:
         val = _attr_float(attrs, ("polarity", "p"), 1.0)
         return 1 if val >= 0.0 else -1
 
-    def _resolve_material(self, material: MaterialParams | dict[str, float] | None) -> MaterialParams:
+    def _resolve_material(
+        self, material: MaterialParams | dict[str, float] | None
+    ) -> MaterialParams:
         if isinstance(material, MaterialParams):
             return material
 
@@ -216,7 +265,10 @@ class ThieleAnalyzer:
         kappa: float | None = None,
         center: tuple[float, float] | None = None,
         stt_force: np.ndarray | tuple[float, float] | Callable[..., Any] | None = None,
-        oersted_force: np.ndarray | tuple[float, float] | Callable[..., Any] | None = None,
+        oersted_force: np.ndarray
+        | tuple[float, float]
+        | Callable[..., Any]
+        | None = None,
     ) -> ThieleForceBalanceResult:
         """Decompose effective forces from tracked vortex trajectory."""
         traj = self._resolve_trajectory(trajectory)
@@ -229,16 +281,24 @@ class ThieleAnalyzer:
         vy = np.asarray(vy, dtype=float)
 
         attrs = getattr(self._job, "attrs", {})
-        p = int(self._infer_polarity(traj) if polarity is None else np.sign(polarity) or 1)
+        p = int(
+            self._infer_polarity(traj) if polarity is None else np.sign(polarity) or 1
+        )
         w = int(np.sign(vorticity) or 1)
 
-        ms = float(Ms) if Ms is not None else _attr_float(attrs, ("Ms", "ms", "Msat"), 8.0e5)
+        ms = (
+            float(Ms)
+            if Ms is not None
+            else _attr_float(attrs, ("Ms", "ms", "Msat"), 8.0e5)
+        )
         l_thick = (
             float(thickness)
             if thickness is not None
             else _attr_float(attrs, ("thickness", "L", "d"), 20.0e-9)
         )
-        alpha_val = float(alpha) if alpha is not None else _attr_float(attrs, ("alpha",), 0.01)
+        alpha_val = (
+            float(alpha) if alpha is not None else _attr_float(attrs, ("alpha",), 0.01)
+        )
         gamma0_val = float(gamma0) if gamma0 is not None else float(GAMMA_E * MU0)
 
         G = float(2.0 * np.pi * p * w * ms * l_thick / max(gamma0_val, 1e-30))
@@ -331,8 +391,14 @@ class ThieleAnalyzer:
             field_cal=field_cal,
             chi_scale=chi_scale,
         )
-        j_func = current_waveform if current_waveform is not None else current_dc(float(current_density))
-        result = model.simulate(t_span=t_span, s0=s0, J_func=j_func, B_func=B_func, dt=dt, **simulate_kwargs)
+        j_func = (
+            current_waveform
+            if current_waveform is not None
+            else current_dc(float(current_density))
+        )
+        result = model.simulate(
+            t_span=t_span, s0=s0, J_func=j_func, B_func=B_func, dt=dt, **simulate_kwargs
+        )
         result.metadata["dataset_name"] = self._dataset_name
         result.metadata["source"] = "mmpp.solitons.vortex.nonlinear.thiele"
         return result
@@ -371,7 +437,11 @@ class ThieleAnalyzer:
             field_cal=field_cal,
             chi_scale=chi_scale,
         )
-        j_func = current_waveform if current_waveform is not None else current_dc(float(current_density))
+        j_func = (
+            current_waveform
+            if current_waveform is not None
+            else current_dc(float(current_density))
+        )
         result = model.simulate_sde(
             t_span=t_span,
             s0=s0,
@@ -473,8 +543,8 @@ class ThieleAnalyzer:
             polarity=p,
             initial_omega0=initial_omega0,
             initial_N=initial_N,
-            fit_omega0_Oe_per_J=fit_omega0_Oe_per_J,
-            initial_omega0_Oe_per_J=initial_omega0_Oe_per_J,
+            fit_domega0_dJ=fit_omega0_Oe_per_J,
+            initial_domega0_dJ=initial_omega0_Oe_per_J,
             fit_chi_scale=fit_chi_scale,
             initial_chi_scale=initial_chi_scale,
             allow_edge=allow_edge,
@@ -587,8 +657,14 @@ class ThieleAnalyzer:
             field=field,
             field_cal=field_cal,
         )
-        j_func = current_waveform if current_waveform is not None else current_dc(float(current_density))
-        result = model.simulate(t_span=t_span, r0=r0, J_func=j_func, B_func=B_func, dt=dt, **simulate_kwargs)
+        j_func = (
+            current_waveform
+            if current_waveform is not None
+            else current_dc(float(current_density))
+        )
+        result = model.simulate(
+            t_span=t_span, r0=r0, J_func=j_func, B_func=B_func, dt=dt, **simulate_kwargs
+        )
         result.metadata["dataset_name"] = self._dataset_name
         result.metadata["source"] = "mmpp.solitons.vortex.nonlinear.thiele"
         return result

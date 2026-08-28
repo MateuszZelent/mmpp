@@ -42,8 +42,9 @@ micromagnetic calibration sweeps.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 
@@ -96,7 +97,7 @@ def normalize_polarizer(
     polarizer: tuple[float, float, float] | np.ndarray,
 ) -> np.ndarray:
     """Return a normalized three-component polarizer vector."""
-    p = np.asarray(polarizer, dtype=float).reshape(-1)
+    p: Any = np.asarray(polarizer, dtype=float).reshape(-1)
     if p.size == 2:
         p = np.array([p[0], p[1], 0.0], dtype=float)
     if p.size < 3:
@@ -927,7 +928,7 @@ class FieldResolvedCPPThieleModel:
             def resolved_I_func(_t: float) -> float:
                 return I_value
 
-        t_eval = np.arange(t0, t1 + 0.5 * dt, dt, dtype=float)
+        t_eval: np.ndarray = np.arange(t0, t1 + 0.5 * dt, dt, dtype=float)
         if t_eval.size and t_eval[-1] > t1:
             t_eval = t_eval[:-1]
         if t_eval.size == 0 or t_eval[0] != t0:
@@ -1031,7 +1032,7 @@ class FieldResolvedCPPThieleModel:
         clamp_u: float | None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Small fixed-step RK4 fallback used when SciPy is unavailable."""
-        values = [np.asarray(x_init, dtype=float).reshape(2)]
+        values: list[np.ndarray] = [np.asarray(x_init, dtype=float).reshape(2)]
         times = [float(t_eval[0])]
         for idx in range(1, int(t_eval.size)):
             t = float(t_eval[idx - 1])

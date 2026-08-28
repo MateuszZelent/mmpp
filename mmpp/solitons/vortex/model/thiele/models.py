@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
@@ -158,12 +159,12 @@ def infer_polarity(
             return -1
 
     if polarity is not None:
-        value = int(np.sign(int(polarity)))
-        return value if value != 0 else 1
+        polarity_value = int(np.sign(int(polarity)))
+        return polarity_value if polarity_value != 0 else 1
 
     attrs = getattr(job_result, "attrs", {}) if job_result is not None else {}
-    value = _attr_float(attrs, ("polarity", "p"), 1.0)
-    return 1 if value >= 0.0 else -1
+    attr_polarity = _attr_float(attrs, ("polarity", "p"), 1.0)
+    return 1 if attr_polarity >= 0.0 else -1
 
 
 def infer_omega0(
@@ -218,19 +219,30 @@ def resolve_cpp_spin_torque_context(
     epsilonprime: float | None = None,
 ) -> CPPSpinTorqueContext:
     """Resolve effective MuMax-style CPP Slonczewski coefficients for the adapter."""
-    if polarizer is None and Lambda is None and epsilonprime is None and fixed_layer_position is None:
+    if (
+        polarizer is None
+        and Lambda is None
+        and epsilonprime is None
+        and fixed_layer_position is None
+    ):
         return CPPSpinTorqueContext(
             material=material,
-            torque_thickness=float(geometry.L if torque_thickness is None else torque_thickness),
+            torque_thickness=float(
+                geometry.L if torque_thickness is None else torque_thickness
+            ),
             domega0_dJ_total=float(domega0_dJ),
             metadata={},
         )
 
     reduction = reduce_mumax_slonczewski_cpp(
         material=material,
-        torque_thickness=float(geometry.L if torque_thickness is None else torque_thickness),
+        torque_thickness=float(
+            geometry.L if torque_thickness is None else torque_thickness
+        ),
         polarizer=(0.0, 0.0, 1.0) if polarizer is None else polarizer,
-        fixed_layer_position="top" if fixed_layer_position is None else fixed_layer_position,
+        fixed_layer_position="top"
+        if fixed_layer_position is None
+        else fixed_layer_position,
         Lambda=1.0 if Lambda is None else float(Lambda),
         epsilonprime=0.0 if epsilonprime is None else float(epsilonprime),
     )

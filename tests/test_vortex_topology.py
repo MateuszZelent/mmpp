@@ -31,7 +31,7 @@ def _make_vortex_snapshot(
     radius = np.hypot(x_grid, y_grid)
     phi = np.arctan2(y_grid, x_grid)
 
-    mz = polarity * np.exp(-(radius / core_radius_px) ** 2)
+    mz = polarity * np.exp(-((radius / core_radius_px) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
 
     mx = -chirality * m_perp * np.sin(phi)

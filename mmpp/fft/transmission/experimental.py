@@ -4,14 +4,24 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import numpy as np
-import pandas as pd
+
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+
+    class _MissingPandas:
+        def __getattr__(self, _name: str):
+            raise ImportError("Experimental transmission table loading requires pandas")
+
+    pd = _MissingPandas()  # type: ignore[assignment]
 
 try:  # pragma: no cover - matplotlib is an optional dependency at runtime
     from matplotlib.axes import Axes
     from matplotlib.lines import Line2D
+
     from ..compute import TransmissionResult
 except ImportError:  # pragma: no cover
     Axes = Any  # type: ignore
@@ -29,29 +39,29 @@ _STYLE_LOADED = False
 
 def _load_mmpp_style(verbose: bool = False) -> bool:
     """Load mmpp paper.mplstyle if available.
-    
+
     Parameters
     ----------
     verbose : bool
         Whether to print informational messages.
-    
+
     Returns
     -------
     bool
         True if style was successfully loaded, False otherwise.
     """
     global _STYLE_LOADED
-    
+
     if _STYLE_LOADED:
         return True
-    
+
     try:
         import matplotlib.pyplot as plt
-        
+
         # Try to load from package directory
         package_dir = os.path.dirname(os.path.dirname(__file__))
         style_path = os.path.join(package_dir, "paper.mplstyle")
-        
+
         if os.path.exists(style_path):
             plt.style.use(style_path)
             if verbose:
@@ -64,7 +74,7 @@ def _load_mmpp_style(verbose: bool = False) -> bool:
                 "./paper.mplstyle",
                 os.path.expanduser("~/.mmpp/paper.mplstyle"),
             ]
-            
+
             for path in fallback_paths:
                 if os.path.exists(path):
                     plt.style.use(path)
@@ -72,12 +82,12 @@ def _load_mmpp_style(verbose: bool = False) -> bool:
                         print(f"✓ Loaded mmpp paper style from: {path}")
                     _STYLE_LOADED = True
                     return True
-        
+
         if verbose:
-            print(f"⚠ paper.mplstyle not found, using default matplotlib style")
+            print("⚠ paper.mplstyle not found, using default matplotlib style")
         _STYLE_LOADED = True
         return False
-        
+
     except Exception as e:
         if verbose:
             print(f"Warning: Could not load paper style: {e}")
@@ -98,8 +108,8 @@ def _resolve_frequency_unit(unit: str) -> float:
 def _resolve_data_column(
     dataframe: pd.DataFrame,
     *,
-    column: Union[int, str, None] = None,
-    bias_index: Optional[float] = None,
+    column: int | str | None = None,
+    bias_index: float | None = None,
 ) -> str:
     """Select a column from a measurement DataFrame.
 
@@ -142,7 +152,11 @@ def _resolve_data_column(
             f"Could not resolve column for bias_index={bias_index}. Available labels: {list(dataframe.columns)!r}"
         )
 
-    numeric_columns = [col for col in dataframe.columns if pd.api.types.is_numeric_dtype(dataframe[col])]
+    numeric_columns = [
+        col
+        for col in dataframe.columns
+        if pd.api.types.is_numeric_dtype(dataframe[col])
+    ]
     if numeric_columns:
         return numeric_columns[-1]
     # fallback to the final column regardless of dtype
@@ -152,23 +166,23 @@ def _resolve_data_column(
 def overlay_transmission(
     ax: Axes,
     *,
-    d: Union[int, str],
-    p: Union[int, str],
-    base_path: Union[str, Path] = "experiment",
+    d: int | str,
+    p: int | str,
+    base_path: str | Path = "experiment",
     width_tag: str = "w5",
-    sim_result: Optional[TransmissionResult] = None,
-    normalize_to: Optional[str] = None,
+    sim_result: TransmissionResult | None = None,
+    normalize_to: str | None = None,
     normalize: bool = False,
     freq_filename: str = "freq.txt",
     freq_file_unit: str = "GHz",
-    target_freq_unit: Optional[str] = None,
-    bias_index: Optional[float] = None,
-    column: Union[int, str, None] = None,
+    target_freq_unit: str | None = None,
+    bias_index: float | None = None,
+    column: int | str | None = None,
     reverse_frequency: bool = True,
     flip: bool = True,
     color: str = "tab:red",
     linewidth: float = 0.8,
-    label: Optional[str] = None,
+    label: str | None = None,
     **plot_kwargs: Any,
 ) -> Line2D:
     """Overlay an experimental transmission trace on a plot.
@@ -225,23 +239,19 @@ def overlay_transmission(
         target_freq_unit = freq_file_unit
 
     base_path = Path(base_path)
-    
+
     # Special case: d=0 and p=0 means load reference file
     if d == 0 and p == 0:
         spectra_path = base_path / "ref.txt"
     else:
         spectra_path = base_path / f"d{d}p{p}_{width_tag}.txt"
-    
+
     freq_path = base_path / freq_filename
 
     if not spectra_path.exists():
-        raise FileNotFoundError(
-            f"Experimental spectrum '{spectra_path}' not found."
-        )
+        raise FileNotFoundError(f"Experimental spectrum '{spectra_path}' not found.")
     if not freq_path.exists():
-        raise FileNotFoundError(
-            f"Experimental frequency file '{freq_path}' not found."
-        )
+        raise FileNotFoundError(f"Experimental frequency file '{freq_path}' not found.")
 
     spectrum_df = pd.read_csv(spectra_path, sep="\t")
     selected_column = _resolve_data_column(
@@ -260,8 +270,10 @@ def overlay_transmission(
                 )
 
             # Try to find the corresponding simulation cross-section from the axes' lines first
-            sim_line = next((line for line in ax.get_lines() if line.get_label() != label), None)
-            
+            sim_line = next(
+                (line for line in ax.get_lines() if line.get_label() != label), None
+            )
+
             if sim_line is not None:
                 # Use data from the plotted line
                 sim_transmission_data = (
@@ -274,17 +286,23 @@ def overlay_transmission(
                 try:
                     # Get the transmission data directly from the result object
                     # This assumes sim_result has a get_transmission_crosssection method or similar
-                    if hasattr(sim_result, 'transmission'):
+                    if hasattr(sim_result, "transmission"):
                         # Access raw transmission data
                         sim_transmission_data = sim_result.transmission
                         sim_max = np.max(sim_transmission_data)
-                    elif hasattr(sim_result, 'get_transmission_crosssection'):
+                    elif hasattr(sim_result, "get_transmission_crosssection"):
                         # Try to get specific cross-section
-                        sim_transmission_data = sim_result.get_transmission_crosssection(d=d, p=p)
+                        sim_transmission_data = (
+                            sim_result.get_transmission_crosssection(d=d, p=p)
+                        )
                         sim_max = np.max(sim_transmission_data)
                     else:
                         # Fallback: use the maximum of all transmission data
-                        sim_max = np.max(sim_result.data) if hasattr(sim_result, 'data') else 1.0
+                        sim_max = (
+                            np.max(sim_result.data)
+                            if hasattr(sim_result, "data")
+                            else 1.0
+                        )
                 except Exception:
                     # If all else fails, just use 1.0 (no normalization)
                     sim_max = 1.0
@@ -309,7 +327,9 @@ def overlay_transmission(
     # This is more robust if the file contains a header like 'freq (GHz)'.
     freq_df = pd.read_csv(freq_path)
     if freq_df.shape[1] != 1:
-        raise ValueError(f"Frequency file '{freq_path}' should contain exactly one column.")
+        raise ValueError(
+            f"Frequency file '{freq_path}' should contain exactly one column."
+        )
     # Use the values from the first column, regardless of its name.
     frequencies = freq_df.iloc[:, 0].to_numpy(dtype=float)
 
@@ -334,7 +354,7 @@ def overlay_transmission(
     else:
         plot_x, plot_y = frequencies, amplitudes
 
-    line, = ax.plot(
+    (line,) = ax.plot(
         plot_x,
         plot_y,
         color=color,
@@ -345,14 +365,16 @@ def overlay_transmission(
     return line
 
 
-def _extract_bias_values_from_columns(columns: list[str]) -> list[tuple[str, Optional[float]]]:
+def _extract_bias_values_from_columns(
+    columns: list[str],
+) -> list[tuple[str, float | None]]:
     """Extract bias values from numeric column headers.
-    
+
     Parameters
     ----------
     columns : list[str]
         Column names from the experimental data.
-    
+
     Returns
     -------
     list[tuple[str, Optional[float]]]
@@ -360,34 +382,34 @@ def _extract_bias_values_from_columns(columns: list[str]) -> list[tuple[str, Opt
         header is not numeric or cannot be converted using the formula.
         The formula used is: bias_value = (header_value + 1) / 2 (inverse of 2*B - 1)
     """
-    bias_values = []
+    bias_values: list[tuple[str, float | None]] = []
     for col in columns:
         try:
             # Try to convert column name to float
             header_val = float(col)
             # Reverse the formula: if header = 2*B - 1, then B = (header + 1) / 2
-            bias_val = (header_val+10) / 2
+            bias_val = (header_val + 10) / 2
             bias_values.append((col, bias_val))
         except (ValueError, TypeError):
             # Column header is not numeric
             bias_values.append((col, None))
-    
+
     return bias_values
 
 
 def load_experimental_transmission_data(
     *,
-    d: Union[int, str],
-    p: Union[int, str],
-    base_path: Union[str, Path] = "experiment",
+    d: int | str,
+    p: int | str,
+    base_path: str | Path = "experiment",
     width_tag: str = "w5",
     freq_filename: str = "freq.txt",
     freq_file_unit: str = "GHz",
-    target_freq_unit: Optional[str] = None,
+    target_freq_unit: str | None = None,
     reverse_frequency: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, list[float]]:
     """Load experimental transmission data and frequency information.
-    
+
     Parameters
     ----------
     d, p:
@@ -404,7 +426,7 @@ def load_experimental_transmission_data(
         Desired unit for plotting. When None, the original unit is used.
     reverse_frequency:
         Whether to reverse the frequency axis.
-    
+
     Returns
     -------
     tuple[np.ndarray, np.ndarray, list[float]]
@@ -414,91 +436,94 @@ def load_experimental_transmission_data(
     """
     if target_freq_unit is None:
         target_freq_unit = freq_file_unit
-    
+
     base_path = Path(base_path)
-    
+
     # Construct spectra file path
     if d == 0 and p == 0:
         spectra_path = base_path / "ref.txt"
     else:
         spectra_path = base_path / f"d{d}p{p}_{width_tag}.txt"
-    
+
     freq_path = base_path / freq_filename
-    
+
     if not spectra_path.exists():
         raise FileNotFoundError(f"Experimental spectrum '{spectra_path}' not found.")
     if not freq_path.exists():
         raise FileNotFoundError(f"Experimental frequency file '{freq_path}' not found.")
-    
+
     # Load spectrum data
     spectrum_df = pd.read_csv(spectra_path, sep="\t")
-    
+
     # Extract bias values from column headers
     col_bias_pairs = _extract_bias_values_from_columns(spectrum_df.columns.tolist())
-    
+
     # Separate numeric columns and their corresponding bias values
-    numeric_cols = []
-    bias_vals = []
+    numeric_cols: list[str] = []
+    bias_vals: list[float] = []
     for col, bias in col_bias_pairs:
         if bias is not None:
             numeric_cols.append(col)
             bias_vals.append(bias)
-    
+
     if not numeric_cols:
         raise ValueError(
             f"No numeric columns found in experimental data. Available columns: {list(spectrum_df.columns)!r}"
         )
-    
+
     # Sort by bias value for consistent ordering
-    sorted_pairs = sorted(zip(numeric_cols, bias_vals), key=lambda x: x[1])
-    numeric_cols, bias_vals = zip(*sorted_pairs)
-    numeric_cols = list(numeric_cols)
-    bias_vals = list(bias_vals)
-    
+    sorted_pairs = sorted(
+        zip(numeric_cols, bias_vals, strict=False), key=lambda x: x[1]
+    )
+    numeric_cols = [pair[0] for pair in sorted_pairs]
+    bias_vals = [pair[1] for pair in sorted_pairs]
+
     # Extract transmission data (all numeric columns as 2D array)
     transmission_data = spectrum_df[numeric_cols].to_numpy(dtype=float)
-    
+
     # Load frequency data
     freq_df = pd.read_csv(freq_path)
     if freq_df.shape[1] != 1:
-        raise ValueError(f"Frequency file '{freq_path}' should contain exactly one column.")
+        raise ValueError(
+            f"Frequency file '{freq_path}' should contain exactly one column."
+        )
     frequencies = freq_df.iloc[:, 0].to_numpy(dtype=float)
-    
+
     # Apply frequency reversal if requested
     if reverse_frequency:
         frequencies = frequencies[::-1]
         transmission_data = transmission_data[::-1, :]
-    
+
     # Convert frequency units
     from_scale = _resolve_frequency_unit(freq_file_unit)
     to_scale = _resolve_frequency_unit(target_freq_unit)
     frequencies = frequencies * from_scale / to_scale
-    
+
     # Validate array dimensions
     if transmission_data.shape[0] != frequencies.shape[0]:
         raise ValueError(
             f"Transmission and frequency arrays have different lengths: "
             f"{transmission_data.shape[0]} vs {frequencies.shape[0]}."
         )
-    
+
     return frequencies, transmission_data, bias_vals
 
 
 def plot_experimental_transmission_heatmap(
     *,
-    d: Union[int, str],
-    p: Union[int, str],
-    base_path: Union[str, Path] = "experiment",
+    d: int | str,
+    p: int | str,
+    base_path: str | Path = "experiment",
     width_tag: str = "w5",
     freq_filename: str = "freq.txt",
     freq_file_unit: str = "GHz",
-    target_freq_unit: Optional[str] = None,
+    target_freq_unit: str | None = None,
     reverse_frequency: bool = True,
     normalize: bool = False,
     cmap: str = "viridis",
-    ax: Optional[Axes] = None,
+    ax: Axes | None = None,
     inset_colorbar: bool = True,
-    colorbar_label: Optional[str] = None,
+    colorbar_label: str | None = None,
     colorbar_position: str = "lower center",
     colorbar_width: str = "80%",
     colorbar_height: str = "22%",
@@ -506,14 +531,14 @@ def plot_experimental_transmission_heatmap(
     colorbar_text_color: str = "white",
     colorbar_fontsize: int = 11,
     colorbar_title_fontsize: int = 12,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
-    decimal_places: Optional[int] = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    decimal_places: int | None = None,
     apply_style: bool = True,
     **imshow_kwargs: Any,
 ) -> tuple[Axes, Any]:
     """Plot experimental transmission data as a 2D heatmap over frequency and magnetic field.
-    
+
     Parameters
     ----------
     d, p:
@@ -562,7 +587,7 @@ def plot_experimental_transmission_heatmap(
         If True, automatically loads mmpp paper.mplstyle (default True).
     imshow_kwargs:
         Additional keyword arguments forwarded to imshow.
-    
+
     Returns
     -------
     tuple[Axes, Any]
@@ -571,17 +596,16 @@ def plot_experimental_transmission_heatmap(
     """
     try:
         import matplotlib.pyplot as plt
-        from mpl_toolkits.axes_grid1.inset_locator import inset_axes
     except ImportError:  # pragma: no cover
-        raise RuntimeError("Matplotlib is required for plotting.")
-    
+        raise RuntimeError("Matplotlib is required for plotting.") from None
+
     # Import professional inset colorbar from plot.py
     from .plot import _make_inset_colorbar
-    
+
     # Load mmpp style if requested
     if apply_style:
         _load_mmpp_style(verbose=False)
-    
+
     # Load experimental data
     frequencies, transmission_data, bias_vals = load_experimental_transmission_data(
         d=d,
@@ -593,30 +617,36 @@ def plot_experimental_transmission_heatmap(
         target_freq_unit=target_freq_unit,
         reverse_frequency=reverse_frequency,
     )
-    
+
     # Apply normalization if requested
     plot_data = transmission_data.copy()
     if normalize:
         data_max = np.max(np.abs(plot_data))
         if data_max > 0:
             plot_data = plot_data / data_max
-    
+
     # Determine vmin/vmax
     data_vmin = vmin if vmin is not None else float(np.min(plot_data))
     data_vmax = vmax if vmax is not None else float(np.max(plot_data))
-    
+
     # Create axes if not provided
+    fig: Any = None
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
     else:
         fig = ax.get_figure()
-    
+
     # Create heatmap
     # extent: [left, right, bottom, top] in data coordinates
     # For correct frequency orientation (0 at bottom), we need to reverse the Y extent
     # because reverse_frequency inverts the data array but we want low freq at bottom
-    extent = [bias_vals[0], bias_vals[-1], frequencies[-1], frequencies[0]]
-    
+    extent = (
+        bias_vals[0],
+        bias_vals[-1],
+        float(frequencies[-1]),
+        float(frequencies[0]),
+    )
+
     im = ax.imshow(
         plot_data,
         aspect="auto",
@@ -628,16 +658,16 @@ def plot_experimental_transmission_heatmap(
         vmax=data_vmax,
         **imshow_kwargs,
     )
-    
+
     # Labels
     ax.set_xlabel("Magnetic Field B (arbitrary units)")
     ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
     ax.set_title(f"Experimental Transmission Heatmap (d={d}, p={p})")
-    
+
     # Determine colorbar label
     if colorbar_label is None:
         colorbar_label = "Transmission" + (" (normalized)" if normalize else "")
-    
+
     # Create colorbar (inset or standard)
     if inset_colorbar:
         # Use professional publication-quality inset colorbar
@@ -662,16 +692,15 @@ def plot_experimental_transmission_heatmap(
         # Use ScalarMappable to avoid alpha inheritance
         from matplotlib.cm import ScalarMappable
         from matplotlib.colors import Normalize
-        
+
         sm = ScalarMappable(
-            cmap=im.get_cmap(),
-            norm=Normalize(vmin=data_vmin, vmax=data_vmax)
+            cmap=im.get_cmap(), norm=Normalize(vmin=data_vmin, vmax=data_vmax)
         )
         sm.set_array([])
-        
+
         cbar = plt.colorbar(sm, ax=ax)
         cbar.set_label(colorbar_label)
-    
+
     return ax, im
 
 
@@ -679,18 +708,18 @@ def overlay_transmission_heatmaps(
     *,
     ax: Axes,
     # Experimental data parameters
-    d: Union[int, str],
-    p: Union[int, str],
-    base_path: Union[str, Path] = "experiment",
+    d: int | str,
+    p: int | str,
+    base_path: str | Path = "experiment",
     width_tag: str = "w5",
     freq_filename: str = "freq.txt",
     freq_file_unit: str = "GHz",
-    target_freq_unit: Optional[str] = None,
+    target_freq_unit: str | None = None,
     reverse_frequency: bool = True,
     exp_normalize: bool = False,
     # Simulation data (optional - will use what's already on axes)
-    sim_data: Optional[np.ndarray] = None,
-    sim_extent: Optional[tuple] = None,
+    sim_data: np.ndarray | None = None,
+    sim_extent: tuple | None = None,
     sim_normalize: bool = False,
     # Overlay control
     exp_alpha: float = 0.7,
@@ -706,18 +735,18 @@ def overlay_transmission_heatmaps(
     colorbar_height: str = "22%",
     colorbar_bg_alpha: float = 0.7,
     # Other
-    vmin_exp: Optional[float] = None,
-    vmax_exp: Optional[float] = None,
-    vmin_sim: Optional[float] = None,
-    vmax_sim: Optional[float] = None,
+    vmin_exp: float | None = None,
+    vmax_exp: float | None = None,
+    vmin_sim: float | None = None,
+    vmax_sim: float | None = None,
     apply_style: bool = True,
     **imshow_kwargs: Any,
 ) -> tuple[Axes, Any, Any]:
     """Overlay experimental and simulation transmission heatmaps with alpha blending.
-    
+
     Creates a composite visualization by overlaying experimental data on top of
     simulation data (or vice versa) with controllable transparency for each layer.
-    
+
     Parameters
     ----------
     ax : Axes
@@ -768,14 +797,14 @@ def overlay_transmission_heatmaps(
         If True, loads mmpp paper.mplstyle.
     imshow_kwargs:
         Additional arguments forwarded to imshow.
-    
+
     Returns
     -------
     tuple[Axes, Any, Any]
         - ax: The matplotlib axes object
         - im_sim: The simulation image object (or None)
         - im_exp: The experimental image object
-    
+
     Examples
     --------
     >>> ax, im_sim, im_exp = overlay_transmission_heatmaps(
@@ -790,14 +819,16 @@ def overlay_transmission_heatmaps(
     """
     try:
         import matplotlib.pyplot as plt
-        from matplotlib.colors import Normalize
         from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import Normalize
     except ImportError:  # pragma: no cover
-        raise RuntimeError("Matplotlib is required for plotting.")
-    
+        raise RuntimeError("Matplotlib is required for plotting.") from None
+
     from .plot import _make_inset_colorbar
-    
-    def _to_rgba_uniform_alpha(data: np.ndarray, cmap_name: str, vmin: float, vmax: float, alpha: float) -> np.ndarray:
+
+    def _to_rgba_uniform_alpha(
+        data: np.ndarray, cmap_name: str, vmin: float, vmax: float, alpha: float
+    ) -> np.ndarray:
         """Convert 2D data to RGBA array with uniform alpha for all pixels."""
         cmap = plt.get_cmap(cmap_name)
         # Normalize data to [0, 1]
@@ -808,13 +839,13 @@ def overlay_transmission_heatmaps(
         # Set uniform alpha
         rgba[..., 3] = alpha
         return rgba
-    
+
     # Load mmpp style if requested
     if apply_style:
         _load_mmpp_style(verbose=False)
-    
-    fig = ax.get_figure()
-    
+
+    fig: Any = ax.get_figure()
+
     # Load experimental data
     frequencies, transmission_exp, bias_vals = load_experimental_transmission_data(
         d=d,
@@ -826,24 +857,30 @@ def overlay_transmission_heatmaps(
         target_freq_unit=target_freq_unit,
         reverse_frequency=reverse_frequency,
     )
-    
+
     # Process experimental data
     plot_data_exp = transmission_exp.copy()
     if exp_normalize:
         data_max = np.max(np.abs(plot_data_exp))
         if data_max > 0:
             plot_data_exp = plot_data_exp / data_max
-    
+
     # Determine experimental extent (reversed Y for correct orientation)
-    exp_extent = [bias_vals[0], bias_vals[-1], frequencies[-1], frequencies[0]]
-    
+    exp_extent = (
+        bias_vals[0],
+        bias_vals[-1],
+        float(frequencies[-1]),
+        float(frequencies[0]),
+    )
+
     # Determine vmin/vmax for experimental data
     exp_vmin = vmin_exp if vmin_exp is not None else float(np.min(plot_data_exp))
     exp_vmax = vmax_exp if vmax_exp is not None else float(np.max(plot_data_exp))
-    
+
     # Plot simulation data first (if provided)
     im_sim = None
-    sim_vmin, sim_vmax = 0, 1  # defaults
+    sim_vmin: float = 0.0
+    sim_vmax: float = 1.0
     if sim_data is not None:
         # Process simulation data
         plot_data_sim = sim_data.copy()
@@ -851,17 +888,19 @@ def overlay_transmission_heatmaps(
             data_max = np.max(np.abs(plot_data_sim))
             if data_max > 0:
                 plot_data_sim = plot_data_sim / data_max
-        
+
         sim_vmin = vmin_sim if vmin_sim is not None else float(np.min(plot_data_sim))
         sim_vmax = vmax_sim if vmax_sim is not None else float(np.max(plot_data_sim))
-        
+
         # Use provided extent or default
         if sim_extent is None:
             sim_extent = exp_extent  # Assume same extent
-        
+
         # Convert to RGBA with uniform alpha (key for proper blending!)
-        sim_rgba = _to_rgba_uniform_alpha(plot_data_sim, sim_cmap, sim_vmin, sim_vmax, sim_alpha)
-        
+        sim_rgba = _to_rgba_uniform_alpha(
+            plot_data_sim, sim_cmap, sim_vmin, sim_vmax, sim_alpha
+        )
+
         # Plot simulation as RGBA array
         im_sim = ax.imshow(
             sim_rgba,
@@ -871,10 +910,12 @@ def overlay_transmission_heatmaps(
             interpolation="bilinear",
             **imshow_kwargs,
         )
-    
+
     # Convert experimental data to RGBA with uniform alpha
-    exp_rgba = _to_rgba_uniform_alpha(plot_data_exp, exp_cmap, exp_vmin, exp_vmax, exp_alpha)
-    
+    exp_rgba = _to_rgba_uniform_alpha(
+        plot_data_exp, exp_cmap, exp_vmin, exp_vmax, exp_alpha
+    )
+
     # Overlay experimental data on top as RGBA array
     im_exp = ax.imshow(
         exp_rgba,
@@ -884,27 +925,25 @@ def overlay_transmission_heatmaps(
         interpolation="bilinear",
         **imshow_kwargs,
     )
-    
+
     # Labels
     ax.set_xlabel("Magnetic Field B (arbitrary units)")
     ax.set_ylabel(f"Frequency ({target_freq_unit or freq_file_unit})")
     ax.set_title(f"Overlay: Experiment (d={d}, p={p}) + Simulation")
-    
+
     # Create ScalarMappables for colorbars (always opaque, independent of image alpha)
     sm_exp = ScalarMappable(
-        cmap=plt.get_cmap(exp_cmap),
-        norm=Normalize(vmin=exp_vmin, vmax=exp_vmax)
+        cmap=plt.get_cmap(exp_cmap), norm=Normalize(vmin=exp_vmin, vmax=exp_vmax)
     )
     sm_exp.set_array([])
-    
+
     sm_sim = None
     if sim_data is not None:
         sm_sim = ScalarMappable(
-            cmap=plt.get_cmap(sim_cmap),
-            norm=Normalize(vmin=sim_vmin, vmax=sim_vmax)
+            cmap=plt.get_cmap(sim_cmap), norm=Normalize(vmin=sim_vmin, vmax=sim_vmax)
         )
         sm_sim.set_array([])
-    
+
     if show_colorbars:
         if inset_colorbar:
             # Experimental colorbar
@@ -923,7 +962,7 @@ def overlay_transmission_heatmaps(
                 fontsize=11,
                 title_fontsize=12,
             )
-            
+
             # Simulation colorbar - only if simulation data exists
             if sm_sim is not None:
                 _make_inset_colorbar(
@@ -943,33 +982,33 @@ def overlay_transmission_heatmaps(
                 )
         else:
             # Standard matplotlib colorbars (side-by-side)
-            cbar_exp = plt.colorbar(sm_exp, ax=ax, label="Experiment", pad=0.02)
-            
+            plt.colorbar(sm_exp, ax=ax, label="Experiment", pad=0.02)
+
             # Simulation colorbar if data exists
             if sm_sim is not None:
-                cbar_sim = plt.colorbar(sm_sim, ax=ax, label="Simulation", pad=0.1)
-    
+                plt.colorbar(sm_sim, ax=ax, label="Simulation", pad=0.1)
+
     return ax, im_sim, im_exp
 
 
 def plot_experimental_transmission(
     ax: Axes,
     *,
-    d: Union[int, str],
-    p: Union[int, str],
-    base_path: Union[str, Path] = "experiment",
+    d: int | str,
+    p: int | str,
+    base_path: str | Path = "experiment",
     width_tag: str = "w5",
     freq_filename: str = "freq.txt",
     freq_file_unit: str = "GHz",
-    target_freq_unit: Optional[str] = None,
-    bias_index: Optional[float] = None,
-    column: Union[int, str, None] = None,
+    target_freq_unit: str | None = None,
+    bias_index: float | None = None,
+    column: int | str | None = None,
     reverse_frequency: bool = True,
     flip: bool = True,
     normalize: bool = True,
     color: str = "green",
     linewidth: float = 1.5,
-    label: Optional[str] = None,
+    label: str | None = None,
     **plot_kwargs: Any,
 ) -> Line2D:
     """Plot experimental transmission trace on specified axes (standalone version).
@@ -1039,23 +1078,19 @@ def plot_experimental_transmission(
         target_freq_unit = freq_file_unit
 
     base_path = Path(base_path)
-    
+
     # Special case: d=0 and p=0 means load reference file
     if d == 0 and p == 0:
         spectra_path = base_path / "ref.txt"
     else:
         spectra_path = base_path / f"d{d}p{p}_{width_tag}.txt"
-    
+
     freq_path = base_path / freq_filename
 
     if not spectra_path.exists():
-        raise FileNotFoundError(
-            f"Experimental spectrum '{spectra_path}' not found."
-        )
+        raise FileNotFoundError(f"Experimental spectrum '{spectra_path}' not found.")
     if not freq_path.exists():
-        raise FileNotFoundError(
-            f"Experimental frequency file '{freq_path}' not found."
-        )
+        raise FileNotFoundError(f"Experimental frequency file '{freq_path}' not found.")
 
     spectrum_df = pd.read_csv(spectra_path, sep="\t")
     selected_column = _resolve_data_column(
@@ -1074,7 +1109,9 @@ def plot_experimental_transmission(
     # Load frequency data
     freq_df = pd.read_csv(freq_path)
     if freq_df.shape[1] != 1:
-        raise ValueError(f"Frequency file '{freq_path}' should contain exactly one column.")
+        raise ValueError(
+            f"Frequency file '{freq_path}' should contain exactly one column."
+        )
     frequencies = freq_df.iloc[:, 0].to_numpy(dtype=float)
 
     if reverse_frequency:
@@ -1098,7 +1135,7 @@ def plot_experimental_transmission(
     else:
         plot_x, plot_y = frequencies, amplitudes
 
-    line, = ax.plot(
+    (line,) = ax.plot(
         plot_x,
         plot_y,
         color=color,

@@ -6,9 +6,8 @@ internally using a lightweight, maintained implementation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
 import warnings
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -17,7 +16,9 @@ def _wrap_to_pi(values: np.ndarray) -> np.ndarray:
     return (values + np.pi) % (2.0 * np.pi) - np.pi
 
 
-def _circular_mean(angles: np.ndarray, weights: np.ndarray | None = None) -> tuple[float, float]:
+def _circular_mean(
+    angles: np.ndarray, weights: np.ndarray | None = None
+) -> tuple[float, float]:
     if angles.size == 0:
         return float("nan"), 0.0
     if weights is None:
@@ -26,7 +27,7 @@ def _circular_mean(angles: np.ndarray, weights: np.ndarray | None = None) -> tup
         w = np.asarray(weights, dtype=float)
         if np.sum(w) <= 0:
             return float("nan"), 0.0
-        vec = np.sum(w * np.exp(1j * angles)) / np.sum(w)
+        vec = np.sum(w * np.exp(1j * angles)) / float(np.sum(w))
     return float(np.angle(vec)), float(np.abs(vec))
 
 
@@ -98,20 +99,46 @@ class AdvancedVortexClassifier:
         self.config = config or VortexClassificationConfig()
 
     @staticmethod
-    def _estimate_core_position(dmz: np.ndarray) -> tuple[float, float]:
-        idx = int(np.argmax(np.abs(dmz)))
+    def _estimate_core_position(
+        dmz: np.ndarray, valid_mask: np.ndarray | None = None
+    ) -> tuple[float, float]:
+        valid = (
+            np.ones(dmz.shape, dtype=bool)
+            if valid_mask is None
+            else np.asarray(valid_mask, dtype=bool)
+        )
+        if not np.any(valid):
+            return (dmz.shape[1] - 1) / 2.0, (dmz.shape[0] - 1) / 2.0
+        amplitude = np.where(valid, np.abs(dmz), -np.inf)
+        if np.all(amplitude[valid] == 0):
+            yy, xx = np.nonzero(valid)
+            return float(np.mean(xx)), float(np.mean(yy))
+        idx = int(np.argmax(amplitude))
         y, x = np.unravel_index(idx, dmz.shape)
         return float(x), float(y)
 
     @staticmethod
-    def _radial_profile(values: np.ndarray, center: tuple[float, float], bins: int) -> tuple[np.ndarray, np.ndarray]:
+    def _radial_profile(
+        values: np.ndarray,
+        center: tuple[float, float],
+        bins: int,
+        valid_mask: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         ny, nx = values.shape
         yy, xx = np.indices((ny, nx))
         cx, cy = center
         radii = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
         edges = np.linspace(0.0, float(np.max(radii)), max(int(bins), 16) + 1)
-        ids = np.clip(np.digitize(radii.ravel(), edges) - 1, 0, edges.size - 2)
-        sums = np.bincount(ids, weights=values.ravel(), minlength=edges.size - 1)
+        ids = np.asarray(
+            np.clip(np.digitize(radii.ravel(), edges) - 1, 0, edges.size - 2),
+            dtype=int,
+        )
+        values_flat = values.ravel()
+        if valid_mask is not None:
+            valid = np.asarray(valid_mask, dtype=bool).ravel()
+            ids = ids[valid]
+            values_flat = values_flat[valid]
+        sums = np.bincount(ids, weights=values_flat, minlength=edges.size - 1)
         counts = np.bincount(ids, minlength=edges.size - 1)
         with np.errstate(invalid="ignore"):
             profile = np.divide(sums, counts, where=counts > 0)
@@ -120,13 +147,22 @@ class AdvancedVortexClassifier:
         return np.asarray(centers, dtype=float), np.asarray(profile, dtype=float)
 
     @staticmethod
-    def _estimate_winding(dmx: np.ndarray, dmy: np.ndarray, center: tuple[float, float], radius: float, width: float) -> tuple[int, float]:
+    def _estimate_winding(
+        dmx: np.ndarray,
+        dmy: np.ndarray,
+        center: tuple[float, float],
+        radius: float,
+        width: float,
+        valid_mask: np.ndarray | None = None,
+    ) -> tuple[int, float]:
         ny, nx = dmx.shape
         yy, xx = np.indices((ny, nx))
         cx, cy = center
         r = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
         phi = np.arctan2(yy - cy, xx - cx)
         mask = np.abs(r - float(radius)) <= max(float(width), 1.0)
+        if valid_mask is not None:
+            mask &= np.asarray(valid_mask, dtype=bool)
         if int(np.sum(mask)) < 16:
             return 0, 0.0
 
@@ -156,11 +192,20 @@ class AdvancedVortexClassifier:
     ) -> VortexModeResult:
         """Classify a single FFT mode with legacy-compatible output fields."""
         _ = dz, verbose
-        mode_array = np.asarray(getattr(mode_data, "mode_array"))
+        mode_array = np.asarray(mode_data.mode_array)
         if mode_array.ndim != 3 or mode_array.shape[-1] < 3:
             raise ValueError("mode_data.mode_array must have shape (Ny, Nx, 3)")
 
         ny, nx, _ = mode_array.shape
+        material_mask = getattr(mode_data, "material_mask", None)
+        if material_mask is None:
+            material_mask = np.ones((ny, nx), dtype=bool)
+        else:
+            material_mask = np.asarray(material_mask, dtype=bool)
+            if material_mask.shape != (ny, nx):
+                raise ValueError(
+                    f"material mask {material_mask.shape} does not match mode {(ny, nx)}"
+                )
         frequency = float(getattr(mode_data, "frequency", 0.0))
         metadata = dict(getattr(mode_data, "metadata", {}) or {})
         if dx is None or dy is None:
@@ -177,7 +222,7 @@ class AdvancedVortexClassifier:
         dmy = np.asarray(mode_array[:, :, 1], dtype=np.complex128)
         dmz = np.asarray(mode_array[:, :, 2], dtype=np.complex128)
 
-        core = self._estimate_core_position(np.real(dmz))
+        core = self._estimate_core_position(np.real(dmz), material_mask)
         cx, cy = core
 
         e_par = float(np.sum(np.abs(dmx) ** 2 + np.abs(dmy) ** 2))
@@ -186,7 +231,12 @@ class AdvancedVortexClassifier:
         e_par_frac = e_par / e_total
 
         total_amp = np.sqrt(np.abs(dmx) ** 2 + np.abs(dmy) ** 2 + np.abs(dmz) ** 2)
-        radii_px, radial_profile = self._radial_profile(total_amp, core, bins=self.config.nbins_radial)
+        radii_px, radial_profile = self._radial_profile(
+            total_amp,
+            core,
+            bins=self.config.nbins_radial,
+            valid_mask=material_mask,
+        )
         if np.all(np.isnan(radial_profile)):
             r_star_px = 0.35 * min(nx, ny)
             radial_nodes = []
@@ -194,11 +244,17 @@ class AdvancedVortexClassifier:
             max_idx = int(np.nanargmax(radial_profile))
             r_star_px = float(radii_px[max_idx])
             profile_norm = radial_profile / max(float(np.nanmax(radial_profile)), 1e-30)
-            minima = np.where(
-                (profile_norm[1:-1] < profile_norm[:-2])
-                & (profile_norm[1:-1] < profile_norm[2:])
-                & (profile_norm[1:-1] < (1.0 - float(self.config.node_amplitude_threshold)))
-            )[0] + 1
+            minima = (
+                np.where(
+                    (profile_norm[1:-1] < profile_norm[:-2])
+                    & (profile_norm[1:-1] < profile_norm[2:])
+                    & (
+                        profile_norm[1:-1]
+                        < (1.0 - float(self.config.node_amplitude_threshold))
+                    )
+                )[0]
+                + 1
+            )
             radial_nodes = [float(radii_px[i]) for i in minima]
 
         width_px = max(float(self.config.ring_thickness_factor) * min(nx, ny), 1.0)
@@ -208,21 +264,26 @@ class AdvancedVortexClassifier:
             core,
             radius=r_star_px,
             width=width_px,
+            valid_mask=material_mask,
         )
         rotation = "CCW" if m_idx >= 0 else "CW"
 
         in_plane_amp = np.sqrt(np.abs(dmx) ** 2 + np.abs(dmy) ** 2)
         amp_thr = float(np.max(in_plane_amp)) * 0.1 if in_plane_amp.size else 0.0
-        mask_ip = in_plane_amp >= amp_thr
+        mask_ip = material_mask & (in_plane_amp > 0.0) & (in_plane_amp >= amp_thr)
         if np.any(mask_ip):
             phase_diff = _wrap_to_pi(np.angle(dmy[mask_ip]) - np.angle(dmx[mask_ip]))
-            delta_phi_xy, phase_coh = _circular_mean(phase_diff, weights=in_plane_amp[mask_ip])
+            delta_phi_xy, phase_coh = _circular_mean(
+                phase_diff, weights=in_plane_amp[mask_ip]
+            )
         else:
             delta_phi_xy, phase_coh = float("nan"), 0.0
 
         yy, xx = np.indices((ny, nx))
         r = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
         ring_mask = np.abs(r - r_star_px) <= width_px
+        ring_mask &= material_mask
+        ring_mask &= np.abs(dmz) > 0.0
         if np.any(ring_mask):
             phi_mz = np.angle(dmz[ring_mask])
             std_phi_mz = float(np.nanstd(_wrap_to_pi(phi_mz - np.nanmean(phi_mz))))
@@ -239,9 +300,16 @@ class AdvancedVortexClassifier:
 
         perp_frac = e_perp / e_total
         notes: list[str] = []
-        if abs(m_idx) == 1 and e_par_frac >= self.config.eta_parallel_for_gyr and dist_quad <= self.config.tol_phi_quadrature:
+        if (
+            abs(m_idx) == 1
+            and e_par_frac >= self.config.eta_parallel_for_gyr
+            and dist_quad <= self.config.tol_phi_quadrature
+        ):
             mode_type = "gyration"
-        elif perp_frac >= self.config.eta_perp_for_breath and std_phi_mz <= self.config.std_phi_mz_for_breath:
+        elif (
+            perp_frac >= self.config.eta_perp_for_breath
+            and std_phi_mz <= self.config.std_phi_mz_for_breath
+        ):
             mode_type = "breathing"
         else:
             mode_type = "azimuthal"
@@ -274,8 +342,12 @@ class AdvancedVortexClassifier:
             E_perp=float(e_perp),
             E_parallel_frac=float(e_par_frac),
             delta_phi_xy=float(delta_phi_xy) if np.isfinite(delta_phi_xy) else 0.0,
-            dist_to_quadrature=float(dist_quad) if np.isfinite(dist_quad) else float("inf"),
-            std_phi_mz_on_ring=float(std_phi_mz) if np.isfinite(std_phi_mz) else float("inf"),
+            dist_to_quadrature=float(dist_quad)
+            if np.isfinite(dist_quad)
+            else float("inf"),
+            std_phi_mz_on_ring=float(std_phi_mz)
+            if np.isfinite(std_phi_mz)
+            else float("inf"),
             phase_coherence_xy=float(phase_coh),
             core_orbit_radius=float(core_orbit),
             gyration_frequency=float(frequency) if mode_type == "gyration" else None,

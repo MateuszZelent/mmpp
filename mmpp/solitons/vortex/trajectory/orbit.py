@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from ..core.models import TrajectoryResult
 from .models import OrbitFitResult
 
@@ -14,7 +15,10 @@ def fit_orbit_ellipse(trajectory: TrajectoryResult) -> OrbitFitResult:
     y = np.asarray(trajectory.y, dtype=float)
 
     if x.size < 3:
-        center = (float(np.mean(x)) if x.size else 0.0, float(np.mean(y)) if y.size else 0.0)
+        center = (
+            float(np.mean(x)) if x.size else 0.0,
+            float(np.mean(y)) if y.size else 0.0,
+        )
         return OrbitFitResult(
             center=center,
             semi_major=0.0,
@@ -74,8 +78,11 @@ def fit_orbit_ellipse(trajectory: TrajectoryResult) -> OrbitFitResult:
     )
 
 
-class OrbitInterface:
+class OrbitInterface(InteractiveNodeMixin):
     """Fluent orbit API hanging off :class:`TrajectoryInterface`."""
+
+    _interactive_owner = "job[0].vortex.trajectory.orbit"
+    _interactive_nodes = frozenset({"fit"})
 
     def __init__(self, trajectory_interface):
         self._trajectory_interface = trajectory_interface

@@ -6,10 +6,10 @@ APIs; notebook rendering can be layered on top by calling :meth:`show`.
 """
 
 import json
-from html import escape
 from dataclasses import dataclass, field
+from html import escape
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from ._json import json_safe
 
@@ -90,7 +90,7 @@ def split_dispersion_interactive_kwargs(
 def _normalize_analytical_options(
     analytical: Any = None,
     analitical: Any = None,
-    options: Optional[dict[str, Any]] = None,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Collect analytical-overlay options into one serializable state block."""
     overlay: dict[str, Any] = {}
@@ -118,16 +118,16 @@ def _normalize_analytical_options(
 
 def _normalize_interactive_options(
     *,
-    components: Optional[list[str]] = None,
-    mode_components: Optional[list[str]] = None,
-    spectrum_components: Optional[list[str]] = None,
-    animate: Optional[bool] = None,
-    auto_animate: Optional[bool] = None,
+    components: list[str] | None = None,
+    mode_components: list[str] | None = None,
+    spectrum_components: list[str] | None = None,
+    animate: bool | None = None,
+    auto_animate: bool | None = None,
     modes: Any = "auto",
     analytical: Any = None,
     analitical: Any = None,
     **kwargs: Any,
-) -> tuple[Optional[list[str]], Optional[list[str]], Any, dict[str, Any], dict[str, Any]]:
+) -> tuple[list[str] | None, list[str] | None, Any, dict[str, Any], dict[str, Any]]:
     """Normalize compatibility aliases used by spectrum/modes notebooks."""
     if components is not None:
         if mode_components is None:
@@ -157,10 +157,9 @@ def _normalize_interactive_options(
 
 def normalize_dispersion_interactive_options(
     **kwargs: Any,
-) -> tuple[Optional[list[str]], Optional[list[str]], Any, dict[str, Any], dict[str, Any]]:
+) -> tuple[list[str] | None, list[str] | None, Any, dict[str, Any], dict[str, Any]]:
     """Public wrapper for shared dispersion interactive option normalization."""
     return _normalize_interactive_options(**kwargs)
-
 
 
 @dataclass
@@ -170,8 +169,8 @@ class DispersionInteractiveViewer:
     result: "DispersionResult1D"
     show_requested: bool = True
     modes: Any = "auto"
-    mode_components: Optional[list[str]] = None
-    spectrum_components: Optional[list[str]] = None
+    mode_components: list[str] | None = None
+    spectrum_components: list[str] | None = None
     can_reconstruct_modes: bool = False
     mode_unavailable_reason: str = ""
     analytical: dict[str, Any] = field(default_factory=dict)
@@ -191,13 +190,13 @@ class DispersionInteractiveViewer:
         result: "DispersionResult1D",
         *,
         show: bool = True,
-        can_reconstruct_modes: Optional[bool] = None,
+        can_reconstruct_modes: bool | None = None,
         mode_unavailable_reason: str = "",
-        components: Optional[list[str]] = None,
-        mode_components: Optional[list[str]] = None,
-        spectrum_components: Optional[list[str]] = None,
-        animate: Optional[bool] = None,
-        auto_animate: Optional[bool] = None,
+        components: list[str] | None = None,
+        mode_components: list[str] | None = None,
+        spectrum_components: list[str] | None = None,
+        animate: bool | None = None,
+        auto_animate: bool | None = None,
         modes: Any = "auto",
         analytical: Any = None,
         analitical: Any = None,
@@ -256,7 +255,7 @@ class DispersionInteractiveViewer:
             # synchronously before the widget shell is visible.  Always build a
             # lightweight toolbar first, display it, then perform the optional
             # first render exactly once from ``_render_widget_after_display``.
-            initial_render = bool(self.options.get("initial_render", True))
+            bool(self.options.get("initial_render", True))
             widget = self._build_widget(
                 display,
                 defer_initial_render=True,
@@ -266,7 +265,9 @@ class DispersionInteractiveViewer:
             self._widget_error = f"{type(exc).__name__}: {exc}"
             self._close_widget_state()
             widget = None
-        self._display_handle = display(widget if widget is not None else self, display_id=True)
+        self._display_handle = display(
+            widget if widget is not None else self, display_id=True
+        )
         if widget is not None and bool(self.options.get("initial_render", True)):
             self._render_widget_after_display()
         return self
@@ -324,7 +325,11 @@ class DispersionInteractiveViewer:
             "mode_unavailable_reason": self.mode_unavailable_reason,
             "analytical": json_safe(self.analytical),
             "live_filters": json_safe(
-                getattr(getattr(getattr(self, "_widget_engine", None), "state", None), "live_filters", None)
+                getattr(
+                    getattr(getattr(self, "_widget_engine", None), "state", None),
+                    "live_filters",
+                    None,
+                )
                 if getattr(self, "_widget_engine", None) is not None
                 else self.options.get("live_filters")
             ),
@@ -337,7 +342,9 @@ class DispersionInteractiveViewer:
 
     def diagnostics(self) -> dict[str, Any]:
         """Return runtime diagnostics for notebook/backend troubleshooting."""
-        if self._widget_engine is not None and hasattr(self._widget_engine, "diagnostics"):
+        if self._widget_engine is not None and hasattr(
+            self._widget_engine, "diagnostics"
+        ):
             return json_safe(self._widget_engine.diagnostics())
         return {
             "toolbar_enabled": False,
@@ -363,7 +370,9 @@ class DispersionInteractiveViewer:
         selection_payload = self._normalized_selection(selection)
         mode_request = self._mode_request(selection_payload)
         if not mode_request.get("available", False):
-            raise ValueError(str(mode_request.get("reason") or "Mode selection unavailable."))
+            raise ValueError(
+                str(mode_request.get("reason") or "Mode selection unavailable.")
+            )
         return self.result.modes.at(
             k_rad_um=float(mode_request["k_rad_um"]),
             f_ghz=float(mode_request["f_ghz"]),
@@ -489,9 +498,7 @@ class DispersionInteractiveViewer:
         if not self.show_requested and self._widget_status == "not-shown":
             notes_html = ""
             if notes:
-                rows = "".join(
-                    f"<li>{escape(str(note))}</li>" for note in notes[:3]
-                )
+                rows = "".join(f"<li>{escape(str(note))}</li>" for note in notes[:3])
                 notes_html = (
                     "<ul style='margin:4px 0 0 16px;padding:0;color:#64748b;'>"
                     f"{rows}</ul>"
@@ -508,8 +515,10 @@ class DispersionInteractiveViewer:
                 f"component={escape(str(getattr(self.result, 'component', '?')))}"
                 "</div>"
                 "<div style='margin-top:4px;color:#64748b;'>"
+                "Lightweight status view. "
                 "Use <code>viewer.show()</code> to display the toolbar, or inspect "
                 "<code>viewer.state</code> for a JSON-friendly snapshot."
+                f" {'For mode reconstruction, call with store_complex=True.' if not self.can_reconstruct_modes else 'Mode reconstruction is available.'}"
                 "</div>"
                 f"{notes_html}"
                 "</div>"
@@ -523,7 +532,11 @@ class DispersionInteractiveViewer:
             [
                 ("status", status, NODE_COLOR_PLOT),
                 ("axis", getattr(self.result, "axis", "?"), NODE_COLOR_ANALYSIS),
-                ("component", getattr(self.result, "component", "?"), NODE_COLOR_ANALYSIS),
+                (
+                    "component",
+                    getattr(self.result, "component", "?"),
+                    NODE_COLOR_ANALYSIS,
+                ),
                 ("widget", self._widget_status, NODE_COLOR_UTIL),
             ]
         )
@@ -562,7 +575,14 @@ class DispersionInteractiveViewer:
             self,
             title="Dispersion interactive viewer API help",
             prefix="viewer",
-            methods=["show", "close", "diagnostics", "export_selection", "save_preset", "load_preset"],
+            methods=[
+                "show",
+                "close",
+                "diagnostics",
+                "export_selection",
+                "save_preset",
+                "load_preset",
+            ],
             subtitle="Live controller returned by dispersion.plot.interactive().",
             chrome=False,
         )

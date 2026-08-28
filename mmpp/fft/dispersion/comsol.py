@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import numpy as np
 
@@ -83,7 +83,9 @@ def _parse_token(token: str, *, return_complex: bool = False) -> float | complex
             return float("nan")
 
 
-def _column_to_array(matrix: list[list[str]], idx: int, *, return_complex: bool = False) -> np.ndarray:
+def _column_to_array(
+    matrix: list[list[str]], idx: int, *, return_complex: bool = False
+) -> np.ndarray:
     values: list[float | complex] = []
     for row in matrix:
         if idx >= len(row):
@@ -171,7 +173,9 @@ def read_data_from_comsol(
     for label, array in (("k", k_values), ("f", f_values)):
         nan_count = int(np.isnan(np.asarray(array)).sum())
         if nan_count:
-            logger.warning("COMSOL column '%s' contains %d NaN entries", label, nan_count)
+            logger.warning(
+                "COMSOL column '%s' contains %d NaN entries", label, nan_count
+            )
 
     return ComsolDispersionData(
         k_values=np.asarray(k_values, dtype=float),

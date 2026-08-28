@@ -1,0 +1,1408 @@
+"""
+Batch operations module for MMPP - enables serial computation across multiple simulation results.
+
+This module provides the BatchOperations class that allows for executing FFT computations,
+mode analysis, and other operations across entire directories of simulation results using
+slice notation like `op[:].fft.modes.compute_modes()` (auto-selects optimal dataset).
+"""
+
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import zarr
+
+from .cli.logging_config import get_mmpp_logger
+
+if TYPE_CHECKING:
+    from .fft.spectrum_batch import BatchSpectrum
+    from .fft.transmission.batch import BatchTransmission
+
+# Get logger for batch operations
+log = get_mmpp_logger("mmpp.batch")
+
+FFT_AVAILABLE: bool | None = None
+_FFT_IMPORT_ERROR: ImportError | None = None
+
+
+def _resolve_fft_class(context: str = "batch operations") -> Any:
+    """Import FFT lazily so single-result imports do not emit batch warnings."""
+    global FFT_AVAILABLE, _FFT_IMPORT_ERROR
+    try:
+        from .fft import FFT
+    except ImportError as exc:
+        FFT_AVAILABLE = False
+        _FFT_IMPORT_ERROR = exc
+        raise ImportError(f"FFT functionality not available for {context}") from exc
+    FFT_AVAILABLE = True
+    _FFT_IMPORT_ERROR = None
+    return FFT
+
+
+class BatchFFT:
+    """Batch FFT operations handler."""
+
+    def __init__(self, results: list[Any], mmpp_ref: Any):
+        """
+        Initialize batch FFT operations.
+
+        Parameters:
+        -----------
+        results : List[Any]
+            List of ZarrJobResult objects
+        mmpp_ref : Any
+            Reference to MMPP instance
+        """
+        self.results = results
+        self.mmpp_ref = mmpp_ref
+        self._dataset_name: str | None = None
+        self._slice_info: Any | None = None
+
+    @property
+    def modes(self) -> "BatchModeAnalyzer":
+        """Get batch mode analyzer."""
+        return BatchModeAnalyzer(self.results, self.mmpp_ref)
+
+    @property
+    def transmission(self) -> "BatchTransmission":
+        """Get batch transmission analyzer."""
+        from .fft.transmission.batch import BatchTransmission
+
+        # Check if dataset context was set (from BatchDatasetWrapper)
+        dataset_name = getattr(self, "_dataset_name", None)
+        slice_info = getattr(self, "_slice_info", None)
+
+        return BatchTransmission(
+            self.results,
+            self.mmpp_ref,
+            dataset_name=dataset_name,
+            slice_info=slice_info,
+        )
+
+    @property
+    def spectrum(self) -> "BatchSpectrum":
+        """Get batch spectrum analyzer.
+
+        Returns batch spectrum processor for computing FFT spectra
+        across multiple simulation results.
+
+        Returns
+        -------
+        BatchSpectrum
+            Batch spectrum processor
+
+        Examples
+        --------
+        >>> # Compute batch spectrum
+        >>> batch = job[:].fft.spectrum.compute_all(
+        ...     extract_parameters=["B0", "d"],
+        ...     fmin=5e9,
+        ...     fmax=25e9,
+        ... )
+        >>> batch.plot_heatmap("B0")
+        """
+        from .fft.spectrum_batch import BatchSpectrum
+
+        dataset_name = getattr(self, "_dataset_name", None)
+        slice_info = getattr(self, "_slice_info", None)
+
+        return BatchSpectrum(
+            self.results,
+            self.mmpp_ref,
+            dataset_name=dataset_name,
+            slice_info=slice_info,
+        )
+
+    @property
+    def jobs(self) -> list[SimpleNamespace]:
+        """Compatibility view exposing selected batch results as job records."""
+        all_results = list(getattr(self.mmpp_ref, "zarr_results", []) or [])
+        records: list[SimpleNamespace] = []
+        for fallback_index, result in enumerate(self.results):
+            try:
+                index = all_results.index(result)
+            except ValueError:
+                index = fallback_index
+            records.append(
+                SimpleNamespace(
+                    index=index,
+                    path=getattr(result, "path", None),
+                    attrs=getattr(result, "attrs", {}),
+                    result=result,
+                )
+            )
+        return records
+
+    def compute_all(self, **kwargs) -> dict[str, Any]:
+        """
+        Compute FFT for all results in batch.
+
+        Parameters:
+        -----------
+        **kwargs : dict
+            Arguments to pass to FFT computation
+
+        Returns:
+        --------
+        Dict[str, Any]
+            Summary of batch FFT computation results
+        """
+        FFT = _resolve_fft_class("batch operations")
+
+        log.info(f"Starting batch FFT computation for {len(self.results)} results")
+
+        successful = 0
+        failed = 0
+        errors = []
+
+        for i, result in enumerate(self.results):
+            try:
+                log.debug(
+                    f"Computing FFT for result {i + 1}/{len(self.results)}: {result.path}"
+                )
+                fft_analyzer = FFT(result, self.mmpp_ref)
+                fft_analyzer._compute_fft(**kwargs)
+                successful += 1
+
+            except Exception as e:
+                log.error(f"Failed to compute FFT for {result.path}: {e}")
+                failed += 1
+                errors.append({"path": result.path, "error": str(e)})
+
+        summary = {
+            "total": len(self.results),
+            "successful": successful,
+            "failed": failed,
+            "errors": errors,
+        }
+
+        log.info(
+            f"Batch FFT computation completed: {successful} successful, {failed} failed"
+        )
+        return summary
+
+    def __repr__(self) -> str:
+        return f"BatchFFT({len(self.results)} results)"
+
+    def _repr_html_(self) -> str:
+        """Return rich HTML representation for Jupyter notebooks."""
+        import uuid as _uuid
+
+        n = len(self.results)
+        uid = str(_uuid.uuid4())[:8]
+
+        # ── header ──────────────────────────────────────────────
+        html = (
+            '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
+            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
+            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
+            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
+            '0 0 0 1px rgba(148,163,184,0.1) inset;">'
+        )
+        html += (
+            '<h3 style="margin:0 0 12px 0;color:#f1f5f9;font-weight:600;'
+            'letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);">'
+            f"🔬 Batch FFT Interface &nbsp;"
+            f'<span style="color:#60a5fa;font-weight:700;">{n}</span>'
+            f'<span style="color:#cbd5e1;font-weight:400;font-size:0.9em;"> result{"s" if n != 1 else ""}</span>'
+            "</h3>"
+        )
+
+        # ── info section ────────────────────────────────────────
+        html += (
+            '<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
+            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;margin-bottom:12px;"
+            'border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);">'
+        )
+        if n > 0:
+            first_name = self.results[0].path.split("/")[-1]
+            last_name = self.results[-1].path.split("/")[-1]
+            html += (
+                f'<span style="color:#94a3b8;">Results:</span> '
+                f'<code style="background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;'
+                f"font-family:'Courier New',monospace;font-size:0.9em;color:#cbd5e1;"
+                f'border:1px solid rgba(71,85,105,0.3);">{first_name}</code>'
+            )
+            if n > 1:
+                html += (
+                    f' <span style="color:#64748b;">→</span> '
+                    f'<code style="background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;'
+                    f"font-family:'Courier New',monospace;font-size:0.9em;color:#cbd5e1;"
+                    f'border:1px solid rgba(71,85,105,0.3);">{last_name}</code>'
+                )
+        else:
+            html += '<span style="color:#fbbf24;">⚠️ Empty batch – no results.</span>'
+        html += "</div>"
+
+        # ── available operations ────────────────────────────────
+        groups = [
+            (
+                "Spectrum",
+                [
+                    (
+                        "job[:].fft.spectrum.compute_all(…)",
+                        "Compute spectra for all jobs → BatchSpectrumResult",
+                    ),
+                    ("batch.plot.heatmap('B0')", "2D heatmap vs swept parameter"),
+                ],
+            ),
+            (
+                "Modes",
+                [
+                    ("job[:].fft.modes.compute_modes()", "Batch FMR mode detection"),
+                    ("job[:].fft.modes.analyze_all()", "Analyze peaks across all jobs"),
+                ],
+            ),
+            (
+                "Transmission",
+                [
+                    (
+                        "job[:].m[…].fft.transmission.compute_all(…)",
+                        "Batch transmission analysis",
+                    ),
+                ],
+            ),
+            (
+                "General",
+                [
+                    ("job[:].fft.compute_all()", "Run raw FFT on all jobs"),
+                ],
+            ),
+        ]
+
+        section_style = (
+            "padding:5px 8px;font-weight:600;color:#f1f5f9;"
+            "background:rgba(51,65,85,0.8);text-align:left;"
+        )
+
+        html += (
+            '<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
+            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;margin-bottom:12px;"
+            'border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);">'
+            '<b style="color:#94a3b8;">🔧 Available Operations:</b>'
+            '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;">'
+        )
+        for group_name, methods in groups:
+            html += (
+                f'<tr><td colspan="2" style="{section_style}">{group_name}</td></tr>'
+            )
+            for code, desc in methods:
+                html += (
+                    '<tr style="border-bottom:1px solid rgba(71,85,105,0.3);">'
+                    f'<td style="padding:5px 8px 5px 16px;">'
+                    f'<code style="background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;'
+                    f'color:#93c5fd;border:1px solid rgba(71,85,105,0.3);font-weight:500;">{code}</code></td>'
+                    f'<td style="padding:5px 8px;color:#cbd5e1;">{desc}</td></tr>'
+                )
+        html += "</table></div>"
+
+        # ── quick-start examples (collapsible) ──────────────────
+        example_id = f"batch-fft-ex-{uid}"
+        html += (
+            f'<div style="margin-top:4px;">'
+            f"<span onclick=\"var e=document.getElementById('{example_id}');"
+            f"e.style.display=e.style.display==='none'?'block':'none';\""
+            f' style="cursor:pointer;color:#60a5fa;font-size:0.9em;">'
+            f"▶ Quick-start examples</span>"
+            f'<div id="{example_id}" style="display:none;margin-top:8px;">'
+            f'<pre style="background:rgba(15,23,42,0.8);padding:10px;border-radius:6px;'
+            f"font-family:'Courier New',monospace;font-size:0.85em;color:#10b981;"
+            f'border:1px solid rgba(71,85,105,0.4);overflow-x:auto;">'
+            "# Batch spectrum computation\n"
+            "batch = job[:].fft.spectrum.compute_all(\n"
+            '    extract_parameters=["B0", "d"],\n'
+            "    fmin=5e9, fmax=25e9,\n"
+            ")\n"
+            'batch.plot.heatmap("B0")\n\n'
+            "# Batch mode computation\n"
+            "job[:].fft.modes.compute_modes()\n\n"
+            "# Dataset-aware batch transmission\n"
+            "job[:].m_layer13[:200,...,0].fft.transmission.compute_all()"
+            "</pre></div></div>"
+        )
+
+        html += "</div>"
+        return html
+
+
+class BatchModeAnalyzer:
+    """Batch mode analysis operations handler."""
+
+    def __init__(self, results: list[Any], mmpp_ref: Any):
+        """
+        Initialize batch mode analyzer.
+
+        Parameters:
+        -----------
+        results : List[Any]
+            List of ZarrJobResult objects
+        mmpp_ref : Any
+            Reference to MMPP instance
+        """
+        self.results = results
+        self.mmpp_ref = mmpp_ref
+
+    def compute_modes(
+        self,
+        dset: str | None = None,
+        parallel: bool = True,
+        max_workers: int | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """
+        Compute FMR modes for all results in batch.
+
+        Parameters:
+        -----------
+        dset : str, default=None
+            Dataset name to analyze (default: auto-select largest m dataset)
+        parallel : bool, default=True
+            Whether to use parallel processing
+        max_workers : Optional[int]
+            Maximum number of worker threads (None for auto)
+        **kwargs : dict
+            Additional arguments to pass to mode computation
+
+        Returns:
+        --------
+        Dict[str, Any]
+            Summary of batch mode computation results
+        """
+        FFT = _resolve_fft_class("mode analysis")
+
+        # Auto-select largest m dataset if none specified
+        if dset is None and self.results:
+            dset = self.results[0].get_largest_m_dataset()
+
+        log.info(f"Starting batch mode computation for {len(self.results)} results")
+        log.info(f"Dataset: {dset}, Parallel: {parallel}")
+
+        successful = 0
+        failed = 0
+        errors = []
+        computation_times = []
+
+        def compute_single_result(result_info):
+            """Compute modes for a single result."""
+            i, result = result_info
+            start_time = time.time()
+
+            try:
+                log.debug(
+                    f"Computing modes for result {i + 1}/{len(self.results)}: {result.path}"
+                )
+
+                # Get FFT analyzer for this result
+                fft_analyzer = FFT(result, self.mmpp_ref)
+
+                # Check if modes already exist
+                modes_analyzer = fft_analyzer.modes
+                if not modes_analyzer.modes_available:
+                    # Compute modes if they don't exist
+                    modes_analyzer.compute_modes(dset=dset, **kwargs)
+                    log.debug(f"Computed new modes for {result.path}")
+                else:
+                    log.debug(f"Modes already available for {result.path}")
+
+                computation_time = time.time() - start_time
+                return {
+                    "success": True,
+                    "path": result.path,
+                    "computation_time": computation_time,
+                    "error": None,
+                }
+
+            except Exception as e:
+                computation_time = time.time() - start_time
+                log.error(f"Failed to compute modes for {result.path}: {e}")
+                return {
+                    "success": False,
+                    "path": result.path,
+                    "computation_time": computation_time,
+                    "error": str(e),
+                }
+
+        # Execute computations
+        iterator: Any
+        if parallel and len(self.results) > 1:
+            # Parallel execution
+            if max_workers is None:
+                max_workers = min(len(self.results), 4)  # Reasonable default
+
+            log.info(f"Using parallel execution with {max_workers} workers")
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks
+                future_to_result = {
+                    executor.submit(compute_single_result, (i, result)): result
+                    for i, result in enumerate(self.results)
+                }
+
+                # Process completed tasks with progress bar
+                try:
+                    from tqdm import tqdm
+
+                    from mmpp.core.mmpp import _running_in_ipython_kernel
+
+                    if _running_in_ipython_kernel():
+                        iterator = as_completed(future_to_result)
+                    else:
+                        iterator = tqdm(
+                            as_completed(future_to_result),
+                            total=len(self.results),
+                            desc="Computing modes",
+                            unit="result",
+                        )
+                except ImportError:
+                    iterator = as_completed(future_to_result)
+
+                for future in iterator:
+                    result_data = future.result()
+                    computation_times.append(result_data["computation_time"])
+
+                    if result_data["success"]:
+                        successful += 1
+                    else:
+                        failed += 1
+                        errors.append(
+                            {"path": result_data["path"], "error": result_data["error"]}
+                        )
+        else:
+            # Sequential execution
+            log.info("Using sequential execution")
+
+            try:
+                from tqdm import tqdm
+
+                from mmpp.core.mmpp import _running_in_ipython_kernel
+
+                if _running_in_ipython_kernel():
+                    iterator = enumerate(self.results)
+                else:
+                    iterator = tqdm(
+                        enumerate(self.results),
+                        total=len(self.results),
+                        desc="Computing modes",
+                        unit="result",
+                    )
+            except ImportError:
+                iterator = enumerate(self.results)
+
+            for i, result in iterator:
+                result_data = compute_single_result((i, result))
+                computation_times.append(result_data["computation_time"])
+
+                if result_data["success"]:
+                    successful += 1
+                else:
+                    failed += 1
+                    errors.append(
+                        {"path": result_data["path"], "error": result_data["error"]}
+                    )
+
+        # Compute statistics
+        avg_time = np.mean(computation_times) if computation_times else 0
+        total_time = sum(computation_times)
+
+        summary = {
+            "total": len(self.results),
+            "successful": successful,
+            "failed": failed,
+            "errors": errors,
+            "dataset": dset,
+            "parallel": parallel,
+            "max_workers": max_workers if parallel else 1,
+            "total_time": total_time,
+            "average_time_per_result": avg_time,
+            "computation_times": computation_times,
+        }
+
+        log.info(
+            f"Batch mode computation completed: {successful} successful, {failed} failed"
+        )
+        log.info(f"Total time: {total_time:.2f}s, Average per result: {avg_time:.2f}s")
+
+        return summary
+
+    def analyze_all(self, **kwargs) -> dict[str, Any]:
+        """
+        Analyze all modes for all results in batch.
+
+        Parameters:
+        -----------
+        **kwargs : dict
+            Arguments to pass to mode analysis
+
+        Returns:
+        --------
+        Dict[str, Any]
+            Summary of batch mode analysis results
+        """
+        FFT = _resolve_fft_class("mode analysis")
+
+        log.info(f"Starting batch mode analysis for {len(self.results)} results")
+
+        successful = 0
+        failed = 0
+        errors = []
+        all_peaks = []
+
+        for i, result in enumerate(self.results):
+            try:
+                log.debug(
+                    f"Analyzing modes for result {i + 1}/{len(self.results)}: {result.path}"
+                )
+
+                fft_analyzer = FFT(result, self.mmpp_ref)
+                modes_analyzer = fft_analyzer.modes
+
+                # Ensure modes are computed
+                if not modes_analyzer.modes_available:
+                    modes_analyzer.compute_modes()
+
+                # Analyze peaks
+                peaks = modes_analyzer.analyze_all(**kwargs)
+                all_peaks.append({"path": result.path, "peaks": peaks})
+                successful += 1
+
+            except Exception as e:
+                log.error(f"Failed to analyze modes for {result.path}: {e}")
+                failed += 1
+                errors.append({"path": result.path, "error": str(e)})
+
+        summary = {
+            "total": len(self.results),
+            "successful": successful,
+            "failed": failed,
+            "errors": errors,
+            "all_peaks": all_peaks,
+        }
+
+        log.info(
+            f"Batch mode analysis completed: {successful} successful, {failed} failed"
+        )
+        return summary
+
+
+class BatchDatasetWrapper:
+    """Wrapper for dataset-aware batch operations.
+
+    Allows syntax like: job[:].m_layer13[:,...,0].fft.transmission(...)
+    """
+
+    def __init__(self, results: list[Any], mmpp_ref: Any, dataset_name: str):
+        """Initialize dataset wrapper.
+
+        Parameters
+        ----------
+        results : List[Any]
+            List of ZarrJobResult objects
+        mmpp_ref : Any
+            Reference to MMPP instance
+        dataset_name : str
+            Name of the dataset (e.g., 'm_layer13')
+        """
+        self.results = results
+        self.mmpp_ref = mmpp_ref
+        self.dataset_name = dataset_name
+        self.slice_info = None
+        self._index_plan = None  # IndexPlan for proper slice composition
+
+    def __getitem__(self, key):
+        """Capture slice information using proper IndexPlan composition.
+
+        This ensures that chained indexing like ``m[0:100][::2]`` composes
+        correctly into ``m[0:100:2]`` rather than producing a multi-axis index.
+        """
+        from .core.dataset_geometry import make_index_plan
+
+        new = BatchDatasetWrapper(self.results, self.mmpp_ref, self.dataset_name)
+        new._index_plan = self._index_plan  # carry forward existing plan
+
+        # Determine current shape from first result so we can build IndexPlan
+        source_shape: tuple | None = None
+        if self.results:
+            try:
+                first = self.results[0]
+                first._ensure_zarr_loaded()
+                member = first._get_zarr_member(self.dataset_name)
+                base_shape = tuple(int(v) for v in getattr(member, "shape", ()))
+                if self._index_plan is not None:
+                    source_shape = self._index_plan.analysis_shape
+                else:
+                    source_shape = base_shape
+            except Exception:
+                source_shape = None
+
+        if source_shape is not None:
+            new_plan = make_index_plan(
+                key, source_shape, previous_plan=self._index_plan
+            )
+            new._index_plan = new_plan
+            new.slice_info = new_plan.storage_key
+        else:
+            # Fallback: can't determine shape, use key as-is
+            new.slice_info = key
+
+        return new
+
+    @property
+    def fft(self) -> BatchFFT:
+        """Get batch FFT operations with dataset context."""
+        # Create a BatchFFT instance with dataset context
+        # The transmission property will use this context
+        batch_fft = BatchFFT(self.results, self.mmpp_ref)
+        # Store dataset context on the batch_fft instance
+        batch_fft._dataset_name = self.dataset_name
+        batch_fft._slice_info = self.slice_info
+        return batch_fft
+
+    def _repr_html_(self) -> str:
+        """HTML card for Jupyter notebooks."""
+        from html import escape as _esc
+
+        n = len(self.results)
+        slice_str = (
+            f"<code style='font-size:11px'>{_esc(str(self.slice_info))}</code>"
+            if self.slice_info is not None
+            else "<span style='color:#64748b'>none</span>"
+        )
+        accessors_html = (
+            "<details style='margin-top:8px'>"
+            "<summary style='cursor:pointer;font-weight:bold;color:#cbd5e1;"
+            "letter-spacing:.04em;font-size:12px'>ACCESSORS &amp; METHODS</summary>"
+            "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px'>"
+            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
+            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Data extraction</div>"
+            "<div style='display:flex;flex-direction:column;gap:2px'>"
+            "<code style='color:#38bdf8'>[:]</code><span style='color:#64748b;font-size:10px'>&nbsp;stacked numpy array</span>"
+            "<code style='color:#38bdf8'>[0:100, ..., 0]</code><span style='color:#64748b;font-size:10px'>&nbsp;sliced batch</span>"
+            "</div></div>"
+            "<div style='background:#1e293b;border-radius:4px;padding:6px 10px;min-width:150px'>"
+            "<div style='color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Analysis</div>"
+            "<div style='display:flex;flex-direction:column;gap:2px'>"
+            "<code style='color:#34d399'>.fft</code><span style='color:#64748b;font-size:10px'>&nbsp;batch FFT</span>"
+            "<code style='color:#34d399'>.fft.spectrum()</code><span style='color:#64748b;font-size:10px'>&nbsp;compute spectra</span>"
+            "</div></div>"
+            "</div></details>"
+        )
+        return (
+            "<div style='border:1px solid #334155;padding:12px 14px;border-radius:8px;"
+            "font-family:monospace;display:inline-block;max-width:760px;"
+            "background:#0f172a;color:#e2e8f0'>"
+            f"<div style='font-size:13px;margin-bottom:8px'>"
+            f"<b style='color:#7dd3fc'>BatchDatasetWrapper</b>"
+            f"&nbsp;&mdash;&nbsp;<code style='color:#f8fafc'>{_esc(self.dataset_name)}</code>"
+            f"&nbsp;&nbsp;<span style='background:#334155;color:#e2e8f0;"
+            f"padding:1px 6px;border-radius:10px;font-size:10px'>{n} jobs</span>"
+            "</div>"
+            "<table style='border-collapse:collapse;font-size:12px;margin-bottom:2px'>"
+            f"<tr><td style='color:#94a3b8;padding-right:14px'>jobs</td><td>{n}</td></tr>"
+            f"<tr><td style='color:#94a3b8;padding-right:14px'>slice</td><td>{slice_str}</td></tr>"
+            "</table>"
+            f"{accessors_html}"
+            "</div>"
+        )
+
+    def __repr__(self) -> str:
+        return f"BatchDatasetWrapper('{self.dataset_name}', {len(self.results)} jobs)"
+
+
+class BatchNumpyDatasetWrapper:
+    """Wrapper that returns stacked numpy arrays from multiple jobs.
+
+    Used by job[:].get.dataset_name[slice] to return 6D numpy arrays
+    with shape [n_jobs, t, z, y, x, c] (or appropriate dimensions based on data).
+
+    Example
+    -------
+    >>> arr = job[:].get.m[:]  # Returns 6D array [n_jobs, t, z, y, x, c]
+    >>> arr = job[:].get.m[0:100, ...]  # Sliced stacked array
+    """
+
+    def __init__(self, results: list, mmpp_ref, dataset_name: str):
+        self._results = results
+        self._mmpp_ref = mmpp_ref
+        self._dataset_name = dataset_name
+
+    def __getitem__(self, key) -> np.ndarray:
+        """Return stacked sliced data as numpy array from all jobs.
+
+        Returns array with shape [n_jobs, ...original_dims...]
+        """
+        arrays = []
+        for result in self._results:
+            result._ensure_zarr_loaded()
+            try:
+                member = result._get_zarr_member(self._dataset_name)
+                arrays.append(np.asarray(member[key]))
+            except (NameError, KeyError) as e:
+                log.warning(
+                    f"Dataset '{self._dataset_name}' not found in {result.path}: {e}"
+                )
+                continue
+
+        if not arrays:
+            raise ValueError(f"Dataset '{self._dataset_name}' not found in any job")
+
+        # Stack all arrays along new first axis [n_jobs, ...]
+        return np.stack(arrays, axis=0)
+
+    @property
+    def shape(self):
+        """Shape of dataset from first result (all should match)."""
+        if self._results:
+            self._results[0]._ensure_zarr_loaded()
+            try:
+                member = self._results[0]._get_zarr_member(self._dataset_name)
+                return (len(self._results),) + member.shape
+            except (NameError, KeyError):
+                pass
+        return None
+
+    def __repr__(self):
+        return f"BatchNumpyDatasetWrapper({self._dataset_name}, n_jobs={len(self._results)}, shape={self.shape})"
+
+
+class BatchNumpyGetter:
+    """Helper providing direct numpy access for batch operations.
+
+    Returns stacked numpy arrays from all jobs with shape [n_jobs, t, z, y, x, c].
+
+    Example
+    -------
+    >>> # Batch access - returns 6D stacked array
+    >>> arr = job[:].get.m[:]  # shape: [n_jobs, t, z, y, x, c]
+    >>> arr = job[:].get.m[0:100, :, :, :, 0]  # sliced stack
+    >>>
+    >>> # Works with any dataset name
+    >>> arr = job[:].get.m_layer13[:]
+    >>> arr = job[:].get["m_layer13"][:]
+    """
+
+    def __init__(self, results: list, mmpp_ref):
+        self._results = results
+        self._mmpp_ref = mmpp_ref
+
+    def __getattr__(self, name: str) -> BatchNumpyDatasetWrapper:
+        """Get BatchNumpyDatasetWrapper for dataset by attribute access."""
+        # Check that at least one result has this dataset
+        for result in self._results:
+            result._ensure_zarr_loaded()
+            if name in result._z:
+                return BatchNumpyDatasetWrapper(self._results, self._mmpp_ref, name)
+        raise AttributeError(f"Dataset '{name}' not found in any job")
+
+    def __getitem__(self, key: str) -> BatchNumpyDatasetWrapper:
+        """Get BatchNumpyDatasetWrapper for dataset by item access."""
+        return self.__getattr__(key)
+
+    def __repr__(self):
+        if self._results:
+            self._results[0]._ensure_zarr_loaded()
+            datasets = list(self._results[0]._z.array_keys())
+            return f"BatchNumpyGetter(n_jobs={len(self._results)}, datasets={datasets[:3]}{'...' if len(datasets) > 3 else ''})"
+        return "BatchNumpyGetter(empty)"
+
+
+class BatchOperations:
+    """
+    Main batch operations class that provides access to batch FFT and mode operations.
+
+    This class is returned when using slice notation on MMPP objects, e.g., `op[:]`.
+    It provides access to batch operations like:
+    - `op[:].fft.modes.compute_modes()` (auto-selects optimal dataset)
+    - `op[:].fft.compute_all()`
+    - `op[:].m_layer13[:,...,0].fft.transmission(...)` (dataset-aware)
+    - `op[:].get.m[:]` (direct numpy access, returns stacked array)
+    """
+
+    def __init__(
+        self, results: list[Any], mmpp_ref: Any, _filter_kwargs: dict | None = None
+    ):
+        """
+        Initialize batch operations.
+
+        Parameters:
+        -----------
+        results : List[Any]
+            List of ZarrJobResult objects to operate on
+        mmpp_ref : Any
+            Reference to parent MMPP instance
+        _filter_kwargs : dict, optional
+            Filter criteria used to produce this batch (from find())
+        """
+        self.results = results
+        self.mmpp_ref = mmpp_ref
+        self._filter_kwargs = _filter_kwargs or {}
+
+        log.info(f"Initialized batch operations for {len(results)} results")
+
+    @property
+    def mpl(self):
+        """Return a plotting helper for the filtered batch results."""
+        from .plotting import MMPPlotter
+
+        return MMPPlotter(self.results, self.mmpp_ref)
+
+    @property
+    def matplotlib(self):
+        """Alias for :attr:`mpl`."""
+        return self.mpl
+
+    @property
+    def jobs(self) -> list[SimpleNamespace]:
+        """Compatibility view exposing selected batch results as job records."""
+        all_results = list(getattr(self.mmpp_ref, "zarr_results", []) or [])
+        records: list[SimpleNamespace] = []
+        for fallback_index, result in enumerate(self.results):
+            try:
+                index = all_results.index(result)
+            except ValueError:
+                index = fallback_index
+            records.append(
+                SimpleNamespace(
+                    index=index,
+                    path=getattr(result, "path", None),
+                    attrs=getattr(result, "attrs", {}),
+                    result=result,
+                )
+            )
+        return records
+
+    def __getitem__(self, index):
+        """Return one result or a sliced batch."""
+        if isinstance(index, slice):
+            sliced_results = self.results[index]
+            if self.mmpp_ref is not None:
+                for res in sliced_results:
+                    setter = getattr(res, "_set_mmpp_ref", None)
+                    if callable(setter):
+                        setter(self.mmpp_ref)
+            return BatchOperations(
+                sliced_results, self.mmpp_ref, _filter_kwargs=self._filter_kwargs
+            )
+
+        result = self.results[index]
+        if self.mmpp_ref is not None:
+            setter = getattr(result, "_set_mmpp_ref", None)
+            if callable(setter):
+                setter(self.mmpp_ref)
+        return result
+
+    @property
+    def fft(self) -> BatchFFT:
+        """Get batch FFT operations handler."""
+        return BatchFFT(self.results, self.mmpp_ref)
+
+    @property
+    def get(self) -> BatchNumpyGetter:
+        """Access datasets with direct numpy output (batch version).
+
+        Returns a BatchNumpyGetter that provides direct stacked numpy array
+        access when slicing datasets. Returns arrays with shape [n_jobs, ...]
+        where the first dimension corresponds to the number of jobs in batch.
+
+        Returns
+        -------
+        BatchNumpyGetter
+            Helper object for numpy-direct batch dataset access
+
+        Example
+        -------
+        >>> # Batch numpy access - returns 6D array [n_jobs, t, z, y, x, c]
+        >>> arr = job[:].get.m[:]
+        >>> arr = job[:].get.m[0:100, :, :, :, 0]
+        >>>
+        >>> # Shape will be [n_jobs, ...original_dims...]
+        >>> arr.shape  # e.g. (10, 443, 1, 94, 7520, 3) for 10 jobs
+        """
+        return BatchNumpyGetter(self.results, self.mmpp_ref)
+
+    @property
+    def solitons(self):
+        """Batch soliton analysis namespace."""
+        from .solitons import BatchSolitonsInterface
+
+        return BatchSolitonsInterface(self.results, self.mmpp_ref)
+
+    @property
+    def vortex(self):
+        """Shortcut alias for ``self.solitons.vortex``."""
+        return self.solitons.vortex
+
+    @property
+    def skyrmion(self):
+        """Shortcut alias for ``self.solitons.skyrmion``."""
+        return self.solitons.skyrmion
+
+    def __getattr__(self, name: str):
+        """Intercept dataset names to enable dataset-aware batch operations.
+
+        This allows syntax like: job[:].m_layer13.fft.transmission(...)
+
+        Parameters
+        ----------
+        name : str
+            Attribute name (potentially a dataset name)
+
+        Returns
+        -------
+        BatchDatasetWrapper
+            Wrapper for dataset-aware operations
+        """
+        # Check if any result has a dataset with this name.
+        for result in self.results:
+            try:
+                result._ensure_zarr_loaded()
+                member = result._z[name]
+                if isinstance(member, zarr.Array):
+                    log.debug(f"Creating dataset wrapper for: {name}")
+                    return BatchDatasetWrapper(self.results, self.mmpp_ref, name)
+            except Exception:
+                continue
+
+        try:
+            plotter = self.mpl
+        except ImportError:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            ) from None
+        try:
+            return getattr(plotter, name)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            ) from exc
+
+        # Not a dataset — raise standard error
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
+
+    def __len__(self) -> int:
+        """Return number of results in batch."""
+        return len(self.results)
+
+    def __repr__(self) -> str:
+        """String representation of batch operations."""
+        return f"BatchOperations({len(self.results)} results)"
+
+    @staticmethod
+    def _fmt_num(value: float) -> str:
+        """Format a number with SI prefix for human readability.
+
+        Examples: 3.89e10 → '38.9G', 1.13e6 → '1.13M', 0.005 → '5m', 42 → '42'
+        """
+        if value == 0:
+            return "0"
+        abs_val = abs(value)
+        si = [
+            (1e12, "T"),
+            (1e9, "G"),
+            (1e6, "M"),
+            (1e3, "k"),
+            (1, ""),
+            (1e-3, "m"),
+            (1e-6, "µ"),
+            (1e-9, "n"),
+            (1e-12, "p"),
+        ]
+        for threshold, prefix in si:
+            if abs_val >= threshold * 0.999:
+                scaled = value / threshold
+                # pick precision: integer-like → no decimals
+                if abs(scaled - round(scaled)) < 1e-9:
+                    return f"{int(round(scaled))}{prefix}"
+                return f"{scaled:.4g}{prefix}"
+        return f"{value:.4g}"
+
+    def _repr_html_(self) -> str:
+        """Return rich HTML representation for Jupyter notebooks."""
+        import html as _html
+        import uuid as _uuid
+
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        n = len(self.results)
+        uid = str(_uuid.uuid4())[:8]
+        _fmt = self._fmt_num  # local shortcut
+        api_card = api_help_html(
+            self,
+            title="BatchOperations API help",
+            prefix="job[:]",
+            subtitle="Batch-level accessors, methods, signatures and examples.",
+            properties=[
+                ("fft", "Batch FFT namespace"),
+                ("get", "Direct stacked numpy access"),
+                ("solitons", "Batch soliton analysis namespace"),
+                ("vortex", "Shortcut for solitons.vortex"),
+                ("mpl", "Batch plotting helper"),
+            ],
+            methods=["process"],
+            chrome=False,
+        )
+
+        sections = [
+            metrics_section_html(
+                [
+                    (
+                        "results",
+                        f"{n} result{'s' if n != 1 else ''}",
+                        NODE_COLOR_COMPUTE,
+                    ),
+                    ("filters", len(self._filter_kwargs), NODE_COLOR_UTIL),
+                ]
+            )
+        ]
+        if n == 0:
+            sections.append(
+                "<div style='background:rgba(255,255,255,0.1);padding:10px;"
+                "border-radius:5px;margin-bottom:12px;'>"
+                "⚠️ Empty batch – no results.</div>"
+            )
+            return node_card_html(
+                "Batch Operations",
+                icon="📦",
+                subtitle="Batch-level accessors, methods, signatures and examples.",
+                badge=("empty", "#ffb86c"),
+                sections=sections,
+                api=api_card,
+                uid=f"batch-{uid}",
+            )
+
+        if self._filter_kwargs:
+            filter_html = (
+                "<div style='background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+                "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);'>"
+                "<b style='color:#bd93f9;'>🔍 Applied Filters:</b>"
+                "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;'>"
+            )
+            for k, v in self._filter_kwargs.items():
+                fmt_v = _fmt(v) if isinstance(v, (int, float)) else str(v)
+                filter_html += (
+                    "<span style='background:rgba(98,114,164,0.18);"
+                    "border:1px solid rgba(98,114,164,0.35);"
+                    "border-radius:20px;padding:3px 12px;font-size:0.85em;'>"
+                    f"<b style='color:{NODE_COLOR_COMPUTE};'>{_html.escape(str(k))}</b>"
+                    "<span style='color:#f8f8f2;'> = </span>"
+                    f"<span style='color:{NODE_COLOR_ANALYSIS};font-family:monospace;'>"
+                    f"{_html.escape(fmt_v)}</span></span>"
+                )
+            sections.append(filter_html + "</div></div>")
+
+        try:
+            from .core.metadata_diff import (
+                extract_job_metadata,
+                find_differing_parameters,
+            )
+
+            diff = find_differing_parameters(self.results)
+            varying = diff.differing_params
+            all_meta = [extract_job_metadata(r) for r in self.results]
+        except Exception:
+            varying = {}
+            all_meta = [{} for _ in self.results]
+
+        varying_keys = list(varying.keys())[:8]
+        if varying:
+            varying_html = (
+                "<div style='background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+                "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);'>"
+                f"<b style='color:#bd93f9;'>📊 Varying Parameters ({len(varying)}):</b>"
+                "<table style='width:100%;margin-top:8px;border-collapse:collapse;font-size:0.88em;'>"
+                "<tr style='border-bottom:1px solid rgba(98,114,164,0.25);'>"
+                "<th style='padding:5px 8px;text-align:left;color:#bd93f9;'>Parameter</th>"
+                "<th style='padding:5px 8px;text-align:center;color:#bd93f9;'>Unique</th>"
+                "<th style='padding:5px 8px;text-align:left;color:#bd93f9;'>Range</th></tr>"
+            )
+            for pname in varying_keys:
+                vals = varying[pname]
+                nums = [
+                    v for v in vals if isinstance(v, (int, float)) and v is not None
+                ]
+                if nums:
+                    uv: Any = sorted(set(nums))
+                    n_uniq = len(uv)
+                    rng = f"{_fmt(uv[0])} → {_fmt(uv[-1])}"
+                else:
+                    uv = sorted({str(v) for v in vals if v is not None})
+                    n_uniq = len(uv)
+                    rng = ", ".join(uv[:5]) + (" …" if len(uv) > 5 else "")
+                varying_html += (
+                    "<tr style='border-bottom:1px solid rgba(98,114,164,0.25);'>"
+                    f"<td style='padding:5px 8px;'><code style='color:{NODE_COLOR_COMPUTE};'>"
+                    f"{_html.escape(pname)}</code></td>"
+                    f"<td style='padding:5px 8px;text-align:center;color:{NODE_COLOR_PLOT};"
+                    f"font-weight:600;'>{n_uniq}</td>"
+                    f"<td style='padding:5px 8px;font-family:monospace;color:#f8f8f2;'>"
+                    f"{_html.escape(rng)}</td></tr>"
+                )
+            sections.append(varying_html + "</table></div>")
+
+        table_html = (
+            "<div style='background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,rgba(30,41,59,0.4) 100%);"
+            "padding:12px;border-radius:8px;margin-bottom:12px;border:1px solid rgba(148,163,184,0.15);'>"
+            f"<b style='color:#bd93f9;'>📋 Results ({n}):</b>"
+            "<div style='margin-top:8px;max-height:400px;overflow:auto;"
+            "border:1px solid rgba(98,114,164,0.25);border-radius:6px;'>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.84em;white-space:nowrap;'>"
+            "<thead style='position:sticky;top:0;z-index:1;'>"
+            "<tr style='background:#282a36;border-bottom:1px solid rgba(98,114,164,0.25);'>"
+            "<th style='padding:6px 8px;text-align:center;color:#bd93f9;'>#</th>"
+            "<th style='padding:6px 8px;text-align:left;color:#bd93f9;'>Name</th>"
+        )
+        for vk in varying_keys:
+            table_html += f"<th style='padding:6px 8px;text-align:center;color:{NODE_COLOR_PLOT};'>{_html.escape(vk)}</th>"
+        table_html += "<th style='padding:6px 8px;text-align:left;color:#bd93f9;'>Path</th></tr></thead><tbody>"
+        for idx, result in enumerate(self.results):
+            name = result.path.split("/")[-1]
+            parts = result.path.rstrip("/").split("/")
+            if len(parts) > 3:
+                short_path = "/".join(parts[-3:])
+            else:
+                short_path = result.path
+            bg = "background:rgba(40,42,54,0.35);" if idx % 2 == 0 else ""
+            table_html += (
+                f"<tr style='border-bottom:1px solid rgba(98,114,164,0.25);{bg}'>"
+            )
+            table_html += f"<td style='padding:4px 8px;text-align:center;color:#6272a4;'>{idx}</td>"
+            table_html += f"<td style='padding:4px 8px;'><code style='color:#f8f8f2;'>{_html.escape(name)}</code></td>"
+            meta = all_meta[idx] if idx < len(all_meta) else {}
+            for vk in varying_keys:
+                val = meta.get(vk)
+                if val is not None and isinstance(val, (int, float)):
+                    cell = _fmt(val)
+                elif val is not None:
+                    cell = str(val)
+                else:
+                    cell = "–"
+                table_html += f"<td style='padding:4px 8px;text-align:center;color:#f8f8f2;font-family:monospace;'>{_html.escape(cell)}</td>"
+            table_html += (
+                f"<td style='padding:4px 8px;color:#6272a4;font-size:0.85em;' "
+                f"title='{_html.escape(result.path)}'>{_html.escape(short_path)}</td></tr>"
+            )
+        sections.append(table_html + "</tbody></table></div></div>")
+        sections.extend(
+            [
+                accessors_section_html(
+                    [
+                        (
+                            "Analysis:",
+                            [
+                                ("job[:].fft.spectrum", NODE_COLOR_ANALYSIS),
+                                ("job[:].fft.modes", NODE_COLOR_ANALYSIS),
+                                ("job[:].fft.transmission", NODE_COLOR_ANALYSIS),
+                            ],
+                        ),
+                        (
+                            "Data:",
+                            [
+                                ("job[:].get.<dset>[:]", NODE_COLOR_COMPUTE),
+                                ("job[:].process(...)", NODE_COLOR_COMPUTE),
+                            ],
+                        ),
+                        (
+                            "Plotting:",
+                            [
+                                ("job[:].mpl", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(
+                    "# Batch spectrum\n"
+                    "batch = job[:].fft.spectrum.compute_all(fmin=5e9, fmax=25e9)\n"
+                    'batch.plot.heatmap("B0")\n\n'
+                    "# Batch numpy access\n"
+                    "arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n"
+                    "# Full pipeline\n"
+                    'job[:].process(dset="m")',
+                    title="Quick-start examples",
+                ),
+            ]
+        )
+        return node_card_html(
+            "Batch Operations",
+            icon="📦",
+            subtitle="Batch-level accessors, methods, signatures and examples.",
+            badge=("ready", "#22c55e"),
+            sections=sections,
+            api=api_card,
+            uid=f"batch-{uid}",
+        )
+
+    def __iter__(self):
+        """Make batch operations iterable."""
+        return iter(self.results)
+
+    def process(
+        self,
+        dset: str | None = None,
+        parallel: bool = True,
+        max_workers: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """
+        Process all results in batch with comprehensive analysis.
+
+        This method performs complete analysis including FFT computation
+        and mode analysis for all results in the batch.
+
+        Parameters:
+        -----------
+        dset : str, default=None
+            Dataset name to analyze (default: auto-select largest m dataset)
+        parallel : bool, default=True
+            Whether to use parallel processing
+        max_workers : Optional[int]
+            Maximum number of worker threads (None for auto)
+        **kwargs : dict
+            Additional arguments to pass to analysis
+
+        Returns:
+        --------
+        Dict[str, Any]
+            Comprehensive analysis results
+        """
+        log.info(f"Processing {len(self.results)} results with comprehensive analysis")
+
+        if not self.results:
+            return {
+                "total": 0,
+                "successful": 0,
+                "failed": 0,
+                "errors": [],
+                "mode_results": None,
+                "computation_time": 0.0,
+            }
+
+        start_time = time.time()
+
+        try:
+            # Perform mode computation and analysis
+            mode_results = self.fft.modes.compute_modes(
+                dset=dset, parallel=parallel, max_workers=max_workers, **kwargs
+            )
+
+            total_time = time.time() - start_time
+
+            results = {
+                "total": len(self.results),
+                "successful": mode_results.get("successful", 0),
+                "failed": mode_results.get("failed", 0),
+                "errors": mode_results.get("errors", []),
+                "mode_results": mode_results,
+                "computation_time": total_time,
+            }
+
+            log.info(
+                f"Batch processing completed in {total_time:.2f}s: "
+                f"{results['successful']} successful, {results['failed']} failed"
+            )
+
+            return results
+
+        except Exception as e:
+            total_time = time.time() - start_time
+            log.error(f"Batch processing failed after {total_time:.2f}s: {e}")
+            return {
+                "total": len(self.results),
+                "successful": 0,
+                "failed": len(self.results),
+                "errors": [{"error": str(e), "context": "batch_processing"}],
+                "mode_results": None,
+                "computation_time": total_time,
+            }
+
+    def prepare_report(
+        self, spectrum: bool = True, modes: bool = True, parallel: bool = True, **kwargs
+    ) -> dict[str, Any]:
+        """
+        Prepare comprehensive report for all results (future functionality).
+
+        Parameters:
+        -----------
+        spectrum : bool, default=True
+            Whether to include spectrum analysis
+        modes : bool, default=True
+            Whether to include mode analysis
+        parallel : bool, default=True
+            Whether to use parallel processing
+        **kwargs : dict
+            Additional arguments for analysis
+
+        Returns:
+        --------
+        Dict[str, Any]
+            Comprehensive report summary
+        """
+        log.info(f"Preparing comprehensive report for {len(self.results)} results")
+        log.info(f"Spectrum: {spectrum}, Modes: {modes}, Parallel: {parallel}")
+
+        report: dict[str, Any] = {
+            "total_results": len(self.results),
+            "spectrum_analysis": None,
+            "mode_analysis": None,
+            "errors": [],
+        }
+
+        try:
+            if spectrum:
+                log.info("Running spectrum analysis...")
+                # This would include FFT spectrum analysis
+                spectrum_summary = self.fft.compute_all(**kwargs)
+                report["spectrum_analysis"] = spectrum_summary
+
+            if modes:
+                log.info("Running mode analysis...")
+                # This would include mode computation and analysis
+                mode_summary = self.fft.modes.compute_modes(parallel=parallel, **kwargs)
+                report["mode_analysis"] = mode_summary
+
+            log.info("Report preparation completed successfully")
+
+        except Exception as e:
+            log.error(f"Error during report preparation: {e}")
+            report["errors"].append(str(e))
+
+        return report
+
+    def get_summary(self) -> dict[str, Any]:
+        """
+        Get summary of all results in batch.
+
+        Returns:
+        --------
+        Dict[str, Any]
+            Summary information about the batch
+        """
+        paths = [result.path for result in self.results]
+
+        # Collect attributes
+        all_attributes: set[str] = set()
+        for result in self.results:
+            if hasattr(result, "attributes") and isinstance(result.attributes, dict):
+                all_attributes.update(result.attributes.keys())
+
+        summary = {
+            "count": len(self.results),
+            "paths": paths,
+            "common_attributes": list(all_attributes),
+            "first_result": self.results[0].path if self.results else None,
+            "last_result": self.results[-1].path if self.results else None,
+        }
+
+        return summary

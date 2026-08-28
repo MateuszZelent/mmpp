@@ -14,7 +14,8 @@ import logging
 import math
 import os
 import re
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional, Union
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -23,34 +24,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MX3_ASSIGNMENT_RE = re.compile(
-    r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)\s*(.+?)\s*$"
-)
+_MX3_ASSIGNMENT_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)\s*(.+?)\s*$")
 
 # ── SW-config presets ─────────────────────────────────────────────────────
 # Maps human-readable geometry names to phi angles (radians)
 SW_CONFIG_PRESETS: dict[str, dict[str, Any]] = {
-    "DE":  {"phi": math.pi / 2, "label": "Damon-Eshbach (k⊥M)"},
-    "BV":  {"phi": 0.0,         "label": "Backward Volume (k∥M)"},
-    "FV":  {"phi": None,        "label": "Forward Volume (M⊥film)"},      # special model
-    "MSSW": {"phi": math.pi / 2, "label": "MSSW (k⊥M)"},                  # alias for DE
+    "DE": {"phi": math.pi / 2, "label": "Damon-Eshbach (k⊥M)"},
+    "BV": {"phi": 0.0, "label": "Backward Volume (k∥M)"},
+    "FV": {"phi": None, "label": "Forward Volume (M⊥film)"},  # special model
+    "MSSW": {"phi": math.pi / 2, "label": "MSSW (k⊥M)"},  # alias for DE
 }
 
 # ── Model registry ────────────────────────────────────────────────────────
 # Maps model names to callables from mmpp.analytical.dispersion
 _MODEL_REGISTRY: dict[str, str] = {
-    "kalinikos":       "kalinikos",
+    "kalinikos": "kalinikos",
     "kalinikos_slavin": "kalinikos",
-    "ks":              "kalinikos",
-    "damon_eshbach":   "damon_eshbach",
-    "de":              "damon_eshbach",
+    "ks": "kalinikos",
+    "damon_eshbach": "damon_eshbach",
+    "de": "damon_eshbach",
     "backward_volume": "backward_volume",
-    "bv":              "backward_volume",
-    "forward_volume":  "forward_volume",
-    "fv":              "forward_volume",
-    "bottcher":        "bottcher",
-    "kim":             "kim",
-    "cortes_ortuno":   "cortes_ortuno",
+    "bv": "backward_volume",
+    "forward_volume": "forward_volume",
+    "fv": "forward_volume",
+    "bottcher": "bottcher",
+    "kim": "kim",
+    "cortes_ortuno": "cortes_ortuno",
 }
 
 
@@ -60,13 +59,14 @@ def _get_model_func(name: str) -> Callable:
     func_name = _MODEL_REGISTRY.get(key)
     if func_name is None:
         available = sorted(set(_MODEL_REGISTRY.values()))
-        raise ValueError(
-            f"Unknown model '{name}'. Available: {available}"
-        )
+        raise ValueError(f"Unknown model '{name}'. Available: {available}")
     from mmpp.analytical import dispersion as _ad
+
     func = getattr(_ad, func_name, None)
     if func is None:
-        raise ImportError(f"Model function '{func_name}' not found in mmpp.analytical.dispersion")
+        raise ImportError(
+            f"Model function '{func_name}' not found in mmpp.analytical.dispersion"
+        )
     return func
 
 
@@ -77,7 +77,7 @@ def _is_mumax_pointer(val: Any) -> bool:
     return val.startswith("0x") and len(val) > 4
 
 
-def _safe_float(val: Any) -> Optional[float]:
+def _safe_float(val: Any) -> float | None:
     """Convert value to float, handling strings and mumax3 pointers."""
     if val is None:
         return None
@@ -89,7 +89,7 @@ def _safe_float(val: Any) -> Optional[float]:
         return None
 
 
-def _sidecar_mx3_path(job_result: Any) -> Optional[str]:
+def _sidecar_mx3_path(job_result: Any) -> str | None:
     """Return the best matching sidecar ``.mx3`` file for a zarr job."""
     if job_result is None or not getattr(job_result, "path", None):
         return None
@@ -173,7 +173,7 @@ def _eval_mx3_expr(expr: str, env: Mapping[str, Any]) -> Any:
     return _eval(tree)
 
 
-def _parse_mx3_scalars(path: Optional[str]) -> dict[str, Any]:
+def _parse_mx3_scalars(path: str | None) -> dict[str, Any]:
     """Parse simple mumax3 assignments from a sidecar script."""
     if not path:
         return {}
@@ -199,7 +199,7 @@ def _parse_mx3_scalars(path: Optional[str]) -> dict[str, Any]:
     return env
 
 
-def _safe_field_vector(value: Any) -> Optional[tuple[float, float, float]]:
+def _safe_field_vector(value: Any) -> tuple[float, float, float] | None:
     """Coerce scalar/vector field values into a 3D vector in Tesla."""
     if value is None or _is_mumax_pointer(value):
         return None
@@ -214,7 +214,7 @@ def _safe_field_vector(value: Any) -> Optional[tuple[float, float, float]]:
     return None
 
 
-def _field_magnitude(value: Any) -> Optional[float]:
+def _field_magnitude(value: Any) -> float | None:
     vector = _safe_field_vector(value)
     if vector is None:
         return _safe_float(value)
@@ -222,9 +222,9 @@ def _field_magnitude(value: Any) -> Optional[float]:
 
 
 def _field_phi_for_axis(
-    vector: Optional[tuple[float, float, float]],
+    vector: tuple[float, float, float] | None,
     axis: str,
-) -> Optional[float]:
+) -> float | None:
     """Return in-plane angle between propagation axis and static field."""
     if vector is None:
         return None
@@ -238,7 +238,7 @@ def _field_phi_for_axis(
     return float(math.acos(cos_phi))
 
 
-def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
+def extract_material_params(result: DispersionResult1D) -> dict[str, Any]:
     """Auto-extract material parameters from zarr attrs via DispersionResult1D back-reference.
 
     Traverses the chain: result._interface → parent_fft → job_result → zarr attrs.
@@ -266,7 +266,9 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
     # Navigate back-reference chain
     iface = getattr(result, "_interface", None)
     if iface is None:
-        logger.debug("No _interface back-reference on result; cannot auto-detect params")
+        logger.debug(
+            "No _interface back-reference on result; cannot auto-detect params"
+        )
         return params
 
     parent_fft = getattr(iface, "parent_fft", None)
@@ -281,6 +283,7 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
     attrs: dict[str, Any] = {}
     try:
         import zarr
+
         root = zarr.open(job_result.path, mode="r")
         attrs = dict(root.attrs)
     except Exception as exc:
@@ -301,13 +304,17 @@ def extract_material_params(result: "DispersionResult1D") -> dict[str, Any]:
         bmax = _safe_float(attrs.get("Bmax"))
         if bmax is not None:
             b_val = abs(bmax)
-            logger.info("B_ext is a mumax3 pointer; using Bmax=%.4f T as fallback", b_val)
+            logger.info(
+                "B_ext is a mumax3 pointer; using Bmax=%.4f T as fallback", b_val
+            )
         else:
             # Try 'b' attr
             b_scalar = _safe_float(attrs.get("b"))
             if b_scalar is not None:
                 b_val = abs(b_scalar)
-                logger.info("B_ext is a mumax3 pointer; using |b|=%.4f T as fallback", b_val)
+                logger.info(
+                    "B_ext is a mumax3 pointer; using |b|=%.4f T as fallback", b_val
+                )
 
     b_vector = _safe_field_vector(b_ext)
     if b_vector is None:
@@ -401,8 +408,8 @@ def compute_analytical_dispersion(
     sw_config: str = "DE",
     n_modes: int = 1,
     k_points: int = 500,
-    phi: Optional[float] = None,
-    D: Optional[float] = None,
+    phi: float | None = None,
+    D: float | None = None,
     # Material params (required):
     B: float,
     Ms: float,
@@ -471,6 +478,7 @@ def compute_analytical_dispersion(
             # Switch to kalinikos_no_approx for n>0
             try:
                 from mmpp.analytical.dispersion import kalinikos_no_approx
+
                 kwargs["n"] = n
                 if "phi" in kwargs:
                     del kwargs["phi"]  # kalinikos_no_approx doesn't take phi
@@ -485,11 +493,14 @@ def compute_analytical_dispersion(
                 # Model might not accept some kwargs — retry preserving phi
                 logger.warning(
                     "Model %s call failed: %s — retrying without Ku",
-                    func_name, exc,
+                    func_name,
+                    exc,
                 )
                 # Keep phi but drop Ku (most common cause of TypeError)
                 safe_keys = {"k", "B", "Ms", "d", "Aex", "g", "phi", "D"}
-                minimal = {k: v for k, v in kwargs.items() if k in safe_keys and v is not None}
+                minimal = {
+                    k: v for k, v in kwargs.items() if k in safe_keys and v is not None
+                }
                 disp_result = model_func(**minimal)
 
         mode_label = config_label if n == 0 else f"{config_label} (n={n})"

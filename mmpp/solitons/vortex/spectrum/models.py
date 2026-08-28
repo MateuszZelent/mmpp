@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -208,8 +209,11 @@ class VortexSpectrogramResult:
         )
 
 
-class VortexSpectrumPlotAccessor:
+class VortexSpectrumPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`VortexSpectrumResult`."""
+
+    _interactive_owner = "spectrum.plt"
+    _interactive_nodes = frozenset({"power_spectrum"})
 
     def __init__(self, result: VortexSpectrumResult):
         self._result = result
@@ -273,8 +277,11 @@ class VortexSpectrumPlotAccessor:
         )
 
 
-class VortexSpectrogramPlotAccessor:
+class VortexSpectrogramPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`VortexSpectrogramResult`."""
+
+    _interactive_owner = "spectrogram.plt"
+    _interactive_nodes = frozenset({"spectrogram"})
 
     def __init__(self, result: VortexSpectrogramResult):
         self._result = result

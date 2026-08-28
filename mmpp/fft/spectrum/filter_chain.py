@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..filters import normalize_filter_config, split_filter_stages
 
@@ -21,26 +22,28 @@ def _map_window_from_pre(pre_filters: dict[str, Any]) -> str | None:
     return None
 
 
-def _map_filter_type_from_pre(pre_filters: dict[str, Any]) -> str | list[str] | None:
-    mapped: list[str] = []
+def _map_filter_type_from_pre(pre_filters: dict[str, Any]) -> dict[str, Any] | None:
+    mapped: dict[str, Any] = {}
 
     for key, option in pre_filters.items():
         if key == "hann_time":
             continue
         if key == "remove_average":
-            mapped.append("remove_mean")
+            mapped["remove_mean"] = option
             continue
         if key == "detrend":
-            mode = str(option.get("mode", "none")).lower() if isinstance(option, dict) else str(option).lower()
+            mode = (
+                str(option.get("mode", "none")).lower()
+                if isinstance(option, dict)
+                else str(option).lower()
+            )
             if mode == "linear":
-                mapped.append("detrend_linear")
+                mapped["detrend_linear"] = option
             continue
-        mapped.append(str(key))
+        mapped[str(key)] = option
 
     if not mapped:
         return None
-    if len(mapped) == 1:
-        return mapped[0]
     return mapped
 
 
@@ -103,7 +106,11 @@ def _post_to_result_kwargs(
 class SpectrumFilterChain:
     """Fluent chain applying pre/post FFT filters for spectrum workflows."""
 
-    def __init__(self, spectrum_callable: Callable[..., Any], filters: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        spectrum_callable: Callable[..., Any],
+        filters: dict[str, Any] | None = None,
+    ):
         self._spectrum_callable = spectrum_callable
         self._filters = dict(filters or {})
 
@@ -157,7 +164,10 @@ class SpectrumFilterChain:
 
         methods = [
             (".filters(**kw)", "Clone chain with merged filter configuration"),
-            (".spectrum(*args, **kw)", "Compute spectrum with pre-filters, apply post/live filters"),
+            (
+                ".spectrum(*args, **kw)",
+                "Compute spectrum with pre-filters, apply post/live filters",
+            ),
         ]
         method_rows = "".join(
             f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
@@ -165,7 +175,11 @@ class SpectrumFilterChain:
             for m, d in methods
         )
         options = [
-            ("remove_average", "False", "Pre: subtract temporal mean per spatial point"),
+            (
+                "remove_average",
+                "False",
+                "Pre: subtract temporal mean per spatial point",
+            ),
             ("hann_time", "None", "Pre: apply Hann window in time domain"),
             ("detrend", "None", "Pre: detrend strategy ('linear')"),
             ("normalize", "False", "Post: normalize spectrum amplitudes"),
@@ -173,7 +187,11 @@ class SpectrumFilterChain:
             ("gamma", "None", "Post: gamma correction (float or dict)"),
             ("percentile_clip", "None", "Post: clip to percentile range (low, high)"),
             ("soft_threshold", "None", "Post: soft threshold by percentile"),
-            ("baseline_correction", "None", "Post: baseline removal ('none', 'median', ...)"),
+            (
+                "baseline_correction",
+                "None",
+                "Post: baseline removal ('none', 'median', ...)",
+            ),
             ("gaussian_smooth", "None", "Post: Gaussian smoothing (dict with sigma)"),
             ("savgol_smooth", "None", "Post: Savitzky-Golay smoothing (dict)"),
         ]
@@ -200,7 +218,7 @@ class SpectrumFilterChain:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "Spectrum Filter Chain</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"

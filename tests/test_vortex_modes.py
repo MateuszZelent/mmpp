@@ -8,6 +8,7 @@ import numpy as np
 import zarr
 
 from mmpp.core.job import ZarrJobResult
+from mmpp.solitons.vortex.ui.interactive_dashboard import VortexInteractiveDashboard
 
 
 def _make_vortex_snapshot(
@@ -25,7 +26,7 @@ def _make_vortex_snapshot(
     radius = np.hypot(x_grid, y_grid)
     phi = np.arctan2(y_grid, x_grid)
 
-    mz = np.exp(-(radius / core_radius_px) ** 2)
+    mz = np.exp(-((radius / core_radius_px) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
 
     mx = -m_perp * np.sin(phi)
@@ -104,7 +105,9 @@ def _create_table_mode_job(
     table.create_dataset("ext_coreposz", data=core_signal, chunks=core_signal.shape)
 
     end = _make_vortex_snapshot(96, 96, center_x=48.0, center_y=48.0)
-    z.create_dataset("end", data=end[np.newaxis, ...], chunks=end[np.newaxis, ...].shape)
+    z.create_dataset(
+        "end", data=end[np.newaxis, ...], chunks=end[np.newaxis, ...].shape
+    )
 
     z.attrs["dx"] = 1e-9
     z.attrs["dy"] = 1e-9
@@ -119,7 +122,9 @@ def test_modes_classify_all_and_single_frequency(tmp_path):
     modes = job.m.solitons.vortex.modes.classify_all(max_modes=8, min_prominence=0.03)
 
     assert len(modes) >= 1
-    assert any(mode.mode_type in {"gyration", "breathing", "azimuthal"} for mode in modes)
+    assert any(
+        mode.mode_type in {"gyration", "breathing", "azimuthal"} for mode in modes
+    )
 
     near_gyr = job.m.solitons.vortex.modes.classify(f=gyr_f * 1e-9, unit="ghz")
     near_breath = job.m.solitons.vortex.modes.classify(f=breathing_f, unit="hz")
@@ -135,7 +140,9 @@ def test_modes_support_table_only_tracking(tmp_path):
     gyro = job.solitons.vortex.modes.gyration
 
     assert len(modes) >= 1
-    assert any(mode.mode_type in {"gyration", "breathing", "azimuthal"} for mode in modes)
+    assert any(
+        mode.mode_type in {"gyration", "breathing", "azimuthal"} for mode in modes
+    )
     assert gyro is None or gyro.mode_type == "gyration"
 
 
@@ -159,3 +166,43 @@ def test_modes_plot_accessor_and_mode_table(tmp_path):
     if rows:
         assert "mode" in rows[0]
         assert "f_ghz" in rows[0]
+
+
+def test_vortex_dashboard_routes_spatial_modes_to_fft_accessor():
+    calls = []
+    explorer = object()
+
+    class _Vortex:
+        def interactive_modes(self):
+            calls.append("interactive_spectrum")
+            return explorer
+
+    dashboard = VortexInteractiveDashboard.__new__(VortexInteractiveDashboard)
+    dashboard._vx = _Vortex()
+    dashboard._state = type("State", (), {"mode_result": None})()
+    dashboard._set_status = lambda message, level: calls.append((message, level))
+
+    assert dashboard._open_spatial_modes() is explorer
+    assert dashboard._state.mode_result is explorer
+    assert "interactive_spectrum" in calls
+    assert calls[-1] == ("Spatial FFT mode explorer opened", "ok")
+
+
+def test_vortex_dashboard_routes_spatial_spectrum_to_fft_accessor():
+    calls = []
+    explorer = object()
+
+    class _Vortex:
+        def interactive_spectrum(self):
+            calls.append("interactive_spectrum")
+            return explorer
+
+    dashboard = VortexInteractiveDashboard.__new__(VortexInteractiveDashboard)
+    dashboard._vx = _Vortex()
+    dashboard._state = type("State", (), {"mode_result": None})()
+    dashboard._set_status = lambda message, level: calls.append((message, level))
+
+    assert dashboard._open_spatial_spectrum() is explorer
+    assert dashboard._state.mode_result is explorer
+    assert "interactive_spectrum" in calls
+    assert calls[-1] == ("Spatial spectrum and mode explorer opened", "ok")

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable, Sequence
 from html import escape as _esc
-from typing import Any, Callable, Sequence
+from typing import Any
 
 
 class CallableMethodHelper:
@@ -64,10 +65,9 @@ class CallableMethodHelper:
         return (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:1px solid #334155;border-radius:10px;padding:12px;margin:6px 0;"
-            "background:#0f172a;color:#e2e8f0;\">"
+            'background:#0f172a;color:#e2e8f0;">'
             f"<div style='font-weight:600;color:#f1f5f9;'>{_esc(self._owner)}."
             f"{_esc(self._name)}{_esc(self.signature)}</div>"
             f"<div style='margin-top:4px;color:#cbd5e1;'>{_esc(self._description)}</div>"
             f"{example_html}</div>"
         )
-

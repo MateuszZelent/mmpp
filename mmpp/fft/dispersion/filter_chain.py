@@ -19,23 +19,24 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from mmpp._repr_helpers import (
     NODE_COLOR_ANALYSIS,
     NODE_COLOR_COMPUTE,
     NODE_COLOR_PLOT,
     NODE_COLOR_UTIL,
-    api_help_html,
     accessors_section_html,
+    api_help_html,
     examples_section_html,
     metrics_section_html,
     node_card_html,
 )
 
 if TYPE_CHECKING:
-    from ..models import DispersionResult1D, DispersionResult2D
     from ..interface import FFTDispersionInterface
+    from ..models import DispersionResult1D, DispersionResult2D
 
 
 class DispersionFilterChain:
@@ -60,7 +61,7 @@ class DispersionFilterChain:
     >>> lowest.plot.heatmap()
     """
 
-    def __init__(self, iface: "FFTDispersionInterface") -> None:
+    def __init__(self, iface: FFTDispersionInterface) -> None:
         # Use object.__setattr__ to avoid triggering __setattr__ recursion
         object.__setattr__(self, "_iface", iface)
 
@@ -74,11 +75,11 @@ class DispersionFilterChain:
         *,
         save: bool = False,
         force: bool = False,
-        component: Optional[str] = None,
+        component: str | None = None,
         avg_over_orthogonal: bool = True,
         orthogonal_avg_mode: str = "fft_power",
         **kwargs: Any,
-    ) -> "DispersionResult1D":
+    ) -> DispersionResult1D:
         """Compute the 1D dispersion relation S(k, f).
 
         Parameters
@@ -105,7 +106,7 @@ class DispersionFilterChain:
             Result with ``.plot``, ``.analyze``, and ``.modes`` accessors.
         """
         iface = object.__getattribute__(self, "_iface")
-        result: "DispersionResult1D" = iface.compute_1d(
+        result: DispersionResult1D = iface.compute_1d(
             axis=axis,
             save=save,
             force=force,
@@ -123,9 +124,9 @@ class DispersionFilterChain:
         *,
         save: bool = False,
         force: bool = False,
-        component: Optional[str] = None,
+        component: str | None = None,
         **kwargs: Any,
-    ) -> "DispersionResult2D":
+    ) -> DispersionResult2D:
         """Compute the 2D dispersion relation S(kx, ky, f).
 
         Parameters
@@ -137,16 +138,23 @@ class DispersionFilterChain:
         **kwargs
             Forwarded to :meth:`~FFTDispersionInterface.compute_2d`.
         """
+        if save:
+            raise NotImplementedError(
+                "Saving/caching compute_2d results is not implemented. "
+                "Use save=False and retain the returned DispersionResult2D."
+            )
+        if force:
+            raise ValueError(
+                "force=True has no effect when compute_2d caching is unavailable"
+            )
         iface = object.__getattribute__(self, "_iface")
         return iface.compute_2d(
-            save=save,
-            force=force,
             component=component,
             **kwargs,
         )
 
     # callable shortcut: chain(axis='x') == chain.compute_1d(axis='x')
-    def __call__(self, axis: str = "x", **kwargs: Any) -> "DispersionResult1D":
+    def __call__(self, axis: str = "x", **kwargs: Any) -> DispersionResult1D:
         return self.compute_1d(axis=axis, **kwargs)
 
     # ------------------------------------------------------------------
@@ -158,12 +166,12 @@ class DispersionFilterChain:
         *,
         remove_static: bool = False,
         average: bool = False,
-        window: Optional[Union[str, Sequence[str]]] = None,
-        pre: Optional[dict[str, Any]] = None,
-        post: Optional[dict[str, Any]] = None,
-        live: Optional[dict[str, Any]] = None,
-        advanced: Optional[dict[str, Any]] = None,
-    ) -> "DispersionFilterChain":
+        window: str | Sequence[str] | None = None,
+        pre: dict[str, Any] | None = None,
+        post: dict[str, Any] | None = None,
+        live: dict[str, Any] | None = None,
+        advanced: dict[str, Any] | None = None,
+    ) -> DispersionFilterChain:
         """Return a new :class:`DispersionFilterChain` with merged filter config.
 
         Lets you chain filter calls::
@@ -261,7 +269,7 @@ class DispersionFilterChain:
                                     ".compute_1d(axis='x', avg_over_orthogonal=False)",
                                     NODE_COLOR_COMPUTE,
                                 ),
-                                (".compute_2d(save=True)", NODE_COLOR_ANALYSIS),
+                                (".compute_2d()", NODE_COLOR_ANALYSIS),
                             ],
                         ),
                         (

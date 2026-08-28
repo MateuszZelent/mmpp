@@ -5,6 +5,7 @@ Utility functions for MMPP Run module.
 try:
     from rich.console import Console
     from rich.panel import Panel
+
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False

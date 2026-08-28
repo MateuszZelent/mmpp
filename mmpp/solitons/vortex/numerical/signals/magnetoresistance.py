@@ -34,7 +34,11 @@ def _estimate_disk_radius(
     disk_radius: float | None,
     metadata: dict,
 ) -> float:
-    if disk_radius is not None and np.isfinite(float(disk_radius)) and float(disk_radius) > 0.0:
+    if (
+        disk_radius is not None
+        and np.isfinite(float(disk_radius))
+        and float(disk_radius) > 0.0
+    ):
         return float(disk_radius)
 
     meta_r = metadata.get("disk_radius", None)
@@ -77,7 +81,10 @@ def _projection_from_trajectory(
     x_norm = (x - x0) / radius_ref
     y_norm = (y - y0) / radius_ref
 
-    c = int(np.sign(chirality if chirality is not None else metadata.get("chirality", 1)) or 1)
+    c = int(
+        np.sign(chirality if chirality is not None else metadata.get("chirality", 1))
+        or 1
+    )
     xi = float(max(xi_shape_factor, 0.0))
 
     # Average in-plane magnetization induced by vortex-core displacement.
@@ -125,7 +132,9 @@ def compute_magnetoresistance(
                 if disk_radius is not None and np.isfinite(float(disk_radius))
                 else None
             ),
-            "chirality": int(np.sign(chirality) or 1) if chirality is not None else None,
+            "chirality": int(np.sign(chirality) or 1)
+            if chirality is not None
+            else None,
             "source_method": trajectory.method,
         },
     )

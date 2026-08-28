@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -20,29 +20,44 @@ def apply_folding(
     folding_period: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Apply folding to angular parameter values with mirroring."""
+    param_values = np.asarray(param_values, dtype=float)
+    sort_idx = np.asarray(sort_idx)
+    folding_period = float(folding_period)
+    if param_values.ndim != 1 or param_values.size == 0:
+        raise ValueError("param_values must be a non-empty 1D array")
+    if not np.isfinite(param_values).all():
+        raise ValueError("param_values must be finite")
+    if sort_idx.ndim != 1 or sort_idx.size != param_values.size:
+        raise ValueError("sort_idx must align with param_values")
+    if not np.array_equal(np.sort(sort_idx), np.arange(param_values.size)):
+        raise ValueError("sort_idx must be a permutation of parameter indices")
+    if not np.isfinite(folding_period) or folding_period <= 0:
+        raise ValueError("folding_period must be finite and positive")
     sorted_params = param_values[sort_idx]
     param_min = sorted_params.min()
     param_max = sorted_params.max()
     param_range = param_max - param_min
 
+    if param_range == 0:
+        raise ValueError("Cannot fold a constant parameter range")
     if param_range >= 0.95 * folding_period:
-        return param_values, sort_idx
+        return sorted_params, sort_idx
 
     n_replications = int(np.ceil(folding_period / param_range))
-    folded_params = []
-    folded_indices = []
+    folded_params: Any = []
+    folded_indices: Any = []
 
     for i in range(n_replications):
         if i % 2 == 0:
             offset = i * param_range
-            for val, idx in zip(sorted_params, sort_idx):
+            for val, idx in zip(sorted_params, sort_idx, strict=False):
                 new_val = val - param_min + offset
                 if new_val < folding_period:
                     folded_params.append(new_val)
                     folded_indices.append(idx)
         else:
             offset = (i + 1) * param_range
-            for val, idx in zip(sorted_params[::-1], sort_idx[::-1]):
+            for val, idx in zip(sorted_params[::-1], sort_idx[::-1], strict=False):
                 new_val = offset - (val - param_min)
                 if new_val < folding_period:
                     folded_params.append(new_val)
@@ -56,25 +71,34 @@ def apply_folding(
 
 def plot_heatmap(
     result: Any,
-    parameter: Optional[str] = None,
-    ax: Optional[Any] = None,
+    parameter: str | None = None,
+    ax: Any | None = None,
     freq_unit: str = "GHz",
-    fmin: Optional[float] = None,
-    fmax: Optional[float] = None,
+    fmin: float | None = None,
+    fmax: float | None = None,
     log_scale: bool = True,
     normalize: str = "per_row",
     cmap: str = "viridis",
     colorbar: bool = True,
-    title: Optional[str] = None,
-    folding: Optional[Union[float, str]] = None,
+    title: str | None = None,
+    folding: float | str | None = None,
     verbose: bool = False,
-    dpi: Optional[int] = None,
-    figsize: Optional[Tuple[float, float]] = None,
+    dpi: int | None = None,
+    figsize: tuple[float, float] | None = None,
     **kwargs,
-) -> Tuple[Any, Any]:
+) -> tuple[Any, Any]:
     """Plot 2D heatmap of power spectrum vs parameter."""
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("Matplotlib required for plotting")
+
+    if freq_unit not in {"Hz", "kHz", "MHz", "GHz", "THz"}:
+        raise ValueError("freq_unit must be Hz, kHz, MHz, GHz, or THz")
+    if normalize not in {"none", "per_row", "global"}:
+        raise ValueError("normalize must be 'none', 'per_row', or 'global'")
+    if not isinstance(log_scale, (bool, np.bool_)):
+        raise TypeError("log_scale must be boolean")
+    if not isinstance(colorbar, (bool, np.bool_)):
+        raise TypeError("colorbar must be boolean")
 
     if parameter is None:
         varying_params = []
@@ -103,10 +127,12 @@ def plot_heatmap(
                     f"(range: {values.min():.3g} to {values.max():.3g})"
                 )
             print(f"\nUsing '{parameter}' for heatmap Y-axis.")
-            print("To use a different parameter, call: result.plot_heatmap(parameter='...')\n")
+            print(
+                "To use a different parameter, call: result.plot_heatmap(parameter='...')\n"
+            )
 
     freq_scales = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
-    freq_scale = freq_scales.get(freq_unit, 1e9)
+    freq_scale = freq_scales[freq_unit]
     frequencies_scaled = result.frequencies / freq_scale
 
     freq_mask = np.ones(len(frequencies_scaled), dtype=bool)
@@ -116,7 +142,13 @@ def plot_heatmap(
         freq_mask &= frequencies_scaled <= fmax
 
     frequencies_display = frequencies_scaled[freq_mask]
-    param_values = result.get_parameter_values(parameter)
+    if frequencies_display.size == 0:
+        raise ValueError("Requested frequency range contains no samples")
+    param_values = np.asarray(result.get_parameter_values(parameter), dtype=float)
+    if param_values.ndim != 1 or param_values.size != len(result):
+        raise ValueError("Heatmap parameter values must align with batch entries")
+    if not np.isfinite(param_values).all():
+        raise ValueError("Heatmap parameter values must be finite")
     sort_idx = np.argsort(param_values)
 
     param_unit = ""
@@ -147,14 +179,16 @@ def plot_heatmap(
         else:
             param_unit = " (°)"
 
-    data_matrix = []
+    data_matrix: Any = []
     for idx in sort_idx:
         power = result.powers[idx][freq_mask]
-        if power.ndim > 1:
-            power = power.squeeze()
+        if power.ndim != 1:
+            raise ValueError("Batch power traces must be one-dimensional")
         data_matrix.append(power)
 
     data_matrix = np.array(data_matrix)
+    if not np.isfinite(data_matrix).all() or np.any(data_matrix < 0):
+        raise ValueError("Heatmap power must be finite and non-negative")
     param_sorted = (
         param_values if folding is not None and is_angular else param_values[sort_idx]
     )
@@ -178,7 +212,9 @@ def plot_heatmap(
         data_matrix = np.log10(data_matrix + 1e-10)
 
     if ax is None:
-        fig_kwargs = {"figsize": figsize if figsize is not None else (10, 6)}
+        fig_kwargs: dict[str, Any] = {
+            "figsize": figsize if figsize is not None else (10, 6)
+        }
         if dpi is not None:
             fig_kwargs["dpi"] = dpi
         fig, ax = plt.subplots(**fig_kwargs)
@@ -187,12 +223,12 @@ def plot_heatmap(
         if dpi is not None:
             fig.set_dpi(dpi)
 
-    extent = [
+    extent = (
         param_sorted[0],
         param_sorted[-1],
         frequencies_display[0],
         frequencies_display[-1],
-    ]
+    )
 
     im = ax.imshow(
         data_matrix.T,
@@ -226,9 +262,27 @@ def replicate_experimental_points(
     folding: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Replicate experimental points to fill folding period with mirroring."""
+    angles = np.asarray(angles, dtype=float)
+    fres = np.asarray(fres, dtype=float)
+    fres_err = np.asarray(fres_err, dtype=float)
+    folding = float(folding)
+    if angles.ndim != 1 or angles.size == 0:
+        raise ValueError("angles must be a non-empty 1D array")
+    if fres.shape != angles.shape or fres_err.shape != angles.shape:
+        raise ValueError("angles, fres, and fres_err must have identical shapes")
+    if not np.isfinite(angles).all() or not np.isfinite(fres).all():
+        raise ValueError("Experimental angles and frequencies must be finite")
+    if not np.isfinite(fres_err).all() or np.any(fres_err < 0):
+        raise ValueError(
+            "Experimental frequency errors must be finite and non-negative"
+        )
+    if not np.isfinite(folding) or folding <= 0:
+        raise ValueError("folding must be finite and positive")
     angle_min = angles.min()
     angle_max = angles.max()
     original_span = angle_max - angle_min
+    if original_span == 0:
+        raise ValueError("Cannot replicate experimental points with zero angular span")
     n_copies = int(np.ceil(folding / original_span))
 
     angles_list = []
@@ -264,18 +318,18 @@ def plot_experimental_data(
     peaks: str,
     errors: str,
     shift: float = 0.0,
-    target_field: Optional[float] = None,
+    target_field: float | None = None,
     field_tolerance: float = 0.01,
     marker: str = "o",
     color: str = "cyan",
     s: float = 36,
     alpha: float = 1.0,
-    error_color: Optional[str] = None,
+    error_color: str | None = None,
     error_linewidth: float = 1.5,
     label: str = "Experimental",
-    ax: Optional[Any] = None,
+    ax: Any | None = None,
     **heatmap_kwargs,
-) -> Tuple[Any, Any]:
+) -> tuple[Any, Any]:
     """Plot heatmap with experimental peak positions overlaid."""
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("Matplotlib required for plotting")
@@ -283,7 +337,7 @@ def plot_experimental_data(
     try:
         import pandas as pd
     except ImportError:
-        raise ImportError("Pandas required for loading experimental data")
+        raise ImportError("Pandas required for loading experimental data") from None
 
     peaks_df = pd.read_csv(peaks)
     errors_df = pd.read_csv(errors)
@@ -364,12 +418,12 @@ def overlay_experimental(
     result: Any,
     exp_frequencies: np.ndarray,
     exp_data: np.ndarray,
-    parameter_value: Optional[float] = None,
-    ax: Optional[Any] = None,
+    parameter_value: float | None = None,
+    ax: Any | None = None,
     label: str = "Experimental",
     color: str = "red",
     **plot_kwargs,
-) -> Tuple[Any, Any]:
+) -> tuple[Any, Any]:
     """Overlay experimental data on spectrum plot."""
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("Matplotlib required for plotting")
@@ -387,7 +441,7 @@ def overlay_experimental(
                 break
         if param_name:
             param_values = result.get_parameter_values(param_name)
-            idx = np.argmin(np.abs(param_values - parameter_value))
+            idx = int(np.argmin(np.abs(param_values - parameter_value)))
         else:
             idx = 0
     else:
@@ -402,7 +456,7 @@ def overlay_experimental(
     ax.plot(sim_freq, sim_power, label="Simulation", color="blue", linewidth=2)
 
     exp_freq_ghz = exp_frequencies / 1e9
-    default_kwargs = {"linewidth": 1.5, "linestyle": "--", "alpha": 0.8}
+    default_kwargs: dict[str, Any] = {"linewidth": 1.5, "linestyle": "--", "alpha": 0.8}
     default_kwargs.update(plot_kwargs)
     ax.plot(exp_freq_ghz, exp_data, label=label, color=color, **default_kwargs)
 

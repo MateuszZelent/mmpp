@@ -29,10 +29,10 @@ from typing import Any
 
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Result model
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class CoreHealthStatus:
@@ -106,6 +106,8 @@ class CoreHealthStatus:
                     return
             else:
                 ax = ax_or_fig
+            if ax is None:
+                return
 
             msg = " | ".join(self.warnings)
             ax.annotate(
@@ -116,12 +118,12 @@ class CoreHealthStatus:
                 va="top",
                 ha="left",
                 color=color,
-                bbox=dict(
-                    boxstyle="round,pad=0.3",
-                    facecolor="#1a1a1a",
-                    edgecolor=color,
-                    alpha=0.85,
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.3",
+                    "facecolor": "#1a1a1a",
+                    "edgecolor": color,
+                    "alpha": 0.85,
+                },
             )
         except Exception:  # never crash the plot
             pass
@@ -139,10 +141,12 @@ class CoreHealthStatus:
             ("mz_final", f"{self.mz_final:.4f}"),
         ]
         if self.min_wall_distance_frac is not None:
-            rows.append((
-                "min_wall_distance",
-                f"{self.min_wall_distance_frac:.3f} R",
-            ))
+            rows.append(
+                (
+                    "min_wall_distance",
+                    f"{self.min_wall_distance_frac:.3f} R",
+                )
+            )
         if self.excluded:
             rows.append(("excluded", "True (annihilation excluded by user flag)"))
 
@@ -163,9 +167,9 @@ class CoreHealthStatus:
             for k, v in rows
         )
         return (
-            "<div style=\"font-family:-apple-system,sans-serif;"
+            '<div style="font-family:-apple-system,sans-serif;'
             "border:1px solid #334155;border-radius:8px;padding:12px;"
-            "background:#0f172a;color:#e2e8f0;\">"
+            'background:#0f172a;color:#e2e8f0;">'
             f"<div style='font-weight:600;color:{_esc(color)};margin-bottom:6px;'>"
             f"Core Health: {label}</div>"
             "<table style='border-collapse:collapse;'>"
@@ -187,6 +191,7 @@ class CoreHealthStatus:
 # ---------------------------------------------------------------------------
 # Detection helpers
 # ---------------------------------------------------------------------------
+
 
 def _average_core_mz(data: np.ndarray, frame_idx: int, core_fraction: float) -> float:
     """Return mean ``m_z`` in the central ``core_fraction`` of the disk.
@@ -247,6 +252,7 @@ def _min_wall_distance(
 # ---------------------------------------------------------------------------
 # Public entry-point
 # ---------------------------------------------------------------------------
+
 
 def check_core_health(
     job_result,
@@ -370,7 +376,7 @@ def check_core_health(
                     r_max_nm = (R - frac * R) * 1e9
                     warn_msgs.append(
                         f"Boundary collision: core reached {r_max_nm:.1f} nm "
-                        f"from disk edge ({frac*100:.1f}% R left)"
+                        f"from disk edge ({frac * 100:.1f}% R left)"
                     )
         except Exception:
             pass

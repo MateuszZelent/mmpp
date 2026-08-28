@@ -1,5 +1,8 @@
+import sys
+from importlib.util import find_spec
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
-from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -24,7 +27,7 @@ else:
     np5d = np.ndarray
     np4dc = np.ndarray
 
-ArraySlice = Union[slice, tuple, int]
+ArraySlice = slice | tuple | int
 
 SPECIAL_ATTRS = {
     "dx",
@@ -50,26 +53,29 @@ SPECIAL_ATTRS = {
 # Feature flags and optional imports
 try:
     import itables  # noqa: F401
+
     ITABLES_AVAILABLE = True
 except ImportError:
     ITABLES_AVAILABLE = False
 
-try:
-    from rich import print as rprint
-    from rich.columns import Columns
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.syntax import Syntax
-    from rich.table import Table
-    from rich.text import Text
 
-    RICH_AVAILABLE = True
-except ImportError:
-    RICH_AVAILABLE = False
-    # Define dummy classes/functions if needed, or handle at usage site
-    Console = None
-    Syntax = None
-    Table = None
+def _optional_module_available(module_name: str) -> bool:
+    """Return whether an optional module can be imported safely.
+
+    A module injected into ``sys.modules`` by an embedding application or test
+    can legitimately have ``__spec__ = None``.  ``find_spec`` raises
+    ``ValueError`` for that case, so check already-loaded modules first and
+    keep optional-dependency probing non-fatal.
+    """
+    if module_name in sys.modules:
+        return sys.modules[module_name] is not None
+    try:
+        return find_spec(module_name) is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
+
+
+RICH_AVAILABLE = _optional_module_available("rich")
 
 # Do not probe notebook/plotting stacks during core import. Public dependency
 # checks resolve these optional packages explicitly when requested.

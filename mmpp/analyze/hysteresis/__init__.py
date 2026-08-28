@@ -13,8 +13,8 @@ from mmpp._repr_helpers import (
     NODE_COLOR_COMPUTE,
     NODE_COLOR_PLOT,
     NODE_COLOR_UTIL,
-    api_help_html,
     accessors_section_html,
+    api_help_html,
     examples_section_html,
     metrics_section_html,
     node_card_html,
@@ -167,7 +167,7 @@ class HysteresisInterface:
         self._dataset_name = dataset_name
         self._slice_info = slice_info
         self._config = config or HysteresisConfig()
-        self._plot = None
+        self._plot: Any = None
 
     @property
     def config(self) -> HysteresisConfig:
@@ -314,7 +314,7 @@ class HysteresisInterface:
         min_spatial_size: int = 50,
         metadata: dict[str, Any] | None = None,
         cloneflip: bool = False,
-    ) -> "HysteresisResult":
+    ) -> HysteresisResult:
         """Unified entry point for loading hysteresis data.
 
         Parameters

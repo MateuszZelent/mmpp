@@ -27,7 +27,7 @@ def _make_vortex_snapshot(
     radius = np.hypot(x_grid, y_grid)
     phi = np.arctan2(y_grid, x_grid)
 
-    mz = polarity * np.exp(-(radius / core_radius_px) ** 2)
+    mz = polarity * np.exp(-((radius / core_radius_px) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
 
     mx = -chirality * m_perp * np.sin(phi)
@@ -95,7 +95,9 @@ def _create_table_job(
     table.create_dataset("ext_coreposy", data=np.asarray(y, dtype=float))
     table.create_dataset("t", data=np.asarray(t, dtype=float))
     if polarity_signal is not None:
-        table.create_dataset("ext_coreposz", data=np.asarray(polarity_signal, dtype=float))
+        table.create_dataset(
+            "ext_coreposz", data=np.asarray(polarity_signal, dtype=float)
+        )
     dt = float(np.median(np.diff(t))) if np.asarray(t).size >= 2 else 1e-12
     z.attrs["dx"] = 1e-9
     z.attrs["dy"] = 1e-9
@@ -128,7 +130,9 @@ def test_orbit_fit_phase_and_plot_accessors(tmp_path):
         title="Orbit 2D",
     )
     fig_overview = traj.plt.overview()
-    ax_phase = phase.plt.frequency_vs_time(unit="ghz", figsize=(6, 3), dpi=100, grid=True)
+    ax_phase = phase.plt.frequency_vs_time(
+        unit="ghz", figsize=(6, 3), dpi=100, grid=True
+    )
     ax_portrait = phase.plt.phase_portrait(figsize=(4, 4), dpi=90, aspect="equal")
 
     assert hasattr(ax_orbit, "plot")

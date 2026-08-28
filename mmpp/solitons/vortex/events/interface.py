@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -26,8 +27,19 @@ from .polarity import detect_polarity_switches
 from .state_transitions import detect_state_switches
 
 
-class EventsInterface:
+class EventsInterface(InteractiveNodeMixin):
     """Event detection namespace (polarity, state transitions, expulsion, dwell time)."""
+
+    _interactive_owner = "job[0].vortex.events"
+    _interactive_nodes = frozenset(
+        {"polarity_switches", "state_switches", "core_expulsions", "dwell_times"}
+    )
+    _interactive_examples = {
+        "polarity_switches": ["events = job[0].vortex.events.polarity_switches()"],
+        "state_switches": ["events = job[0].vortex.events.state_switches()"],
+        "core_expulsions": ["events = job[0].vortex.events.core_expulsions()"],
+        "dwell_times": ["dwell = job[0].vortex.events.dwell_times()"],
+    }
 
     def __init__(
         self,
@@ -215,7 +227,6 @@ class EventsInterface:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
-
         from html import escape as _esc
 
         from mmpp._repr_helpers import (
@@ -342,8 +353,15 @@ class EventsInterface:
         )
 
 
-class EventsPlotAccessor:
+class EventsPlotAccessor(InteractiveNodeMixin):
     """Plotting facade for :class:`EventsInterface`."""
+
+    _interactive_owner = "job[0].vortex.events.plt"
+    _interactive_nodes = frozenset({"event_timeline", "dwell_histogram"})
+    _interactive_examples = {
+        "event_timeline": ["job[0].vortex.events.plt.event_timeline()"],
+        "dwell_histogram": ["job[0].vortex.events.plt.dwell_histogram()"],
+    }
 
     def __init__(self, interface: EventsInterface):
         self._interface = interface
@@ -369,12 +387,12 @@ class EventsPlotAccessor:
         ax.plot(traj.time, traj.x, label="x(t)", **x_kwargs)
         ax.plot(traj.time, traj.y, label="y(t)", **y_kwargs)
 
-        for event in self._interface.polarity_switches(trajectory=traj):
-            ax.axvline(event.time, color="red", linestyle=":", alpha=0.6)
-        for event in self._interface.state_switches(trajectory=traj):
-            ax.axvline(event.time, color="green", linestyle="-.", alpha=0.5)
-        for event in self._interface.core_expulsions(trajectory=traj):
-            ax.axvline(event.time, color="purple", linestyle="--", alpha=0.5)
+        for polarity_event in self._interface.polarity_switches(trajectory=traj):
+            ax.axvline(polarity_event.time, color="red", linestyle=":", alpha=0.6)
+        for state_event in self._interface.state_switches(trajectory=traj):
+            ax.axvline(state_event.time, color="green", linestyle="-.", alpha=0.5)
+        for expulsion_event in self._interface.core_expulsions(trajectory=traj):
+            ax.axvline(expulsion_event.time, color="purple", linestyle="--", alpha=0.5)
 
         ax.set_xlabel("Time [s]")
         ax.set_ylabel("Position [m]")

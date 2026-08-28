@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from mmpp._repr_helpers import (
     NODE_COLOR_ADVANCED,
@@ -14,6 +15,9 @@ from mmpp._repr_helpers import (
     metrics_section_html,
     node_card_html,
 )
+
+if TYPE_CHECKING:
+    from .dataset_plotting import DatasetPlotAccessor
 
 
 def _backend_methods_section(methods) -> str:
@@ -89,7 +93,7 @@ class _DatasetMatplotlibPlotAccessor:
     _DEFAULT_MPL_FIGSIZE = (8.0, 5.0)
     _DEFAULT_MPL_DPI = 100
 
-    def __init__(self, parent: "DatasetPlotAccessor"):
+    def __init__(self, parent: DatasetPlotAccessor):
         self._parent = parent
 
     @classmethod
@@ -199,7 +203,7 @@ class _DatasetK3DPlotAccessor:
         merged.setdefault("multiplier", None)
         return merged
 
-    def __init__(self, parent: "DatasetPlotAccessor"):
+    def __init__(self, parent: DatasetPlotAccessor):
         self._parent = parent
 
     def __call__(self, **kwargs):
@@ -286,7 +290,7 @@ class _DatasetK3DPlotAccessor:
 class _DatasetHVPlotAccessor:
     """Holoviews backend namespace for dataset-aware plotting."""
 
-    def __init__(self, parent: "DatasetPlotAccessor"):
+    def __init__(self, parent: DatasetPlotAccessor):
         self._parent = parent
 
     def __call__(self, **kwargs):
@@ -330,7 +334,7 @@ class _DatasetHVPlotAccessor:
 class _DatasetPyVistaPlotAccessor:
     """PyVista backend namespace for dataset-aware plotting."""
 
-    def __init__(self, parent: "DatasetPlotAccessor"):
+    def __init__(self, parent: DatasetPlotAccessor):
         self._parent = parent
 
     def __call__(self, **kwargs):

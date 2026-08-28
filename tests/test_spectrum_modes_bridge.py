@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
-from matplotlib import animation as mpl_animation
 import numpy as np
 import zarr
+from matplotlib import animation as mpl_animation
 
 import mmpp.fft.modes.interface as modes_interface_mod
 from mmpp.core.job import ZarrJobResult

@@ -1,15 +1,16 @@
 import colorsys
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import zarr
-from .pyzfn import Pyzfn
+
 from .batch_operations import BatchOperations
 
 # Import shared logging configuration
 from .cli.logging_config import get_mmpp_logger, setup_mmpp_logging
+from .pyzfn import Pyzfn
 
 # Get logger for plotting
 log = get_mmpp_logger("mmpp.plot")
@@ -125,6 +126,7 @@ except ImportError:
     RICH_AVAILABLE = False
 
 # Import type aliases from core
+np3d: Any
 try:
     from .core import np3d
 except ImportError:
@@ -148,7 +150,7 @@ class PlotConfig:
     tick_fontsize: int = 10
     use_custom_fonts: bool = True
     font_family: str = "Arial"
-    colors: Optional[dict[str, str]] = None
+    colors: dict[str, str] | None = None
     max_legend_params: int = 4  # Maximum number of parameters to show in legend
     sort_results: bool = True  # Whether to sort results by parameters
 
@@ -188,7 +190,7 @@ class PlotterProxy(BatchOperations):
     New code should prefer :class:`mmpp.batch_operations.BatchOperations`.
     """
 
-    def __init__(self, results: list[Any], mmpp_instance: Optional[Any] = None):
+    def __init__(self, results: list[Any], mmpp_instance: Any | None = None):
         """
         Initialize the plotter proxy.
 
@@ -204,7 +206,7 @@ class PlotterProxy(BatchOperations):
 
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to MMPPlotter or handle dataset names.
-        
+
         This allows both:
         - job.find(...).m_layer13[...].fft.transmission() - dataset access
         - job.find(...).mpl.plot() - plotting methods
@@ -216,11 +218,12 @@ class PlotterProxy(BatchOperations):
                 member = result._z[name]
                 if isinstance(member, zarr.Array):
                     from .batch_operations import BatchDatasetWrapper
+
                     log.debug(f"PlotterProxy: Creating dataset wrapper for: {name}")
                     return BatchDatasetWrapper(self.results, self.mmpp_instance, name)
             except (KeyError, Exception):
                 continue
-        
+
         # Default: delegate to MMPPlotter for plotting methods
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError(
@@ -231,14 +234,14 @@ class PlotterProxy(BatchOperations):
         plotter = MMPPlotter(self.results, self.mmpp_instance)
         return getattr(plotter, name)
 
-    def __getitem__(self, index: Union[int, slice]) -> Any:
+    def __getitem__(self, index: int | slice) -> Any:
         """Get job result by index or batch operations by slice.
-        
+
         Parameters
         ----------
         index : Union[int, slice]
             Index of the result to get or slice for batch operations
-            
+
         Returns
         -------
         Union[Any, BatchOperations]
@@ -247,6 +250,7 @@ class PlotterProxy(BatchOperations):
         if isinstance(index, slice):
             # Return BatchOperations for slice
             from .batch_operations import BatchOperations
+
             sliced_results = self.results[index]
             if self.mmpp_instance is not None:
                 for res in sliced_results:
@@ -261,11 +265,11 @@ class PlotterProxy(BatchOperations):
             if callable(setter):
                 setter(self.mmpp_instance)
         return result
-    
+
     def __len__(self) -> int:
         """Return number of results."""
         return len(self.results)
-    
+
     def __iter__(self):
         """Make PlotterProxy iterable."""
         if self.mmpp_instance is not None:
@@ -293,14 +297,14 @@ _STYLING_SETUP_COMPLETED = False
 
 def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
     """Setup custom fonts including Arial from package fonts directory.
-    
+
     Parameters
     ----------
     verbose : bool
         Print debug information
     force : bool
         Force setup even if already initialized
-        
+
     Returns
     -------
     bool
@@ -313,13 +317,12 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
         return True
 
     try:
-        import shutil
-        
         # Clear matplotlib font cache first
-        cache_dir = font_manager.get_cachedir()
+        cache_dir = getattr(font_manager, "get_cachedir", lambda: None)()
         if cache_dir and os.path.exists(cache_dir):
-            fontlist_cache = os.path.join(cache_dir, 'fontlist-*.json')
+            fontlist_cache = os.path.join(cache_dir, "fontlist-*.json")
             import glob
+
             for cache_file in glob.glob(fontlist_cache):
                 try:
                     os.remove(cache_file)
@@ -332,17 +335,17 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
         package_dir = os.path.dirname(__file__)
         package_fonts_dir = os.path.join(package_dir, "fonts")
         arial_fonts_dir = os.path.join(package_fonts_dir, "Arial")
-        
+
         fonts_loaded = 0
-        
+
         # Add fonts using findSystemFonts (more reliable than manual iteration)
         if os.path.exists(arial_fonts_dir) and os.path.isdir(arial_fonts_dir):
             if verbose:
                 log.info(f"🔍 Adding fonts from: {arial_fonts_dir}")
-            
+
             # Use findSystemFonts to discover fonts properly
             font_files = font_manager.findSystemFonts(fontpaths=[arial_fonts_dir])
-            
+
             for font_path in font_files:
                 try:
                     font_manager.fontManager.addfont(font_path)
@@ -358,7 +361,7 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
             # This is needed when system font cache can't be modified
             try:
                 # Method 1: Try private API (matplotlib >= 3.2)
-                font_manager._load_fontmanager(try_read_cache=False)
+                font_manager._load_fontmanager(try_read_cache=False)  # type: ignore[attr-defined]
                 if verbose:
                     log.info(f"✓ Loaded {fonts_loaded} fonts and rebuilt cache")
             except (AttributeError, TypeError):
@@ -366,10 +369,12 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
                     # Method 2: Rebuild font list manually
                     font_manager.fontManager.ttflist.clear()
                     font_manager.fontManager.afmlist.clear()
-                    font_manager.fontManager.ttflist.extend(font_manager.findSystemFonts())
+                    font_manager.fontManager.ttflist.extend(
+                        cast(Any, font_manager.findSystemFonts())
+                    )
                     # Re-add our fonts
                     for font_file in os.listdir(arial_fonts_dir):
-                        if font_file.lower().endswith(('.ttf', '.otf')):
+                        if font_file.lower().endswith((".ttf", ".otf")):
                             font_path = os.path.join(arial_fonts_dir, font_file)
                             try:
                                 font_manager.fontManager.addfont(font_path)
@@ -379,15 +384,23 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
                         log.info(f"✓ Loaded {fonts_loaded} fonts (rebuilt manually)")
                 except Exception as rebuild_err:
                     if verbose:
-                        log.warning(f"Font cache rebuild failed: {rebuild_err}, fonts may not appear")
+                        log.warning(
+                            f"Font cache rebuild failed: {rebuild_err}, fonts may not appear"
+                        )
 
         # Set font preferences - Arial first, then fallbacks
         plt.rcParams["font.family"] = "sans-serif"
-        plt.rcParams["font.sans-serif"] = ["Arial", "Arimo", "DejaVu Sans", "Helvetica", "sans-serif"]
-        
+        plt.rcParams["font.sans-serif"] = [
+            "Arial",
+            "Arimo",
+            "DejaVu Sans",
+            "Helvetica",
+            "sans-serif",
+        ]
+
         # Check if Arial is available
         available_fonts = {f.name for f in font_manager.fontManager.ttflist}
-        
+
         if "Arial" in available_fonts:
             # Arial available - use custom mathtext with Arial
             plt.rcParams["mathtext.fontset"] = "custom"
@@ -430,80 +443,82 @@ def setup_custom_fonts(verbose: bool = False, force: bool = False) -> bool:
 
 def check_fonts(verbose: bool = True) -> dict:
     """Comprehensive font diagnostic utility for MMPP.
-    
+
     Displays detailed information about:
     - Package installation location
     - Fonts directory status
     - Available font files
     - Matplotlib font registration status
     - Currently available fonts
-    
+
     Parameters
     ----------
     verbose : bool, default True
         Print detailed diagnostic information
-        
+
     Returns
     -------
     dict
         Diagnostic information
-        
+
     Examples
     --------
     >>> import mmpp
     >>> mmpp.check_fonts()
     """
     import os
+
     from matplotlib import font_manager
-    
+
     # Gather diagnostic info
     package_dir = os.path.dirname(__file__)
     fonts_base_dir = os.path.join(package_dir, "fonts")
     arial_fonts_dir = os.path.join(fonts_base_dir, "Arial")
-    
+
     fonts_dir_exists = os.path.exists(arial_fonts_dir)
-    
+
     font_files = []
     if fonts_dir_exists:
         font_files = [
-            f for f in os.listdir(arial_fonts_dir) 
-            if f.lower().endswith(('.ttf', '.otf'))
+            f
+            for f in os.listdir(arial_fonts_dir)
+            if f.lower().endswith((".ttf", ".otf"))
         ]
-    
+
     # Check matplotlib registration
     available_fonts = {f.name for f in font_manager.fontManager.ttflist}
     arial_registered = "Arial" in available_fonts
-    arial_variants = sorted([f for f in available_fonts if 'arial' in f.lower()])
-    
+    arial_variants = sorted([f for f in available_fonts if "arial" in f.lower()])
+
     # Build result dictionary
     result = {
-        'package_dir': package_dir,
-        'fonts_dir': arial_fonts_dir,
-        'fonts_dir_exists': fonts_dir_exists,
-        'font_files': font_files,
-        'arial_registered': arial_registered,
-        'available_fonts': list(available_fonts),
-        'arial_variants': arial_variants
+        "package_dir": package_dir,
+        "fonts_dir": arial_fonts_dir,
+        "fonts_dir_exists": fonts_dir_exists,
+        "font_files": font_files,
+        "arial_registered": arial_registered,
+        "available_fonts": list(available_fonts),
+        "arial_variants": arial_variants,
     }
-    
+
     if verbose:
         print("📦 MMPP Font Diagnostic")
         print("=" * 60)
         print(f"📁 Package installation: {package_dir}")
         print(f"📂 Fonts directory: {arial_fonts_dir}")
-        
+
         if fonts_dir_exists:
             print("✅ Fonts directory exists")
         else:
             print("❌ Fonts directory NOT FOUND")
-        
+
         if font_files:
             print(f"\n📄 Font files found ({len(font_files)}):")
             for font_file in sorted(font_files):
                 print(f"   • {font_file}")
         else:
             print("\n❌ No font files found")
-        
+
         print()
         if arial_registered:
             print("✅ Arial registered in matplotlib")
@@ -511,27 +526,27 @@ def check_fonts(verbose: bool = True) -> dict:
             print("❌ Arial NOT registered")
             print("   Try: from mmpp.plotting import setup_custom_fonts")
             print("        setup_custom_fonts(verbose=True, force=True)")
-        
+
         if arial_variants:
             print(f"\n📊 Arial variants ({len(arial_variants)}):")
             for variant in arial_variants:
                 print(f"   • {variant}")
-        
+
         print("=" * 60)
-    
+
     return result
 
 
 def load_paper_style(verbose: bool = False, force: bool = False) -> bool:
     """Load custom paper style.
-    
+
     Parameters
     ----------
     verbose : bool
         Print debug information
     force : bool
         Force reload even if already loaded
-        
+
     Returns
     -------
     bool
@@ -548,11 +563,11 @@ def load_paper_style(verbose: bool = False, force: bool = False) -> bool:
         # This ensures package fonts (Arial) are registered with matplotlib
         # before the style tries to use them
         setup_custom_fonts(verbose=verbose, force=force)
-        
+
         # Package directory is the primary location
         package_dir = os.path.dirname(__file__)
         style_path = os.path.join(package_dir, "paper.mplstyle")
-        
+
         if os.path.exists(style_path):
             plt.style.use(style_path)
             if verbose:
@@ -565,7 +580,7 @@ def load_paper_style(verbose: bool = False, force: bool = False) -> bool:
                 "./paper.mplstyle",
                 os.path.expanduser("~/.mmpp/paper.mplstyle"),
             ]
-            
+
             for path in fallback_paths:
                 if os.path.exists(path):
                     plt.style.use(path)
@@ -618,7 +633,7 @@ class MMPPlotter:
     """
 
     def __init__(
-        self, results: Union[list[Any], Any], mmpp_instance: Optional[Any] = None
+        self, results: list[Any] | Any, mmpp_instance: Any | None = None
     ) -> None:
         """
         Initialize the plotter.
@@ -692,7 +707,7 @@ class MMPPlotter:
                     )
 
             # Apply custom colors
-            apply_custom_colors(self.config.colors)
+            apply_custom_colors(self.config.colors or {})
 
             # Mark styling as completed globally
             _STYLING_SETUP_COMPLETED = True
@@ -850,7 +865,7 @@ MMPP Plotter:
 
         # Apply color changes if provided
         if "colors" in kwargs:
-            apply_custom_colors(self.config.colors)
+            apply_custom_colors(self.config.colors or {})
 
         return self
 
@@ -907,7 +922,7 @@ MMPP Plotter:
         styles = list(plt.style.available) + ["paper"]
         return sorted(styles)
 
-    def _parse_component(self, comp: Union[str, int]) -> int:
+    def _parse_component(self, comp: str | int) -> int:
         """Parse component specification."""
         if isinstance(comp, str):
             comp_map = {"x": 0, "y": 1, "z": 2}
@@ -922,9 +937,9 @@ MMPP Plotter:
         self,
         job: Pyzfn,
         dataset_name: str,
-        x_series: Optional[str] = None,
-        comp: Optional[Union[str, int]] = None,
-        average: Optional[tuple[Any, ...]] = None,
+        x_series: str | None = None,
+        comp: str | int | None = None,
+        average: tuple[Any, ...] | None = None,
     ) -> tuple:
         """
         Extract data from a Pyzfn job.
@@ -1006,16 +1021,16 @@ MMPP Plotter:
         self,
         x_series: str,
         y_series: str,
-        comp: Optional[Union[str, int]] = None,
-        average: Optional[tuple[Any, ...]] = None,
-        figsize: Optional[tuple[Any, ...]] = None,
-        title: Optional[Union[str, list[str]]] = None,
-        xlabel: Optional[str] = None,
-        ylabel: Optional[str] = None,
-        legend_labels: Optional[list[str]] = None,
-        legend_variables: Optional[list[str]] = None,
-        colors: Optional[list[str]] = None,
-        save_path: Optional[str] = None,
+        comp: str | int | None = None,
+        average: tuple[Any, ...] | None = None,
+        figsize: tuple[Any, ...] | None = None,
+        title: str | list[str] | None = None,
+        xlabel: str | None = None,
+        ylabel: str | None = None,
+        legend_labels: list[str] | None = None,
+        legend_variables: list[str] | None = None,
+        colors: list[str] | None = None,
+        save_path: str | None = None,
         paper_ready: bool = False,
         **kwargs: Any,
     ) -> tuple:
@@ -1232,7 +1247,7 @@ MMPP Plotter:
     def plot_time_series(
         self,
         dataset: str,
-        comp: Union[str, int] = "z",
+        comp: str | int = "z",
         average: tuple = (1, 2, 3),
         **kwargs: Any,
     ) -> tuple:
@@ -1400,7 +1415,7 @@ MMPP Plotter:
 
         def sort_key(result):
             # Collect all sortable attributes
-            sort_values = []
+            sort_values: list[Any] = []
 
             # Common parameters in order of importance
             important_params = [
@@ -1674,7 +1689,7 @@ MMPP Plotter:
         return ", ".join(title_parts)
 
     def _format_result_label(
-        self, result: Any, varying_params: Optional[list[str]] = None
+        self, result: Any, varying_params: list[str] | None = None
     ) -> str:
         """
         Format result label showing only varying parameters with proper precision.
@@ -1772,7 +1787,7 @@ MMPP Plotter:
             other_params_added = 0
 
             # Get all available parameters
-            available_params = set()
+            available_params: set[str] = set()
             if hasattr(result, "attributes") and isinstance(result.attributes, dict):
                 available_params.update(result.attributes.keys())
 
@@ -1813,14 +1828,14 @@ MMPP Plotter:
 
     def snapshot(
         self,
-        dset: Optional[str] = None,
+        dset: str | None = None,
         z: int = 0,
         t: int = -1,
-        ax: Optional[Axes] = None,
+        ax: Axes | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
-        cmap: Optional[str] = None,
-        component: Optional[int] = None,
+        zero: int | None = None,
+        cmap: str | None = None,
+        component: int | None = None,
         dpi: int = 100,
     ) -> Axes:
         """
@@ -1872,13 +1887,13 @@ MMPP Plotter:
 
         # ── Probe dataset shape to decide vector vs scalar ──────────
         raw_dset = result.get_raw(dset)
-        full_shape = raw_dset.shape          # e.g. (Nt, Nz, Ny, Nx, 3) or (Nz, Ny, Nx)
+        full_shape = raw_dset.shape  # e.g. (Nt, Nz, Ny, Nx, 3) or (Nz, Ny, Nx)
         ndim = len(full_shape)
 
         # Build the indexing tuple depending on dimensionality
         if ndim == 5:
             # Standard 5-D: (t, z, y, x, comp)
-            slices = (t, z, slice(None), slice(None), slice(None))
+            slices: Any = (t, z, slice(None), slice(None), slice(None))
             arr = np.asarray(raw_dset[slices], dtype=np.float32)
             n_comp = arr.shape[-1]
         elif ndim == 4:
@@ -1919,7 +1934,9 @@ MMPP Plotter:
             else:
                 log.warning(
                     "zero=%s ignored for %dD dataset '%s' (no time axis)",
-                    zero, ndim, dset,
+                    zero,
+                    ndim,
+                    dset,
                 )
                 ref = np.zeros_like(arr)
             arr = arr - ref
@@ -1971,7 +1988,8 @@ MMPP Plotter:
             )
 
             ax.quiver(
-                x, y,
+                x,
+                y,
                 u[::stepy, ::stepx],
                 v[::stepy, ::stepx],
                 alpha=alphas[::stepy, ::stepx],

@@ -22,9 +22,10 @@ import importlib.util
 import json
 import sys
 import tempfile
-from types import SimpleNamespace
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 
@@ -125,7 +126,9 @@ def _make_headless_viewer_state() -> dict[str, Any]:
     state = viewer.state
     return {
         **state,
-        "positive_frequencies": bool(state.get("options", {}).get("positive_frequencies")),
+        "positive_frequencies": bool(
+            state.get("options", {}).get("positive_frequencies")
+        ),
         "preset_roundtrip": reloaded.state == state,
         "export_selection": exported["selection"],
     }
@@ -186,7 +189,9 @@ def _run_viewer_display_lifecycle_smoke() -> dict[str, Any]:
         "widget_status_after_show": widget_status_after_show,
         "live_filters_after_show": state_after_show.get("live_filters"),
         "live_filter_error": (
-            getattr(getattr(lifecycle, "_widget_engine", None), "_last_filter_error", "")
+            getattr(
+                getattr(lifecycle, "_widget_engine", None), "_last_filter_error", ""
+            )
         ),
         "rendered_xlim": rendered_xlim,
         "rendered_ylim": rendered_ylim,
@@ -346,7 +351,6 @@ def _write_docs_smoke_zarr(path: Path) -> None:
 def _run_docs_example_smoke() -> dict[str, Any]:
     """Execute the public dispersion docs pattern on a synthetic dataset."""
     import mmpp
-
     from mmpp.fft.dispersion.interface import FFTDispersionInterface
 
     with tempfile.TemporaryDirectory(prefix="mmpp-dispersion-docs-smoke-") as tmp:
@@ -516,8 +520,7 @@ def _run_docs_example_smoke() -> dict[str, Any]:
 def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
     progress_stages = set(docs_example.get("dataset_first_progress_stages") or [])
     checks = {
-        "full_dataset_headless": docs_example.get("full_dataset_viewer_show")
-        is False,
+        "full_dataset_headless": docs_example.get("full_dataset_viewer_show") is False,
         "full_dataset_uses_all_timesteps": (
             docs_example.get("full_dataset_shape") or [None, None]
         )[-1]
@@ -528,8 +531,7 @@ def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
         "auto_modes_store_complex": docs_example.get("auto_modes_has_complex") is True,
         "auto_modes_can_reconstruct": docs_example.get("auto_modes_can_reconstruct")
         is True,
-        "legacy_alias_headless": docs_example.get("legacy_alias_viewer_show")
-        is False,
+        "legacy_alias_headless": docs_example.get("legacy_alias_viewer_show") is False,
         "legacy_alias_same_type": docs_example.get("legacy_alias_same_type") is True,
         "legacy_alias_uses_all_timesteps": (
             docs_example.get("legacy_alias_shape") or [None, None]
@@ -563,8 +565,7 @@ def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
         == 4,
         "result_viewer_headless": docs_example.get("result_viewer_show") is False,
         "positive_frequencies": docs_example.get("positive_frequencies") is True,
-        "amplitude_squared_scaling": docs_example.get("scaling")
-        == "amplitude_squared",
+        "amplitude_squared_scaling": docs_example.get("scaling") == "amplitude_squared",
         "preview_without_complex": docs_example.get("s_complex_is_none") is True,
         "preview_modes_unavailable": docs_example.get(
             "result_viewer_can_reconstruct_modes"
@@ -574,9 +575,7 @@ def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
         in str(docs_example.get("result_viewer_unavailable_reason"))
         or "S_complex" in str(docs_example.get("export_mode_request_reason")),
         "mode_result_has_complex": docs_example.get("mode_result_has_complex") is True,
-        "modes_viewer_can_reconstruct": docs_example.get(
-            "modes_viewer_can_reconstruct"
-        )
+        "modes_viewer_can_reconstruct": docs_example.get("modes_viewer_can_reconstruct")
         is True,
         "mode_viewer_headless": docs_example.get("mode_viewer_show") is False,
         "mode_viewer_abs": docs_example.get("mode_viewer_type") == "abs",
@@ -584,9 +583,7 @@ def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
         "legacy_modes_has_interface": docs_example.get("legacy_modes_has_interface")
         is True,
         "legacy_modes_lattice": docs_example.get("legacy_modes_lattice_nm") == 470,
-        "legacy_modes_can_reconstruct": docs_example.get(
-            "legacy_modes_can_reconstruct"
-        )
+        "legacy_modes_can_reconstruct": docs_example.get("legacy_modes_can_reconstruct")
         is True,
         "legacy_modes_export": docs_example.get("legacy_modes_export_source")
         == "legacy_modes"
@@ -752,10 +749,13 @@ def _run_widget_smoke(*, require: bool = False) -> dict[str, Any]:
             "has_axes": getattr(modes, "_ax_disp", None) is not None
             and getattr(modes, "_ax_mode", None) is not None,
             "has_widgets": has_widgets,
-            "display_handle_present": getattr(modes, "_display_handle", None) is not None,
+            "display_handle_present": getattr(modes, "_display_handle", None)
+            is not None,
         }
         modes.close()
-        report["close_cleared_display"] = getattr(modes, "_display_handle", None) is None
+        report["close_cleared_display"] = (
+            getattr(modes, "_display_handle", None) is None
+        )
         report["close_cleared_figure"] = getattr(modes, "_fig", None) is None
     except Exception as exc:  # pragma: no cover - depends on optional widget stack
         report = {
@@ -872,7 +872,8 @@ def run_release_gate(
         "benchmark_threshold": benchmark.get("threshold_status"),
     }
     masterplan_failures = [
-        name for name, contract_status in masterplan_contracts.items()
+        name
+        for name, contract_status in masterplan_contracts.items()
         if contract_status == "failed"
     ]
     recommended_next_steps = _recommended_masterplan_next_steps(masterplan_failures)

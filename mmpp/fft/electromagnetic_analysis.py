@@ -9,19 +9,33 @@ Advanced electromagnetic analysis tools for FMR modes including:
 - Mode coupling analysis
 """
 
-from dataclasses import dataclass
-from typing import Any
+from __future__ import annotations
 
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
+
 import numpy as np
 import scipy.constants as const
+
+if TYPE_CHECKING:
+    import matplotlib.pyplot as plt
 
 # Import shared logging configuration
 from ..cli.logging_config import get_mmpp_logger
 
 # Get logger for electromagnetic analysis
 log = get_mmpp_logger("mmpp.fft.electromagnetic")
+
+
+def _require_matplotlib():
+    """Load plotting modules only for visualization entrypoints."""
+    try:
+        import matplotlib.gridspec as gridspec
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise ImportError("Electromagnetic visualization requires matplotlib") from exc
+    return plt, gridspec
+
 
 try:
     from ..plotting import load_paper_style
@@ -157,6 +171,7 @@ class PoyntingVectorAnalysis:
         fig : plt.Figure
             Matplotlib figure
         """
+        plt, _gridspec = _require_matplotlib()
         if STYLING_AVAILABLE:
             load_paper_style()
 
@@ -368,6 +383,7 @@ class RadiationPatternAnalysis:
         fig : plt.Figure
             Matplotlib figure
         """
+        plt, gridspec = _require_matplotlib()
         if STYLING_AVAILABLE:
             load_paper_style()
 
@@ -509,7 +525,7 @@ def analyze_electromagnetic_properties(
     radiation_analyzer = RadiationPatternAnalysis(config)
     QFactorAnalysis(config)
 
-    results = {}
+    results: dict[str, Any] = {}
 
     log.info(
         f"Starting electromagnetic analysis for frequency {mode_data.frequency:.3f} GHz"
@@ -543,7 +559,9 @@ def analyze_electromagnetic_properties(
         current_density = 1j * omega * m_data * config.gamma  # Magnetization current
 
         # Radiation pattern analysis
-        extent_m = [x * 1e-9 for x in mode_data.extent]  # Convert nm to m
+        extent_m = cast(
+            tuple[float, float, float, float], tuple(x * 1e-9 for x in mode_data.extent)
+        )  # Convert nm to m
         far_field = radiation_analyzer.compute_far_field(
             current_density, extent_m, omega / (2 * np.pi)
         )
@@ -583,6 +601,7 @@ def create_comprehensive_em_report(
     fig : plt.Figure
         Comprehensive report figure
     """
+    plt, gridspec = _require_matplotlib()
     config = config or ElectromagneticAnalysisConfig()
 
     if STYLING_AVAILABLE:

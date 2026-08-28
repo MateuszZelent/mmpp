@@ -45,7 +45,9 @@ def pop_figure_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     return figure
 
 
-def ensure_axis(ax=None, *, default_figsize=None, figure_kwargs: dict[str, Any] | None = None):
+def ensure_axis(
+    ax=None, *, default_figsize=None, figure_kwargs: dict[str, Any] | None = None
+):
     """Return axis, creating a new figure if ``ax`` is None."""
     if ax is not None:
         return ax
@@ -124,4 +126,3 @@ def apply_axes_style(ax, style_kwargs: dict[str, Any] | None) -> None:
 
     if style.pop("tight_layout", False):
         ax.figure.tight_layout()
-

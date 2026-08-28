@@ -93,7 +93,7 @@ def _loss_radius(num: TrajectoryFeatures, ana: TrajectoryFeatures) -> float:
         return 0.0
 
     r_num, r_ana = num.r[:n], ana.r[:n]
-    scale = max(float(np.mean(r_num ** 2)), 1e-30)
+    scale = max(float(np.mean(r_num**2)), 1e-30)
     return float(np.mean((r_num - r_ana) ** 2)) / scale
 
 
@@ -126,7 +126,7 @@ def _loss_phase(num: TrajectoryFeatures, ana: TrajectoryFeatures) -> float:
 
     # Normalise by total phase accumulated
     total_phase = max(abs(float(phi_num[-1] - phi_num[0])), 1e-6)
-    return float(np.mean((phi_num - phi_ana_aligned) ** 2)) / (total_phase ** 2)
+    return float(np.mean((phi_num - phi_ana_aligned) ** 2)) / (total_phase**2)
 
 
 def _loss_frequency(num: TrajectoryFeatures, ana: TrajectoryFeatures) -> float:
@@ -166,7 +166,7 @@ def _loss_psd(num: TrajectoryFeatures, ana: TrajectoryFeatures) -> float:
 
     # Normalise by numerical peak power
     scale = max(float(np.max(psd_num_window)), 1e-30)
-    return float(np.mean((psd_num_window - psd_ana_window) ** 2)) / (scale ** 2)
+    return float(np.mean((psd_num_window - psd_ana_window) ** 2)) / (scale**2)
 
 
 def _loss_ellipticity(num: TrajectoryFeatures, ana: TrajectoryFeatures) -> float:
@@ -178,12 +178,18 @@ def _loss_stability(num: TrajectoryFeatures, ana: TrajectoryFeatures) -> float:
     """Penalise mismatch of radius-envelope drift and collapsed analytical orbits."""
     drift_mismatch = (num.radius_drift_ratio - ana.radius_drift_ratio) ** 2
     tail_scale = max(float(num.tail_mean_radius), 1e-30)
-    tail_mismatch = ((float(num.tail_mean_radius) - float(ana.tail_mean_radius)) / tail_scale) ** 2
+    tail_mismatch = (
+        (float(num.tail_mean_radius) - float(ana.tail_mean_radius)) / tail_scale
+    ) ** 2
 
     target_radius = max(num.mean_radius, 1e-30)
     ana_radius_ratio = ana.mean_radius / target_radius
     collapse_penalty = 0.0
-    if num.mean_radius > 0 and num.radius_drift_ratio >= 0.85 and ana_radius_ratio < 0.7:
+    if (
+        num.mean_radius > 0
+        and num.radius_drift_ratio >= 0.85
+        and ana_radius_ratio < 0.7
+    ):
         collapse_penalty = ((0.7 - ana_radius_ratio) / 0.7) ** 2
         tail_ratio = float(ana.tail_mean_radius) / tail_scale
         if tail_ratio < 0.75:

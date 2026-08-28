@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from mmpp.analytical import FieldResolvedCalibration, FieldResolvedCPPThieleModel
 
+from ...._method_helpers import InteractiveNodeMixin
 from ..adapters import thiele_to_trajectory_result
 from .models import (
     infer_disk_geometry,
@@ -31,8 +32,11 @@ def _resolve_optional_value(source: Any, *keys: str):
     return None
 
 
-class FieldResolvedCPPModelAdapter:
+class FieldResolvedCPPModelAdapter(InteractiveNodeMixin):
     """Adapter exposing field-resolved CPP Thiele simulation as ``TrajectoryResult``."""
+
+    _interactive_owner = "model"
+    _interactive_nodes = frozenset({"simulate", "simulate_dc_sweep"})
 
     def __init__(
         self,
@@ -92,7 +96,7 @@ def field_resolved_cpp(
     mat_raw = infer_material_params(material, job_result=job_result)
     geo = infer_disk_geometry(geom, job_result=job_result, dataset_name=dataset_name)
     p = infer_polarity(polarity, job_result=job_result)
-    c = 1 if int(chirality) >= 0 else -1
+    c = 1 if int(cast(Any, chirality)) >= 0 else -1
     omega0_value = infer_omega0(omega0, material=mat_raw, geometry=geo)
 
     spin_ctx = resolve_cpp_spin_torque_context(

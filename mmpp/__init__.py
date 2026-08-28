@@ -7,7 +7,7 @@ A Python library for simulation and analysis with advanced post-processing capab
 import warnings
 from importlib import import_module
 from importlib.util import find_spec
-from typing import Optional
+from typing import Any, Optional, cast
 
 __version__ = "0.5.5"
 __author__ = "Mateusz Zelent"
@@ -32,7 +32,7 @@ def _patch_matplotlib_tight_layout_warning() -> None:
     if getattr(Figure.tight_layout, "_mmpp_tight_layout_patched", False):
         return
 
-    original_tight_layout = Figure.tight_layout
+    original_tight_layout: Any = Figure.tight_layout
 
     def _tight_layout_without_warning(self, *args, **kwargs):
         with warnings.catch_warnings():
@@ -43,12 +43,11 @@ def _patch_matplotlib_tight_layout_warning() -> None:
             )
             return original_tight_layout(self, *args, **kwargs)
 
-    _tight_layout_without_warning._mmpp_tight_layout_patched = True
-    Figure.tight_layout = _tight_layout_without_warning
+    setattr(_tight_layout_without_warning, "_mmpp_tight_layout_patched", True)  # noqa: B010
+    Figure.tight_layout = _tight_layout_without_warning  # type: ignore[method-assign]
 
 
 from . import analyze
-
 
 # Import main classes with error handling for missing dependencies
 try:
@@ -61,7 +60,7 @@ except Exception as e:
     _CORE_IMPORT_ERROR = f"{type(e).__name__}: {e}"
 
     def _core_repair_hint() -> str:
-        if "numpy.dtype size changed" in _CORE_IMPORT_ERROR:
+        if _CORE_IMPORT_ERROR and "numpy.dtype size changed" in _CORE_IMPORT_ERROR:
             return (
                 "Detected a binary incompatibility between NumPy and a compiled "
                 "dependency such as pandas. Restart the notebook kernel after "
@@ -70,8 +69,7 @@ except Exception as e:
                 "the kernel, start Jupyter with PYTHONNOUSERSITE=1."
             )
         return (
-            "Install with: pip install mmpp[dev]\n"
-            "Or repair the package reported above."
+            "Install with: pip install mmpp[dev]\nOr repair the package reported above."
         )
 
     def _format_core_import_error() -> str:
@@ -82,20 +80,21 @@ except Exception as e:
         return error_msg
 
     # Create dummy classes for graceful degradation
-    class MMPP:
+    class MMPP:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs):
             raise ImportError(_format_core_import_error())
 
-    class ScanResult:
+    class ScanResult:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs):
             raise ImportError(_format_core_import_error())
 
-    class ZarrJobResult:
+    class ZarrJobResult:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs):
             raise ImportError(_format_core_import_error())
+
 
 # Backward-compatible / convenience aliases
-MMPPAnalyzer = MMPP          # MMPP is the primary analysis entry-point
+MMPPAnalyzer = MMPP  # MMPP is the primary analysis entry-point
 SimulationResult = ZarrJobResult  # ZarrJobResult represents a single simulation result
 
 try:
@@ -104,11 +103,13 @@ try:
     @_dataclass
     class MMPPConfig:
         """Global MMPP configuration placeholder (reserved for future use)."""
+
         verbose: bool = False
         cache_enabled: bool = True
 
     del _dataclass
 except Exception:
+
     class MMPPConfig:  # type: ignore[no-redef]
         pass
 
@@ -134,7 +135,7 @@ except ImportError as e:
     _SIMULATION_IMPORT_ERROR = str(e)
 
     # Create dummy class for graceful degradation
-    class SimulationManager:
+    class SimulationManager:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs):
             error_msg = "Simulation dependencies not available. "
             if _SIMULATION_IMPORT_ERROR:
@@ -143,7 +144,7 @@ except ImportError as e:
             error_msg += "Or install specific package that is missing above."
             raise ImportError(error_msg)
 
-    class SimulationSwapper:
+    class SimulationSwapper:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs):
             error_msg = "Simulation dependencies not available. "
             if _SIMULATION_IMPORT_ERROR:
@@ -153,7 +154,7 @@ except ImportError as e:
             raise ImportError(error_msg)
 
 
-def _module_available(module_name: str) -> tuple[bool, Optional[str]]:
+def _module_available(module_name: str) -> tuple[bool, str | None]:
     """Return whether *module_name* can be found without importing it."""
     try:
         return find_spec(module_name) is not None, None
@@ -161,7 +162,7 @@ def _module_available(module_name: str) -> tuple[bool, Optional[str]]:
         return False, str(exc)
 
 
-def _dependency_group_available(packages: list[str]) -> tuple[bool, Optional[str]]:
+def _dependency_group_available(packages: list[str]) -> tuple[bool, str | None]:
     missing = []
     errors = []
     for package in packages:
@@ -183,15 +184,15 @@ def _dependency_group_available(packages: list[str]) -> tuple[bool, Optional[str
 def check_dependencies(verbose: bool = True):
     """
     Check which mmpp dependencies are available and which are missing.
-    
+
     This function provides a detailed report of installed and missing dependencies,
     helping users diagnose installation issues.
-    
+
     Returns:
     --------
     dict
         Dictionary with dependency status information
-        
+
     Examples:
     ---------
     >>> import mmpp
@@ -210,80 +211,81 @@ def check_dependencies(verbose: bool = True):
     pyfftw_available, pyfftw_error = _dependency_group_available(["pyfftw"])
 
     status = {
-        'core': {
-            'available': _CORE_AVAILABLE,
-            'error': _CORE_IMPORT_ERROR,
-            'required_packages': ['numpy', 'pandas', 'zarr', 'rich'],
+        "core": {
+            "available": _CORE_AVAILABLE,
+            "error": _CORE_IMPORT_ERROR,
+            "required_packages": ["numpy", "pandas", "zarr", "rich"],
         },
-        'plotting': {
-            'available': plotting_available,
-            'error': plotting_error,
-            'required_packages': ['matplotlib'],
+        "plotting": {
+            "available": plotting_available,
+            "error": plotting_error,
+            "required_packages": ["matplotlib"],
         },
-        'simulation': {
-            'available': _SIMULATION_AVAILABLE,
-            'error': _SIMULATION_IMPORT_ERROR,
-            'required_packages': ['PyYAML'],
+        "simulation": {
+            "available": _SIMULATION_AVAILABLE,
+            "error": _SIMULATION_IMPORT_ERROR,
+            "required_packages": ["PyYAML"],
         },
-        'fft': {
-            'available': fft_available,
-            'error': fft_error,
-            'required_packages': ['numpy'],
+        "fft": {
+            "available": fft_available,
+            "error": fft_error,
+            "required_packages": ["numpy"],
         },
-        'dispersion': {
-            'available': dispersion_available,
-            'error': dispersion_error,
-            'required_packages': ['numpy', 'zarr'],
+        "dispersion": {
+            "available": dispersion_available,
+            "error": dispersion_error,
+            "required_packages": ["numpy", "zarr"],
         },
-        'interactive': {
-            'available': interactive_available,
-            'error': interactive_error,
-            'required_packages': ['IPython', 'ipywidgets'],
+        "interactive": {
+            "available": interactive_available,
+            "error": interactive_error,
+            "required_packages": ["IPython", "ipywidgets"],
         },
-        'scipy': {
-            'available': scipy_available,
-            'error': scipy_error,
-            'required_packages': ['scipy'],
+        "scipy": {
+            "available": scipy_available,
+            "error": scipy_error,
+            "required_packages": ["scipy"],
         },
-        'pyfftw': {
-            'available': pyfftw_available,
-            'error': pyfftw_error,
-            'required_packages': ['pyfftw'],
+        "pyfftw": {
+            "available": pyfftw_available,
+            "error": pyfftw_error,
+            "required_packages": ["pyfftw"],
         },
     }
 
     if not verbose:
         return status
-    
+
     # Print formatted report
     print("=" * 60)
     print("MMPP Dependency Status Report")
     print("=" * 60)
-    
+
     for module, info in status.items():
-        status_icon = "✅" if info['available'] else "❌"
+        status_icon = "✅" if info["available"] else "❌"
         print(f"\n{status_icon} {module.upper()}")
         print(f"   Available: {info['available']}")
-        
-        if not info['available'] and info['error']:
+
+        if not info["available"] and info["error"]:
             print(f"   Error: {info['error']}")
-        
-        print(f"   Required packages: {', '.join(info['required_packages'])}")
-        
-        if not info['available']:
-            print(f"   Install with: pip install mmpp[dev]")
-    
+
+        packages = cast(list[str], info["required_packages"])
+        print(f"   Required packages: {', '.join(packages)}")
+
+        if not info["available"]:
+            print("   Install with: pip install mmpp[dev]")
+
     print("\n" + "=" * 60)
     print("Overall Status:")
-    all_available = all(info['available'] for info in status.values())
+    all_available = all(info["available"] for info in status.values())
     if all_available:
         print("✅ All dependencies are available!")
     else:
-        missing = [name for name, info in status.items() if not info['available']]
+        missing = [name for name, info in status.items() if not info["available"]]
         print(f"❌ Missing: {', '.join(missing)}")
         print("   Run: pip install mmpp[dev]")
     print("=" * 60)
-    
+
     return status
 
 
@@ -299,9 +301,7 @@ def __getattr__(name: str):
             _patch_matplotlib_tight_layout_warning()
             plotting = import_module(".plotting", __name__)
             value = getattr(plotting, name)
-            _PLOTTING_AVAILABLE = bool(
-                getattr(plotting, "MATPLOTLIB_AVAILABLE", True)
-            )
+            _PLOTTING_AVAILABLE = bool(getattr(plotting, "MATPLOTLIB_AVAILABLE", True))
             _PLOTTING_IMPORT_ERROR = None if _PLOTTING_AVAILABLE else "matplotlib"
         except ImportError as exc:
             _PLOTTING_AVAILABLE = False
@@ -371,120 +371,128 @@ def open(base_path: str, **kwargs):
 def install_ffmpeg(force: bool = False, verbose: bool = True) -> str:
     """
     Install FFmpeg for MMPP animation functionality and configure system PATH.
-    
+
     This function installs FFmpeg binary and ensures it's available for matplotlib
     animations. It handles system PATH configuration and matplotlib writer setup.
-    
+
     Parameters:
     -----------
     force : bool, default False
         Force reinstallation even if FFmpeg is already available
     verbose : bool, default True
         Print installation progress and diagnostics
-        
+
     Returns:
     --------
     str
         Path to the installed FFmpeg binary
-        
+
     Raises:
     -------
     ImportError
         If FFT/animation modules are not available
     RuntimeError
         If FFmpeg installation fails
-        
+
     Examples:
     ---------
     >>> import mmpp
     >>> ffmpeg_path = mmpp.install_ffmpeg()
     >>> print(f"FFmpeg installed at: {ffmpeg_path}")
-    
+
     >>> # Force reinstall with verbose output
     >>> mmpp.install_ffmpeg(force=True, verbose=True)
     """
     try:
-        from .fft.modes import install_ffmpeg as _install_ffmpeg, check_ffmpeg_installation
         import os
         import sys
-        
+
+        from .fft.modes import (
+            check_ffmpeg_installation,
+        )
+        from .fft.modes import (
+            install_ffmpeg as _install_ffmpeg,
+        )
+
         if verbose:
             print("🎬 Installing FFmpeg for MMPP animation support...")
-        
+
         # Check current status
         status = check_ffmpeg_installation()
-        if status.get('available') and not force:
-            ffmpeg_path = status['path']
+        if status.get("available") and not force:
+            ffmpeg_path = status["path"]
             if verbose:
                 print(f"✅ FFmpeg already available at: {ffmpeg_path}")
                 print(f"Version: {status.get('version', 'unknown')}")
-            
+
             # Ensure PATH is configured
             _configure_system_path(ffmpeg_path, verbose=verbose)
             return ffmpeg_path
-        
+
         # Install FFmpeg
         if verbose:
             print("⚡ Installing FFmpeg binary...")
-        
+
         ffmpeg_path = _install_ffmpeg(force=force)
-        
+
         if not ffmpeg_path or not os.path.exists(ffmpeg_path):
             raise RuntimeError("FFmpeg installation failed - binary not found")
-        
+
         # Configure system PATH
         _configure_system_path(ffmpeg_path, verbose=verbose)
-        
+
         # Verify installation
         final_status = check_ffmpeg_installation()
-        if not final_status.get('available'):
+        if not final_status.get("available"):
             raise RuntimeError("FFmpeg installation verification failed")
-        
+
         if verbose:
             print(f"🎉 FFmpeg successfully installed at: {ffmpeg_path}")
             print(f"Version: {final_status.get('version', 'unknown')}")
             print("✅ MMPP animation functionality is now ready!")
-        
+
         return ffmpeg_path
-        
+
     except ImportError:
         raise ImportError(
             "FFT/animation modules not available. Install with: pip install mmpp[animation]"
-        )
+        ) from None
     except Exception as e:
-        raise RuntimeError(f"FFmpeg installation failed: {e}")
+        raise RuntimeError(f"FFmpeg installation failed: {e}") from e
 
 
 def _configure_system_path(ffmpeg_path: str, verbose: bool = True) -> None:
     """Configure system PATH to include FFmpeg directory."""
     import os
     import sys
-    
+
     # Get directory containing FFmpeg
     ffmpeg_dir = os.path.dirname(ffmpeg_path)
-    
+
     # Add to Python's PATH for current session
-    if ffmpeg_dir not in os.environ.get('PATH', '').split(os.pathsep):
-        current_path = os.environ.get('PATH', '')
-        os.environ['PATH'] = f"{ffmpeg_dir}{os.pathsep}{current_path}"
-        
+    if ffmpeg_dir not in os.environ.get("PATH", "").split(os.pathsep):
+        current_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{ffmpeg_dir}{os.pathsep}{current_path}"
+
         if verbose:
             print(f"📁 Added to PATH: {ffmpeg_dir}")
-    
+
     # Configure matplotlib animation writer
     try:
         import matplotlib
-        matplotlib.rcParams['animation.ffmpeg_path'] = ffmpeg_path
-        
+
+        matplotlib.rcParams["animation.ffmpeg_path"] = ffmpeg_path
+
         # Also set the writer directly for immediate use
         from matplotlib.animation import writers
-        if 'ffmpeg' in writers.list():
+
+        if "ffmpeg" in writers.list():
             # Fix lambda to accept any arguments matplotlib might pass
-            writers['ffmpeg'].bin_path = lambda *args, **kwargs: ffmpeg_path
-            
+            writers["ffmpeg"].bin_path = lambda *args, **kwargs: ffmpeg_path  # type: ignore[attr-defined]
+
         if verbose:
-            print(f"🎯 Configured matplotlib animation writer")
-            
+            print("🎯 Configured matplotlib animation writer")
+
     except ImportError:
         if verbose:
             print("⚠️  matplotlib not available for writer configuration")
@@ -503,7 +511,7 @@ except Exception as e:
     _SOLITONS_IMPORT_ERROR = f"{type(e).__name__}: {e}"
 
     # Fallback if solitons module not available
-    def build_thiele_dashboard(*args, **kwargs):
+    def build_thiele_dashboard(analyzer: Any | None = None, **kwargs: Any) -> Any:
         """Thiele interactive dashboard (solitons module required)."""
         raise ImportError(
             "build_thiele_dashboard requires solitons module. "
@@ -514,7 +522,7 @@ except Exception as e:
 
 __all__ = [
     "MMPP",
-    "ScanResult", 
+    "ScanResult",
     "ZarrJobResult",
     "MMPPlotter",
     "PlotConfig",

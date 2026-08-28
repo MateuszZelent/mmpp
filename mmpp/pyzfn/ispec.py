@@ -17,7 +17,7 @@ from numpy.typing import NDArray
 from .utils import Peak, find_peaks
 
 if TYPE_CHECKING:  # pragma: no cover
-    from pyzfn import Pyzfn
+    from .pyzfn import Pyzfn
 
 AxesArray = NDArray[np.object_]
 

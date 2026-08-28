@@ -44,7 +44,9 @@ def _resolve_mode_cmaps(explorer: Any) -> tuple[str, str, str]:
 
     cmap_mag_name = str(cmap_mag.value) if cmap_mag is not None else "viridis"
     cmap_phase_name = str(cmap_phase.value) if cmap_phase is not None else "twilight"
-    cmap_combined_name = str(cmap_combined.value) if cmap_combined is not None else "RdBu_r"
+    cmap_combined_name = (
+        str(cmap_combined.value) if cmap_combined is not None else "RdBu_r"
+    )
     return cmap_mag_name, cmap_phase_name, cmap_combined_name
 
 
@@ -70,13 +72,19 @@ def _resolve_plot_data(
     return plot_data, cmap_combined_name, -vmax_val, vmax_val, "combined"
 
 
-def _render_holography(comp_data: np.ndarray) -> np.ndarray:
+def _render_holography(explorer: Any, comp_data: np.ndarray) -> np.ndarray:
     """Render complex data as HSV domain-coloring RGB image."""
     try:
         from ..vortex_optics import VortexOptics
 
-        return VortexOptics.complex_holography(comp_data)
-    except Exception:
+        return VortexOptics.complex_holography(
+            comp_data,
+            gamma=float(getattr(explorer, "_holography_gamma", 0.6)),
+            noise_threshold=float(
+                getattr(explorer, "_holography_noise_threshold", 1e-4)
+            ),
+        )
+    except ImportError:
         # Fallback: visualize phase only if vortex module is unavailable.
         phase = np.angle(comp_data)
         rgb = np.zeros(phase.shape + (3,), dtype=float)
@@ -98,7 +106,9 @@ def _apply_mode_axes_style(
 ) -> None:
     """Apply labels/grid/title for one mode subplot."""
     component_label = component_plot_label(comp)
-    single_component_layout = getattr(explorer, "_layout_variant", "") == "single_component"
+    single_component_layout = (
+        getattr(explorer, "_layout_variant", "") == "single_component"
+    )
     if single_component_layout:
         ax.set_title(
             f"{row_title} ({component_label})",
@@ -134,8 +144,12 @@ def _overlay_geometry_contour(
         geom = explorer._geometry_contour
         geom_y = np.linspace(extent[2], extent[3], geom.shape[0])
         geom_x = np.linspace(extent[0], extent[1], geom.shape[1])
-        ax.contour(geom_x, geom_y, geom, levels=[0.5], colors=["white"], linewidths=[1.5])
-        ax.contour(geom_x, geom_y, geom, levels=[0.5], colors=["black"], linewidths=[0.5])
+        ax.contour(
+            geom_x, geom_y, geom, levels=[0.5], colors=["white"], linewidths=[1.5]
+        )
+        ax.contour(
+            geom_x, geom_y, geom, levels=[0.5], colors=["black"], linewidths=[0.5]
+        )
     except Exception:
         pass
 
@@ -153,7 +167,7 @@ def update_mode_plots(explorer: Any) -> None:
             explorer._current_z_layer,
         )
         explorer._loaded_frequency_ghz = float(actual_freq)
-        explorer._phase_source_mode_array = np.asarray(mode_array)
+        explorer._phase_source_mode_array = np.asanyarray(mode_array)
         explorer._phase_source_frequency_ghz = float(explorer._current_frequency_ghz)
         explorer._phase_source_actual_frequency_ghz = float(actual_freq)
         explorer._phase_source_z_layer = int(explorer._current_z_layer)
@@ -195,7 +209,7 @@ def update_mode_plots(explorer: Any) -> None:
                 getattr(explorer, "_use_holography", False) and row_type == "phase"
             )
             if use_holography:
-                plot_data = _render_holography(comp_data)
+                plot_data = _render_holography(explorer, comp_data)
                 cmap_name = None
                 vmin = None
                 vmax = None

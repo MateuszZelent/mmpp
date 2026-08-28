@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .result import Branch
+
+if TYPE_CHECKING:
+    from .result import HysteresisResult
 
 
 def validate_hysteresis_data(
@@ -40,8 +44,7 @@ def validate_hysteresis_data(
     finite_count = int(np.count_nonzero(finite_mask))
     if finite_count < 10:
         errors.append(
-            "Too few finite points after NaN/Inf removal "
-            f"({finite_count}), need >=10"
+            f"Too few finite points after NaN/Inf removal ({finite_count}), need >=10"
         )
 
     if require_non_monotonic and finite_count > 1:
@@ -104,7 +107,7 @@ def segment_branches(field: np.ndarray, slope_tolerance: float = 1e-15) -> list[
     cycle_id = 0
     prev_name: str | None = None
 
-    for start, stop in zip(starts, stops):
+    for start, stop in zip(starts, stops, strict=False):
         stop = max(stop, start + 1)
         local_diff = np.diff(field_arr[start:stop])
         trend = float(np.nanmedian(local_diff)) if local_diff.size else 0.0
@@ -154,7 +157,7 @@ def segment_branches(field: np.ndarray, slope_tolerance: float = 1e-15) -> list[
     return branches
 
 
-def build_cloneflip_result(result: "HysteresisResult") -> "HysteresisResult":
+def build_cloneflip_result(result: HysteresisResult) -> HysteresisResult:
     """Create a symmetric full loop from a single monotonic sweep.
 
     Applies the centrosymmetric constraint **M(−B) = −M(B)**, which holds for
@@ -218,17 +221,13 @@ def build_cloneflip_result(result: "HysteresisResult") -> "HysteresisResult":
     # zig-zag curve around every field sample.
     if float(np.nanmin(B_s)) < 0.0 < float(np.nanmax(B_s)):
         dB_orig = np.diff(B)
-        is_monotonic_original = bool(
-            np.all(dB_orig >= 0.0) or np.all(dB_orig <= 0.0)
-        )
+        is_monotonic_original = bool(np.all(dB_orig >= 0.0) or np.all(dB_orig <= 0.0))
 
         if is_monotonic_original:
-            B_path = B
-            M_path = M
-            frame_path = (
-                frame_orig
-                if frame_orig is not None
-                else np.arange(B.size, dtype=int)
+            B_path: Any = B
+            M_path: Any = M
+            frame_path: Any = (
+                frame_orig if frame_orig is not None else np.arange(B.size, dtype=int)
             )
         else:
             B_path = B_s
@@ -288,7 +287,7 @@ def build_cloneflip_result(result: "HysteresisResult") -> "HysteresisResult":
     # Skip the first point of the reversed array (== B_up[-1]) to avoid a
     # duplicate at the field maximum; keep the last point (== B_up[0]) so the
     # loop closes at the starting field value.
-    B_dn = B_up[::-1][1:]        # 2N − 1 points
+    B_dn = B_up[::-1][1:]  # 2N − 1 points
     M_dn = M_up[::-1][1:]
     frame_dn = frame_up[::-1][1:]
 
@@ -339,7 +338,7 @@ def find_zero_crossings(x: np.ndarray, y: np.ndarray) -> list[float]:
             continue
 
         if y0 * y1 < 0.0:
-            denom = (y1 - y0)
+            denom = y1 - y0
             if denom == 0.0:
                 continue
             alpha = -y0 / denom
@@ -363,7 +362,7 @@ def interpolate_at_x(x: np.ndarray, y: np.ndarray, target_x: float = 0.0) -> flo
         x0, x1 = float(x_arr[i]), float(x_arr[i + 1])
         y0, y1 = float(y_arr[i]), float(y_arr[i + 1])
         if (x0 <= target_x <= x1) or (x1 <= target_x <= x0):
-            denom = (x1 - x0)
+            denom = x1 - x0
             if denom == 0:
                 return float("nan")
             alpha = (target_x - x0) / denom

@@ -4,14 +4,29 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..._method_helpers import InteractiveNodeMixin
 from ..config import VortexConfig
 from .gyration import compute_breathing_spectrum, compute_gyration_spectrum
+from .helpers import GyrationSpectrumHelper
 from .models import VortexSpectrogramResult, VortexSpectrumResult
 from .spectrogram import compute_spectrogram
 
 
-class VortexSpectrumInterface:
+class VortexSpectrumInterface(InteractiveNodeMixin):
     """Spectrum analysis namespace."""
+
+    _interactive_owner = "job[0].vortex.spectrum"
+    _interactive_nodes = frozenset({"breathing", "spectrogram"})
+    _interactive_examples = {
+        "breathing": [
+            "result = job[0].vortex.spectrum.breathing(method='welch')",
+            "result.plt.power_spectrum()",
+        ],
+        "spectrogram": [
+            "result = job[0].vortex.spectrum.spectrogram(component='radius')",
+            "result.plt.spectrogram()",
+        ],
+    }
 
     def __init__(
         self,
@@ -20,17 +35,26 @@ class VortexSpectrumInterface:
         slice_info: Any | None,
         config: VortexConfig,
         core_interface,
+        vortex_interface=None,
     ):
         self._job = job_result
         self._dataset_name = dataset_name
         self._slice_info = slice_info
         self._config = config
         self._core = core_interface
+        self._vortex_interface = vortex_interface
         self._last_gyration: VortexSpectrumResult | None = None
         self._last_breathing: VortexSpectrumResult | None = None
         self._last_spectrogram: VortexSpectrogramResult | None = None
 
-    def gyration(self, method: str | None = None, **kwargs) -> VortexSpectrumResult:
+    @property
+    def gyration(self) -> GyrationSpectrumHelper:
+        """Callable notebook helper for core-gyration spectrum workflows."""
+        return GyrationSpectrumHelper(self, self._compute_gyration)
+
+    def _compute_gyration(
+        self, method: str | None = None, **kwargs
+    ) -> VortexSpectrumResult:
         """Compute gyration power spectrum from core trajectory.
 
         Parameters
@@ -158,7 +182,6 @@ class VortexSpectrumInterface:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
-
         from html import escape as _esc
 
         from mmpp._repr_helpers import (
@@ -198,6 +221,14 @@ class VortexSpectrumInterface:
                     (".gyration().plt.power_spectrum(...)", NODE_COLOR_ANALYSIS),
                     (".breathing().peak_frequency_ghz", NODE_COLOR_ANALYSIS),
                     (".spectrogram().plt.spectrogram(...)", NODE_COLOR_ANALYSIS),
+                ],
+            ),
+            (
+                "Interactive:",
+                [
+                    (".gyration.interactive()", NODE_COLOR_ANALYSIS),
+                    (".gyration.interactive_modes()", NODE_COLOR_PLOT),
+                    (".gyration.mode(f=None)", NODE_COLOR_PLOT),
                 ],
             ),
             (
@@ -261,6 +292,8 @@ class VortexSpectrumInterface:
             "spec = jobs[-1].solitons.vortex.spectrum.gyration(method='welch')\n"
             "spec.peak_frequency_ghz\n"
             "spec.plt.power_spectrum()\n"
+            "jobs[-1].vortex.spectrum.gyration.interactive()\n"
+            "jobs[-1].vortex.spectrum.gyration.interactive_modes()\n"
             "\n"
             "# Breathing mode spectrum\n"
             "breath = jobs[-1].solitons.vortex.spectrum.breathing()\n"
@@ -313,8 +346,11 @@ class VortexSpectrumInterface:
         )
 
 
-class SpectrumInterfacePlotAccessor:
+class SpectrumInterfacePlotAccessor(InteractiveNodeMixin):
     """Plotting facade for :class:`VortexSpectrumInterface`."""
+
+    _interactive_owner = "job[0].vortex.spectrum.plt"
+    _interactive_nodes = frozenset({"power_spectrum", "spectrogram"})
 
     def __init__(self, interface: VortexSpectrumInterface):
         self._interface = interface

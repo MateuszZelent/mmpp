@@ -1,0 +1,734 @@
+"""Interactive FMR spectrum explorer.
+
+This module provides a refactored interactive UI for FMR spectrum analysis.
+It supports two operation modes:
+
+- Toolbar mode (ipywidgets): interactive controls, filtering, and sweep animation
+- Classic matplotlib mode: click-to-select spectrum with mode panels
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+log = logging.getLogger("mmpp.fft.modes")
+
+try:
+    import matplotlib.pyplot as plt
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+    from matplotlib.gridspec import GridSpec
+
+    _HAS_MATPLOTLIB = True
+except ImportError:  # pragma: no cover - optional dependency
+    Figure = Any
+    Axes = Any
+    _HAS_MATPLOTLIB = False
+
+try:
+    import ipywidgets as widgets
+    from IPython.display import clear_output, display
+
+    _HAS_WIDGETS = True
+except ImportError:  # pragma: no cover - optional dependency
+    widgets = None  # type: ignore[assignment]
+    clear_output = display = None  # type: ignore[assignment]
+    _HAS_WIDGETS = False
+
+from ._interactive import (
+    COMPONENT_NAMES,
+    SpectrumFilterState,
+    apply_preset_state,
+    build_toolbar,
+    closest_freq_index,
+    collect_preset_state,
+    create_figure,
+    draw_frequency_line,
+    draw_spectrum,
+    get_presets_dir,
+    guess_layer_bounds,
+    initialize_frequency,
+    list_presets,
+    load_spectrum_data,
+    normalize_component_selection,
+    normalize_spectrum_component_selection,
+    on_animate_clicked,
+    on_delete_preset_clicked,
+    on_load_preset_changed,
+    on_mode_type_changed,
+    on_phase_index_changed,
+    on_save_animation_clicked,
+    on_save_preset_clicked,
+    on_spectrum_click,
+    plot_compat,
+    read_controls,
+    recompute_filtered_spectrum,
+    refresh_freq_slider_bounds,
+    refresh_preset_options,
+    render_figure,
+    resolve_mode_rows,
+    set_status,
+    stop_animation,
+    update_frequency_selection,
+    update_mode_plots,
+    update_status_text,
+)
+
+
+def _require_bool(name: str, value: Any) -> bool:
+    if not isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be boolean")
+    return bool(value)
+
+
+def _require_integer(name: str, value: Any, *, minimum: int | None = None) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer")
+    result = int(value)
+    if minimum is not None and result < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return result
+
+
+def _validate_figsize(figsize: Any) -> tuple[float, float]:
+    try:
+        values = tuple(float(value) for value in figsize)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("figsize must contain two positive finite values") from exc
+    if len(values) != 2 or not np.isfinite(values).all() or min(values) <= 0:
+        raise ValueError("figsize must contain two positive finite values")
+    return values
+
+
+def _validate_axis_limits(name: str, limits: Any) -> tuple[float, float] | None:
+    if limits is None:
+        return None
+    try:
+        values = tuple(float(value) for value in limits)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must contain two finite increasing values") from exc
+    if len(values) != 2 or not np.isfinite(values).all() or values[0] >= values[1]:
+        raise ValueError(f"{name} must contain two finite increasing values")
+    return values
+
+
+class InteractiveSpectrum:
+    """Interactive FMR spectrum explorer with optional toolbar UI."""
+
+    def __init__(
+        self,
+        data_loader: Any = None,
+        spectrum_result: Any = None,
+        component_label: str | None = None,
+        analyzer: Any = None,
+        dpi: int = 100,
+        figsize: tuple[float, float] = (16.0, 10.0),
+    ):
+        if not _HAS_MATPLOTLIB:
+            raise ImportError("Matplotlib is required for interactive spectrum")
+
+        self.data_loader = data_loader
+        self.spectrum_result = spectrum_result
+        self._component_label = component_label
+        self.analyzer = analyzer
+
+        self.dpi = _require_integer("dpi", dpi, minimum=1)
+        self.figsize = _validate_figsize(figsize)
+
+        # Spectrum state
+        self._raw_frequencies_ghz: np.ndarray = np.array([], dtype=float)
+        self._raw_component_power: dict[str, np.ndarray] = {}
+        self._available_components: list[str] = []
+
+        self._filtered_frequencies_ghz: np.ndarray = np.array([], dtype=float)
+        self._filtered_component_power: dict[str, np.ndarray] = {}
+        self._peaks: list[tuple[float, float]] = []
+
+        # Visualization state
+        self._fig: Figure | None = None
+        self._ax_spectrum: Axes | None = None
+        self._mode_axes: np.ndarray | None = None
+        self._mode_cbar_axes: list[Any] = []
+        self._mode_row_types: list[str] = ["magnitude", "phase", "combined"]
+        self._mode_colorbars: list[Any] = []
+        self._frequency_line: Any = None
+        self._current_frequency_ghz: float | None = None
+        self._loaded_frequency_ghz: float | None = None
+        self._phase_source_mode_array: np.ndarray | None = None
+        self._phase_source_frequency_ghz: float | None = None
+        self._phase_source_actual_frequency_ghz: float | None = None
+        self._phase_source_z_layer: int | None = None
+        self._mode_components: list[str] = ["x", "y", "z"]
+        self._spectrum_components: list[str] = ["x", "y", "z"]
+        # Backward-compat alias used by older helpers/extensions.
+        self._current_components: list[str] = list(self._mode_components)
+        self._current_z_layer: int = -1
+        self._freq_unit: str = "GHz"
+        self._title: str | None = None
+        self._show_peaks: bool = True
+        self._filter_state = SpectrumFilterState(0.0, 1.0)
+
+        # Toolbar widgets/state
+        self._toolbar_enabled = False
+        self._widget_root: Any = None
+        self._display_handle: Any = None
+        self._widget_output: Any = None
+        self._controls: dict[str, Any] = {}
+        self._status_history: list[str] = []
+        self._internal_update = False
+        self._presets_dir: Path | None = None
+        self._is_saving_animation = False
+        self._save_animation_path: Path | None = None
+
+        # Layout configuration
+        self._mode_aspect: str = "equal"
+        self._xlim: tuple[float, float] | None = None
+        self._ylim: tuple[float, float] | None = None
+        self._layout_mode: str = "auto"  # "auto", "vertical" or "horizontal"
+        self._layout_variant: str = "vertical"
+
+        # Animation state (matching dispersion module pattern)
+        self._animation: Any = None
+        self._is_animating: bool = False
+        self._geometry_contour: np.ndarray | None = None  # For overlay on mode plots
+        self._mode_type: str = (
+            "combined"  # real, imag, abs, phase, combined, ampl_phase
+        )
+        self._use_holography: bool = False
+        self._holography_gamma: float = 0.6
+        self._holography_noise_threshold: float = 1e-4
+
+    # ---------------------------------------------------------------------
+    # Public API
+    # ---------------------------------------------------------------------
+    def show(
+        self,
+        components: Sequence[int | str] | None = None,
+        mode_components: Sequence[int | str] | None = None,
+        spectrum_components: Sequence[int | str] | None = None,
+        z_layer: int = -1,
+        log_scale: bool = False,
+        normalize: bool = True,
+        freq_unit: str = "GHz",
+        show_peaks: bool = True,
+        title: str | None = None,
+        initial_frequency: float | None = None,
+        toolbar: bool = True,
+        smooth_filter: str = "none",
+        smooth_window: int = 7,
+        smooth_sigma: float = 1.0,
+        baseline_mode: str = "none",
+        clip_percentile_low: float = 0.0,
+        clip_percentile_high: float = 100.0,
+        soft_threshold_percentile: float = 0.0,
+        freq_min: float | None = None,
+        freq_max: float | None = None,
+        peak_prominence: float = 0.05,
+        peak_distance: int = 5,
+        mode_view: str = "all",
+        show: bool = True,
+        # New layout parameters
+        aspect: str = "equal",
+        xlim: tuple[float, float] | None = None,
+        ylim: tuple[float, float] | None = None,
+        layout: str = "auto",
+        use_holography: bool = False,
+        holography_gamma: float | None = None,
+        holography_noise_threshold: float | None = None,
+        auto_animate: bool = False,
+        **_ignored: Any,
+    ) -> Any:
+        """Create interactive spectrum with mode visualization.
+
+        Parameters mirror previous API and extend it with toolbar/filter options.
+        """
+        save_path_override = _ignored.pop("save_path", None)
+        if save_path_override is None:
+            save_path_override = _ignored.pop("animation_save_path", None)
+        if not auto_animate and "animate" in _ignored:
+            auto_animate = _require_bool("animate", _ignored.pop("animate"))
+        else:
+            _ignored.pop("animate", None)
+        if _ignored:
+            unknown = ", ".join(sorted(str(key) for key in _ignored))
+            raise TypeError(f"Unknown interactive_spectrum option(s): {unknown}")
+
+        z_layer = _require_integer("z_layer", z_layer)
+        log_scale = _require_bool("log_scale", log_scale)
+        normalize = _require_bool("normalize", normalize)
+        show_peaks = _require_bool("show_peaks", show_peaks)
+        toolbar = _require_bool("toolbar", toolbar)
+        show = _require_bool("show", show)
+        use_holography = _require_bool("use_holography", use_holography)
+        auto_animate = _require_bool("auto_animate", auto_animate)
+        aspect_mode = str(aspect).strip().lower()
+        if aspect_mode not in {"equal", "auto"}:
+            raise ValueError("aspect must be 'equal' or 'auto'")
+        layout_mode = str(layout).strip().lower()
+        if layout_mode not in {"auto", "vertical", "horizontal"}:
+            raise ValueError("layout must be 'auto', 'vertical', or 'horizontal'")
+        xlim = _validate_axis_limits("xlim", xlim)
+        ylim = _validate_axis_limits("ylim", ylim)
+        peak_distance = _require_integer("peak_distance", peak_distance, minimum=1)
+
+        self._load_spectrum_data()
+
+        self._current_z_layer = z_layer
+        self._get_freq_scale(freq_unit)  # validate before mutating UI state
+        self._freq_unit = str(freq_unit).strip()
+        self._title = title
+        self._show_peaks = show_peaks
+        self._mode_row_types = self._resolve_mode_rows(mode_view)
+
+        base_components = normalize_component_selection(
+            components,
+            available=self._available_components or COMPONENT_NAMES,
+        )
+        mode_selection = (
+            mode_components if mode_components is not None else base_components
+        )
+        spectrum_selection = (
+            spectrum_components if spectrum_components is not None else base_components
+        )
+        self._mode_components = normalize_component_selection(
+            mode_selection,
+            available=self._available_components or COMPONENT_NAMES,
+        )
+        self._spectrum_components = normalize_spectrum_component_selection(
+            spectrum_selection,
+            available=self._available_components,
+        )
+        self._current_components = list(self._mode_components)
+
+        # Store layout configuration
+        self._mode_aspect = aspect_mode
+        self._xlim = xlim
+        self._ylim = ylim
+        self._layout_mode = layout_mode
+        self._use_holography = use_holography
+        analyzer_config = getattr(self.analyzer, "config", None)
+        default_gamma = getattr(analyzer_config, "holography_gamma", 0.6)
+        default_noise = getattr(analyzer_config, "holography_noise_threshold", 1e-4)
+        self._holography_gamma = float(
+            default_gamma if holography_gamma is None else holography_gamma
+        )
+        self._holography_noise_threshold = float(
+            default_noise
+            if holography_noise_threshold is None
+            else holography_noise_threshold
+        )
+        if not np.isfinite(self._holography_gamma) or self._holography_gamma <= 0:
+            raise ValueError("holography_gamma must be finite and positive")
+        if (
+            not np.isfinite(self._holography_noise_threshold)
+            or self._holography_noise_threshold < 0
+        ):
+            raise ValueError(
+                "holography_noise_threshold must be finite and non-negative"
+            )
+
+        data_fmin = float(np.nanmin(self._raw_frequencies_ghz))
+        data_fmax = float(np.nanmax(self._raw_frequencies_ghz))
+        init_fmin = data_fmin if freq_min is None else float(freq_min)
+        init_fmax = data_fmax if freq_max is None else float(freq_max)
+        init_fmin = float(np.clip(init_fmin, data_fmin, data_fmax))
+        init_fmax = float(np.clip(init_fmax, data_fmin, data_fmax))
+        if init_fmin > init_fmax:
+            init_fmin, init_fmax = init_fmax, init_fmin
+
+        self._filter_state = SpectrumFilterState(
+            freq_min=init_fmin,
+            freq_max=init_fmax,
+            smooth_filter=str(smooth_filter),
+            smooth_window=smooth_window,
+            smooth_sigma=float(smooth_sigma),
+            baseline_mode=str(baseline_mode),
+            clip_percentile_low=float(clip_percentile_low),
+            clip_percentile_high=float(clip_percentile_high),
+            soft_threshold_percentile=float(soft_threshold_percentile),
+            normalize=normalize,
+            log_scale=log_scale,
+        )
+
+        self._peak_prominence = float(peak_prominence)
+        self._peak_distance = peak_distance
+
+        if save_path_override is not None:
+            self._save_animation_path = Path(str(save_path_override)).expanduser()
+        else:
+            self._save_animation_path = None
+
+        self._recompute_filtered_spectrum()
+        self._initialize_frequency(initial_frequency)
+
+        if toolbar and _HAS_WIDGETS:
+            self._toolbar_enabled = True
+            self._build_toolbar()
+            self._render_figure()
+            if auto_animate:
+                self._on_animate_clicked(None)
+            if show:
+                if self._display_handle is None:
+                    self._display_handle = display(self._widget_root, display_id=True)
+                else:
+                    self._display_handle.update(self._widget_root)
+                return None  # Avoid double display in Jupyter (display + auto-return)
+            return self._widget_root
+
+        self._toolbar_enabled = False
+        self._render_figure()
+        if auto_animate:
+            self._on_animate_clicked(None)
+        if show:
+            plt.show()
+            return None  # Avoid double display in Jupyter (plt.show + auto-return)
+        return self._fig
+
+    # ---------------------------------------------------------------------
+    # Data processing
+    # ---------------------------------------------------------------------
+    def _load_spectrum_data(self) -> None:
+        """Load and normalize spectrum data from available source."""
+        load_spectrum_data(self)
+
+    def _recompute_filtered_spectrum(self) -> None:
+        """Recompute filtered traces and peak list from current filter state."""
+        recompute_filtered_spectrum(self)
+
+    def _initialize_frequency(self, initial_frequency: float | None) -> None:
+        """Set current frequency based on initial request, peaks, or center."""
+        initialize_frequency(self, initial_frequency)
+
+    # ---------------------------------------------------------------------
+    # Presets
+    # ---------------------------------------------------------------------
+    def _get_presets_dir(self) -> Path:
+        """Return project-local presets directory."""
+        return get_presets_dir(self)
+
+    def _list_presets(self) -> list[str]:
+        """List available interactive toolbar presets."""
+        return list_presets(self)
+
+    def _collect_preset_state(self) -> dict[str, Any]:
+        """Collect serializable state from current controls."""
+        return collect_preset_state(self)
+
+    def _apply_preset_state(self, payload: dict[str, Any]) -> None:
+        """Apply preset payload to widgets/state."""
+        apply_preset_state(self, payload)
+
+    def _refresh_preset_options(self) -> None:
+        """Refresh preset dropdown options."""
+        refresh_preset_options(self)
+
+    def _on_save_preset_clicked(self, _btn: Any) -> None:
+        """Persist current toolbar config as a preset."""
+        on_save_preset_clicked(self, _btn)
+
+    def _on_load_preset_changed(self, change: Any) -> None:
+        """Load selected preset and apply values to toolbar."""
+        on_load_preset_changed(self, change)
+
+    def _on_delete_preset_clicked(self, _btn: Any) -> None:
+        """Delete selected preset file."""
+        on_delete_preset_clicked(self, _btn)
+
+    # ---------------------------------------------------------------------
+    # Widget toolbar
+    # ---------------------------------------------------------------------
+    def _build_toolbar(self) -> None:
+        """Build ipywidgets toolbar UI."""
+        if not _HAS_WIDGETS:
+            raise RuntimeError("ipywidgets is required for toolbar mode")
+        build_toolbar(self, widgets_module=widgets)
+
+    def _guess_layer_bounds(self) -> tuple[int, int]:
+        """Best-effort z-layer slider bounds."""
+        return guess_layer_bounds(self)
+
+    def _on_controls_changed(self, _change: Any) -> None:
+        if self._internal_update:
+            return
+
+        self._read_controls()
+        self._recompute_filtered_spectrum()
+
+        # Clamp currently selected frequency to filtered range.
+        if self._filtered_frequencies_ghz.size:
+            idx = self._closest_freq_index(self._current_frequency_ghz)
+            self._current_frequency_ghz = float(self._filtered_frequencies_ghz[idx])
+
+        self._refresh_freq_slider_bounds()
+        self._render_figure()
+
+    def _on_frequency_index_changed(self, change: Any) -> None:
+        if self._internal_update:
+            return
+        if change.get("name") != "value":
+            return
+
+        if self._filtered_frequencies_ghz.size == 0:
+            return
+
+        slider = self._controls.get("freq_index") if self._controls else None
+        slider_kind = slider.__class__.__name__.lower() if slider is not None else ""
+        if slider_kind.startswith("float"):
+            requested = float(change.get("new", self._current_frequency_ghz or 0.0))
+            fmin = float(np.nanmin(self._filtered_frequencies_ghz))
+            fmax = float(np.nanmax(self._filtered_frequencies_ghz))
+            self._current_frequency_ghz = float(np.clip(requested, fmin, fmax))
+        else:
+            idx = int(change["new"])
+            idx = max(0, min(idx, self._filtered_frequencies_ghz.size - 1))
+            self._current_frequency_ghz = float(self._filtered_frequencies_ghz[idx])
+        self._update_frequency_selection(redraw_canvas=True)
+
+    def _on_refresh_clicked(self, _btn: Any) -> None:
+        self._read_controls()
+        self._recompute_filtered_spectrum()
+        self._refresh_freq_slider_bounds()
+        self._render_figure()
+
+    def _on_reset_clicked(self, _btn: Any) -> None:
+        if not self._controls:
+            return
+
+        self._internal_update = True
+        try:
+            fmin = float(np.nanmin(self._raw_frequencies_ghz))
+            fmax = float(np.nanmax(self._raw_frequencies_ghz))
+            self._controls["fmin"].value = fmin
+            self._controls["fmax"].value = fmax
+            self._controls["smooth_filter"].value = "none"
+            self._controls["smooth_window"].value = 7
+            self._controls["smooth_sigma"].value = 1.0
+            self._controls["baseline_mode"].value = "none"
+            self._controls["clip_low"].value = 0.0
+            self._controls["clip_high"].value = 100.0
+            self._controls["soft_threshold"].value = 0.0
+            self._controls["normalize"].value = True
+            self._controls["log_scale"].value = False
+            self._controls["show_peaks"].value = True
+            self._controls["peak_prom"].value = 0.05
+            self._controls["peak_dist"].value = 5
+            self._controls["mode_view"].value = "all"
+            if "mode_components" in self._controls:
+                self._controls["mode_components"].value = tuple(
+                    self._available_components
+                )
+            elif "components" in self._controls:
+                # Backward-compat for legacy toolbar keys.
+                self._controls["components"].value = tuple(self._available_components)
+            if "spectrum_components" in self._controls:
+                self._controls["spectrum_components"].value = tuple(
+                    self._available_components
+                )
+            self._controls["z_layer"].value = -1
+            if "aspect" in self._controls:
+                self._controls["aspect"].value = "equal"
+            if "layout" in self._controls:
+                self._controls["layout"].value = "auto"
+        finally:
+            self._internal_update = False
+
+        self._on_refresh_clicked(_btn)
+
+    def _on_save_animation_clicked(self, _btn: Any) -> None:
+        """Save phase oscillation animation of selected mode."""
+        on_save_animation_clicked(self, _btn)
+
+    def _on_animate_clicked(self, _btn: Any) -> None:
+        """Toggle live animation of selected mode."""
+        on_animate_clicked(self, _btn)
+
+    def _stop_animation(self) -> None:
+        """Stop any running animation."""
+        stop_animation(self)
+
+    def _on_mode_type_changed(self, change: Any) -> None:
+        """Handle mode visualization type change."""
+        on_mode_type_changed(self, change)
+
+    def _on_phase_index_changed(self, change: Any) -> None:
+        """Handle phase index slider updates for static phase preview."""
+        on_phase_index_changed(self, change)
+
+    def _read_controls(self) -> None:
+        """Read widget values into internal state."""
+        read_controls(self)
+
+    def _refresh_freq_slider_bounds(self) -> None:
+        refresh_freq_slider_bounds(self)
+
+    # ---------------------------------------------------------------------
+    # Figure rendering and interaction
+    # ---------------------------------------------------------------------
+    def _resolve_mode_rows(self, mode_view: str) -> list[str]:
+        return resolve_mode_rows(mode_view)
+
+    def _render_figure(self) -> None:
+        """Render spectrum + mode figure (in output widget or directly)."""
+        render_figure(
+            self,
+            clear_output_fn=clear_output,
+            plt_module=plt,
+            grid_spec_cls=GridSpec,
+        )
+
+    def _create_figure(self, n_rows: int, n_components: int) -> None:
+        """Create matplotlib figure and axes layout."""
+        create_figure(
+            self,
+            n_rows=n_rows,
+            n_components=n_components,
+            plt_module=plt,
+            grid_spec_cls=GridSpec,
+        )
+
+    def _draw_spectrum(self) -> None:
+        """Draw filtered spectrum traces and peak markers."""
+        draw_spectrum(self)
+
+    def _draw_frequency_line(self) -> None:
+        """Draw or update current frequency indicator line."""
+        draw_frequency_line(self)
+
+    def _load_mode(
+        self, frequency_ghz: float, z_layer: int
+    ) -> tuple[np.ndarray, float, tuple[float, float, float, float]]:
+        """Load mode array and metadata at selected frequency."""
+        if self.analyzer is not None:
+            mode_data = self.analyzer.get_mode(frequency_ghz, z_layer)
+            mode_array = np.asanyarray(mode_data.masked_mode_array)
+            self._geometry_contour = (
+                None
+                if mode_data.material_mask is None
+                else np.asarray(mode_data.material_mask, dtype=bool)
+            )
+            extent = tuple(mode_data.extent)
+            actual = float(mode_data.frequency)
+            return mode_array, actual, extent
+
+        if self.data_loader is not None:
+            mode_array, actual, _meta = self.data_loader.load_mode_at_frequency(
+                frequency_ghz, z_layer
+            )
+            arr = np.asanyarray(mode_array)
+            stored_mask = (
+                _meta.get("material_mask") if isinstance(_meta, dict) else None
+            )
+            self._geometry_contour = (
+                None if stored_mask is None else np.asarray(stored_mask, dtype=bool)
+            )
+            if arr.ndim == 2:
+                arr = arr[:, :, np.newaxis]
+            ny, nx = arr.shape[:2]
+            extent = (0.0, float(nx), 0.0, float(ny))
+            return arr, float(actual), extent
+
+        raise RuntimeError("No analyzer/data loader available for mode visualization")
+
+    def _update_mode_plots(self) -> None:
+        """Render mode maps for selected frequency."""
+        update_mode_plots(self)
+
+    def _update_status_text(self) -> None:
+        update_status_text(self, logger=log)
+
+    def _set_status(
+        self,
+        message: str,
+        color: str = "#334155",
+        persist: bool = True,
+    ) -> None:
+        """Set status message in toolbar or fallback to logger."""
+        set_status(self, message, color=color, logger=log, persist=persist)
+
+    def _update_frequency_selection(self, redraw_canvas: bool = True) -> None:
+        """Update vertical line and mode maps after frequency change."""
+        update_frequency_selection(self, redraw_canvas=redraw_canvas)
+
+    def _on_click(self, event: Any) -> None:
+        """Handle spectrum click interactions."""
+        on_spectrum_click(self, event)
+
+    def _closest_freq_index(self, freq_ghz: float | None) -> int:
+        return closest_freq_index(self, freq_ghz)
+
+    def _cleanup_figure_connections(self) -> None:
+        """Clean up previous figure resources before re-render."""
+        if self._fig is None:
+            return
+        try:
+            plt.close(self._fig)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _get_freq_scale(freq_unit: str) -> float:
+        """Convert GHz to display unit scaling factor."""
+        mapping = {
+            "hz": 1e9,
+            "khz": 1e6,
+            "mhz": 1e3,
+            "ghz": 1.0,
+            "thz": 1e-3,
+        }
+        key = str(freq_unit).strip().lower()
+        if key not in mapping:
+            raise ValueError("freq_unit must be Hz, kHz, MHz, GHz, or THz")
+        return float(mapping[key])
+
+
+# Backward-compatible alias
+
+
+def plot(
+    data_loader: Any,
+    log_scale: bool = False,
+    normalize: bool = True,
+    freq_unit: str = "GHz",
+    show_peaks: bool = True,
+    freq_min: float | None = None,
+    freq_max: float | None = None,
+    smooth_filter: str = "none",
+    smooth_window: int = 7,
+    smooth_sigma: float = 1.0,
+    baseline_mode: str = "none",
+    clip_percentile_low: float = 0.0,
+    clip_percentile_high: float = 100.0,
+    soft_threshold_percentile: float = 0.0,
+    peak_prominence: float = 0.05,
+    peak_distance: int = 5,
+    title: str | None = None,
+    dpi: int = 100,
+    figsize: tuple[float, float] = (12.0, 6.0),
+) -> Figure:
+    """Simple static spectrum plot compatibility helper."""
+    return plot_compat(
+        data_loader=data_loader,
+        log_scale=log_scale,
+        normalize=normalize,
+        freq_unit=freq_unit,
+        show_peaks=show_peaks,
+        freq_min=freq_min,
+        freq_max=freq_max,
+        smooth_filter=smooth_filter,
+        smooth_window=smooth_window,
+        smooth_sigma=smooth_sigma,
+        baseline_mode=baseline_mode,
+        clip_percentile_low=clip_percentile_low,
+        clip_percentile_high=clip_percentile_high,
+        soft_threshold_percentile=soft_threshold_percentile,
+        peak_prominence=peak_prominence,
+        peak_distance=peak_distance,
+        title=title,
+        dpi=dpi,
+        figsize=figsize,
+    )

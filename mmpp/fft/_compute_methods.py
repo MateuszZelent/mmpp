@@ -6,23 +6,41 @@ public ``FFTCompute`` API.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
-from ._scaling import SPECTRUM_SCALINGS, apply_spectrum_scaling, compute_window_scaling_stats
+from ._scaling import (
+    SPECTRUM_SCALINGS,
+    apply_spectrum_scaling,
+    compute_window_scaling_stats,
+)
 
 
-def _spatial_axes_for_data(data: np.ndarray) -> tuple[int, ...]:
+def _spatial_axes_for_data(
+    data: np.ndarray, spatial_axes: tuple[int, ...] | None = None
+) -> tuple[int, ...]:
     """Return the correct spatial axes for *data* using :func:`infer_axis_layout`.
 
     This avoids the old ``range(1, ndim-1)`` heuristic which incorrectly treated
     the last spatial axis as a component for scalar (no-component) datasets.
     """
+    if spatial_axes is not None:
+        normalized = tuple(int(axis) for axis in spatial_axes)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError(f"spatial_axes contains duplicates: {normalized}")
+        if any(axis <= 0 or axis >= data.ndim for axis in normalized):
+            raise ValueError(
+                f"spatial_axes {normalized} are invalid for data shape {data.shape}"
+            )
+        return normalized
+
     try:
         from ..core.dataset_geometry import infer_axis_layout
+
         layout = infer_axis_layout(data.shape)
         return tuple(int(a) for a in layout.spatial_axes)
     except Exception:
@@ -64,6 +82,7 @@ def run_fft_method1(
     apply_filter: Callable[[np.ndarray, Any], np.ndarray],
     apply_window: Callable[[np.ndarray, str], np.ndarray],
     compute_fft: Callable[..., tuple[np.ndarray, np.ndarray, int]],
+    spatial_axes: tuple[int, ...] | None = None,
 ) -> MethodExecutionResult:
     """FFT method 1: filter -> spatial average -> window -> FFT.
 
@@ -73,13 +92,19 @@ def run_fft_method1(
     """
     start_time = time.time()
     requested_engine = engine or "auto"
-    selected_engine = determine_engine(data.size) if requested_engine == "auto" else requested_engine
+    selected_engine = (
+        determine_engine(data.size) if requested_engine == "auto" else requested_engine
+    )
 
     data_filtered = apply_filter(data, filter_type)
     if data_filtered.ndim > 2:
         # Average over spatial axes, keep time (0) and component (if present)
-        spatial_axes = _spatial_axes_for_data(data_filtered)
-        data_averaged = np.mean(data_filtered, axis=spatial_axes) if spatial_axes else data_filtered
+        resolved_spatial_axes = _spatial_axes_for_data(data_filtered, spatial_axes)
+        data_averaged = (
+            np.mean(data_filtered, axis=resolved_spatial_axes)
+            if resolved_spatial_axes
+            else data_filtered
+        )
     else:
         data_averaged = data_filtered
 
@@ -126,6 +151,7 @@ def run_fft_method2(
     apply_filter: Callable[[np.ndarray, Any], np.ndarray],
     apply_window: Callable[[np.ndarray, str], np.ndarray],
     compute_fft: Callable[..., tuple[np.ndarray, np.ndarray, int]],
+    spatial_axes: tuple[int, ...] | None = None,
 ) -> MethodExecutionResult:
     """FFT method 2: filter+window -> FFT per pixel -> spatial average of |FFT|².
 
@@ -137,7 +163,9 @@ def run_fft_method2(
     """
     start_time = time.time()
     requested_engine = engine or "auto"
-    selected_engine = determine_engine(data.size) if requested_engine == "auto" else requested_engine
+    selected_engine = (
+        determine_engine(data.size) if requested_engine == "auto" else requested_engine
+    )
 
     data_filtered = apply_filter(data, filter_type)
     window_stats = compute_window_scaling_stats(window, int(data_filtered.shape[0]))
@@ -154,13 +182,13 @@ def run_fft_method2(
     spectrum = fft_data
     if spectrum.ndim > 2:
         # Average over spatial axes, keep freq (0) and component (if present)
-        spatial_axes = _spatial_axes_for_data(data_filtered)
-        if spatial_axes:
+        resolved_spatial_axes = _spatial_axes_for_data(data_filtered, spatial_axes)
+        if resolved_spatial_axes:
             # Average POWER spectra (|FFT|²) per pixel, then take sqrt.
             # This is physically different from method 1 (average signal, then FFT)
             # because <|FFT(x_i)|²> ≠ |FFT(<x_i>)|² in general.
             power = np.abs(spectrum) ** 2
-            spectrum = np.sqrt(np.mean(power, axis=spatial_axes))
+            spectrum = np.sqrt(np.mean(power, axis=resolved_spatial_axes))
 
     spectrum, scaling_metadata = apply_spectrum_scaling(
         spectrum=spectrum,
@@ -198,6 +226,8 @@ def build_fft_metadata(
     frequencies: np.ndarray,
     fft_length: int,
     scaling_metadata: dict[str, Any],
+    spatial_axes: tuple[int, ...] | None = None,
+    component_axis: int | None = None,
 ) -> dict[str, Any]:
     """Build stable metadata for FFT method runs."""
     return {
@@ -217,5 +247,7 @@ def build_fft_metadata(
             float(frequencies[1] - frequencies[0]) if len(frequencies) > 1 else 0.0
         ),
         "fft_length": fft_length,
+        "spatial_axes": spatial_axes,
+        "component_axis": component_axis,
         **scaling_metadata,
     }

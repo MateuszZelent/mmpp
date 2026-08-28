@@ -7,9 +7,11 @@ Contains functions for creating static mode visualizations:
 - _add_scale_bar: Add publication-style scale bars
 """
 
-import numpy as np
 import logging
-from typing import Any, Optional, Union, TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -19,6 +21,7 @@ log = logging.getLogger("mmpp.fft.modes")
 # Check for matplotlib availability
 try:
     import matplotlib.pyplot as plt
+
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -27,21 +30,35 @@ except ImportError:
 from ..style import setup_animation_styling
 from ..utils.scalebar import calculate_optimal_length, format_scalebar_label
 
-# Import for scale bar
 try:
-    from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
     import matplotlib.font_manager as fm
+    from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+
     AXES_GRID_AVAILABLE = True
 except ImportError:
     AXES_GRID_AVAILABLE = False
+
+
+def _visible_mode_rows(config: Any) -> list[str]:
+    """Return enabled static mode rows in their display order."""
+    rows = []
+    if config.show_magnitude:
+        rows.append("magnitude")
+    if config.show_phase:
+        rows.append("phase")
+    if config.show_combined:
+        rows.append("combined")
+    if not rows:
+        raise ValueError("At least one mode visualization row must be enabled")
+    return rows
 
 
 def plot_modes(
     analyzer,
     frequency: float,
     z_layer: int = 0,
-    components: Optional[list[Union[int, str]]] = None,
-    save_path: Optional[str] = None,
+    components: list[int | str] | None = None,
+    save_path: str | None = None,
 ) -> tuple["Figure", np.ndarray]:
     """
     Plot mode visualization for a specific frequency.
@@ -70,18 +87,16 @@ def plot_modes(
     # Setup professional styling for mode plots
     setup_animation_styling(use_paper_style=True, use_custom_fonts=True)
 
-    components = components or ["x", "y", "z"]
+    components = ["x", "y", "z"] if components is None else list(components)
+    if not components:
+        raise ValueError("components must contain at least one component")
     mode_data = analyzer.get_mode(frequency, z_layer)
 
     # Create figure with subplots
     n_components = len(components)
-    n_rows = (
-        3
-        if analyzer.config.show_magnitude
-        and analyzer.config.show_phase
-        and analyzer.config.show_combined
-        else 2
-    )
+    visible_rows = _visible_mode_rows(analyzer.config)
+    n_rows = len(visible_rows)
+    actual_frequency = mode_data.frequency
 
     fig, axes = plt.subplots(
         n_rows,
@@ -107,13 +122,15 @@ def plot_modes(
         if analyzer.config.show_magnitude:
             im1 = axes[row, i].imshow(
                 magnitude,
-                cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_magnitude),
+                cmap=analyzer.config._resolve_colormap(
+                    analyzer.config.colormap_magnitude
+                ),
                 extent=mode_data.extent,
                 aspect="equal",
                 interpolation=analyzer.config.interpolation,
                 origin="lower",
             )
-            axes[row, i].set_title(f"|m_{comp}| @ {frequency:.3f} GHz")
+            axes[row, i].set_title(f"|m_{comp}| @ {actual_frequency:.3f} GHz")
             axes[row, i].set_xlabel("x (nm)")
             if i == 0:
                 axes[row, i].set_ylabel("y (nm)")
@@ -132,7 +149,7 @@ def plot_modes(
                 vmax=np.pi,
                 origin="lower",
             )
-            axes[row, i].set_title(f"arg(m_{comp}) @ {frequency:.3f} GHz")
+            axes[row, i].set_title(f"arg(m_{comp}) @ {actual_frequency:.3f} GHz")
             axes[row, i].set_xlabel("x (nm)")
             if i == 0:
                 axes[row, i].set_ylabel("y (nm)")
@@ -143,6 +160,7 @@ def plot_modes(
         if analyzer.config.show_combined:
             # Create combined visualization: magnitude * cos(phase) for real part
             combined_data = magnitude * np.cos(phase)  # Real part
+            vmax = max(float(np.max(np.abs(combined_data))), np.finfo(float).eps)
 
             im3 = axes[row, i].imshow(
                 combined_data,
@@ -151,9 +169,11 @@ def plot_modes(
                 aspect="equal",
                 interpolation=analyzer.config.interpolation,
                 origin="lower",
+                vmin=-vmax,
+                vmax=vmax,
             )
             axes[row, i].set_title(
-                f"m_{comp} combined (mag×cos(φ)) @ {frequency:.3f} GHz"
+                f"m_{comp} combined (mag×cos(φ)) @ {actual_frequency:.3f} GHz"
             )
             axes[row, i].set_xlabel("x (nm)")
             if i == 0:
@@ -164,6 +184,7 @@ def plot_modes(
 
     # Save if requested
     if save_path:
+        Path(save_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=analyzer.config.dpi, bbox_inches="tight")
         log.info(f"Saved mode plots to {save_path}")
 
@@ -175,97 +196,76 @@ def update_single_mode_plot(
     ax: Any,
     row_idx: int,
     col_idx: int,
-    component: Union[str, int],
+    component: str | int,
     z_layer: int,
 ) -> None:
     """Update single mode plot (used when stopping animation)."""
-    try:
-        # Get mode data
-        mode_data = analyzer.get_mode(analyzer._current_frequency, z_layer)
-        comp_data = mode_data.get_component(component)
+    mode_data = analyzer.get_mode(analyzer._current_frequency, z_layer)
+    comp_data = mode_data.get_component(component)
+    vis_types = _visible_mode_rows(analyzer.config)
+    if row_idx < 0 or row_idx >= len(vis_types):
+        raise IndexError(f"Invalid mode visualization row: {row_idx}")
+    vis_type = vis_types[row_idx]
 
-        # Determine visualization type
-        vis_types = []
-        if analyzer.config.show_magnitude:
-            vis_types.append("magnitude")
-        if analyzer.config.show_phase:
-            vis_types.append("phase")
-        if analyzer.config.show_combined:
-            vis_types.append("combined")
+    ax.clear()
+    ax.set_xticks([])
+    ax.set_yticks([])
 
-        vis_type = vis_types[row_idx]
+    from ..vortex_optics import VortexOptics
 
-        # Clear and redraw
-        ax.clear()
-        ax.set_xticks([])
-        ax.set_yticks([])
-        
-        # Get component label
-        from ..vortex_optics import VortexOptics
-        comp_label = VortexOptics.get_component_label(str(component), latex=True)
+    comp_label = VortexOptics.get_component_label(str(component), latex=True)
 
-        if vis_type == "magnitude":
-            magnitude = np.abs(comp_data)
-            ax.imshow(
-                magnitude,
-                cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_magnitude),
-                extent=mode_data.extent,
-                aspect="equal",
-                interpolation=analyzer.config.interpolation,
-                origin="lower",
+    if vis_type == "magnitude":
+        ax.imshow(
+            np.abs(comp_data),
+            cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_magnitude),
+            extent=mode_data.extent,
+            aspect="equal",
+            interpolation=analyzer.config.interpolation,
+            origin="lower",
+        )
+        ax.set_title(f"|{comp_label}|")
+
+    elif vis_type == "phase":
+        use_holo = getattr(analyzer.config, "use_holography", False)
+        if use_holo:
+            holo_gamma = getattr(analyzer.config, "holography_gamma", 0.6)
+            holo_noise = getattr(analyzer.config, "holography_noise_threshold", 1e-4)
+            holo_img = VortexOptics.complex_holography(
+                comp_data, holo_gamma, holo_noise
             )
-            ax.set_title(f"|{comp_label}|")
-
-        elif vis_type == "phase":
-            # Check if holography is enabled
-            use_holo = getattr(analyzer.config, 'use_holography', False)
-            
-            if use_holo:
-                # Complex holography (domain coloring)
-                holo_gamma = getattr(analyzer.config, 'holography_gamma', 0.6)
-                holo_noise = getattr(analyzer.config, 'holography_noise_threshold', 1e-4)
-                
-                holo_img = VortexOptics.complex_holography(comp_data, holo_gamma, holo_noise)
-                ax.imshow(holo_img, extent=mode_data.extent, aspect="equal", origin="lower")
-                ax.set_title(f"Hologram of {comp_label}")
-            else:
-                # Standard phase visualization
-                phase = np.angle(comp_data)
-                ax.imshow(
-                    phase,
-                    cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
-                    extent=mode_data.extent,
-                    aspect="equal",
-                    interpolation=analyzer.config.interpolation,
-                    vmin=-np.pi,
-                    vmax=np.pi,
-                    origin="lower",
-                )
-                ax.set_title(f"arg({comp_label})")
-
-        elif vis_type == "combined":
-            magnitude = np.abs(comp_data)
-            phase = np.angle(comp_data)
-            combined_data = magnitude * np.cos(phase)
+            ax.imshow(holo_img, extent=mode_data.extent, aspect="equal", origin="lower")
+            ax.set_title(f"Hologram of {comp_label}")
+        else:
             ax.imshow(
-                combined_data,
+                np.angle(comp_data),
                 cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
                 extent=mode_data.extent,
                 aspect="equal",
                 interpolation=analyzer.config.interpolation,
+                vmin=-np.pi,
+                vmax=np.pi,
                 origin="lower",
             )
-            ax.set_title(f"Re[{comp_label}]")
+            ax.set_title(f"arg({comp_label})")
 
-    except Exception as e:
-        log.error(f"Failed to update single mode plot: {e}")
+    elif vis_type == "combined":
+        combined_data = np.real(comp_data)
+        vmax = max(float(np.max(np.abs(combined_data))), np.finfo(float).eps)
+        ax.imshow(
+            combined_data,
+            cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
+            extent=mode_data.extent,
+            aspect="equal",
+            interpolation=analyzer.config.interpolation,
+            origin="lower",
+            vmin=-vmax,
+            vmax=vmax,
+        )
+        ax.set_title(f"Re[{comp_label}]")
 
 
-def add_scale_bar(
-    analyzer,
-    ax: Any,
-    extent: tuple[float, float, float, float]
-) -> None:
+def add_scale_bar(analyzer, ax: Any, extent: tuple[float, float, float, float]) -> None:
     """Add a publication-style scale bar to the supplied axis."""
     if not (analyzer.config.show_scalebar and AXES_GRID_AVAILABLE):
         return
@@ -300,11 +300,11 @@ def add_scale_bar(
             color=analyzer.config.scalebar_color,
             frameon=True,  # Enable frame for background
             size_vertical=size_vertical,
-            fontproperties=fm.FontProperties(size=scalebar_fontsize, weight='bold'),
+            fontproperties=fm.FontProperties(size=scalebar_fontsize, weight="bold"),
         )
         # Add semi-transparent black background (30% alpha)
         scalebar.patch.set_facecolor((0, 0, 0, 0.3))
-        scalebar.patch.set_edgecolor('none')
+        scalebar.patch.set_edgecolor("none")
     except Exception as exc:
         log.debug(f"Could not create scale bar: {exc}")
         return

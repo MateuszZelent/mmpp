@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from ...._method_helpers import InteractiveNodeMixin
 from .cip import cip
 from .cpp import cpp
 from .field_resolved_cpp import field_resolved_cpp
 
 
-class ThieleModelNamespace:
+class ThieleModelNamespace(InteractiveNodeMixin):
     """Factory namespace for CIP/CPP Thiele adapters."""
+
+    _interactive_owner = "job[0].vortex.model.thiele"
+    _interactive_nodes = frozenset({"cpp", "cip", "field_resolved_cpp"})
 
     def __init__(
         self, *, job_result=None, dataset_name: str | None = None, slice_info=None

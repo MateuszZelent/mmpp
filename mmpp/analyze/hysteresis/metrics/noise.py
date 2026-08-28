@@ -112,7 +112,9 @@ def _apply_savgol(mag: np.ndarray, window: int, order: int) -> tuple[np.ndarray,
     order = int(max(1, min(order, window - 1)))
 
     if _SCIPY_AVAILABLE and savgol_filter is not None:
-        return np.asarray(savgol_filter(mag, window_length=window, polyorder=order), dtype=float), False
+        return np.asarray(
+            savgol_filter(mag, window_length=window, polyorder=order), dtype=float
+        ), False
 
     return _moving_average(mag, window), True
 
@@ -132,13 +134,20 @@ def _apply_median(mag: np.ndarray, window: int) -> tuple[np.ndarray, bool]:
 
 
 def _apply_butterworth(mag: np.ndarray) -> tuple[np.ndarray, bool]:
-    if _SCIPY_AVAILABLE and butter is not None and filtfilt is not None and mag.size > 8:
+    if (
+        _SCIPY_AVAILABLE
+        and butter is not None
+        and filtfilt is not None
+        and mag.size > 8
+    ):
         b, a = butter(N=3, Wn=0.2, btype="low")
         return np.asarray(filtfilt(b, a, mag), dtype=float), False
     return _moving_average(mag, 7), True
 
 
-def auto_filter(magnetization: np.ndarray, noise_stats: NoiseStats, config) -> np.ndarray:
+def auto_filter(
+    magnetization: np.ndarray, noise_stats: NoiseStats, config
+) -> np.ndarray:
     """Apply adaptive filtering policy driven by SNR or explicit method."""
     mag = np.asarray(magnetization, dtype=float).reshape(-1)
     method = config.filter_method

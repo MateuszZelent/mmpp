@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -48,7 +49,7 @@ class ParameterSpec:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:10px;padding:14px;margin:6px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 6px 15px rgba(0,0,0,0.2);display:inline-block;\">"
+            'color:#e2e8f0;box-shadow:0 6px 15px rgba(0,0,0,0.2);display:inline-block;">'
             "<div style='font-weight:600;color:#f1f5f9;margin-bottom:8px;'>"
             f"ParameterSpec <span style='color:{frozen_color};font-size:0.85em;'>"
             f"{frozen_icon}</span></div>"
@@ -280,46 +281,75 @@ class AutofitConfig:
         lbl = "padding:3px 8px;color:#94a3b8;font-size:0.85em;font-weight:600;white-space:nowrap;"
         val = "padding:3px 8px;color:#e2e8f0;font-size:0.85em;font-family:monospace;"
 
-        groups = [
-            ("🎯 Trajectory", [
-                ("trajectory", self.trajectory),
-                ("tracking_source", self.tracking_source),
-                ("tracking_method", self.tracking_method),
-                ("windowing", self.windowing),
-                ("n_periods", self.n_periods),
-            ]),
-            ("🧮 Model", [
-                ("model", self.model),
-                ("params", self.params if isinstance(self.params, str) else "{...}"),
-                ("current", self.current),
-                ("allow_oersted", self.allow_oersted),
-                ("allow_field_fit", self.allow_field_fit),
-            ]),
-            ("🔧 Fit Parameters", [
-                ("fit_params", ", ".join(self.fit_params)),
-                ("param_specs", f"{len(self.param_specs)} overrides" if self.param_specs else "defaults"),
-            ]),
-            ("⚖️ Objective", [
-                ("objective", self.objective),
-                ("weights", "custom" if self.weights else f"preset ({self.objective})"),
-            ]),
-            ("🔍 Optimisation", [
-                ("global_search", self.global_search),
-                ("global_method", self.global_method),
-                ("global_maxiter", self.global_maxiter),
-                ("global_popsize", self.global_popsize),
-                ("local_method", self.local_method),
-                ("local_maxiter", self.local_maxiter),
-                ("max_eval", self.max_eval),
-            ]),
-            ("⚙️ Alignment & Misc", [
-                ("align_phase", self.align_phase),
-                ("align_center", self.align_center),
-                ("random_seed", self.random_seed),
-                ("verbose", self.verbose),
-                ("live_plot", self.live_plot),
-                ("live_plot_every", self.live_plot_every),
-            ]),
+        groups: list[tuple[str, list[tuple[str, Any]]]] = [
+            (
+                "🎯 Trajectory",
+                [
+                    ("trajectory", self.trajectory),
+                    ("tracking_source", self.tracking_source),
+                    ("tracking_method", self.tracking_method),
+                    ("windowing", self.windowing),
+                    ("n_periods", self.n_periods),
+                ],
+            ),
+            (
+                "🧮 Model",
+                [
+                    ("model", self.model),
+                    (
+                        "params",
+                        self.params if isinstance(self.params, str) else "{...}",
+                    ),
+                    ("current", self.current),
+                    ("allow_oersted", self.allow_oersted),
+                    ("allow_field_fit", self.allow_field_fit),
+                ],
+            ),
+            (
+                "🔧 Fit Parameters",
+                [
+                    ("fit_params", ", ".join(self.fit_params)),
+                    (
+                        "param_specs",
+                        f"{len(self.param_specs)} overrides"
+                        if self.param_specs
+                        else "defaults",
+                    ),
+                ],
+            ),
+            (
+                "⚖️ Objective",
+                [
+                    ("objective", self.objective),
+                    (
+                        "weights",
+                        "custom" if self.weights else f"preset ({self.objective})",
+                    ),
+                ],
+            ),
+            (
+                "🔍 Optimisation",
+                [
+                    ("global_search", self.global_search),
+                    ("global_method", self.global_method),
+                    ("global_maxiter", self.global_maxiter),
+                    ("global_popsize", self.global_popsize),
+                    ("local_method", self.local_method),
+                    ("local_maxiter", self.local_maxiter),
+                    ("max_eval", self.max_eval),
+                ],
+            ),
+            (
+                "⚙️ Alignment & Misc",
+                [
+                    ("align_phase", self.align_phase),
+                    ("align_center", self.align_center),
+                    ("random_seed", self.random_seed),
+                    ("verbose", self.verbose),
+                    ("live_plot", self.live_plot),
+                    ("live_plot_every", self.live_plot_every),
+                ],
+            ),
         ]
 
         html = f"<div style='{card}'>"
@@ -351,16 +381,25 @@ class AutofitConfig:
         try:
             resolved = self.get_weights()
             loss_labels = {
-                "w_xy": "x,y MSE", "w_r": "radius", "w_phi": "phase",
-                "w_freq": "frequency", "w_psd": "spectral PSD",
-                "w_ellip": "eccentricity", "w_stability": "stability", "w_reg": "regularisation",
+                "w_xy": "x,y MSE",
+                "w_r": "radius",
+                "w_phi": "phase",
+                "w_freq": "frequency",
+                "w_psd": "spectral PSD",
+                "w_ellip": "eccentricity",
+                "w_stability": "stability",
+                "w_reg": "regularisation",
             }
             html += f"<div style='{section}'>"
             html += "<div style='font-weight:600;color:#e2e8f0;margin-bottom:4px;font-size:0.9em;'>⚖️ Resolved Weights</div>"
             html += "<div style='display:flex;flex-wrap:wrap;gap:6px;'>"
             for key, w in resolved.items():
                 label = loss_labels.get(key, key)
-                bg = "rgba(34,197,94,0.15)" if w >= 0.5 else ("rgba(165,180,252,0.1)" if w > 0 else "rgba(71,85,105,0.2)")
+                bg = (
+                    "rgba(34,197,94,0.15)"
+                    if w >= 0.5
+                    else ("rgba(165,180,252,0.1)" if w > 0 else "rgba(71,85,105,0.2)")
+                )
                 color = "#22c55e" if w >= 0.5 else ("#a5b4fc" if w > 0 else "#475569")
                 html += (
                     f"<span style='background:{bg};border:1px solid {color}33;"

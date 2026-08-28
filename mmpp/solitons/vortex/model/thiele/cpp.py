@@ -6,6 +6,7 @@ from typing import Any
 
 from mmpp.analytical import CPPThieleModel
 
+from ...._method_helpers import InteractiveNodeMixin
 from ..adapters import thiele_to_trajectory_result
 from .models import (
     infer_disk_geometry,
@@ -32,8 +33,11 @@ def _resolve_optional_value(source: Any, *keys: str):
     return None
 
 
-class CPPModelAdapter:
+class CPPModelAdapter(InteractiveNodeMixin):
     """Thin adapter exposing ``simulate`` -> ``TrajectoryResult`` contract."""
+
+    _interactive_owner = "model"
+    _interactive_nodes = frozenset({"simulate"})
 
     def __init__(
         self,
@@ -127,9 +131,13 @@ def cpp(
         fixed_layer_position=(
             fixed_layer_position
             if fixed_layer_position is not None
-            else _resolve_optional_value(material, "fixed_layer_position", "FixedLayerPosition")
+            else _resolve_optional_value(
+                material, "fixed_layer_position", "FixedLayerPosition"
+            )
         ),
-        Lambda=Lambda if Lambda is not None else _resolve_optional_value(material, "Lambda"),
+        Lambda=Lambda
+        if Lambda is not None
+        else _resolve_optional_value(material, "Lambda"),
         epsilonprime=(
             epsilonprime
             if epsilonprime is not None

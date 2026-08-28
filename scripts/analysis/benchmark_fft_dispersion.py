@@ -106,14 +106,12 @@ def _estimate_pipeline_memory_mb(
     )
     collapsed_orth = 1 if avg_over_orthogonal else n_y
     spectrum_shape = (collapsed_orth, n_x, n_t)
-    spectrum_complex_mb = (
-        float(np.prod(spectrum_shape) * np.dtype(np.complex64).itemsize)
-        / (1024.0 * 1024.0)
-    )
-    spectrum_power_mb = (
-        float(np.prod(spectrum_shape) * np.dtype(np.float32).itemsize)
-        / (1024.0 * 1024.0)
-    )
+    spectrum_complex_mb = float(
+        np.prod(spectrum_shape) * np.dtype(np.complex64).itemsize
+    ) / (1024.0 * 1024.0)
+    spectrum_power_mb = float(
+        np.prod(spectrum_shape) * np.dtype(np.float32).itemsize
+    ) / (1024.0 * 1024.0)
     s_complex_mb = spectrum_complex_mb if store_complex else 0.0
     s_local_mb = spectrum_power_mb if not avg_over_orthogonal else 0.0
     estimated_peak_mb = (
@@ -156,10 +154,7 @@ def _evaluate_thresholds(
                 "limit": float(max_elapsed_s),
             }
         )
-    if (
-        max_peak_memory_mb is not None
-        and report["peak_memory_mb"] > max_peak_memory_mb
-    ):
+    if max_peak_memory_mb is not None and report["peak_memory_mb"] > max_peak_memory_mb:
         failures.append(
             {
                 "metric": "peak_memory_mb",
@@ -169,9 +164,7 @@ def _evaluate_thresholds(
         )
 
     report["thresholds"] = {
-        key: float(value)
-        for key, value in thresholds.items()
-        if value is not None
+        key: float(value) for key, value in thresholds.items() if value is not None
     }
     report["threshold_status"] = "failed" if failures else "ok"
     report["threshold_failures"] = failures
@@ -212,9 +205,8 @@ def run_benchmark(
     if preflight_only:
         n_t, _n_z, n_y, n_x, _n_c = shape
         local_orth = n_y if not avg_over_orthogonal else 1
-        spectrum_mb = (
-            float(n_x * n_t * np.dtype(np.float32).itemsize)
-            / (1024.0 * 1024.0)
+        spectrum_mb = float(n_x * n_t * np.dtype(np.float32).itemsize) / (
+            1024.0 * 1024.0
         )
         local_mb = (
             float(local_orth * n_x * n_t * np.dtype(np.float32).itemsize)
@@ -315,7 +307,9 @@ def run_benchmark(
         "benchmark": "fft_dispersion_1d",
         "mode": "execute",
         "profile": profile_name,
-        "available_profiles": {key: list(value) for key, value in BENCHMARK_PROFILES.items()},
+        "available_profiles": {
+            key: list(value) for key, value in BENCHMARK_PROFILES.items()
+        },
         "shape": list(shape),
         "backend": backend or original["backend"],
         "workers": workers,
@@ -353,7 +347,9 @@ def run_benchmark(
 def _shape_arg(value: str) -> tuple[int, int, int, int, int]:
     parts = tuple(int(part.strip()) for part in value.split(","))
     if len(parts) != 5:
-        raise argparse.ArgumentTypeError("shape must have five comma-separated integers")
+        raise argparse.ArgumentTypeError(
+            "shape must have five comma-separated integers"
+        )
     return parts
 
 

@@ -29,19 +29,19 @@ def main() -> None:
     # Import the main CLI handler from the parent module
     import importlib.util
     import os
-    
+
     # Get the path to cli.py (sibling of cli/ directory)
     parent_dir = os.path.dirname(os.path.dirname(__file__))
     cli_path = os.path.join(parent_dir, "cli.py")
-    
+
     # Load cli.py as a module
     spec = importlib.util.spec_from_file_location("mmpp_cli", cli_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not load cli.py from {cli_path}")
-    
+
     cli_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cli_module)
-    
+
     # Call main from the loaded module
     return cli_module.main()
 
@@ -49,7 +49,7 @@ def main() -> None:
 __all__ = [
     "main",
     "handle_auth_command",
-    "handle_jobs_command", 
+    "handle_jobs_command",
     "handle_swap_command",
     "login_to_server",
     "logout_from_server",

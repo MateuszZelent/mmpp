@@ -18,7 +18,7 @@ class VortexModelInterface:
         self._job = job_result
         self._dataset_name = dataset_name
         self._slice_info = slice_info
-        self._thiele = None
+        self._thiele: Any | None = None
 
     @property
     def thiele(self):

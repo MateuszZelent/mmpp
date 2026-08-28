@@ -50,7 +50,7 @@ uv add "mmpp[fft]"
 ```
 
 For development from a checkout, use `uv sync --extra dev` or the equivalent
-`python -m pip install -e ".[dev]"`. The supported Python range is 3.9–3.12.
+`python -m pip install -e ".[dev]"`. The supported Python range is 3.10–3.12.
 
 Optional extras are available for optional workflows:
 
@@ -441,6 +441,74 @@ fig = modes_iface.plot_modes(frequency=9.5)
 viewer = modes_iface.interactive_spectrum(dpi=140)
 ```
 
+## Interactive vortex and skyrmion analysis
+
+The soliton accessors expose notebook dashboards directly.  For vortex
+analysis, choose the initial module explicitly or enter through the callable
+gyration-spectrum helper:
+
+Every public analysis or plotting method in the vortex and skyrmion trees is
+also a callable HTML helper.  Evaluate a node without parentheses to see its
+live signature, examples, and `Overview` / `API` tabs; add parentheses to run
+the unchanged operation:
+
+```python
+job[0].vortex.topology.topological_charge       # HTML helper
+job[0].vortex.topology.topological_charge()     # execute
+job[0].vortex.events.polarity_switches          # HTML helper
+job[0].vortex.events.polarity_switches()        # execute
+jobs[:].skyrmion.analyze                        # HTML helper
+jobs[:].skyrmion.analyze("charge", parameter="Dind")
+```
+
+```python
+# Full vortex dashboard, opened on the spectrum or mode module.
+job[0].vortex.interactive(initial_module="spectrum")
+job[0].vortex.interactive(initial_module="modes")
+
+# Direct combined FFT viewer: spectrum, peaks and spatial mode maps.
+job[0].vortex.interactive_spectrum(dpi=140)
+job[0].vortex.interactive_modes(dpi=140)
+
+# Evaluating this expression without parentheses displays its HTML API card.
+job[0].vortex.spectrum.gyration
+
+# Focused spectrum dashboard and spatial FFT-mode explorer.
+job[0].vortex.spectrum.gyration.interactive()
+job[0].vortex.spectrum.gyration.interactive_modes()
+
+# Spatial mode at the dominant gyration peak.
+mode = job[0].vortex.spectrum.gyration.mode()
+mode.plot.interactive()
+```
+
+`job[0].vortex.modes` classifies peaks from the tracked core trajectory.  It
+returns mode labels, frequencies, and powers.  Spatial complex maps
+`m(x, y, f)` are provided by `job[0].fft.modes`; the gyration helper links the
+two workflows.
+
+For skyrmions, the dashboard combines the magnetisation snapshot, topological
+charge density, and radial size fit:
+
+```python
+job[0].skyrmion.interactive(
+    initial_frame=0,
+    z_layer=0,
+    initial_module="analysis",  # "analysis", "spectrum", or "modes"
+    topology_method="berg_luscher",
+    size_method="auto",
+)
+
+# The same dataset/slice is passed to the combined FFT spectrum-mode viewer.
+job[0].skyrmion.interactive(initial_module="spectrum")
+job[0].skyrmion.interactive(initial_module="modes")
+job[0].skyrmion.interactive_spectrum(dpi=140)
+job[0].skyrmion.interactive_modes(dpi=140)
+
+# A folder/batch opens one selected run; use analyze(...) for the full sweep.
+jobs[:].skyrmion.interactive(index=0, sort_by="Dind")
+```
+
 Legacy-compatible mode entry points are still available where present:
 
 ```python
@@ -678,7 +746,7 @@ print("batch specs:", len(batch))
 
 ## Contributing and maintainability notes
 
-The library supports practical workflows across Python 3.9+ and documents interfaces in
+The library supports practical workflows across Python 3.10+ and documents interfaces in
 `mmpp/api` and `docs/`. If you contribute examples, prefer:
 
 - one concise path per snippet,

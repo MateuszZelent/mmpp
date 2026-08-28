@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, Optional, Union
+from typing import Any
 
 import numpy as np
 
-class DatasetPlotMplMixin:
+from .dataset_plotting_core import DatasetPlotCoreMixin
+
+
+class DatasetPlotMplMixin(DatasetPlotCoreMixin):
     _DEFAULT_FIGSIZE = (8.0, 5.0)
 
     @staticmethod
@@ -32,11 +35,11 @@ class DatasetPlotMplMixin:
         ax=None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
-        zero: Optional[int] = None,
-        scalar_kw: Optional[dict[str, Any]] = None,
-        vector_kw: Optional[dict[str, Any]] = None,
-        filename: Optional[str] = None,
+        multiplier: float | None = None,
+        zero: int | None = None,
+        scalar_kw: dict[str, Any] | None = None,
+        vector_kw: dict[str, Any] | None = None,
+        filename: str | None = None,
     ):
         import matplotlib.pyplot as plt
 
@@ -80,12 +83,15 @@ class DatasetPlotMplMixin:
         ax=None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         z: int = 0,
         t: int = -1,
-        zero: Optional[int] = None,
-        scalar_component: Optional[Union[int, str]] = "mz",
-        vector_vdims: tuple[Optional[Union[int, str]], Optional[Union[int, str]]] = ("mx", "my"),
+        zero: int | None = None,
+        scalar_component: int | str | None = "mz",
+        vector_vdims: tuple[int | str | None, int | str | None] = (
+            "mx",
+            "my",
+        ),
         filter_field: Any = "norm",
         cmap: str = "viridis",
         colorbar: bool = True,
@@ -96,15 +102,15 @@ class DatasetPlotMplMixin:
         headwidth: float = 3.5,
         headlength: float = 4.5,
         headaxislength: float = 4.0,
-        background_color: Optional[str] = "#e9e9ef",
+        background_color: str | None = "#e9e9ef",
         cell_grid: bool = False,
         cell_grid_color: str = "white",
         cell_grid_alpha: float = 0.12,
         cell_grid_linewidth: float = 0.35,
-        title: Optional[str] = None,
-        scalar_kwargs: Optional[dict[str, Any]] = None,
-        vector_kwargs: Optional[dict[str, Any]] = None,
-        filename: Optional[str] = None,
+        title: str | None = None,
+        scalar_kwargs: dict[str, Any] | None = None,
+        vector_kwargs: dict[str, Any] | None = None,
+        filename: str | None = None,
     ):
         import matplotlib.pyplot as plt
 
@@ -191,19 +197,19 @@ class DatasetPlotMplMixin:
         ax=None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         filter_field: Any = None,
         cmap: str = "viridis",
         colorbar: bool = True,
         colorbar_label: str = "",
         symmetric_clim: bool = False,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        title: Optional[str] = None,
-        filename: Optional[str] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        title: str | None = None,
+        filename: str | None = None,
         **imshow_kwargs,
     ):
         import matplotlib.pyplot as plt
@@ -272,22 +278,22 @@ class DatasetPlotMplMixin:
         ax=None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
+        zero: int | None = None,
         filter_field: Any = None,
-        vdims: Optional[tuple[Optional[Union[int, str]], Optional[Union[int, str]]]] = None,
-        vdim_mapping: Optional[dict[Any, Any]] = None,
-        color_field: Optional[Union[int, str, np.ndarray]] = None,
+        vdims: tuple[int | str | None, int | str | None] | None = None,
+        vdim_mapping: dict[Any, Any] | None = None,
+        color_field: int | str | np.ndarray | None = None,
         cmap: str = "viridis",
         use_color: bool = True,
         colorbar: bool = True,
         colorbar_label: str = "",
         quiver_density: int = 20,
-        vector_scale: Optional[float] = None,
+        vector_scale: float | None = None,
         pivot: str = "mid",
-        title: Optional[str] = None,
-        filename: Optional[str] = None,
+        title: str | None = None,
+        filename: str | None = None,
         **quiver_kwargs,
     ):
         import matplotlib.pyplot as plt
@@ -339,7 +345,11 @@ class DatasetPlotMplMixin:
             if arrow_y is not None
             else np.zeros(vec.shape[:2], dtype=np.float32)
         )
-        w = np.asarray(vec[:, :, 2], dtype=np.float32) if n_comp >= 3 else np.zeros_like(u)
+        (
+            np.asarray(vec[:, :, 2], dtype=np.float32)
+            if n_comp >= 3
+            else np.zeros_like(u)
+        )
 
         if filter_field is not None:
             mask = self._coerce_mask(filter_field, u.shape, t=t, z=z, zero=zero)
@@ -471,20 +481,20 @@ class DatasetPlotMplMixin:
         ax=None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         filter_field: Any = None,
         levels: int = 12,
         filled: bool = True,
         cmap: str = "viridis",
         colorbar: bool = True,
-        colorbar_label: Optional[str] = None,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        title: Optional[str] = None,
-        filename: Optional[str] = None,
+        colorbar_label: str | None = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        title: str | None = None,
+        filename: str | None = None,
         **contour_kwargs,
     ):
         import matplotlib.pyplot as plt
@@ -556,6 +566,7 @@ class DatasetPlotMplMixin:
         **kwargs,
     ):
         from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
         from ..plotting import hsl2rgb
 
         n = 200
@@ -585,7 +596,7 @@ class DatasetPlotMplMixin:
     def _mpl_add_colorbar(
         ax,
         mappable,
-        colorbar_label: Optional[str] = None,
+        colorbar_label: str | None = None,
         *,
         min_height_inches: float = 2.0,
         min_width_inches: float = 0.35,
@@ -643,7 +654,7 @@ class DatasetPlotMplMixin:
         ax,
         shape_xy: tuple[int, int],
         *,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         color: str = "white",
         alpha: float = 0.12,
         linewidth: float = 0.35,
@@ -674,21 +685,22 @@ class DatasetPlotMplMixin:
         ax=None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
+        zero: int | None = None,
         filter_field: Any = None,
-        lightness_field: Optional[Union[int, str, np.ndarray]] = None,
-        clim: Optional[tuple[float, float]] = None,
+        lightness_field: int | str | np.ndarray | None = None,
+        clim: tuple[float, float] | None = None,
         colorwheel: bool = True,
-        colorwheel_xlabel: Optional[str] = None,
-        colorwheel_ylabel: Optional[str] = None,
-        colorwheel_args: Optional[dict[str, Any]] = None,
-        title: Optional[str] = None,
-        filename: Optional[str] = None,
+        colorwheel_xlabel: str | None = None,
+        colorwheel_ylabel: str | None = None,
+        colorwheel_args: dict[str, Any] | None = None,
+        title: str | None = None,
+        filename: str | None = None,
         **imshow_kwargs,
     ):
         import matplotlib.pyplot as plt
+
         from ..plotting import hsl2rgb
 
         frame = self._extract_frame(z=z, t=t, zero=zero)
@@ -698,7 +710,9 @@ class DatasetPlotMplMixin:
             if lightness_field is None:
                 lightness = np.ones_like(hue, dtype=np.float32)
             elif isinstance(lightness_field, (int, np.integer, str)):
-                lightness = self._component_image(frame, lightness_field, default="norm")
+                lightness = self._component_image(
+                    frame, lightness_field, default="norm"
+                )
             else:
                 lightness = np.asarray(lightness_field, dtype=np.float32)
                 lightness = np.squeeze(lightness)
@@ -806,24 +820,26 @@ class DatasetPlotMplMixin:
         *,
         ax,
         mode: str,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        cmap: Optional[str] = None,
-        component: Optional[Union[int, str]] = None,
+        cmap: str | None = None,
+        component: int | str | None = None,
         quiver_density: int = 20,
         colorbar: bool = True,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        title: Optional[str] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        title: str | None = None,
     ):
-        import matplotlib.pyplot as plt
         from ..plotting import hsl2rgb
 
         draw_mode = self._normalize_mode(mode)
         ax.clear()
         repeat_value = max(int(repeat), 1)
         if frame.ndim >= 2:
-            shape_xy = (int(frame.shape[0]) * repeat_value, int(frame.shape[1]) * repeat_value)
+            shape_xy = (
+                int(frame.shape[0]) * repeat_value,
+                int(frame.shape[1]) * repeat_value,
+            )
         else:
             shape_xy = (repeat_value, repeat_value)
         dx_u, dy_u, extent, axis_multiplier, unit_label = self._resolve_plot_geometry(
@@ -934,11 +950,11 @@ class DatasetPlotMplMixin:
         ax=None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
-        cmap: Optional[str] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        cmap: str | None = None,
+        component: int | str | None = None,
         quiver_density: int = 20,
         colorbar: bool = True,
     ):
@@ -968,14 +984,14 @@ class DatasetPlotMplMixin:
         ax=None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         cmap: str = "viridis",
         colorbar: bool = True,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
     ):
         import matplotlib.pyplot as plt
 
@@ -1000,13 +1016,13 @@ class DatasetPlotMplMixin:
         self,
         *,
         mode: str = "snapshot",
-        component: Optional[Union[int, str]] = None,
+        component: int | str | None = None,
         z: int = 0,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
+        zero: int | None = None,
         remove_static: bool = False,
         static_reference: int = 0,
         cmap: str = "viridis",
@@ -1028,9 +1044,9 @@ class DatasetPlotMplMixin:
         fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
         if toolbar:
             plt.subplots_adjust(bottom=0.18)
-            slider_ax = fig.add_axes([0.15, 0.07, 0.55, 0.04])
-            button_ax = fig.add_axes([0.74, 0.065, 0.12, 0.05])
-            static_ax = fig.add_axes([0.88, 0.065, 0.08, 0.05])
+            slider_ax = fig.add_axes((0.15, 0.07, 0.55, 0.04))
+            button_ax = fig.add_axes((0.74, 0.065, 0.12, 0.05))
+            static_ax = fig.add_axes((0.88, 0.065, 0.08, 0.05))
             frame_slider = Slider(
                 slider_ax,
                 "Frame",
@@ -1118,7 +1134,7 @@ class DatasetPlotMplMixin:
             blit=False,
             cache_frame_data=False,
         )
-        fig._mmpp_interactive = {
+        fig.__dict__["_mmpp_interactive"] = {
             "slider": frame_slider,
             "play_button": play_btn,
             "remove_static_check": static_check,
@@ -1133,15 +1149,15 @@ class DatasetPlotMplMixin:
         self,
         *,
         mode: str = "snapshot",
-        component: Optional[Union[int, str]] = None,
+        component: int | str | None = None,
         z: int = 0,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
+        zero: int | None = None,
         cmap: str = "viridis",
         quiver_density: int = 20,
         fps: int = 20,
-        save_path: Optional[str] = None,
+        save_path: str | None = None,
         figsize: tuple[float, float] = _DEFAULT_FIGSIZE,
         dpi: int = 100,
     ):
@@ -1185,6 +1201,7 @@ class DatasetPlotMplMixin:
 
         path = str(save_path)
         suffix = path.lower().rsplit(".", 1)[-1] if "." in path else ""
+        writer: Any
         if suffix == "mp4":
             writer = mpl_animation.FFMpegWriter(fps=max(int(fps), 1), bitrate=2000)
         elif suffix == "gif":

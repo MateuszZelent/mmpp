@@ -1,0 +1,393 @@
+"""Core computations for hysteresis processing and validation."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from .result import Branch
+
+if TYPE_CHECKING:
+    from .result import HysteresisResult
+
+
+def validate_hysteresis_data(
+    field: np.ndarray,
+    magnetization: np.ndarray,
+    *,
+    require_non_monotonic: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate input arrays and return finite 1D views.
+
+    Raises
+    ------
+    ValueError
+        If input does not represent a meaningful hysteresis loop.
+    """
+    field_arr = np.asarray(field, dtype=float).reshape(-1)
+    magnetization_arr = np.asarray(magnetization, dtype=float).reshape(-1)
+
+    errors: list[str] = []
+    if field_arr.size != magnetization_arr.size:
+        errors.append(
+            f"Size mismatch: field({field_arr.size}) vs M({magnetization_arr.size})"
+        )
+
+    if field_arr.size < 10:
+        errors.append(
+            f"Too few points ({field_arr.size}), need >=10 for meaningful analysis"
+        )
+
+    finite_mask = np.isfinite(field_arr) & np.isfinite(magnetization_arr)
+    finite_count = int(np.count_nonzero(finite_mask))
+    if finite_count < 10:
+        errors.append(
+            f"Too few finite points after NaN/Inf removal ({finite_count}), need >=10"
+        )
+
+    if require_non_monotonic and finite_count > 1:
+        field_finite = field_arr[finite_mask]
+        dfield = np.diff(field_finite)
+        if np.all(dfield >= 0) or np.all(dfield <= 0):
+            errors.append("Field is monotonic - this is not a hysteresis loop")
+
+    if errors:
+        bullet = "\n".join(f"  - {msg}" for msg in errors)
+        raise ValueError(f"Data validation failed:\n{bullet}")
+
+    return field_arr[finite_mask], magnetization_arr[finite_mask]
+
+
+def _fill_zero_signs(sign: np.ndarray) -> np.ndarray:
+    """Fill zero entries in sign array using nearest non-zero neighbors."""
+    sign_out = np.asarray(sign, dtype=float).copy()
+    if sign_out.size == 0:
+        return sign_out
+
+    # Forward fill
+    for idx in range(1, sign_out.size):
+        if sign_out[idx] == 0 and sign_out[idx - 1] != 0:
+            sign_out[idx] = sign_out[idx - 1]
+
+    # Backward fill
+    for idx in range(sign_out.size - 2, -1, -1):
+        if sign_out[idx] == 0 and sign_out[idx + 1] != 0:
+            sign_out[idx] = sign_out[idx + 1]
+
+    # Any remaining zeros -> ascending default
+    sign_out[sign_out == 0] = 1.0
+    return sign_out
+
+
+def segment_branches(field: np.ndarray, slope_tolerance: float = 1e-15) -> list[Branch]:
+    """Segment loop into monotonic ascending/descending branches.
+
+    Returns
+    -------
+    list[Branch]
+        Branches with cycle ids and major/minor flags.
+    """
+    field_arr = np.asarray(field, dtype=float).reshape(-1)
+    n = int(field_arr.size)
+    if n <= 1:
+        return [Branch(name="ascending", start=0, stop=n, cycle_id=0, is_major=True)]
+
+    dfield = np.diff(field_arr)
+    sign = np.sign(dfield)
+    sign[np.abs(dfield) <= slope_tolerance] = 0.0
+    sign = _fill_zero_signs(sign)
+
+    change_idx = np.where(sign[1:] != sign[:-1])[0]
+    starts = [0] + [int(idx + 1) for idx in change_idx]
+    stops = [int(idx + 1) for idx in change_idx] + [n]
+
+    branches: list[Branch] = []
+    cycle_id = 0
+    prev_name: str | None = None
+
+    for start, stop in zip(starts, stops, strict=False):
+        stop = max(stop, start + 1)
+        local_diff = np.diff(field_arr[start:stop])
+        trend = float(np.nanmedian(local_diff)) if local_diff.size else 0.0
+        name = "ascending" if trend >= 0 else "descending"
+
+        if prev_name == "descending" and name == "ascending":
+            cycle_id += 1
+        prev_name = name
+
+        branches.append(
+            Branch(
+                name=name,
+                start=int(start),
+                stop=int(stop),
+                cycle_id=int(cycle_id),
+                is_major=False,
+            )
+        )
+
+    # major cycle = cycle with maximum field span
+    by_cycle: dict[int, list[Branch]] = defaultdict(list)
+    for branch in branches:
+        by_cycle[branch.cycle_id].append(branch)
+
+    cycle_spans: dict[int, float] = {}
+    cycle_points: dict[int, int] = {}
+    for cid, segs in by_cycle.items():
+        c_start = min(seg.start for seg in segs)
+        c_stop = max(seg.stop for seg in segs)
+        cycle_field = field_arr[c_start:c_stop]
+        cycle_spans[cid] = float(np.nanmax(cycle_field) - np.nanmin(cycle_field))
+        cycle_points[cid] = int(c_stop - c_start)
+
+    # Tie-breaking: max field span -> max points -> earliest cycle id.
+    major_cycle = (
+        max(
+            cycle_spans,
+            key=lambda cid: (cycle_spans[cid], cycle_points[cid], -cid),
+        )
+        if cycle_spans
+        else 0
+    )
+
+    for branch in branches:
+        branch.is_major = branch.cycle_id == major_cycle
+
+    return branches
+
+
+def build_cloneflip_result(result: HysteresisResult) -> HysteresisResult:
+    """Create a symmetric full loop from a single monotonic sweep.
+
+    Applies the centrosymmetric constraint **M(−B) = −M(B)**, which holds for
+    reversible (single-equilibrium) micromagnetic simulations where only one
+    field polarity was computed.
+
+    The original data is sorted ascending by field.  A point-reflected copy
+    ``(−B, −M)`` is appended in ascending order to extend the field axis into
+    the opposite polarity, forming the outward sweep.  The return branch is
+    assembled as the time-reversal of the outward sweep (zero hysteresis area
+    — physically correct for a reversible system), resulting in a closed loop
+    of ``4N − 1`` points with two branches (ascending + descending).
+
+    For the interactive snapshot explorer, reflected points are mapped to the
+    corresponding original snapshot (same |B|, shown without sign change in the
+    spatial image).
+
+    Parameters
+    ----------
+    result:
+        Source :class:`HysteresisResult` — may be monotonic (single-direction
+        sweep); the ``require_non_monotonic`` check is intentionally bypassed.
+
+    Returns
+    -------
+    HysteresisResult
+        New result with ``4*N − 1`` points and two branches.  The original
+        result is *not* modified.  ``metadata["cloneflip"] = True`` and
+        ``metadata["n_original"] = N`` are set on the returned object.
+    """
+    from .result import HysteresisResult  # local import to avoid circularity
+
+    B = np.asarray(result.field, dtype=float).reshape(-1)
+    M = np.asarray(result.magnetization, dtype=float).reshape(-1)
+    frame_orig = result.frame_index
+
+    # ── sort ascending by field value ─────────────────────────────────────────
+    order = np.argsort(B)
+    B_s = B[order]
+    M_s = M[order]
+    frame_s = (
+        frame_orig[order]
+        if frame_orig is not None
+        else np.arange(B.size, dtype=int)[order]
+    )
+
+    N = int(B_s.size)
+    if N < 2:
+        raise ValueError(
+            "cloneflip requires at least 2 data points — "
+            f"only {N} point(s) found after sorting."
+        )
+
+    # ── bipolar monotonic sweep: do NOT mirror it again ──────────────────────
+    # Some simulations already save a single monotonic sweep across both
+    # polarities, e.g. +50 mT → −50 mT.  Such data is not a closed hysteresis
+    # loop, so cloneflip is still useful, but the correct reversible completion
+    # is just the time-reversal of the measured branch.  Reflecting
+    # (−B, −M) again would create duplicate field coordinates with opposite
+    # magnetization values interleaved by the sort step, producing a jagged
+    # zig-zag curve around every field sample.
+    if float(np.nanmin(B_s)) < 0.0 < float(np.nanmax(B_s)):
+        dB_orig = np.diff(B)
+        is_monotonic_original = bool(np.all(dB_orig >= 0.0) or np.all(dB_orig <= 0.0))
+
+        if is_monotonic_original:
+            B_path: Any = B
+            M_path: Any = M
+            frame_path: Any = (
+                frame_orig if frame_orig is not None else np.arange(B.size, dtype=int)
+            )
+        else:
+            B_path = B_s
+            M_path = M_s
+            frame_path = frame_s
+
+        B_return = B_path[::-1][1:]
+        M_return = M_path[::-1][1:]
+        frame_return = frame_path[::-1][1:]
+
+        B_loop = np.concatenate([B_path, B_return])
+        M_loop = np.concatenate([M_path, M_return])
+        frame_loop = np.concatenate([frame_path, frame_return])
+
+        meta = dict(result.metadata)
+        meta.update(
+            {
+                "cloneflip": True,
+                "cloneflip_mode": "reverse_existing_bipolar_sweep",
+                "n_original": N,
+                "cloneflip_field_range": (
+                    float(np.nanmin(B_loop)),
+                    float(np.nanmax(B_loop)),
+                ),
+            }
+        )
+
+        return HysteresisResult(
+            field=B_loop,
+            magnetization=M_loop,
+            branches=segment_branches(B_loop),
+            frame_index=frame_loop,
+            config=result.config,
+            metadata=meta,
+        )
+
+    # ── reflected ascending part: (−B_s[::-1], −M_s[::-1]) ──────────────────
+    # Points at the opposite polarity: B_refl is ascending (from −b_max to −b_min).
+    B_refl = -B_s[::-1]
+    M_refl = -M_s[::-1]
+    frame_refl = frame_s[::-1]  # map to same snapshot at mirrored |B|
+
+    # ── outward sweep: sorted merge of original and reflected ─────────────────
+    # We must sort so B_up is strictly ascending regardless of whether the
+    # original data lives in positive-B, negative-B or mixed range.
+    # Example (all-positive original, B_s=[+0.0005…+0.0065]):
+    #   B_refl = [−0.0065…−0.0005] → sorted concat → [−0.0065…−0.0005, +0.0005…+0.0065] ✓
+    _B_join = np.concatenate([B_s, B_refl])
+    _M_join = np.concatenate([M_s, M_refl])
+    _f_join = np.concatenate([frame_s, frame_refl])
+    _sort = np.argsort(_B_join, kind="stable")
+    B_up = _B_join[_sort]
+    M_up = _M_join[_sort]
+    frame_up = _f_join[_sort]
+
+    # ── return sweep: reverse of outward (reversible → zero area) ────────────
+    # Skip the first point of the reversed array (== B_up[-1]) to avoid a
+    # duplicate at the field maximum; keep the last point (== B_up[0]) so the
+    # loop closes at the starting field value.
+    B_dn = B_up[::-1][1:]  # 2N − 1 points
+    M_dn = M_up[::-1][1:]
+    frame_dn = frame_up[::-1][1:]
+
+    # ── assemble closed loop: 4N − 1 points ──────────────────────────────────
+    B_loop = np.concatenate([B_up, B_dn])
+    M_loop = np.concatenate([M_up, M_dn])
+    frame_loop = np.concatenate([frame_up, frame_dn])
+
+    branches = segment_branches(B_loop)
+
+    meta = dict(result.metadata)
+    meta.update(
+        {
+            "cloneflip": True,
+            "n_original": N,
+            "cloneflip_field_range": (float(B_loop.min()), float(B_loop.max())),
+        }
+    )
+
+    return HysteresisResult(
+        field=B_loop,
+        magnetization=M_loop,
+        branches=branches,
+        frame_index=frame_loop,
+        config=result.config,
+        metadata=meta,
+    )
+
+
+def find_zero_crossings(x: np.ndarray, y: np.ndarray) -> list[float]:
+    """Find x-values where y crosses zero using linear interpolation."""
+    x_arr = np.asarray(x, dtype=float).reshape(-1)
+    y_arr = np.asarray(y, dtype=float).reshape(-1)
+    out: list[float] = []
+
+    if x_arr.size != y_arr.size or x_arr.size < 2:
+        return out
+
+    for i in range(x_arr.size - 1):
+        x0, x1 = float(x_arr[i]), float(x_arr[i + 1])
+        y0, y1 = float(y_arr[i]), float(y_arr[i + 1])
+
+        if not np.isfinite(y0) or not np.isfinite(y1):
+            continue
+
+        if y0 == 0.0:
+            out.append(x0)
+            continue
+
+        if y0 * y1 < 0.0:
+            denom = y1 - y0
+            if denom == 0.0:
+                continue
+            alpha = -y0 / denom
+            out.append(x0 + alpha * (x1 - x0))
+
+    return out
+
+
+def interpolate_at_x(x: np.ndarray, y: np.ndarray, target_x: float = 0.0) -> float:
+    """Interpolate y at target_x using adjacent samples, return NaN if unavailable."""
+    x_arr = np.asarray(x, dtype=float).reshape(-1)
+    y_arr = np.asarray(y, dtype=float).reshape(-1)
+    if x_arr.size != y_arr.size or x_arr.size == 0:
+        return float("nan")
+
+    exact_idx = np.where(np.isclose(x_arr, float(target_x)))[0]
+    if exact_idx.size:
+        return float(y_arr[int(exact_idx[0])])
+
+    for i in range(x_arr.size - 1):
+        x0, x1 = float(x_arr[i]), float(x_arr[i + 1])
+        y0, y1 = float(y_arr[i]), float(y_arr[i + 1])
+        if (x0 <= target_x <= x1) or (x1 <= target_x <= x0):
+            denom = x1 - x0
+            if denom == 0:
+                return float("nan")
+            alpha = (target_x - x0) / denom
+            return float(y0 + alpha * (y1 - y0))
+
+    return float("nan")
+
+
+def numerical_derivative(field: np.ndarray, magnetization: np.ndarray) -> np.ndarray:
+    """Compute robust dM/dB derivative."""
+    field_arr = np.asarray(field, dtype=float).reshape(-1)
+    mag_arr = np.asarray(magnetization, dtype=float).reshape(-1)
+
+    if field_arr.size < 2:
+        return np.zeros_like(field_arr)
+
+    # Avoid repeated/near-repeated coordinates causing gradient singularities.
+    # Use a scale-aware epsilon instead of a fixed machine-level value.
+    span = float(np.nanmax(field_arr) - np.nanmin(field_arr))
+    eps = max(1e-12, span * 1e-9)
+    adjusted_field = field_arr.copy()
+    repeated = np.where(np.abs(np.diff(adjusted_field)) <= eps)[0]
+    for idx in repeated:
+        adjusted_field[idx + 1] += eps
+
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        derivative = np.gradient(mag_arr, adjusted_field)
+    return np.nan_to_num(derivative, nan=0.0, posinf=0.0, neginf=0.0)

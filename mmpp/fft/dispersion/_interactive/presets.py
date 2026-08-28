@@ -83,7 +83,9 @@ def save_preset(explorer: Any, name: str) -> Path:
     if not preset_name:
         raise ValueError("Preset name must be non-empty")
     path = get_presets_dir(explorer) / f"dispersion_{preset_name}.json"
-    path.write_text(json.dumps(collect_preset_state(explorer), indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(collect_preset_state(explorer), indent=2), encoding="utf-8"
+    )
     return path
 
 

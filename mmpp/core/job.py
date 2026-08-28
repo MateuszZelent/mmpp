@@ -1,31 +1,31 @@
-import os
 import glob
 import json
+import os
 import shutil
 import warnings
-import zarr
-import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
-from ..pyzfn import Pyzfn
-from ..pyzfn.h5_backend import detect_h5_quantities, H5QuantityGroup
+import numpy as np
+import zarr
+
 from ..cli.logging_config import get_mmpp_logger
+from ..pyzfn.h5_backend import detect_h5_quantities
+from .attributes import AttributesView
 from .constants import (
+    RICH_AVAILABLE,
     SPECIAL_ATTRS,
     ArraySlice,
-    npf32,
-    npc64,
     np1d,
     np2d,
     np3d,
     np4d,
-    np5d,
     np4dc,
-    RICH_AVAILABLE,
+    np5d,
+    npc64,
+    npf32,
 )
-from .attributes import AttributesView
 from .dataset import DatasetAwareWrapper
 from .dataset_geometry import AxisGeometry, DatasetGeometry
 from .table import TableAwareWrapper
@@ -84,7 +84,7 @@ class ScanResult:
 
     path: str
     attributes: dict[str, Any]
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class ZarrJobResult:
@@ -104,12 +104,12 @@ class ZarrJobResult:
         self.path = path
         self.attributes = attributes
         self._mmpp_ref = None
-        self._z = None
+        self._z: zarr.Group = cast(zarr.Group, None)
         self._h5_groups: dict | None = None
-        self._path_obj = None
-        self._name = None
-        self._analyze = None
-        self._mock_data = None
+        self._path_obj: Path = cast(Path, None)
+        self._name: str = cast(str, None)
+        self._analyze: Any | None = None
+        self._mock_data: DatasetAwareWrapper = cast(DatasetAwareWrapper, None)
 
     def _build_mock_data_wrapper(self) -> DatasetAwareWrapper:
         """Create a deterministic in-memory dataset for plotting/debug parity work.
@@ -181,7 +181,7 @@ class ZarrJobResult:
             data,
             geometry_override=geometry,
         )
-        wrapper.attrs = {
+        cast(Any, wrapper).attrs = {
             "dx": float(cell[0]),
             "dy": float(cell[1]),
             "dz": float(cell[2]),
@@ -208,7 +208,7 @@ class ZarrJobResult:
             # Detect H5-backed quantities (amumax H5 storage mode)
             self._h5_groups = detect_h5_quantities(self.path)
 
-    def _get_zarr_member(self, key: str) -> Union[zarr.Array, zarr.Group]:
+    def _get_zarr_member(self, key: str) -> zarr.Array | zarr.Group:
         """Safely retrieve a dataset or subgroup from the underlying zarr store.
 
         H5-backed quantities (from amumax H5 storage mode) are checked first.
@@ -294,7 +294,7 @@ class ZarrJobResult:
                 mx3_content = f.read()
 
             # Create syntax-highlighted script
-            if RICH_AVAILABLE and Syntax:
+            if RICH_AVAILABLE:
                 syntax = Syntax(mx3_content, "go", theme="monokai", line_numbers=True)
                 return syntax
             return None
@@ -315,13 +315,13 @@ class ZarrJobResult:
         """
         script = self.script
         if script:
-            if RICH_AVAILABLE and Console:
+            if RICH_AVAILABLE:
                 console = Console()
                 console.print(script)
         else:
             log.warning("No script found to display.")
 
-    def __getitem__(self, item: str) -> Union[zarr.Array, zarr.Group]:
+    def __getitem__(self, item: str) -> zarr.Array | zarr.Group:
         """Get zarr dataset or group by key.
 
         Prioritizes datasets over attributes. If a dataset with the given name
@@ -497,6 +497,7 @@ class ZarrJobResult:
         """HTML card for Jupyter notebooks."""
         import uuid as _uuid
         from html import escape as _esc
+
         from mmpp._repr_helpers import (
             NODE_COLOR_ANALYSIS,
             NODE_COLOR_COMPUTE,
@@ -639,7 +640,7 @@ class ZarrJobResult:
         self._ensure_zarr_loaded()
         tree = self._z.tree()
         # Print using rich console for better formatting
-        if RICH_AVAILABLE and Console:
+        if RICH_AVAILABLE:
             console = Console()
             console.print(f"[bold cyan]{self.name}[/bold cyan]")
             console.print(tree)
@@ -679,7 +680,6 @@ class ZarrJobResult:
             Name of dataset or group to remove (must not escape the job directory)
         """
         from pathlib import Path
-        import shutil
 
         base = Path(self.path).resolve()
         target = (base / dset).resolve()
@@ -711,7 +711,7 @@ class ZarrJobResult:
 
     def get_raw(
         self, dset: str, slices: ArraySlice = slice(None)
-    ) -> Union[zarr.Array, np.ndarray]:
+    ) -> zarr.Array | np.ndarray:
         """
         Get raw zarr dataset or data using direct indexing.
         Handles datasets with special characters (like minus) in names.
@@ -1013,6 +1013,11 @@ class ZarrJobResult:
     def vortex(self):
         """Shortcut alias for ``self.solitons.vortex``."""
         return self.solitons.vortex
+
+    @property
+    def skyrmion(self):
+        """Shortcut alias for ``self.solitons.skyrmion``."""
+        return self.solitons.skyrmion
 
     @property
     def analyze(self):

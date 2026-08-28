@@ -1,17 +1,24 @@
-from __future__ import annotations
-
 """Utilities for automated characterisation of FMR modes."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ..cli.logging_config import get_mmpp_logger
 
+log = get_mmpp_logger("mmpp.fft.mode_characterization")
+
 # Import advanced vortex classifier
 try:
-    from .vortex_classifier import AdvancedVortexClassifier, VortexClassificationConfig, VortexModeResult
+    from .vortex_classifier import (
+        AdvancedVortexClassifier,
+        VortexClassificationConfig,
+        VortexModeResult,
+    )
+
     VORTEX_CLASSIFIER_AVAILABLE = True
 except ImportError:
     VORTEX_CLASSIFIER_AVAILABLE = False
@@ -20,10 +27,8 @@ except ImportError:
 if TYPE_CHECKING:  # pragma: no cover - only used for typing
     from .modes import FMRModeData
 
-log = get_mmpp_logger("mmpp.fft.mode_characterization")
 
-
-def _wrap_to_pi(angles: np.ndarray) -> np.ndarray:
+def _wrap_to_pi(angles: Any) -> Any:
     """Wrap angles to the interval [-pi, pi]."""
     return (angles + np.pi) % (2 * np.pi) - np.pi
 
@@ -45,6 +50,7 @@ def _radial_profile(
     values: np.ndarray,
     center: tuple[float, float],
     bins: int,
+    valid_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute azimuthally averaged radial profile."""
     ny, nx = values.shape
@@ -61,6 +67,15 @@ def _radial_profile(
     bin_indices = np.clip(bin_indices, 0, bins - 1)
 
     values_flat = values.ravel()
+    if valid_mask is not None:
+        valid = np.asarray(valid_mask, dtype=bool)
+        if valid.shape != values.shape:
+            raise ValueError(
+                f"valid_mask shape {valid.shape} does not match values {values.shape}"
+            )
+        valid_flat = valid.ravel()
+        bin_indices = bin_indices[valid_flat]
+        values_flat = values_flat[valid_flat]
     sums = np.bincount(bin_indices, weights=values_flat, minlength=bins)
     counts = np.bincount(bin_indices, minlength=bins)
 
@@ -86,10 +101,10 @@ class ModeCharacteristicConfig:
     gyration_parallel_ratio: float = 0.55
     breathing_perp_ratio: float = 0.5
     anisotropy_ratio: float = 0.25
-    
+
     # Advanced vortex classifier settings
     use_vortex_classifier: bool = False  # Enable advanced vortex analysis
-    vortex_dot_radius: Optional[float] = None  # Auto-estimate if None
+    vortex_dot_radius: float | None = None  # Auto-estimate if None
     min_points_for_winding: int = 64
     default_radius_fraction: float = 0.35
     min_radius_fraction: float = 0.12
@@ -113,15 +128,15 @@ class ModeCharacteristicConfig:
 class ModeCharacterizationResult:
     """Results produced by :class:`ModeCharacterAnalyzer`."""
 
-    frequency: Optional[float]
-    m_index: Optional[int]
+    frequency: float | None
+    m_index: int | None
     m_quality: float
-    rotation_sense: Optional[str]
+    rotation_sense: str | None
     radial_nodes: int
     energy_parallel: float
     energy_perp: float
     dominant_component: str
-    phase_xy_mean: Optional[float]
+    phase_xy_mean: float | None
     phase_xy_coherence: float
     phase_z_uniformity: float
     primary_class: str
@@ -155,20 +170,29 @@ class ModeCharacterizationResult:
 class ModeCharacterAnalyzer:
     """Analyse spatial mode maps to extract gyro/breathing/azimuthal labels."""
 
-    def __init__(self, config: Optional[ModeCharacteristicConfig] = None) -> None:
+    def __init__(self, config: ModeCharacteristicConfig | None = None) -> None:
         self.config = config or ModeCharacteristicConfig()
 
     def analyze(
         self,
-        mode: "FMRModeData",
+        mode: FMRModeData,
         *,
-        core_position: Optional[tuple[float, float]] = None,
-        analysis_radius: Optional[float] = None,
+        core_position: tuple[float, float] | None = None,
+        analysis_radius: float | None = None,
     ) -> ModeCharacterizationResult:
         """Return classification for a given :class:`FMRModeData` instance."""
 
         mode_array = mode.mode_array
         ny, nx, _ = mode_array.shape
+        material_mask = getattr(mode, "material_mask", None)
+        if material_mask is None:
+            material_mask = np.ones((ny, nx), dtype=bool)
+        else:
+            material_mask = np.asarray(material_mask, dtype=bool)
+            if material_mask.shape != (ny, nx):
+                raise ValueError(
+                    f"material mask {material_mask.shape} does not match mode {(ny, nx)}"
+                )
 
         dx, dy = mode.metadata.get("spatial_resolution", (1.0, 1.0))
         area_element = float(dx) * float(dy)
@@ -180,7 +204,7 @@ class ModeCharacterAnalyzer:
             or mode.metadata.get("core_position")
         )
         if center is None:
-            center = self._estimate_core_position(mode_array)
+            center = self._estimate_core_position(mode_array, material_mask)
             notes = ["core_position estimated from |mz|"]
         else:
             notes = []
@@ -196,14 +220,21 @@ class ModeCharacterAnalyzer:
         parallel_ratio = energy_parallel / total_energy
         perp_ratio = energy_perp / total_energy
 
-        dominant_component = "in_plane" if parallel_ratio >= perp_ratio else "out_of_plane"
+        dominant_component = (
+            "in_plane" if parallel_ratio >= perp_ratio else "out_of_plane"
+        )
 
         # Phase relations between mx and my
         mx = mode_array[:, :, 0]
         my = mode_array[:, :, 1]
         in_plane_amp = np.sqrt(np.abs(mx) ** 2 + np.abs(my) ** 2)
-        amp_threshold = self.config.relative_amplitude_threshold * np.nanmax(in_plane_amp)
-        ip_mask = in_plane_amp >= amp_threshold
+        in_plane_max = (
+            float(np.nanmax(in_plane_amp[material_mask]))
+            if np.any(material_mask)
+            else 0.0
+        )
+        amp_threshold = self.config.relative_amplitude_threshold * in_plane_max
+        ip_mask = material_mask & (in_plane_amp > 0.0) & (in_plane_amp >= amp_threshold)
 
         if np.any(ip_mask):
             phase_diff = _wrap_to_pi(np.angle(my[ip_mask]) - np.angle(mx[ip_mask]))
@@ -216,8 +247,11 @@ class ModeCharacterAnalyzer:
         # mz phase uniformity
         mz = mode_array[:, :, 2]
         mz_amp = np.abs(mz)
-        mz_threshold = self.config.relative_amplitude_threshold * np.nanmax(mz_amp)
-        mz_mask = mz_amp >= mz_threshold
+        mz_max = (
+            float(np.nanmax(mz_amp[material_mask])) if np.any(material_mask) else 0.0
+        )
+        mz_threshold = self.config.relative_amplitude_threshold * mz_max
+        mz_mask = material_mask & (mz_amp > 0.0) & (mz_amp >= mz_threshold)
         if np.any(mz_mask):
             phase_z = np.angle(mz[mz_mask])
             phase_z_uniformity = _circular_stats(phase_z, mz_amp[mz_mask])[1]
@@ -226,12 +260,22 @@ class ModeCharacterAnalyzer:
 
         # Radial analysis
         total_magnitude = np.sqrt(np.sum(np.abs(mode_array) ** 2, axis=2))
-        radii, radial_profile = _radial_profile(total_magnitude, (cx, cy), self.config.radial_bins)
+        radii, radial_profile = _radial_profile(
+            total_magnitude,
+            (cx, cy),
+            self.config.radial_bins,
+            valid_mask=material_mask,
+        )
 
-        if np.all(np.isnan(radial_profile)):
+        radial_peak = (
+            float(np.nanmax(radial_profile))
+            if not np.all(np.isnan(radial_profile))
+            else 0.0
+        )
+        if not np.isfinite(radial_peak) or radial_peak <= 0.0:
             radial_nodes = 0
         else:
-            norm_profile = radial_profile / np.nanmax(radial_profile)
+            norm_profile = radial_profile / radial_peak
             minima_mask = (
                 (norm_profile[1:-1] < norm_profile[:-2])
                 & (norm_profile[1:-1] < norm_profile[2:])
@@ -262,6 +306,7 @@ class ModeCharacterAnalyzer:
             (cx, cy),
             analysis_radius,
             in_plane_amp,
+            material_mask,
         )
 
         if coverage < self.config.min_ring_coverage:
@@ -276,7 +321,10 @@ class ModeCharacterAnalyzer:
             elif m_index < 0:
                 rotation = "CW"
 
-        labels = [f"m={m_index}" if m_index is not None else "m=undetermined", f"n={radial_nodes}"]
+        labels = [
+            f"m={m_index}" if m_index is not None else "m=undetermined",
+            f"n={radial_nodes}",
+        ]
         if rotation:
             labels.append(rotation)
         labels.append(f"parallel={parallel_ratio:.2f}")
@@ -310,35 +358,37 @@ class ModeCharacterAnalyzer:
 
     def analyze_vortex(
         self,
-        mode: "FMRModeData",
+        mode: FMRModeData,
         *,
-        core_position: Optional[tuple[float, float]] = None,
-        R_dot: Optional[float] = None,
+        core_position: tuple[float, float] | None = None,
+        R_dot: float | None = None,
         verbose: bool = False,
-    ) -> "VortexModeResult":
+    ) -> VortexModeResult:
         """
         Analyze mode using advanced vortex/skyrmion classifier.
-        
+
         Parameters:
         -----------
         mode : FMRModeData
             Mode data to analyze
         core_position : tuple, optional
             Core position in pixels. If None, estimated automatically
-        R_dot : float, optional  
+        R_dot : float, optional
             Dot radius. If None, taken from config or estimated
         verbose : bool
             Print detailed analysis
-            
+
         Returns:
         --------
         VortexModeResult
             Advanced classification result with indices and physics
         """
-        
+
         if not VORTEX_CLASSIFIER_AVAILABLE:
-            raise ImportError("Advanced vortex classifier not available. Check vortex_classifier.py")
-        
+            raise ImportError(
+                "Advanced vortex classifier not available. Check vortex_classifier.py"
+            )
+
         # Create vortex classifier with compatible config
         vortex_config = VortexClassificationConfig(
             tol_phi_quadrature=self.config.quadrature_tolerance,
@@ -347,35 +397,46 @@ class ModeCharacterAnalyzer:
             std_phi_mz_for_breath=self.config.breathing_phase_uniformity,
             nbins_radial=max(48, self.config.radial_bins),
         )
-        
+
         classifier = AdvancedVortexClassifier(vortex_config)
-        
+
         # Use provided R_dot or get from config
         dot_radius = R_dot or self.config.vortex_dot_radius
-        
+
         # Get spatial resolution
         dx, dy = mode.metadata.get("spatial_resolution", (1.0, 1.0))
-        
+
         # Run advanced vortex analysis
         result = classifier.classify_mode(
-            mode, 
-            R_dot=dot_radius,
-            dx=dx, 
-            dy=dy,
-            verbose=verbose
+            mode, R_dot=dot_radius, dx=dx, dy=dy, verbose=verbose
         )
-        
+
         return result
 
     @staticmethod
-    def _estimate_core_position(mode_array: np.ndarray) -> tuple[float, float]:
+    def _estimate_core_position(
+        mode_array: np.ndarray, material_mask: np.ndarray | None = None
+    ) -> tuple[float, float]:
         """Estimate vortex/skyrmion core position from |mz| map."""
         mz_amp = np.abs(mode_array[:, :, 2])
-        if np.all(mz_amp == 0):
+        valid = (
+            np.ones(mz_amp.shape, dtype=bool)
+            if material_mask is None
+            else np.asarray(material_mask, dtype=bool)
+        )
+        if not np.any(valid):
+            ny, nx = mz_amp.shape
+            return (nx - 1) / 2.0, (ny - 1) / 2.0
+        if np.all(mz_amp[valid] == 0):
             total = np.sqrt(np.sum(np.abs(mode_array) ** 2, axis=2))
-            flat_idx = int(np.argmax(total))
+            if np.all(total[valid] == 0):
+                y_valid, x_valid = np.nonzero(valid)
+                return float(np.mean(x_valid)), float(np.mean(y_valid))
+            weighted = np.where(valid, total, -np.inf)
+            flat_idx = int(np.argmax(weighted))
         else:
-            flat_idx = int(np.argmax(mz_amp))
+            weighted = np.where(valid, mz_amp, -np.inf)
+            flat_idx = int(np.argmax(weighted))
         ny, nx, _ = mode_array.shape
         y_idx, x_idx = np.unravel_index(flat_idx, (ny, nx))
         return float(x_idx), float(y_idx)
@@ -387,15 +448,22 @@ class ModeCharacterAnalyzer:
         center: tuple[float, float],
         radius: float,
         in_plane_amp: np.ndarray,
-    ) -> tuple[Optional[int], float, float]:
+        material_mask: np.ndarray | None = None,
+    ) -> tuple[int | None, float, float]:
         """Estimate azimuthal winding of mx + i my."""
         ny, nx = mx.shape
         y_idx, x_idx = np.indices((ny, nx))
         cx, cy = center
         radii = np.sqrt((x_idx - cx) ** 2 + (y_idx - cy) ** 2)
 
-        ring_mask = np.abs(radii - radius) <= max(radius * self.config.ring_width_fraction, 1.0)
-        amp_threshold = self.config.relative_amplitude_threshold * np.nanmax(in_plane_amp)
+        ring_mask = np.abs(radii - radius) <= max(
+            radius * self.config.ring_width_fraction, 1.0
+        )
+        if material_mask is not None:
+            ring_mask &= np.asarray(material_mask, dtype=bool)
+        amp_threshold = self.config.relative_amplitude_threshold * np.nanmax(
+            in_plane_amp
+        )
         ring_mask &= in_plane_amp >= amp_threshold
 
         coverage = 0.0
@@ -479,13 +547,17 @@ class ModeCharacterAnalyzer:
             "azimuthal": azimuthal_score,
         }
 
-        primary = max(scores, key=scores.get)
+        primary = max(scores, key=lambda name: scores[name])
         confidence = min(1.0, scores[primary])
 
         # Additional refinements
         if primary == "azimuthal" and result.radial_nodes > 0:
             result.labels.append("radial-structure")
-        if primary == "azimuthal" and result.m_index is not None and abs(result.m_index) > 1:
+        if (
+            primary == "azimuthal"
+            and result.m_index is not None
+            and abs(result.m_index) > 1
+        ):
             result.labels.append("|m|>1")
         if primary == "breathing" and result.radial_nodes >= 1:
             result.labels.append("breathing-overtone")
@@ -497,4 +569,6 @@ class ModeCharacterAnalyzer:
         result.diagnostics["scores"] = scores
 
         if confidence < 0.3:
-            result.notes.append("classification confidence low; consider manual inspection")
+            result.notes.append(
+                "classification confidence low; consider manual inspection"
+            )

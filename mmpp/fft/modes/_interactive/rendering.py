@@ -38,7 +38,7 @@ def _resolve_figsize(
     n_components: int,
 ) -> tuple[float, float]:
     """Compute adaptive figure size unless user explicitly overrode it."""
-    current = tuple(float(v) for v in explorer.figsize)
+    current: tuple[float, float] = tuple(float(v) for v in explorer.figsize)  # type: ignore[assignment]
     if current != _DEFAULT_FIGSIZE:
         return current
 

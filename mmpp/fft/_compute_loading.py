@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import time
 import warnings
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -21,6 +21,8 @@ class InputLoadMetrics:
     memory_before_mb: float | None
     memory_after_mb: float | None
     memory_used_mb: float | None
+    spatial_axes: tuple[int, ...] | None = None
+    component_axis: int | None = None
 
 
 def _resolve_dataset(
@@ -61,9 +63,7 @@ def _resolve_dataset(
         except Exception as exc:
             logger.debug("Unable to enumerate datasets in %s: %s", zarr_path, exc)
 
-        suggestion = (
-            f" Available datasets: {', '.join(available)}" if available else ""
-        )
+        suggestion = f" Available datasets: {', '.join(available)}" if available else ""
         raise ValueError(
             f"Dataset '{dataset}' not found in zarr file '{zarr_path}'.{suggestion}"
         )
@@ -150,11 +150,16 @@ def _select_z_layer(
     slice_info: Any | None,
     original_dataset_shape: tuple[int, ...] | None,
     dataset_attrs: Any | None = None,
+    layout_out: dict[str, Any] | None = None,
     logger: Any,
 ) -> np.ndarray:
     """Select z-layer while handling ambiguous 4D cases."""
     original_ndim = len(data.shape)
-    source_ndim = len(original_dataset_shape) if original_dataset_shape is not None else original_ndim
+    source_ndim = (
+        len(original_dataset_shape)
+        if original_dataset_shape is not None
+        else original_ndim
+    )
 
     def _extract_component_count(attrs: Any | None) -> int | None:
         if attrs is None:
@@ -194,16 +199,30 @@ def _select_z_layer(
                 normalized = raw.lower().replace("-", "").replace("_", "")
                 if normalized in {"tzyx", "zyxt"}:
                     return "tzyx"
-                if normalized in {"tyxc", "tyxcomp", "tyxcomponent", "tyxcomponents", "tyxvaluedim"}:
+                if normalized in {
+                    "tyxc",
+                    "tyxcomp",
+                    "tyxcomponent",
+                    "tyxcomponents",
+                    "tyxvaluedim",
+                }:
                     return "tyxc"
                 if "comp" in normalized or normalized.endswith("c"):
                     return "tyxc"
-                if "z" in normalized and "comp" not in normalized and not normalized.endswith("c"):
+                if (
+                    "z" in normalized
+                    and "comp" not in normalized
+                    and not normalized.endswith("c")
+                ):
                     return "tzyx"
 
             if isinstance(raw, (list, tuple)):
                 tokens = [str(token).lower() for token in raw]
-                if any(token in {"c", "comp", "component", "components", "valuedim", "value_dim"} for token in tokens):
+                if any(
+                    token
+                    in {"c", "comp", "component", "components", "valuedim", "value_dim"}
+                    for token in tokens
+                ):
                     return "tyxc"
                 if "z" in tokens:
                     return "tzyx"
@@ -217,6 +236,13 @@ def _select_z_layer(
         return bool(non_ellipsis_slices) and isinstance(
             non_ellipsis_slices[-1], (int, np.integer)
         )
+
+    def _record_layout(
+        *, spatial_axes: tuple[int, ...], component_axis: int | None
+    ) -> None:
+        if layout_out is not None:
+            layout_out["spatial_axes"] = spatial_axes
+            layout_out["component_axis"] = component_axis
 
     if source_ndim == 5:  # (t, z, y, x, comp)
         nz = data.shape[1] if data.ndim == 5 else 1
@@ -233,6 +259,7 @@ def _select_z_layer(
         else:
             data = data[:, z_layer, :, :, :]
             logger.debug("Selected z-layer %s from 5D data", z_layer)
+        _record_layout(spatial_axes=(1, 2), component_axis=3)
         return data
 
     if source_ndim == 4:
@@ -244,14 +271,17 @@ def _select_z_layer(
             logger.debug(
                 "Detected component selection in original 4D dataset - keeping semantics as (t,y,x,comp)"
             )
+            _record_layout(spatial_axes=(1, 2), component_axis=3)
             return data
 
         if axis_layout == "tzyx":
             logger.debug("Detected scalar 4D axis layout from metadata: (t,z,y,x)")
+            _record_layout(spatial_axes=(1, 2), component_axis=None)
             return data[:, -1, :, :] if z_layer == -1 else data[:, z_layer, :, :]
 
         if axis_layout == "tyxc":
             logger.debug("Detected vector 4D axis layout from metadata: (t,y,x,comp)")
+            _record_layout(spatial_axes=(1, 2), component_axis=3)
             return data
 
         if component_count is not None:
@@ -259,34 +289,42 @@ def _select_z_layer(
                 "Detected %s component(s) from metadata in 4D dataset - keeping semantics as (t,y,x,comp)",
                 component_count,
             )
+            _record_layout(spatial_axes=(1, 2), component_axis=3)
             return data
 
-        trailing_dim = original_dataset_shape[-1] if original_dataset_shape is not None else data.shape[-1]
+        trailing_dim = (
+            original_dataset_shape[-1]
+            if original_dataset_shape is not None
+            else data.shape[-1]
+        )
         if trailing_dim in {2, 3}:
             logger.debug(
                 "Inferring vector 4D layout (t,y,x,comp) from trailing dimension=%s",
                 trailing_dim,
             )
+            _record_layout(spatial_axes=(1, 2), component_axis=3)
             return data
 
         logger.debug(
             "Inferring scalar 4D layout (t,z,y,x) because no component metadata was found and trailing dimension=%s",
             trailing_dim,
         )
+        _record_layout(spatial_axes=(1, 2), component_axis=None)
         return data[:, -1, :, :] if z_layer == -1 else data[:, z_layer, :, :]
-
-        return data
 
     if original_ndim == 3:
         logger.debug(
             "3D dataset detected - using provided dimensions without z-layer selection"
         )
+        _record_layout(spatial_axes=(1, 2), component_axis=None)
         return data
     if original_ndim == 2:
         logger.debug("2D dataset detected - interpreting first axis as time")
+        _record_layout(spatial_axes=(1,), component_axis=None)
         return data
     if original_ndim == 1:
         logger.debug("1D time series detected")
+        _record_layout(spatial_axes=(), component_axis=None)
         return data
 
     raise ValueError(f"Unsupported data shape: {data.shape}")
@@ -305,17 +343,42 @@ def _coerce_dt(value: Any) -> float | None:
     return dt if dt > 0 else None
 
 
-def resolve_dt_from_metadata(*, data_set: Any, job: Any, logger: Any) -> float:
+def _uniform_dt_from_time_axis(value: Any, *, slice_info: Any | None = None) -> float:
+    """Resolve dt from the active, uniformly sampled portion of a time axis."""
+    axis: Any = np.asarray(value, dtype=float).reshape(-1)
+    if slice_info is not None:
+        key = slice_info if isinstance(slice_info, tuple) else (slice_info,)
+        if key and isinstance(key[0], slice):
+            axis = axis[key[0]]
+    if axis.size < 2:
+        raise ValueError("Time axis must contain at least two selected samples")
+    if not np.all(np.isfinite(axis)):
+        raise ValueError("Time axis contains non-finite values")
+    deltas = np.asarray(np.diff(axis), dtype=float)
+    if np.any(deltas <= 0):
+        raise ValueError("Time axis must be strictly increasing")
+    dt = float(np.mean(deltas))
+    tolerance = max(abs(dt) * 1e-6, np.finfo(float).eps * 10)
+    if np.max(np.abs(deltas - dt)) > tolerance:
+        raise ValueError(
+            "FFT requires a uniformly sampled time axis; resample the data first"
+        )
+    return dt
+
+
+def resolve_dt_from_metadata(
+    *, data_set: Any, job: Any, logger: Any, slice_info: Any | None = None
+) -> float:
     """Resolve timestep with dataset-specific attributes first."""
     dt = None
+    dt_from_time_axis = False
     try:
         if hasattr(data_set, "attrs") and "t" in data_set.attrs:
             t_attr = data_set.attrs["t"]
             if hasattr(t_attr, "__len__") and len(t_attr) >= 2:
-                candidate = _coerce_dt(t_attr[1] - t_attr[0])
-                if candidate is not None:
-                    dt = candidate
-                    logger.debug("Using dt from data_set.attrs['t']: %s", dt)
+                dt = _uniform_dt_from_time_axis(t_attr, slice_info=slice_info)
+                dt_from_time_axis = True
+                logger.debug("Using dt from data_set.attrs['t']: %s", dt)
 
         if dt is None and hasattr(data_set, "dt"):
             candidate = _coerce_dt(data_set.dt)
@@ -358,8 +421,19 @@ def resolve_dt_from_metadata(*, data_set: Any, job: Any, logger: Any) -> float:
                 "Could not determine dt from dataset metadata. Provide explicit time metadata (e.g. attrs['t'] or attrs['t_sampl'])."
             )
     except (AttributeError, TypeError, IndexError) as exc:
-        raise ValueError(f"Could not determine dt from dataset metadata: {exc}") from exc
+        raise ValueError(
+            f"Could not determine dt from dataset metadata: {exc}"
+        ) from exc
 
+    # Scalar dt metadata does not already encode the time-view stride.
+    if dt is not None and not dt_from_time_axis and slice_info is not None:
+        key = slice_info if isinstance(slice_info, tuple) else (slice_info,)
+        if key and isinstance(key[0], slice):
+            step = key[0].step
+            if step is not None:
+                if int(step) <= 0:
+                    raise ValueError("FFT time slicing requires a positive step")
+                dt *= int(step)
     return dt
 
 
@@ -375,6 +449,8 @@ def load_fft_input_data(
     psutil_module: Any | None,
     logger: Any,
     preloaded_data: np.ndarray | None = None,
+    time_step_scale: float = 1.0,
+    _layout_out: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, float]:
     """Load FFT input data from zarr with slicing, z-layer handling, and dt detection.
 
@@ -398,7 +474,9 @@ def load_fft_input_data(
     except Exception as exc:
         raise RuntimeError(f"Failed to open zarr job at {zarr_path}: {exc}") from exc
 
-    data_set = _resolve_dataset(job=job, zarr_path=zarr_path, dataset=dataset, logger=logger)
+    data_set = _resolve_dataset(
+        job=job, zarr_path=zarr_path, dataset=dataset, logger=logger
+    )
     original_dataset_shape = tuple(getattr(data_set, "shape", ()) or ())
 
     # ------------------------------------------------------------------
@@ -410,6 +488,19 @@ def load_fft_input_data(
             preloaded_data.shape,
         )
         data = np.asarray(preloaded_data)
+        if tmax is not None:
+            data = data[:tmax]
+        # The materialized array already represents the selected view. z_layer
+        # is consequently local to that view and must never reload source data.
+        data = _select_z_layer(
+            data=data,
+            z_layer=z_layer,
+            slice_info=None,
+            original_dataset_shape=tuple(data.shape),
+            dataset_attrs=getattr(data_set, "attrs", None),
+            layout_out=_layout_out,
+            logger=logger,
+        )
     else:
         data_load_start = time.time()
         data, apply_tmax = _apply_slice_with_time_policy(
@@ -429,10 +520,19 @@ def load_fft_input_data(
             slice_info=slice_info,
             original_dataset_shape=original_dataset_shape,
             dataset_attrs=getattr(data_set, "attrs", None),
+            layout_out=_layout_out,
             logger=logger,
         )
 
-    dt = resolve_dt_from_metadata(data_set=data_set, job=job, logger=logger)
+    dt = resolve_dt_from_metadata(
+        data_set=data_set, job=job, logger=logger, slice_info=slice_info
+    )
+    if preloaded_data is not None:
+        if not np.isfinite(time_step_scale) or time_step_scale <= 0:
+            raise ValueError(
+                f"time_step_scale must be finite and positive, got {time_step_scale}"
+            )
+        dt *= float(time_step_scale)
 
     total_time = time.time() - start_time
     logger.info("Data loaded successfully in %.3fs, shape: %s", total_time, data.shape)
@@ -452,6 +552,7 @@ def load_fft_input_data_profiled(
     psutil_module: Any | None,
     logger: Any,
     preloaded_data: np.ndarray | None = None,
+    time_step_scale: float = 1.0,
 ) -> tuple[np.ndarray, float, InputLoadMetrics]:
     """Load FFT input data and collect timing/memory metrics."""
     process = None
@@ -465,6 +566,7 @@ def load_fft_input_data_profiled(
             memory_before = None
 
     load_start_time = time.time()
+    layout_info: dict[str, Any] = {}
     data, dt = load_fft_input_data(
         zarr_path=zarr_path,
         dataset=dataset,
@@ -476,6 +578,8 @@ def load_fft_input_data_profiled(
         psutil_module=psutil_module,
         logger=logger,
         preloaded_data=preloaded_data,
+        time_step_scale=time_step_scale,
+        _layout_out=layout_info,
     )
     load_time = time.time() - load_start_time
 
@@ -503,6 +607,8 @@ def load_fft_input_data_profiled(
         memory_before_mb=(float(memory_before) if memory_before is not None else None),
         memory_after_mb=(float(memory_after) if memory_after is not None else None),
         memory_used_mb=(float(memory_used) if memory_used is not None else None),
+        spatial_axes=layout_info.get("spatial_axes"),
+        component_axis=layout_info.get("component_axis"),
     )
     return data, dt, metrics
 
@@ -535,7 +641,9 @@ def log_input_load_metrics(
             metrics.memory_after_mb,
         )
     else:
-        logger.debug("🧠 Memory monitoring unavailable (install psutil for memory stats)")
+        logger.debug(
+            "🧠 Memory monitoring unavailable (install psutil for memory stats)"
+        )
 
     if metrics.loading_speed_mbps is not None:
         logger.debug("🚀 Loading speed: %.1f MB/s", metrics.loading_speed_mbps)
@@ -597,7 +705,9 @@ def normalize_z_layer_index(
                 return normalized
             return z_layer
 
-        logger.debug("Dataset '%s' not found for shape inspection, using z_layer as-is", dataset)
+        logger.debug(
+            "Dataset '%s' not found for shape inspection, using z_layer as-is", dataset
+        )
         return z_layer
     except Exception as exc:
         logger.warning("Failed to normalize z_layer: %s, using z_layer as-is", exc)

@@ -130,7 +130,9 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         style={"description_width": "55px"},
     )
     controls["z_layer"] = widgets.IntSlider(
-        value=int(explorer.state.z_layer) if str(explorer.state.z_layer) != "all" else 0,
+        value=int(explorer.state.z_layer)
+        if str(explorer.state.z_layer) != "all"
+        else 0,
         min=int(z_min),
         max=int(z_max),
         step=1,
@@ -140,7 +142,9 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
         style={"description_width": "55px"},
     )
     controls["roi"] = widgets.Text(
-        value="" if explorer.state.roi is None else ",".join(str(v) for v in explorer.state.roi),
+        value=""
+        if explorer.state.roi is None
+        else ",".join(str(v) for v in explorer.state.roi),
         placeholder="x0,x1,y0,y1",
         description="roi:",
         layout=widgets.Layout(width="100%"),
@@ -356,7 +360,9 @@ def build_toolbar(explorer: Any, widgets_module: Any) -> None:
 
     controls["anim_trail"].observe(_on_trail, names="value")
 
-    controls["save_animation"].on_click(lambda _btn: on_save_animation_clicked(explorer))
+    controls["save_animation"].on_click(
+        lambda _btn: on_save_animation_clicked(explorer)
+    )
 
     def _on_preset_save(_btn):
         try:

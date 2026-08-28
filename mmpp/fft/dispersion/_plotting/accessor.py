@@ -10,14 +10,14 @@ Usage::
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 if TYPE_CHECKING:
-    import matplotlib.pyplot as plt
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
+
     from ..models import DispersionBranch, DispersionResult1D
 
 
@@ -34,7 +34,7 @@ class DispersionPlotAccessor:
         Dispersion branch + group velocity panel.
     """
 
-    def __init__(self, result: "DispersionResult1D") -> None:
+    def __init__(self, result: DispersionResult1D) -> None:
         self._result = result
 
     def interactive(self, *, show: bool = True, **kwargs: Any) -> Any:
@@ -58,26 +58,26 @@ class DispersionPlotAccessor:
 
     def heatmap(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (12, 8),
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         cmap: str = "cmc.davos",
         kscale: str = "rad_um",
         f_units: str = "GHz",
-        fmax: Optional[float] = None,
+        fmax: float | None = None,
         lognorm: bool = False,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        k_xlim: Optional[tuple[float, float]] = None,
-        orth_index: Optional[int] = None,
-        title: Optional[str] = None,
-        live_filters: Optional[dict[str, Any]] = None,
-        trim_0f: Optional[int] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        k_xlim: tuple[float, float] | None = None,
+        orth_index: int | None = None,
+        title: str | None = None,
+        live_filters: dict[str, Any] | None = None,
+        trim_0f: int | None = None,
         positive_frequencies: bool = True,
-        save: Union[str, "Path", bool, None] = None,
-        overlay_points: Optional[dict[str, Any]] = None,
-    ) -> tuple["Figure", "Axes"]:
+        save: str | Path | bool | None = None,
+        overlay_points: dict[str, Any] | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plot S(k, f) dispersion heatmap.
 
         Parameters
@@ -129,10 +129,20 @@ class DispersionPlotAccessor:
             cmap = "viridis"
 
         result = self._result
+        valid_kscales = {"rad_um", "rad_m", "rad", "cycles_m", "meter"}
+        if kscale not in valid_kscales:
+            raise ValueError(
+                "kscale must be 'rad_um', 'rad_m'/'rad', or 'cycles_m'/'meter'"
+            )
+        if f_units not in {"GHz", "Hz"}:
+            raise ValueError("f_units must be 'GHz' or 'Hz'")
 
         # --- Build figure/axes -----------------------------------------------
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+            fig_kwargs: dict[str, Any] = {"figsize": figsize}
+            if dpi:
+                fig_kwargs["dpi"] = dpi
+            fig, ax = plt.subplots(**fig_kwargs)
         else:
             fig = ax.get_figure()
 
@@ -155,18 +165,15 @@ class DispersionPlotAccessor:
 
         # Live filters
         if live_filters:
-            try:
-                from ..utils import apply_dispersion_post_filters
+            from ..utils import apply_dispersion_post_filters
 
-                spectrum = apply_dispersion_post_filters(
-                    spectrum,
-                    k_axis=result.k_axis,
-                    f_axis=result.f_axis,
-                    filters=live_filters,
-                    include_live=True,
-                )
-            except Exception:
-                pass  # degrade gracefully
+            spectrum = apply_dispersion_post_filters(
+                spectrum,
+                k_axis=result.k_axis,
+                f_axis=result.f_axis,
+                filters=live_filters,
+                include_live=True,
+            )
 
         if positive_frequencies:
             pos_mask = f_axis >= 0
@@ -175,27 +182,40 @@ class DispersionPlotAccessor:
                 f_axis = f_axis[pos_mask]
 
         # Trim lowest bins
-        if trim_0f and trim_0f > 0:
-            spectrum = spectrum[:, trim_0f:]
-            f_axis = f_axis[trim_0f:]
+        if trim_0f is not None:
+            if (
+                isinstance(trim_0f, (bool, np.bool_))
+                or int(trim_0f) != trim_0f
+                or int(trim_0f) < 0
+            ):
+                raise ValueError("trim_0f must be a non-negative integer")
+            trim_count = int(trim_0f)
+            if trim_count >= f_axis.size:
+                raise ValueError("trim_0f removes every available frequency bin")
+            spectrum = spectrum[:, trim_count:]
+            f_axis = f_axis[trim_count:]
 
         # fmax clip (in Hz, then convert if needed)
-        if fmax is not None and fmax > 0:
-            fmax_hz = fmax * 1e9 if f_units == "GHz" else fmax
+        if fmax is not None:
+            fmax_value = float(fmax)
+            if not np.isfinite(fmax_value) or fmax_value <= 0:
+                raise ValueError("fmax must be finite and positive")
+            fmax_hz = fmax_value * 1e9 if f_units == "GHz" else fmax_value
             mask_f = f_axis <= fmax_hz
-            if np.any(mask_f):
-                spectrum = spectrum[:, mask_f]
-                f_axis = f_axis[mask_f]
+            if not np.any(mask_f):
+                raise ValueError("fmax does not include any available frequency bin")
+            spectrum = spectrum[:, mask_f]
+            f_axis = f_axis[mask_f]
 
         # Unit conversion
         if kscale == "rad_um":
             k_plot = k_axis / 1e6
             k_label = r"$k$ [rad/μm]"
-            default_xlim: Optional[tuple[float, float]] = (-10.0, 10.0)
+            default_xlim: tuple[float, float] | None = None
         elif kscale in {"meter", "cycles_m"}:
             k_plot = k_axis / (2 * np.pi)
             k_label = r"$k$ [m$^{-1}$]"
-            default_xlim = (-20.0, 20.0)
+            default_xlim = None
         else:
             k_plot = k_axis
             k_label = r"$k$ [rad/m]"
@@ -209,7 +229,7 @@ class DispersionPlotAccessor:
             f_label = "Frequency [Hz]"
 
         # Color normalisation
-        norm = None
+        norm: Any = None
         if lognorm:
             s_min = spectrum[spectrum > 0].min() if np.any(spectrum > 0) else 1e-10
             norm = LogNorm(
@@ -265,7 +285,7 @@ class DispersionPlotAccessor:
             if ok.size and of.size:
                 if kscale == "rad_um":
                     ok = ok / 1e6
-                elif kscale == "meter":
+                elif kscale in {"meter", "cycles_m"}:
                     ok = ok / (2 * np.pi)
                 if f_units == "GHz":
                     of = of / 1e9
@@ -292,15 +312,15 @@ class DispersionPlotAccessor:
 
     def branch(
         self,
-        branch: "DispersionBranch",
-        ax: Optional["Axes"] = None,
+        branch: DispersionBranch,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (10, 6),
         kscale: str = "rad_um",
         f_units: str = "GHz",
-        title: Optional[str] = None,
-        save: Union[str, "Path", bool, None] = None,
-    ) -> tuple["Figure", Any]:
+        title: str | None = None,
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Any]:
         """Plot tracked dispersion branch and group velocity.
 
         Parameters
@@ -310,6 +330,13 @@ class DispersionPlotAccessor:
         """
         import matplotlib.pyplot as plt
 
+        if kscale not in {"rad_um", "rad_m", "rad", "cycles_m", "meter"}:
+            raise ValueError(
+                "kscale must be 'rad_um', 'rad_m'/'rad', or 'cycles_m'/'meter'"
+            )
+        if f_units not in {"GHz", "Hz"}:
+            raise ValueError("f_units must be 'GHz' or 'Hz'")
+
         fig, axes = plt.subplots(1, 2, figsize=figsize)
         ax_disp, ax_vg = axes
 
@@ -318,12 +345,13 @@ class DispersionPlotAccessor:
 
         if branch.group_velocity is None:
             branch.compute_group_velocity()
+        assert branch.group_velocity is not None
         vg_data = branch.group_velocity.copy()
 
         if kscale == "rad_um":
             k_data = k_data / 1e6
             k_label = r"$k$ [rad/μm]"
-        elif kscale == "meter":
+        elif kscale in {"meter", "cycles_m"}:
             k_data = k_data / (2 * np.pi)
             k_label = r"$k$ [m$^{-1}$]"
         else:
@@ -363,7 +391,7 @@ class DispersionPlotAccessor:
 
     def add_analytics(
         self,
-        ax: "Axes",
+        ax: Axes,
         *,
         model: str = "kalinikos",
         sw_config: str = "DE",
@@ -372,23 +400,23 @@ class DispersionPlotAccessor:
         linestyle: str = "--",
         linewidth: float = 1.5,
         alpha: float = 0.8,
-        label: Optional[str] = None,
+        label: str | None = None,
         # Material parameter overrides (auto-detected from zarr if None):
-        B: Optional[float] = None,
-        Ms: Optional[float] = None,
-        Aex: Optional[float] = None,
-        d: Optional[float] = None,
-        Ku: Optional[float] = None,
-        Kc1: Optional[float] = None,
-        Kc2: Optional[float] = None,
-        phi_ani: Optional[float] = None,
+        B: float | None = None,
+        Ms: float | None = None,
+        Aex: float | None = None,
+        d: float | None = None,
+        Ku: float | None = None,
+        Kc1: float | None = None,
+        Kc2: float | None = None,
+        phi_ani: float | None = None,
         g: float = 2.0,
-        phi: Optional[float] = None,
-        D: Optional[float] = None,
+        phi: float | None = None,
+        D: float | None = None,
         k_points: int = 500,
         kscale: str = "rad_um",
         f_units: str = "GHz",
-    ) -> tuple["Figure", "Axes"]:
+    ) -> tuple[Figure, Axes]:
         """Overlay analytical dispersion curve(s) on an existing axes.
 
         Material parameters are auto-extracted from zarr simulation attributes.
@@ -437,7 +465,7 @@ class DispersionPlotAccessor:
         )
 
         result = self._result
-        fig = ax.get_figure()
+        fig = cast(Figure, ax.get_figure())
 
         # Auto-extract params from zarr, then apply user overrides
         auto_params = extract_material_params(result)
@@ -482,15 +510,15 @@ class DispersionPlotAccessor:
             k_points=k_points,
             phi=phi if phi is not None else auto_params.get("phi"),
             D=D,
-            B=effective["B"],
-            Ms=effective["Ms"],
-            d=effective["d"],
-            Aex=effective["Aex"],
-            Ku=effective["Ku"],
-            Kc1=effective["Kc1"],
-            Kc2=effective["Kc2"],
-            phi_ani=effective["phi_ani"],
-            g=effective["g"],
+            B=cast(float, effective["B"]),
+            Ms=cast(float, effective["Ms"]),
+            d=cast(float, effective["d"]),
+            Aex=cast(float, effective["Aex"]),
+            Ku=cast(float, effective["Ku"]),
+            Kc1=cast(float, effective["Kc1"]),
+            Kc2=cast(float, effective["Kc2"]),
+            phi_ani=cast(float, effective["phi_ani"]),
+            g=cast(float, effective["g"]),
         )
 
         # Plot each mode
@@ -529,7 +557,7 @@ class DispersionPlotAccessor:
     # helpers
     # ------------------------------------------------------------------
 
-    def _save_fig(self, fig: "Figure", save: Any, result: "DispersionResult1D") -> None:
+    def _save_fig(self, fig: Figure, save: Any, result: DispersionResult1D) -> None:
         from datetime import datetime, timezone
 
         if isinstance(save, bool):
@@ -549,8 +577,8 @@ class DispersionPlotAccessor:
             NODE_COLOR_COMPUTE,
             NODE_COLOR_PLOT,
             NODE_COLOR_UTIL,
-            api_help_html,
             accessors_section_html,
+            api_help_html,
             examples_section_html,
             metrics_section_html,
             node_card_html,

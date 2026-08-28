@@ -1,0 +1,61 @@
+"""Animation controls for hysteresis interactive explorer."""
+
+from __future__ import annotations
+
+try:
+    from matplotlib.animation import FuncAnimation
+
+    _HAS_ANIM = True
+except Exception:  # pragma: no cover - optional dependency
+    FuncAnimation = None  # type: ignore[assignment]
+    _HAS_ANIM = False
+
+
+def start_animation(explorer) -> None:
+    """Start online point-walk animation."""
+    if not _HAS_ANIM:
+        raise ImportError("matplotlib.animation is required for animation")
+
+    n_points = explorer.result.field.size
+    if n_points <= 1:
+        return
+
+    stop_animation(explorer)
+    explorer.state.is_animating = True
+
+    fps = max(
+        1.0,
+        float(explorer.result.config.animation_fps)
+        * float(explorer.state.animation_speed),
+    )
+    interval_ms = 1000.0 / fps
+
+    def _step(_frame_idx):
+        if not explorer.state.is_animating:
+            return []
+        next_idx = (int(explorer.state.current_idx) + 1) % n_points
+        explorer._set_index(next_idx, redraw=True)
+        return []
+
+    explorer._animation = FuncAnimation(
+        explorer._fig,
+        _step,
+        interval=interval_ms,
+        blit=False,
+        repeat=True,
+        save_count=n_points,
+        cache_frame_data=False,
+    )
+
+
+def stop_animation(explorer) -> None:
+    """Stop current animation if active."""
+    explorer.state.is_animating = False
+    animation = getattr(explorer, "_animation", None)
+    if animation is not None and getattr(animation, "event_source", None) is not None:
+        animation.event_source.stop()
+        # Prevent matplotlib "Animation was deleted without rendering" warning
+        # when we intentionally stop before any draw/save call.
+        if hasattr(animation, "_draw_was_started"):
+            animation._draw_was_started = True
+    explorer._animation = None

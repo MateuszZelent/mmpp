@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -94,7 +95,11 @@ def verify_fft_parameters(
     zero_padding: Any,
     nfft: Any,
     metadata_overrides: dict[str, Any],
-    metadata_keys_to_check: Sequence[str] = ("z_layer", "source_dataset", "slice_identifier"),
+    metadata_keys_to_check: Sequence[str] = (
+        "z_layer",
+        "source_dataset",
+        "slice_identifier",
+    ),
 ) -> bool:
     """Verify whether request parameters match an existing cached FFT result."""
     engine_match = True
@@ -112,7 +117,10 @@ def verify_fft_parameters(
 
     metadata_match = True
     for key in metadata_keys_to_check:
-        if key in metadata_overrides and key in existing_result.metadata:
+        if key in metadata_overrides:
+            if key not in existing_result.metadata:
+                metadata_match = False
+                break
             if metadata_overrides[key] != existing_result.metadata[key]:
                 metadata_match = False
                 break

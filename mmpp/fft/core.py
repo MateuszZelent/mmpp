@@ -4,30 +4,48 @@ FFT Core Module
 Main FFT class providing unified interface for FFT analysis.
 """
 
-from typing import Any, Optional
-from html import escape as _html_escape
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from ..cli.logging_config import get_mmpp_logger
 
 # Import from our own modules
 from ._compute_loading import resolve_dt_from_metadata
 from .compute_fft import FFTCompute, FFTComputeResult
 from .method_helpers import CallableMethodHelper
-from .plot import FFTPlotter
 from .spectrum.compute import (
     build_cache_key,
     compute_fft_cached,
     format_slice_identifier,
 )
 from .transmission.interface import FFTTransmissionInterface
-from ..cli.logging_config import get_mmpp_logger
+
+if TYPE_CHECKING:
+    from .plot import FFTPlotter
 
 # Get logger for FFT core
 log = get_mmpp_logger("mmpp.fft")
 
+
+def _spectral_power_trace(spectrum: Any) -> np.ndarray:
+    """Reduce a frequency-first spectrum to mean spectral power per bin."""
+    values = np.asarray(spectrum)
+    if values.ndim == 0 or values.shape[0] == 0:
+        raise ValueError("Spectrum must be a non-empty frequency-first array")
+    if not np.isfinite(values).all():
+        raise ValueError("Spectrum must contain only finite values")
+    power = np.abs(values) ** 2
+    if power.ndim > 1:
+        power = np.mean(power, axis=tuple(range(1, power.ndim)))
+    return np.asarray(power, dtype=float)
+
+
 # Import mode visualization capabilities
 try:
-    from .modes import FFTModeInterface, FMRModeAnalyzer, ModeVisualizationConfig
+    from .modes import FFTModeInterface, FMRModeAnalyzer
     from .modes.interface import FFTModeInterfaceNew  # New refactored interface
 
     MODES_AVAILABLE = True
@@ -36,8 +54,6 @@ except ImportError:
 
 try:
     from .dispersion import (
-        SpinWaveAnalyzer,
-        DispersionConfig,
         FFTDispersionInterface,
         find_peaks_1d,
     )
@@ -48,7 +64,6 @@ except ImportError:
     find_peaks_1d = None  # type: ignore
 
 from .spectrum import (
-    MultiSpectrumResult,
     SpectrumFilterChain,
     SpectrumHelper,
     SpectrumResult,
@@ -61,7 +76,7 @@ def generate_pastel_colors(n: int) -> list:
         import matplotlib.pyplot as plt
         from matplotlib.colors import to_rgba
 
-        colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
+        colors = plt.get_cmap("Accent")(np.linspace(0, 1, max(int(n), 3)))
         return [to_rgba(c) for c in colors[: int(n)]]
     except ImportError:
         return [(0.4 + 0.15 * i, 0.6, 0.8, 1.0) for i in range(max(1, int(n)))]
@@ -207,7 +222,7 @@ class FFT:
     MODES_AVAILABLE = MODES_AVAILABLE
     DISPERSION_AVAILABLE = DISPERSION_AVAILABLE
 
-    def __init__(self, job_result, mmpp_instance: Optional[Any] = None):
+    def __init__(self, job_result, mmpp_instance: Any | None = None):
         """
         Initialize FFT analyzer for a job result.
 
@@ -226,18 +241,20 @@ class FFT:
         self._compute = FFTCompute(debug=debug_mode)
 
         # Initialize plotter (lazy loaded)
-        self._plotter = None
+        self._plotter: FFTPlotter | None = None
 
         # Transmission interface (lazy)
-        self._transmission_interface = None
+        self._transmission_interface: FFTTransmissionInterface | None = None
 
         # Cache for FFT results
-        self._cache = {}
+        self._cache: dict[Any, Any] = {}
 
     @property
     def plotter(self) -> FFTPlotter:
         """Get plotter instance (lazy initialization)."""
         if self._plotter is None:
+            from .plot import FFTPlotter
+
             self._plotter = FFTPlotter([self.job_result], self.mmpp)
         return self._plotter
 
@@ -263,7 +280,7 @@ class FFT:
         """Alias for :attr:`helpers`."""
         return self.helpers
 
-    def _format_slice_identifier(self, slice_info: Optional[Any]) -> str:
+    def _format_slice_identifier(self, slice_info: Any | None) -> str:
         """Create a deterministic identifier for slice_info for caching/saving."""
         return format_slice_identifier(slice_info)
 
@@ -272,7 +289,7 @@ class FFT:
         dataset_name: str,
         z_layer: int,
         method: int,
-        slice_identifier: Optional[str] = None,
+        slice_identifier: str | None = None,
         **kwargs,
     ) -> str:
         """Generate cache key for FFT results."""
@@ -286,14 +303,14 @@ class FFT:
 
     def _compute_fft(
         self,
-        dataset_name: Optional[str] = None,
+        dataset_name: str | None = None,
         z_layer: int = -1,
         method: int = 1,
         use_cache: bool = True,
         save: bool = False,
         force: bool = False,
-        save_dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
+        save_dataset_name: str | None = None,
+        slice_info: Any | None = None,
         **kwargs,
     ) -> FFTComputeResult:
         """
@@ -371,13 +388,13 @@ class FFT:
         method: int = 1,
         save: bool = False,
         force: bool = False,
-        save_dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
-        tmin: Optional[int] = None,
-        tmax: Optional[int] = None,
-        find_peaks: Optional[dict] = None,
-        fmin: Optional[float] = None,
-        fmax: Optional[float] = None,
+        save_dataset_name: str | None = None,
+        slice_info: Any | None = None,
+        tmin: int | None = None,
+        tmax: int | None = None,
+        find_peaks: dict | None = None,
+        fmin: float | None = None,
+        fmax: float | None = None,
         **kwargs,
     ):
         """
@@ -437,7 +454,7 @@ class FFT:
         if tmin is not None or tmax is not None:
             slice_info = self._merge_time_slice(slice_info, tmin=tmin, tmax=tmax)
 
-        result = self._compute_fft(
+        fft_result = self._compute_fft(
             dset,
             z_layer,
             method,
@@ -448,8 +465,8 @@ class FFT:
             **kwargs,
         )
 
-        frequencies = result.frequencies
-        spectrum = result.spectrum
+        frequencies = fft_result.frequencies
+        spectrum = fft_result.spectrum
 
         # Apply frequency range filtering
         if fmin is not None or fmax is not None:
@@ -465,6 +482,13 @@ class FFT:
 
         peaks_info = None
         if find_peaks is not None:
+            if not isinstance(find_peaks, dict):
+                raise TypeError("find_peaks must be a dictionary or None")
+            unknown_peak_options = sorted(set(find_peaks) - {"min_prominence"})
+            if unknown_peak_options:
+                raise TypeError(
+                    "Unknown find_peaks option(s): " + ", ".join(unknown_peak_options)
+                )
             # Find peaks in spectrum
             if find_peaks_1d is None:
                 log.warning(
@@ -474,19 +498,7 @@ class FFT:
                 # Extract parameters
                 min_prominence = find_peaks.get("min_prominence", 0.0)
 
-                # Use absolute value of spectrum for peak detection
-                spectrum_abs = np.abs(spectrum)
-
-                # For peak finding, handle multidimensional spectrum by spatial averaging
-                if spectrum_abs.ndim > 1:
-                    # Spatial axes are 1, 2, ...
-                    spatial_axes = tuple(range(1, spectrum_abs.ndim))
-                    spectrum_for_peaks = np.mean(spectrum_abs, axis=spatial_axes)
-                    log.debug(
-                        f"Averaged spectrum over axes {spatial_axes} for peak finding"
-                    )
-                else:
-                    spectrum_for_peaks = spectrum_abs
+                spectrum_for_peaks = _spectral_power_trace(spectrum)
 
                 # Find peaks
                 peak_indices = find_peaks_1d(
@@ -498,7 +510,8 @@ class FFT:
                 peaks_info = {
                     "indices": peak_indices,
                     "frequencies": frequencies[peak_indices],
-                    "amplitudes": spectrum_for_peaks[peak_indices],
+                    "amplitudes": np.sqrt(spectrum_for_peaks[peak_indices]),
+                    "powers": spectrum_for_peaks[peak_indices],
                 }
 
                 log.info(
@@ -527,20 +540,22 @@ class FFT:
             mode_context={
                 "dset": dset,
                 "slice_info": slice_info,
+                "preloaded_data": kwargs.get("preloaded_data"),
+                "time_step_scale": kwargs.get("time_step_scale", 1.0),
             },
-            scaling=result.metadata.get("scaling", "raw"),
-            spectrum_kind=result.metadata.get("spectrum_kind", "complex"),
-            power_quantity=result.metadata.get("power_quantity", "raw_power"),
+            scaling=fft_result.metadata.get("scaling", "raw"),
+            spectrum_kind=fft_result.metadata.get("spectrum_kind", "complex"),
+            power_quantity=fft_result.metadata.get("power_quantity", "raw_power"),
         )
         result._single_component = component_selected
         return result
 
     @staticmethod
     def _merge_time_slice(
-        slice_info: Optional[Any],
+        slice_info: Any | None,
         *,
-        tmin: Optional[int],
-        tmax: Optional[int],
+        tmin: int | None,
+        tmax: int | None,
     ) -> Any:
         """Override only the time axis while preserving other slice selections."""
         time_slice = slice(tmin, tmax)
@@ -563,8 +578,8 @@ class FFT:
         method: int = 1,
         save: bool = False,
         force: bool = False,
-        save_dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
+        save_dataset_name: str | None = None,
+        slice_info: Any | None = None,
         **kwargs,
     ) -> np.ndarray:
         """
@@ -621,8 +636,8 @@ class FFT:
 
     def _compute_frequencies_fast(
         self,
-        dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
+        dataset_name: str | None = None,
+        slice_info: Any | None = None,
         **kwargs,
     ) -> np.ndarray:
         """
@@ -722,9 +737,7 @@ class FFT:
                 f"Failed to compute frequencies from metadata: {e}"
             ) from e
 
-    def _apply_time_slice_length(
-        self, n_timesteps: int, slice_info: Optional[Any]
-    ) -> int:
+    def _apply_time_slice_length(self, n_timesteps: int, slice_info: Any | None) -> int:
         """Estimate resulting time length after applying slice info."""
         if slice_info is None or n_timesteps <= 0:
             return n_timesteps
@@ -750,7 +763,7 @@ class FFT:
         return n_timesteps
 
     @staticmethod
-    def _extract_component_index(slice_info: Optional[Any]) -> Optional[int]:
+    def _extract_component_index(slice_info: Any | None) -> int | None:
         """Extract selected component index from a dataset slice descriptor."""
         if slice_info is None:
             return None
@@ -801,8 +814,8 @@ class FFT:
         method: int = 1,
         save: bool = False,
         force: bool = False,
-        save_dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
+        save_dataset_name: str | None = None,
+        slice_info: Any | None = None,
         **kwargs,
     ) -> np.ndarray:
         """
@@ -847,7 +860,7 @@ class FFT:
         dset: str = "m",
         z_layer: int = -1,
         method: int = 1,
-        slice_info: Optional[Any] = None,
+        slice_info: Any | None = None,
         **kwargs,
     ) -> np.ndarray:
         """
@@ -877,7 +890,7 @@ class FFT:
         dset: str = "m",
         z_layer: int = -1,
         method: int = 1,
-        slice_info: Optional[Any] = None,
+        slice_info: Any | None = None,
         **kwargs,
     ) -> np.ndarray:
         """
@@ -907,16 +920,16 @@ class FFT:
     def plot_spectrum(
         self,
         dset: str = "m",
-        ax: Optional[Any] = None,
+        ax: Any | None = None,
         method: int = 1,
         z_layer: int = -1,
         log_scale: bool = True,
         normalize: bool = False,
         save: bool = True,
         force: bool = False,
-        save_dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
-        slice_identifier: Optional[str] = None,
+        save_dataset_name: str | None = None,
+        slice_info: Any | None = None,
+        slice_identifier: str | None = None,
         **kwargs,
     ) -> tuple[Any, Any]:
         """
@@ -1016,63 +1029,87 @@ class FFT:
         dispersion_ok = DISPERSION_AVAILABLE
         uid = str(_uuid.uuid4())[:8]
 
-        status = metrics_section_html([
-            ("job", job_name, None),
-            ("path", job_path, None),
-            ("cache entries", cache_size, None),
-            ("modes",
-             "available" if modes_ok else "unavailable",
-             "#22c55e" if modes_ok else "#ef4444"),
-            ("dispersion",
-             "available" if dispersion_ok else "unavailable",
-             "#22c55e" if dispersion_ok else "#ef4444"),
-        ])
+        status = metrics_section_html(
+            [
+                ("job", job_name, None),
+                ("path", job_path, None),
+                ("cache entries", cache_size, None),
+                (
+                    "modes",
+                    "available" if modes_ok else "unavailable",
+                    "#22c55e" if modes_ok else "#ef4444",
+                ),
+                (
+                    "dispersion",
+                    "available" if dispersion_ok else "unavailable",
+                    "#22c55e" if dispersion_ok else "#ef4444",
+                ),
+            ]
+        )
 
-        accessors = accessors_section_html([
-            ("Compute:", [
-                (".spectrum()", NODE_COLOR_COMPUTE),
-                (".filters(**f).spectrum()", NODE_COLOR_COMPUTE),
-                (".power()", NODE_COLOR_COMPUTE),
-                (".frequencies()", NODE_COLOR_COMPUTE),
-                (".magnitude()", NODE_COLOR_COMPUTE),
-                (".phase()", NODE_COLOR_COMPUTE),
-            ]),
-            ("Analysis:", [
-                (".modes", NODE_COLOR_ANALYSIS),
-                (".dispersion", NODE_COLOR_ANALYSIS),
-                (".transmission", NODE_COLOR_ANALYSIS),
-            ]),
-            ("Plotting:", [
-                (".plot_spectrum()", NODE_COLOR_PLOT),
-                (".interactive_spectrum()", NODE_COLOR_PLOT),
-                (".plotter", NODE_COLOR_PLOT),
-            ]),
-            ("Utilities:", [
-                (".clear_cache()", NODE_COLOR_UTIL),
-                (".helpers", NODE_COLOR_UTIL),
-            ]),
-        ])
+        accessors = accessors_section_html(
+            [
+                (
+                    "Compute:",
+                    [
+                        (".spectrum()", NODE_COLOR_COMPUTE),
+                        (".filters(**f).spectrum()", NODE_COLOR_COMPUTE),
+                        (".power()", NODE_COLOR_COMPUTE),
+                        (".frequencies()", NODE_COLOR_COMPUTE),
+                        (".magnitude()", NODE_COLOR_COMPUTE),
+                        (".phase()", NODE_COLOR_COMPUTE),
+                    ],
+                ),
+                (
+                    "Analysis:",
+                    [
+                        (".modes", NODE_COLOR_ANALYSIS),
+                        (".dispersion", NODE_COLOR_ANALYSIS),
+                        (".transmission", NODE_COLOR_ANALYSIS),
+                    ],
+                ),
+                (
+                    "Plotting:",
+                    [
+                        (".plot_spectrum()", NODE_COLOR_PLOT),
+                        (".interactive_spectrum()", NODE_COLOR_PLOT),
+                        (".plotter", NODE_COLOR_PLOT),
+                    ],
+                ),
+                (
+                    "Utilities:",
+                    [
+                        (".clear_cache()", NODE_COLOR_UTIL),
+                        (".helpers", NODE_COLOR_UTIL),
+                    ],
+                ),
+            ]
+        )
 
-        examples = examples_section_html("\n".join([
-            "# Preferred: access FFT through a dataset",
-            "data = job[0].m_layer13[:200, ...]",
-            "result = data.fft.spectrum()",
-            "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
-            "",
-            "# Job-level FFT (auto-selects largest m dataset)",
-            "result = job[0].fft.spectrum()",
-            "",
-            "# Fluent filter chain",
-            "job[0].fft.filters(remove_static=True).spectrum()",
-            "",
-            "# Frequency range & peak detection",
-            "result = job[0].fft.spectrum(fmin=1e9, fmax=20e9,",
-            "                            find_peaks={'min_prominence': 0.1})",
-            "",
-            "# Analysis sub-interfaces",
-            "job[0].fft.modes.interactive_spectrum(dpi=150)",
-            "job[0].fft.dispersion.plot_dispersion(axis='x')",
-        ]))
+        examples = examples_section_html(
+            "\n".join(
+                [
+                    "# Preferred: access FFT through a dataset",
+                    "data = job[0].m_layer13[:200, ...]",
+                    "result = data.fft.spectrum()",
+                    "result.plot.spectrum(log_scale=True, freq_unit='GHz')",
+                    "",
+                    "# Job-level FFT (auto-selects largest m dataset)",
+                    "result = job[0].fft.spectrum()",
+                    "",
+                    "# Fluent filter chain",
+                    "job[0].fft.filters(remove_static=True).spectrum()",
+                    "",
+                    "# Frequency range & peak detection",
+                    "result = job[0].fft.spectrum(fmin=1e9, fmax=20e9,",
+                    "                            find_peaks={'min_prominence': 0.1})",
+                    "",
+                    "# Analysis sub-interfaces",
+                    "job[0].fft.modes.interactive_spectrum(dpi=150)",
+                    "job[0].fft.dispersion.plot_dispersion(axis='x')",
+                ]
+            )
+        )
 
         api = api_help_html(
             self,
@@ -1080,13 +1117,25 @@ class FFT:
             prefix="job[0].fft",
             subtitle="Live signatures generated from the FFT interface.",
             properties=[
-                ("spectrum", "Spectrum namespace with computation and plotting helpers"),
+                (
+                    "spectrum",
+                    "Spectrum namespace with computation and plotting helpers",
+                ),
                 ("modes", "FMR mode analysis namespace"),
                 ("dispersion", "Dispersion relation analysis namespace"),
                 ("transmission", "Transmission / absorption analysis namespace"),
             ],
-            methods=["filters", "power", "frequencies", "magnitude", "phase",
-                     "plot_spectrum", "plot_modes", "interactive_spectrum", "clear_cache"],
+            methods=[
+                "filters",
+                "power",
+                "frequencies",
+                "magnitude",
+                "phase",
+                "plot_spectrum",
+                "plot_modes",
+                "interactive_spectrum",
+                "clear_cache",
+            ],
             chrome=False,
         )
 
@@ -1525,7 +1574,7 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
         return "\n".join(output)
 
     @property
-    def modes(self) -> "FFTModeInterfaceNew":
+    def modes(self) -> FFTModeInterfaceNew:
         """
         Get mode visualization interface.
 
@@ -1552,7 +1601,7 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
         return self._mode_interface_new
 
     @property
-    def dispersion(self) -> "FFTDispersionInterface":
+    def dispersion(self) -> FFTDispersionInterface:
         """
         Get spin-wave dispersion analysis interface.
 
@@ -1576,7 +1625,7 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
             self._dispersion_interface = FFTDispersionInterface(self)
         return self._dispersion_interface
 
-    def __getitem__(self, index: int) -> "FFTModeInterface":
+    def __getitem__(self, index: int) -> FFTModeInterface:
         """
         Get FFT result by index for mode operations.
 

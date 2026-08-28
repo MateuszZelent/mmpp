@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import warnings
-from typing import Any, Optional, Union
+from typing import Any
 
 import numpy as np
 
 from .dataset_geometry import _dataset_attrs, resolve_dataset_geometry
 
+
 class DatasetPlotCoreMixin:
+    _dataset: Any
     _SI_PREFIX_BY_EXP = {
         -15: "f",
         -12: "p",
@@ -89,9 +90,9 @@ class DatasetPlotCoreMixin:
 
     def _resolve_plot_geometry(
         self,
-        shape_xy: tuple[int, int],
+        shape_xy: tuple[int, ...],
         *,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
     ) -> tuple[float, float, tuple[float, float, float, float], float, str]:
         ny, nx = int(shape_xy[0]), int(shape_xy[1])
         geometry = resolve_dataset_geometry(self._dataset, include_slice=True)
@@ -147,7 +148,7 @@ class DatasetPlotCoreMixin:
         *,
         z: int = 0,
         t: int = -1,
-        zero: Optional[int] = None,
+        zero: int | None = None,
         dataset_obj=None,
     ) -> np.ndarray:
         dataset = self._dataset if dataset_obj is None else dataset_obj
@@ -189,7 +190,7 @@ class DatasetPlotCoreMixin:
         self,
         *,
         z: int = 0,
-        zero: Optional[int] = None,
+        zero: int | None = None,
         dataset_obj=None,
     ) -> np.ndarray:
         dataset = self._dataset if dataset_obj is None else dataset_obj
@@ -231,7 +232,7 @@ class DatasetPlotCoreMixin:
         self,
         *,
         t: int = -1,
-        zero: Optional[int] = None,
+        zero: int | None = None,
         dataset_obj=None,
     ) -> np.ndarray:
         """Extract 3d (scalar) or 4d (vector) volume for volumetric plotting."""
@@ -270,7 +271,7 @@ class DatasetPlotCoreMixin:
     @staticmethod
     def _component_volume(
         volume: np.ndarray,
-        component: Optional[Union[int, str]],
+        component: int | str | np.integer | None,
         *,
         default: str = "norm",
     ) -> np.ndarray:
@@ -322,8 +323,8 @@ class DatasetPlotCoreMixin:
     @staticmethod
     def _unwrap_field_like_component(
         field_like: Any,
-        component: Optional[Union[int, str]] = None,
-    ) -> tuple[Any, Optional[Union[int, str]]]:
+        component: int | str | None = None,
+    ) -> tuple[Any, int | str | None]:
         """Unpack compact field spec ``(field_like, component)`` if provided."""
         source = field_like
         comp = component
@@ -358,7 +359,7 @@ class DatasetPlotCoreMixin:
             return tuple(int(v) for v in target_shape), (1,) * len(target_shape)
 
         repeat: list[int] = []
-        for target, base in zip(target_shape, base_shape):
+        for target, base in zip(target_shape, base_shape, strict=False):
             target_i = int(target)
             base_i = int(base)
             if base_i <= 0 or target_i <= 0 or target_i % base_i != 0:
@@ -389,7 +390,9 @@ class DatasetPlotCoreMixin:
         )
 
         resampled = arr
-        for axis, (target_axis, source_axis) in enumerate(zip(target_axes, source_axes)):
+        for axis, (target_axis, source_axis) in enumerate(
+            zip(target_axes, source_axes, strict=False)
+        ):
             count = int(effective_shape[axis])
             centers = float(target_axis.min_m) + (
                 np.arange(count, dtype=np.float32) + 0.5
@@ -412,14 +415,16 @@ class DatasetPlotCoreMixin:
         *,
         t: int = -1,
         z: int = 0,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         default: str = "norm",
     ) -> np.ndarray:
         field_like, component = self._unwrap_field_like_component(field_like, component)
         spatial_ndim = len(target_shape)
         if spatial_ndim not in {2, 3}:
-            raise ValueError(f"Only 2D/3D scalar coercion is supported, got {target_shape}")
+            raise ValueError(
+                f"Only 2D/3D scalar coercion is supported, got {target_shape}"
+            )
 
         source_axes = None
         if hasattr(field_like, "numpy"):
@@ -476,7 +481,7 @@ class DatasetPlotCoreMixin:
         *,
         t: int = -1,
         z: int = 0,
-        zero: Optional[int] = None,
+        zero: int | None = None,
     ) -> np.ndarray:
         """Convert mask-like input to boolean array broadcastable to target shape."""
         if mask_like is None:
@@ -525,9 +530,9 @@ class DatasetPlotCoreMixin:
     def _normalise_to_uint8(
         values: np.ndarray,
         *,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        visible_mask: Optional[np.ndarray] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        visible_mask: np.ndarray | None = None,
     ) -> np.ndarray:
         arr = np.asarray(values, dtype=np.float32)
         if vmin is None:
@@ -574,7 +579,7 @@ class DatasetPlotCoreMixin:
     @staticmethod
     def _component_image(
         frame: np.ndarray,
-        component: Optional[Union[int, str]],
+        component: int | str | None,
         *,
         default: str = "norm",
     ) -> np.ndarray:
@@ -629,7 +634,7 @@ class DatasetPlotCoreMixin:
     def _resolve_vdim_mapping(
         self,
         n_comp: int,
-        vdim_mapping: Optional[dict[Any, Any]] = None,
+        vdim_mapping: dict[Any, Any] | None = None,
     ) -> dict[str, int]:
         """Resolve mapping from symbolic component names to component indices."""
         raw = None
@@ -670,12 +675,12 @@ class DatasetPlotCoreMixin:
 
     @staticmethod
     def _resolve_component_index(
-        token: Optional[Union[int, str]],
+        token: int | str | np.integer | None,
         n_comp: int,
         *,
-        mapping: Optional[dict[str, int]] = None,
+        mapping: dict[str, int] | None = None,
         allow_none: bool = True,
-    ) -> Optional[int]:
+    ) -> int | None:
         if token is None:
             if allow_none:
                 return None
@@ -715,10 +720,12 @@ class DatasetPlotCoreMixin:
             return "snapshot"
         if value in {"heatmap", "scalar", "mpl_heatmap"}:
             return "heatmap"
-        raise ValueError(f"Unsupported render mode: {mode!r}. Use 'snapshot' or 'heatmap'.")
+        raise ValueError(
+            f"Unsupported render mode: {mode!r}. Use 'snapshot' or 'heatmap'."
+        )
 
     @staticmethod
-    def _k3d_colormap(cmap_name: str) -> Optional[list[float]]:
+    def _k3d_colormap(cmap_name: str) -> list[float] | None:
         """Build K3D-compatible colormap from k3d built-ins or matplotlib."""
         name = str(cmap_name or "viridis").strip()
         if not name:
@@ -727,7 +734,9 @@ class DatasetPlotCoreMixin:
         try:
             import k3d
 
-            mpl_maps = getattr(getattr(k3d, "colormaps", None), "matplotlib_color_maps", None)
+            mpl_maps = getattr(
+                getattr(k3d, "colormaps", None), "matplotlib_color_maps", None
+            )
             if mpl_maps is not None:
                 candidates = [
                     name,
@@ -759,7 +768,9 @@ class DatasetPlotCoreMixin:
             return None
 
     @staticmethod
-    def _k3d_color_range(image: np.ndarray, vmin: Optional[float], vmax: Optional[float]) -> list[float]:
+    def _k3d_color_range(
+        image: np.ndarray, vmin: float | None, vmax: float | None
+    ) -> list[float]:
         if vmin is not None and vmax is not None:
             lo = float(vmin)
             hi = float(vmax)

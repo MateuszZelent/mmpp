@@ -85,7 +85,9 @@ class SnapshotCache:
             elif data.ndim == 3:
                 frame = data
             else:
-                raise ValueError(f"Unexpected shape {tuple(data.shape)} for key '{key}'")
+                raise ValueError(
+                    f"Unexpected shape {tuple(data.shape)} for key '{key}'"
+                )
 
             if roi is not None:
                 x0, x1, y0, y1 = roi
@@ -95,7 +97,9 @@ class SnapshotCache:
             return frame
 
         dset_obj = self._job.get_raw(self._dset)
-        data_obj = dset_obj[self._slice_info] if self._slice_info is not None else dset_obj
+        data_obj = (
+            dset_obj[self._slice_info] if self._slice_info is not None else dset_obj
+        )
         shape = tuple(getattr(data_obj, "shape", ()))
 
         if len(shape) == 5:
@@ -106,7 +110,9 @@ class SnapshotCache:
             t_idx = int(np.clip(int(frame_idx), 0, t_count - 1))
             n_comp = max(1, min(3, int(c_count)))
             if z_layer == "all":
-                frame = np.asarray(data_obj[t_idx, :, :, :, :n_comp], dtype=float).mean(axis=0)
+                frame = np.asarray(data_obj[t_idx, :, :, :, :n_comp], dtype=float).mean(
+                    axis=0
+                )
             else:
                 z_idx = int(np.clip(int(z_layer), 0, z_count - 1))
                 frame = np.asarray(data_obj[t_idx, z_idx, :, :, :n_comp], dtype=float)
@@ -145,7 +151,12 @@ class SnapshotCache:
         z_layer: int | str,
         roi: tuple[int, int, int, int] | None,
     ) -> np.ndarray:
-        key = (int(frame_idx), str(component), str(z_layer), tuple(roi) if roi else None)
+        key = (
+            int(frame_idx),
+            str(component),
+            str(z_layer),
+            tuple(roi) if roi else None,
+        )
         if key in self._lru:
             self._lru.move_to_end(key)
             return self._lru[key]

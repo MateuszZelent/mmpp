@@ -62,10 +62,12 @@ def topological_density_fd(
     """Finite-difference topological density and integrated charge."""
     m_hat = normalize_magnetization(m)
     oriented, sign, flipped = _orient_field(m_hat, convention)
-    edge_order = 2 if (oriented.shape[0] > 2 and oriented.shape[1] > 2) else 1
-
-    dm_dx = np.gradient(oriented, float(dx), axis=1, edge_order=edge_order)
-    dm_dy = np.gradient(oriented, float(dy), axis=0, edge_order=edge_order)
+    if oriented.shape[0] > 2 and oriented.shape[1] > 2:
+        dm_dx = np.gradient(oriented, float(dx), axis=1, edge_order=2)
+        dm_dy = np.gradient(oriented, float(dy), axis=0, edge_order=2)
+    else:
+        dm_dx = np.gradient(oriented, float(dx), axis=1, edge_order=1)
+        dm_dy = np.gradient(oriented, float(dy), axis=0, edge_order=1)
 
     cross = np.cross(dm_dx, dm_dy)
     q = np.einsum("...i,...i", oriented, cross) / (4.0 * np.pi)

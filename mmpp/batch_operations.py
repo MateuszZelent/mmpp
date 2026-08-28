@@ -9,17 +9,22 @@ slice notation like `op[:].fft.modes.compute_modes()` (auto-selects optimal data
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import zarr
 
 from .cli.logging_config import get_mmpp_logger
 
+if TYPE_CHECKING:
+    from .core.dataset_geometry import IndexPlan
+    from .fft.spectrum_batch import BatchSpectrum
+    from .fft.transmission.batch import BatchTransmission
+
 # Get logger for batch operations
 log = get_mmpp_logger("mmpp.batch")
 
-FFT_AVAILABLE: Optional[bool] = None
+FFT_AVAILABLE: bool | None = None
 _FFT_IMPORT_ERROR: ImportError | None = None
 
 
@@ -53,6 +58,8 @@ class BatchFFT:
         """
         self.results = results
         self.mmpp_ref = mmpp_ref
+        self._dataset_name: str | None = None
+        self._slice_info: Any | None = None
 
     @property
     def modes(self) -> "BatchModeAnalyzer":
@@ -340,9 +347,9 @@ class BatchModeAnalyzer:
 
     def compute_modes(
         self,
-        dset: Optional[str] = None,
+        dset: str | None = None,
         parallel: bool = True,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         **kwargs,
     ) -> dict[str, Any]:
         """
@@ -419,6 +426,7 @@ class BatchModeAnalyzer:
                 }
 
         # Execute computations
+        iterator: Any
         if parallel and len(self.results) > 1:
             # Parallel execution
             if max_workers is None:
@@ -435,8 +443,9 @@ class BatchModeAnalyzer:
 
                 # Process completed tasks with progress bar
                 try:
-                    from mmpp.core.mmpp import _running_in_ipython_kernel
                     from tqdm import tqdm
+
+                    from mmpp.core.mmpp import _running_in_ipython_kernel
 
                     if _running_in_ipython_kernel():
                         iterator = as_completed(future_to_result)
@@ -466,8 +475,9 @@ class BatchModeAnalyzer:
             log.info("Using sequential execution")
 
             try:
-                from mmpp.core.mmpp import _running_in_ipython_kernel
                 from tqdm import tqdm
+
+                from mmpp.core.mmpp import _running_in_ipython_kernel
 
                 if _running_in_ipython_kernel():
                     iterator = enumerate(self.results)
@@ -598,8 +608,8 @@ class BatchDatasetWrapper:
         self.results = results
         self.mmpp_ref = mmpp_ref
         self.dataset_name = dataset_name
-        self.slice_info = None
-        self._index_plan = None  # IndexPlan for proper slice composition
+        self.slice_info: Any = None
+        self._index_plan: IndexPlan | None = None
 
     def __getitem__(self, key):
         """Capture slice information using proper IndexPlan composition.
@@ -607,7 +617,7 @@ class BatchDatasetWrapper:
         This ensures that chained indexing like ``m[0:100][::2]`` composes
         correctly into ``m[0:100:2]`` rather than producing a multi-axis index.
         """
-        from .core.dataset_geometry import IndexPlan, make_index_plan
+        from .core.dataset_geometry import make_index_plan
 
         new = BatchDatasetWrapper(self.results, self.mmpp_ref, self.dataset_name)
         new._index_plan = self._index_plan  # carry forward existing plan
@@ -924,6 +934,11 @@ class BatchOperations:
         """Shortcut alias for ``self.solitons.vortex``."""
         return self.solitons.vortex
 
+    @property
+    def skyrmion(self):
+        """Shortcut alias for ``self.solitons.skyrmion``."""
+        return self.solitons.skyrmion
+
     def __getattr__(self, name: str):
         """Intercept dataset names to enable dataset-aware batch operations.
 
@@ -947,7 +962,7 @@ class BatchOperations:
                 if isinstance(member, zarr.Array):
                     log.debug(f"Creating dataset wrapper for: {name}")
                     return BatchDatasetWrapper(self.results, self.mmpp_ref, name)
-            except (KeyError, Exception):
+            except Exception:
                 continue
 
         try:
@@ -955,7 +970,7 @@ class BatchOperations:
         except ImportError:
             raise AttributeError(
                 f"'{type(self).__name__}' object has no attribute '{name}'"
-            )
+            ) from None
         try:
             return getattr(plotter, name)
         except AttributeError as exc:
@@ -1120,11 +1135,11 @@ class BatchOperations:
                     v for v in vals if isinstance(v, (int, float)) and v is not None
                 ]
                 if nums:
-                    uv = sorted(set(nums))
+                    uv: Any = sorted(set(nums))
                     n_uniq = len(uv)
                     rng = f"{_fmt(uv[0])} → {_fmt(uv[-1])}"
                 else:
-                    uv = sorted(set(str(v) for v in vals if v is not None))
+                    uv = sorted({str(v) for v in vals if v is not None})
                     n_uniq = len(uv)
                     rng = ", ".join(uv[:5]) + (" …" if len(uv) > 5 else "")
                 varying_html += (
@@ -1236,9 +1251,9 @@ class BatchOperations:
 
     def process(
         self,
-        dset: Optional[str] = None,
+        dset: str | None = None,
         parallel: bool = True,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
@@ -1338,7 +1353,7 @@ class BatchOperations:
         log.info(f"Preparing comprehensive report for {len(self.results)} results")
         log.info(f"Spectrum: {spectrum}, Modes: {modes}, Parallel: {parallel}")
 
-        report = {
+        report: dict[str, Any] = {
             "total_results": len(self.results),
             "spectrum_analysis": None,
             "mode_analysis": None,
@@ -1378,7 +1393,7 @@ class BatchOperations:
         paths = [result.path for result in self.results]
 
         # Collect attributes
-        all_attributes = set()
+        all_attributes: set[str] = set()
         for result in self.results:
             if hasattr(result, "attributes") and isinstance(result.attributes, dict):
                 all_attributes.update(result.attributes.keys())

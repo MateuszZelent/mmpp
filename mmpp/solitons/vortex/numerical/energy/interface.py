@@ -5,16 +5,39 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
-from ...config import VortexConfig
+from ...._method_helpers import InteractiveNodeMixin
 from ..._shared.models import TrajectoryResult
-from .models import EnergyTimeSeriesResult, EffectivePotentialResult, PinningResult
+from ...config import VortexConfig
+from .models import EffectivePotentialResult, EnergyTimeSeriesResult, PinningResult
 from .pinning import detect_pinning_sites
 from .potential import potential_from_boltzmann, potential_from_energy_channel
 from .time_resolved import extract_energy_time_series
 
 
-class EnergyInterface:
+class EnergyInterface(InteractiveNodeMixin):
     """Energy namespace with table-driven time-resolved channels."""
+
+    _interactive_owner = "job[0].vortex.energy"
+    _interactive_nodes = frozenset({"time_resolved", "potential", "pinning"})
+    _interactive_descriptions = {
+        "time_resolved": "Load energy channels sampled over simulation time.",
+        "potential": "Estimate the effective radial potential from trajectory statistics.",
+        "pinning": "Detect pinning sites as local minima of the effective potential.",
+    }
+    _interactive_examples = {
+        "time_resolved": [
+            "energy = job[0].vortex.energy.time_resolved()",
+            "energy.plt.time_resolved()",
+        ],
+        "potential": [
+            "potential = job[0].vortex.energy.potential(method='auto')",
+            "potential.plt.potential()",
+        ],
+        "pinning": [
+            "pinning = job[0].vortex.energy.pinning()",
+            "pinning.plt.potential_with_sites()",
+        ],
+    }
 
     def __init__(
         self,
@@ -195,17 +218,8 @@ class EnergyInterface:
             examples_section_html,
             metrics_section_html,
             node_card_html,
-            plot_accessor_html,
         )
 
-        methods = [
-            (".time_resolved(...)", "Load table energy channels E(t)"),
-            (".potential(method='auto')", "Reconstruct effective W(r)"),
-            (".pinning(...)", "Detect pinning minima in W(r)"),
-            (".plt.time_resolved()", "Plot E(t) channels"),
-            (".plt.potential()", "Plot effective potential"),
-            (".plt.pinning()", "Plot potential with pinning sites"),
-        ]
         sections = [
             metrics_section_html(
                 [
@@ -270,8 +284,11 @@ class EnergyInterface:
         )
 
 
-class EnergyPlotFacade:
+class EnergyPlotFacade(InteractiveNodeMixin):
     """Plotting facade for :class:`EnergyInterface`."""
+
+    _interactive_owner = "job[0].vortex.energy.plt"
+    _interactive_nodes = frozenset({"time_resolved", "potential", "pinning"})
 
     def __init__(self, interface: EnergyInterface):
         self._interface = interface

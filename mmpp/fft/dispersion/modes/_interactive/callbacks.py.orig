@@ -1,0 +1,767 @@
+"""Animation callback helpers for interactive dispersion modes."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+
+
+def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
+    """Toggle animation of selected mode in the mode visualization panel."""
+    explorer._ensure_animation_state()
+
+    if explorer._selected_k is None or explorer._selected_f is None:
+        explorer.w_info.value = "<small style='color:red'>⚠️ Select a mode first (click on dispersion)</small>"
+        return
+
+    # Toggle animation on/off
+    if explorer._is_animating:
+        # Stop animation
+        explorer._stop_animation()
+        explorer.w_info.value = "<small>Animation stopped</small>"
+        explorer.w_animate.description = "🎬 Animate Mode"
+        explorer.w_animate.button_style = "warning"
+        # Restore static view
+        explorer._update_mode_visualization()
+        return
+
+    try:
+        from matplotlib.animation import FuncAnimation
+
+        # Get parameters
+        a = explorer.w_lattice.value * 1e-9
+        n_bz = explorer.w_n_bz_mask.value
+        k_direction = explorer.w_k_direction.value
+        mode_type = explorer.w_mode_type.value
+
+        # Extract complex mode data
+        x_axis, y_axis, mode_2d_complex = explorer._extract_mode_2d_custom(
+            k_0=explorer._selected_k,
+            f_0=explorer._selected_f,
+            lattice_constant=a,
+            n_bz=n_bz,
+            k_direction=k_direction,
+            k_margin_bins=explorer.w_k_margin.value,
+            f_margin_bins=explorer.w_f_margin.value,
+            neighbor_reduce=explorer.w_neighbor_reduce.value,
+        )
+
+        # Time parameters for full 2π cycle
+        period_s = 1.0 / explorer._selected_f  # Full period
+        omega = 2 * np.pi * explorer._selected_f
+        n_frames = explorer.w_anim_frames.value  # From widget
+        fps = explorer.w_anim_fps.value  # From widget
+
+        # Time array for one complete cycle (0 to T)
+        time_array = np.linspace(0, period_s, n_frames, endpoint=False)
+
+        # Pre-compute all frames for selected visualization mode
+        mode_labels = {
+            "real": "Re[M]",
+            "imag": "Im[M]",
+            "abs": "|M|",
+            "phase": "φ[M]",
+            "ampl_phase": "Ampl×Phase",
+        }
+        mode_label = mode_labels.get(mode_type, mode_type)
+        is_rgb = mode_type == "ampl_phase"
+
+        frames: Any = []
+        if mode_type in ["real", "imag"]:
+            frames = []
+            for t in time_array:
+                m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                if mode_type == "real":
+                    m_t = np.real(m_t_complex)
+                else:
+                    m_t = np.imag(m_t_complex)
+                frames.append(m_t)
+
+            frames = np.array(frames)  # (n_frames, N_y, N_x)
+            vmax = np.max(np.abs(frames))
+            if vmax < 1e-20:
+                vmax = 1.0
+            vmin = -vmax
+            cmap = explorer.w_cmap_mode.value
+            cbar_label = "Re[M(t)]" if mode_type == "real" else "Im[M(t)]"
+
+        elif mode_type == "abs":
+            # |M| is the spatial envelope and stays constant in time for a pure harmonic mode.
+            amplitude = np.abs(mode_2d_complex)
+            frames = np.repeat(amplitude[np.newaxis, :, :], n_frames, axis=0)
+            vmin = 0.0
+            vmax = np.max(amplitude)
+            if vmax < 1e-20:
+                vmax = 1.0
+            cmap = "hot"
+            cbar_label = "|M|"
+
+        elif mode_type == "phase":
+            frames = []
+            for t in time_array:
+                m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                frames.append(np.angle(m_t_complex))
+
+            frames = np.array(frames)
+            vmin = -np.pi
+            vmax = np.pi
+            cmap = "hsv"
+            cbar_label = "φ[M(t)] [rad]"
+
+        elif mode_type == "ampl_phase":
+            from ..utils import create_amplitude_phase_colormap
+
+            amplitude_ref = np.abs(mode_2d_complex)
+            amp_min = float(amplitude_ref.min())
+            amp_max = float(amplitude_ref.max())
+
+            frames = []
+            for t in time_array:
+                m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                frames.append(
+                    create_amplitude_phase_colormap(
+                        m_t_complex,
+                        amp_min=amp_min,
+                        amp_max=amp_max,
+                    )
+                )
+
+            frames = np.array(frames)  # (n_frames, N_y, N_x, 3)
+            vmin = None
+            vmax = None
+            cmap = None
+            cbar_label = None
+
+        else:
+            raise ValueError(f"Unknown mode_type='{mode_type}'")
+
+        # Setup axes
+        ax = explorer._ax_mode
+
+        # Save current zoom/pan state BEFORE clearing
+        xlim_saved = ax.get_xlim()
+        ylim_saved = ax.get_ylim()
+
+        ax.clear()
+
+        # Remove old mode colorbar
+        if explorer._colorbar_mode is not None:
+            try:
+                explorer._colorbar_mode.remove()
+            except Exception:
+                pass
+            explorer._colorbar_mode = None
+
+        # Extent
+        x_um = x_axis * 1e6
+        y_um = y_axis * 1e6
+        extent = (float(x_um[0]), float(x_um[-1]), float(y_um[0]), float(y_um[-1]))
+
+        # Initial frame
+        if is_rgb:
+            im = ax.imshow(
+                frames[0],
+                aspect="auto",
+                origin="lower",
+                extent=extent,
+                interpolation="bilinear",
+            )
+        else:
+            im = ax.imshow(
+                frames[0],
+                aspect="auto",
+                origin="lower",
+                extent=extent,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                interpolation="bilinear",
+            )
+
+        # Colorbar only for scalar data
+        if not is_rgb:
+            explorer._colorbar_mode = explorer._fig.colorbar(
+                im, ax=ax, shrink=0.8, pad=0.02
+            )
+            explorer._colorbar_mode.set_label(str(cbar_label or ""), fontsize=9)
+
+        # Labels
+        ax.set_xlabel("x [μm]", fontsize=10)
+        ax.set_ylabel("y [μm]", fontsize=10)
+
+        # Title (will be updated each frame)
+        k_str = f"k = {explorer._selected_k / 1e6:.2f} rad/μm"
+        f_str = f"f = {explorer._selected_f / 1e9:.2f} GHz"
+        title = ax.set_title(
+            f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns | φ=0.00°", fontsize=11
+        )
+        ax.tick_params(labelsize=9)
+
+        # Restore zoom/pan state (preserve user's zoom during animation)
+        # Check if this is first plot (matplotlib default xlim is 0,1)
+        is_first_plot = (
+            abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01
+        )
+
+        if not is_first_plot and not explorer._first_mode_plot:
+            # Preserve user's zoom/pan
+            ax.set_xlim(xlim_saved)
+            ax.set_ylim(ylim_saved)
+        else:
+            # First animation - use configured number of periods from slider
+            x_periods = explorer.w_mode_x_periods.value
+            x_center = (x_um[0] + x_um[-1]) / 2
+            half_width = (x_periods / 2.0) * (a * 1e6)  # periods to μm
+            ax.set_xlim(x_center - half_width, x_center + half_width)
+            ax.set_ylim(y_um[0], y_um[-1])
+
+        # Overlay geometry contour if provided (draw once, persists through animation)
+        if explorer._geometry_contour is not None:
+            try:
+                geom = explorer._geometry_contour
+                # Create coordinate arrays for the geometry
+                geom_y = np.linspace(y_um[0], y_um[-1], geom.shape[0])
+                geom_x = np.linspace(x_um[0], x_um[-1], geom.shape[1])
+
+                # Draw contour at level 0.5 (boundary between 0 and 1)
+                ax.contour(
+                    geom_x,
+                    geom_y,
+                    geom,
+                    levels=[0.5],
+                    colors=["white"],
+                    linewidths=[1.5],
+                    linestyles=["solid"],
+                )
+                # Add black outline for visibility on light backgrounds
+                ax.contour(
+                    geom_x,
+                    geom_y,
+                    geom,
+                    levels=[0.5],
+                    colors=["black"],
+                    linewidths=[0.5],
+                    linestyles=["solid"],
+                )
+            except Exception as contour_err:
+                logger.warning(
+                    f"Failed to draw geometry contour in animation: {contour_err}"
+                )
+
+        # Animation update function
+        def update(frame_idx):
+            im.set_data(frames[frame_idx])
+            t_ns = time_array[frame_idx] * 1e9
+            phase_deg = (time_array[frame_idx] / period_s) * 360
+            title.set_text(
+                f"{mode_label} Mode | {k_str}, {f_str} | t={t_ns:.2f} ns | φ={phase_deg:.0f}°"
+            )
+            return [im, title]
+
+        # Create animation
+        interval = 1000 / fps  # ms between frames
+        explorer._animation = FuncAnimation(
+            explorer._fig,
+            update,
+            frames=n_frames,
+            interval=interval,
+            blit=True,
+            repeat=True,
+        )
+
+        explorer._is_animating = True
+        explorer.w_animate.description = "⏸️ Stop Animation"
+        explorer.w_animate.button_style = "danger"
+        abs_note = (
+            " | |M| is time-invariant for harmonic modes" if mode_type == "abs" else ""
+        )
+        explorer.w_info.value = (
+            f"<small style='color:green'>🎬 Animating: {n_frames} frames, "
+            f"T={period_s * 1e9:.2f} ns (1 period = 2π), mode={mode_label}{abs_note}</small>"
+        )
+
+        # Redraw
+        explorer._fig.canvas.draw_idle()
+
+    except Exception as e:
+        import traceback
+
+        tb = traceback.format_exc()
+        logger.error(f"Animation failed:\n{tb}")
+        explorer.w_info.value = (
+            f"<small style='color:red'>❌ Animation error: {str(e)[:50]}</small>"
+        )
+        explorer._is_animating = False
+        explorer.w_animate.description = "🎬 Animate Mode"
+        explorer.w_animate.button_style = "warning"
+
+
+def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
+    """Save the current animation to file.
+
+    Goal: saved file should match what the user currently sees (layout, zoom,
+    filters, colormaps, markers).
+    """
+    if explorer._selected_k is None or explorer._selected_f is None:
+        explorer.w_info.value = "<small style='color:red'>⚠️ Select a mode first (click on dispersion)</small>"
+        return
+
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
+
+        try:
+            from matplotlib.animation import ImageMagickWriter
+
+            _has_imagemagick = True
+        except ImportError:
+            _has_imagemagick = False
+        from datetime import datetime
+        from pathlib import Path
+
+        # Get parameters
+        a = explorer.w_lattice.value * 1e-9
+        n_bz = explorer.w_n_bz_mask.value
+        k_direction = explorer.w_k_direction.value
+        mode_type = explorer.w_mode_type.value
+        n_frames = explorer.w_anim_frames.value
+        fps = explorer.w_anim_fps.value
+        save_mode = explorer.w_anim_save_mode.value
+        file_format = explorer.w_anim_file_format.value
+
+        explorer.w_info.value = (
+            "<small style='color:blue'>⏳ Preparing animation for save...</small>"
+        )
+
+        # Capture current view state (zoom/pan) so the saved animation matches the UI.
+        disp_xlim = None
+        disp_ylim = None
+        mode_xlim = None
+        mode_ylim = None
+        if explorer._ax_disp is not None:
+            disp_xlim = explorer._ax_disp.get_xlim()
+            disp_ylim = explorer._ax_disp.get_ylim()
+        if explorer._ax_mode is not None:
+            mode_xlim = explorer._ax_mode.get_xlim()
+            mode_ylim = explorer._ax_mode.get_ylim()
+
+        # Extract complex mode data
+        x_axis, y_axis, mode_2d_complex = explorer._extract_mode_2d_custom(
+            k_0=explorer._selected_k,
+            f_0=explorer._selected_f,
+            lattice_constant=a,
+            n_bz=n_bz,
+            k_direction=k_direction,
+            k_margin_bins=explorer.w_k_margin.value,
+            f_margin_bins=explorer.w_f_margin.value,
+            neighbor_reduce=explorer.w_neighbor_reduce.value,
+        )
+
+        # Time parameters
+        period_s = 1.0 / explorer._selected_f
+        omega = 2 * np.pi * explorer._selected_f
+        time_array = np.linspace(0, period_s, n_frames, endpoint=False)
+
+        # Pre-compute frames (same logic as _on_animate)
+        mode_labels = {
+            "real": "Re[M]",
+            "imag": "Im[M]",
+            "abs": "|M|",
+            "phase": "φ[M]",
+            "ampl_phase": "Ampl×Phase",
+        }
+        mode_label = mode_labels.get(mode_type, mode_type)
+        is_rgb = mode_type == "ampl_phase"
+
+        frames: Any = []
+        if mode_type in ["real", "imag"]:
+            frames = []
+            for t in time_array:
+                m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                frames.append(
+                    np.real(m_t_complex)
+                    if mode_type == "real"
+                    else np.imag(m_t_complex)
+                )
+            frames = np.array(frames)
+            vmax = np.max(np.abs(frames))
+            if vmax < 1e-20:
+                vmax = 1.0
+            vmin = -vmax
+            cmap = explorer.w_cmap_mode.value
+            cbar_label = "Re[M(t)]" if mode_type == "real" else "Im[M(t)]"
+
+        elif mode_type == "abs":
+            amplitude = np.abs(mode_2d_complex)
+            frames = np.repeat(amplitude[np.newaxis, :, :], n_frames, axis=0)
+            vmin, vmax = 0.0, np.max(amplitude)
+            if vmax < 1e-20:
+                vmax = 1.0
+            cmap = "hot"
+            cbar_label = "|M|"
+
+        elif mode_type == "phase":
+            frames = []
+            for t in time_array:
+                m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                frames.append(np.angle(m_t_complex))
+            frames = np.array(frames)
+            vmin, vmax = -np.pi, np.pi
+            cmap = "hsv"
+            cbar_label = "φ[M(t)] [rad]"
+
+        elif mode_type == "ampl_phase":
+            from ..utils import create_amplitude_phase_colormap
+
+            amplitude_ref = np.abs(mode_2d_complex)
+            amp_min, amp_max = float(amplitude_ref.min()), float(amplitude_ref.max())
+            frames = []
+            for t in time_array:
+                m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
+                frames.append(
+                    create_amplitude_phase_colormap(
+                        m_t_complex, amp_min=amp_min, amp_max=amp_max
+                    )
+                )
+            frames = np.array(frames)
+            vmin, vmax = None, None
+            cmap = None
+            cbar_label = None
+
+        # Create temporary figure for saving (Full HD quality: 1920px width minimum)
+        # Quality settings: figsize * dpi = pixels (e.g., 16 inches * 120 dpi = 1920 px)
+        save_dpi = 120  # High quality export
+
+        if save_mode == "mode":
+            # Save only mode panel: 1920x1200 px (16" x 10" @ 120 dpi)
+            fig_save, ax_save = plt.subplots(
+                figsize=(16, 10),
+                dpi=save_dpi,
+                constrained_layout=True,
+            )
+            ax_disp_save = None
+        else:
+            # Save full view: 1920x1680 px (16" x 14" @ 120 dpi)
+            fig_save, (ax_disp_save, ax_save) = plt.subplots(
+                2,
+                1,
+                figsize=(16, 14),
+                dpi=save_dpi,
+                gridspec_kw={"height_ratios": [1.2, 1], "hspace": 0.25},
+                constrained_layout=True,
+            )
+
+            # Plot dispersion exactly like the interactive view (filters, limits, markers).
+            if explorer.result is None:
+                raise ValueError("No dispersion result available")
+
+            S_map = explorer.result.S  # (Nk, Nf)
+            live_filters = explorer._build_live_filters_config()
+            if live_filters is not None:
+                try:
+                    from ..utils import apply_dispersion_post_filters
+
+                    S_map = apply_dispersion_post_filters(
+                        S_map,
+                        k_axis=explorer.result.k_axis,
+                        f_axis=explorer.result.f_axis,
+                        filters=live_filters,
+                        include_live=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Live post-filter application failed for save; using raw S"
+                    )
+                    S_map = explorer.result.S
+
+            S = S_map.T  # (Nf, Nk)
+            k_axis_plot = explorer.result.k_axis / 1e6  # rad/μm
+            f_axis_plot = explorer.result.f_axis / 1e9  # GHz
+
+            # Get frequency limits (for viewport only, not data cutting)
+            f_min = float(explorer.w_fmin.value)
+            f_max = float(explorer.w_fmax.value)
+
+            # Check if there's valid data
+            if len(f_axis_plot) < 2 or len(k_axis_plot) < 2:
+                raise ValueError("Insufficient data for animation save")
+
+            # Cut data to show only positive frequencies (upper half)
+            positive_freq_mask = f_axis_plot >= 0
+            if np.sum(positive_freq_mask) > 0:
+                S = S[positive_freq_mask, :]
+                f_axis_positive = f_axis_plot[positive_freq_mask]
+            else:
+                f_axis_positive = f_axis_plot
+
+            # Plot data with extent from 0 to fmax
+            extent_disp = [k_axis_plot[0], k_axis_plot[-1], 0, f_axis_positive[-1]]
+            im_disp = ax_disp_save.imshow(
+                np.log10(S + 1e-20),
+                aspect="auto",
+                origin="lower",
+                extent=extent_disp,
+                cmap=explorer.w_cmap_disp.value,
+                interpolation="bilinear",
+            )
+            fig_save.colorbar(im_disp, ax=ax_disp_save, shrink=0.8, pad=0.02).set_label(
+                "log₁₀(S)", fontsize=9
+            )
+
+            G = 2 * np.pi / a / 1e6  # rad/μm
+            # Restore current zoom/pan if available (match UI)
+            is_default_xlim = disp_xlim is None or (
+                abs(disp_xlim[0] - 0.0) < 0.01 and abs(disp_xlim[1] - 1.0) < 0.01
+            )
+            is_default_ylim = disp_ylim is None or (
+                abs(disp_ylim[0] - 0.0) < 0.01 and abs(disp_ylim[1] - 1.0) < 0.01
+            )
+            if is_default_xlim:
+                ax_disp_save.set_xlim(-1.5 * G, 1.5 * G)
+            else:
+                ax_disp_save.set_xlim(disp_xlim)
+            if is_default_ylim:
+                # Show all available frequencies on first plot
+                ax_disp_save.set_ylim(0, f_axis_positive[-1])
+            else:
+                # Preserve user zoom but constrain to frequency limits and available data
+                view_f_min = max(disp_ylim[0], f_min, 0)
+                assert disp_ylim is not None
+                view_f_max = min(disp_ylim[1], f_max, f_axis_positive[-1])
+                ax_disp_save.set_ylim(view_f_min, view_f_max)
+
+            # Add BZ boundary lines if enabled (using current xlim)
+            if explorer.w_show_bz_lines.value:
+                k_range = ax_disp_save.get_xlim()
+                k_max = max(abs(k_range[0]), abs(k_range[1]))
+                if G > 0:
+                    n_zones = int(np.ceil(k_max / G)) + 1
+                else:
+                    n_zones = 1
+
+                for n in range(-n_zones, n_zones + 1):
+                    if n == 0:
+                        continue
+                    k_line = n * G
+                    if abs(k_line) <= k_max * 1.1:
+                        alpha = 0.8 if abs(n) == 1 else 0.4
+                        ax_disp_save.axvline(
+                            k_line,
+                            color="red",
+                            linestyle="--",
+                            linewidth=1.5 if abs(n) == 1 else 1.0,
+                            alpha=alpha,
+                        )
+
+                ax_disp_save.legend(
+                    [f"BZ boundaries (G = {G:.1f} rad/μm)"],
+                    loc="upper right",
+                    fontsize=8,
+                )
+
+            # Always add k=0 reference line
+            ax_disp_save.axvline(0, color="gray", linestyle=":", alpha=0.5, linewidth=1)
+            ax_disp_save.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
+            ax_disp_save.set_ylabel("f [GHz]", fontsize=10)
+            ax_disp_save.set_title(
+                f"Dispersion S(k, f) | a = {a * 1e9:.0f} nm | Click to select mode",
+                fontsize=11,
+            )
+            ax_disp_save.grid(True, alpha=0.3, linestyle=":")
+            ax_disp_save.tick_params(labelsize=9)
+
+            # Mark selection and mask replicas (but don't touch UI info text)
+            explorer._draw_selection_markers(ax_disp_save, update_info=False)
+
+        # Setup mode animation axes
+        x_um = x_axis * 1e6
+        y_um = y_axis * 1e6
+        extent = (float(x_um[0]), float(x_um[-1]), float(y_um[0]), float(y_um[-1]))
+
+        if is_rgb:
+            im = ax_save.imshow(
+                frames[0],
+                aspect="auto",
+                origin="lower",
+                extent=extent,
+                interpolation="bilinear",
+            )
+        else:
+            im = ax_save.imshow(
+                frames[0],
+                aspect="auto",
+                origin="lower",
+                extent=extent,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                interpolation="bilinear",
+            )
+            fig_save.colorbar(im, ax=ax_save, shrink=0.8, pad=0.02).set_label(
+                str(cbar_label or ""), fontsize=9
+            )
+
+        # Add geometry contour if available
+        if explorer._geometry_contour is not None:
+            try:
+                geom = explorer._geometry_contour
+                geom_y = np.linspace(y_um[0], y_um[-1], geom.shape[0])
+                geom_x = np.linspace(x_um[0], x_um[-1], geom.shape[1])
+                ax_save.contour(
+                    geom_x,
+                    geom_y,
+                    geom,
+                    levels=[0.5],
+                    colors=["white"],
+                    linewidths=[1.5],
+                )
+                ax_save.contour(
+                    geom_x,
+                    geom_y,
+                    geom,
+                    levels=[0.5],
+                    colors=["black"],
+                    linewidths=[0.5],
+                )
+            except Exception:
+                pass
+
+        ax_save.set_xlabel("x [μm]", fontsize=10)
+        ax_save.set_ylabel("y [μm]", fontsize=10)
+        k_str = f"k = {explorer._selected_k / 1e6:.2f} rad/μm"
+        f_str = f"f = {explorer._selected_f / 1e9:.2f} GHz"
+        title = ax_save.set_title(
+            f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns | φ=0.00°",
+            fontsize=11,
+        )
+        ax_save.tick_params(labelsize=9)
+
+        # Match current mode zoom/pan when available.
+        is_default_xlim = mode_xlim is None or (
+            abs(mode_xlim[0] - 0.0) < 0.01 and abs(mode_xlim[1] - 1.0) < 0.01
+        )
+        is_default_ylim = mode_ylim is None or (
+            abs(mode_ylim[0] - 0.0) < 0.01 and abs(mode_ylim[1] - 1.0) < 0.01
+        )
+
+        if is_default_xlim:
+            # Same default view logic as the UI.
+            x_periods = float(explorer.w_mode_x_periods.value)
+            x_center = (x_um[0] + x_um[-1]) / 2
+            half_width = (x_periods / 2.0) * (a * 1e6)
+            ax_save.set_xlim(x_center - half_width, x_center + half_width)
+        else:
+            ax_save.set_xlim(mode_xlim)
+
+        if is_default_ylim:
+            ax_save.set_ylim(y_um[0], y_um[-1])
+        else:
+            ax_save.set_ylim(mode_ylim)
+
+        # Animation update function
+        def update(frame_idx):
+            im.set_data(frames[frame_idx])
+            t_ns = time_array[frame_idx] * 1e9
+            phase_deg = (time_array[frame_idx] / period_s) * 360
+            title.set_text(
+                f"{mode_label} Mode | {k_str}, {f_str} | t={t_ns:.2f} ns | φ={phase_deg:.0f}°"
+            )
+            return [im, title]
+
+        # Create animation
+        anim = FuncAnimation(
+            fig_save,
+            update,
+            frames=n_frames,
+            interval=1000 / fps,
+            blit=False,  # more reliable when saving complex multi-axes figures
+            repeat=False,
+        )
+
+        # Generate filename
+        k_val = f"{explorer._selected_k / 1e6:.2f}".replace(".", "p")
+        f_val = f"{explorer._selected_f / 1e9:.2f}".replace(".", "p")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"mode_anim_{save_mode}_k{k_val}_f{f_val}_{mode_type}_{timestamp}.{file_format}"
+
+        # Save animation with appropriate writer
+        output_path = Path.cwd() / filename
+        explorer.w_info.value = (
+            f"<small style='color:blue'>💾 Saving animation to {filename}...</small>"
+        )
+
+        # Use higher DPI for GIF to compensate for color limitation
+        export_dpi = 150 if file_format == "gif" else save_dpi
+
+        writer: Any
+        if file_format == "gif":
+            # Try ImageMagick first (much better quality and dithering)
+            if _has_imagemagick:
+                try:
+                    # ImageMagick with optimized settings for quality
+                    writer = ImageMagickWriter(
+                        fps=fps,
+                        metadata={"Author": "MMPP", "Title": "Mode Animation"},
+                        bitrate=2000,  # Higher bitrate for better quality
+                        extra_args=[
+                            "-layers",
+                            "Optimize",
+                        ],  # Optimize file size while keeping quality
+                    )
+                    writer_name = "ImageMagick"
+                except Exception:
+                    # Fallback to Pillow if ImageMagick fails
+                    writer = PillowWriter(
+                        fps=fps, metadata={"Author": "MMPP", "Title": "Mode Animation"}
+                    )
+                    writer_name = "Pillow (256 colors)"
+            else:
+                # PillowWriter fallback - limited to 256 colors
+                writer = PillowWriter(
+                    fps=fps, metadata={"Author": "MMPP", "Title": "Mode Animation"}
+                )
+                writer_name = "Pillow (256 colors)"
+        else:  # mp4
+            # High quality MP4: increased bitrate for Full HD
+            writer = FFMpegWriter(
+                fps=fps,
+                bitrate=4000,
+                codec="libx264",
+                extra_args=["-pix_fmt", "yuv420p", "-preset", "slower", "-crf", "18"],
+            )
+            writer_name = "FFmpeg"
+
+        anim.save(str(output_path), writer=writer, dpi=export_dpi)
+
+        plt.close(fig_save)
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+
+        # Add quality hint for GIF format
+        quality_hint = ""
+        if file_format == "gif" and writer_name == "Pillow (256 colors)":
+            quality_hint = "<br>💡 <i>Tip: Use MP4 format for better color quality</i>"
+
+        explorer.w_info.value = (
+            f"<small style='color:green'>✅ Animation saved: {filename} ({file_size_mb:.1f} MB)<br>"
+            f"{n_frames} frames @ {fps} fps, {export_dpi} DPI, mode={mode_label}, writer={writer_name}{quality_hint}</small>"
+        )
+
+    except Exception as e:
+        import traceback
+
+        logger.error(f"Animation save failed:\n{traceback.format_exc()}")
+        explorer.w_info.value = (
+            f"<small style='color:red'>❌ Save error: {str(e)[:80]}</small>"
+        )
+
+
+def stop_animation(explorer: Any) -> None:
+    """Stop the current animation."""
+    explorer._ensure_animation_state()
+
+    if explorer._animation is not None:
+        explorer._animation.event_source.stop()
+        explorer._animation = None
+    explorer._is_animating = False

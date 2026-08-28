@@ -31,6 +31,7 @@ from mmpp._repr_helpers import (
 from mmpp._shared.spectral import compute_psd
 from mmpp.cache.serializers import serialize_for_json
 
+from ._method_helpers import InteractiveNodeMixin
 from .vortex._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -294,11 +295,7 @@ def _store_spectrum_map_cache(
         "coordinate_name": result.coordinate_name,
         "config": serialize_for_json(config),
         "result_metadata": serialize_for_json(
-            {
-                key: value
-                for key, value in result.metadata.items()
-                if key != "cache"
-            }
+            {key: value for key, value in result.metadata.items() if key != "cache"}
         ),
     }
     (cache_path / "metadata.json").write_text(
@@ -351,7 +348,10 @@ def _resolve_spectrum_map_source(
         if component_norm in _PROCESSED_SPECTRUM_COMPONENTS:
             return "processed"
         if component_norm in _MAGNETIZATION_COMPONENT_INDEX:
-            if any(_table_has_component(result, component_norm) for result in ordered_results):
+            if any(
+                _table_has_component(result, component_norm)
+                for result in ordered_results
+            ):
                 return "table"
             return "magnetization"
     if source_norm in {"processed", "trajectory", "motion", "core"}:
@@ -360,9 +360,7 @@ def _resolve_spectrum_map_source(
         return "table"
     if source_norm in {"magnetization", "m", "raw"}:
         return "magnetization"
-    raise ValueError(
-        "source must be 'auto', 'processed', 'table', or 'magnetization'"
-    )
+    raise ValueError("source must be 'auto', 'processed', 'table', or 'magnetization'")
 
 
 def _validate_spectrum_map_component(*, source: str, component: str) -> str:
@@ -413,7 +411,7 @@ def _read_table_trace(result: Any, *, component: str) -> tuple[np.ndarray, np.nd
             time_key = key
             break
     if time_key is not None:
-        time = np.asarray(table[time_key][:], dtype=float).reshape(-1)
+        time: Any = np.asarray(table[time_key][:], dtype=float).reshape(-1)
     else:
         attrs = getattr(result, "attrs", {}) or {}
         dt = _coerce_numeric(attrs.get("t_sampl", 1e-12), default=1e-12)
@@ -812,7 +810,10 @@ class BatchVortexPhaseDiagramResult:
         )
 
 
-class BatchVortexPhaseDiagramPlotAccessor:
+class BatchVortexPhaseDiagramPlotAccessor(InteractiveNodeMixin):
+    _interactive_owner = "phase_diagram.plt"
+    _interactive_nodes = frozenset({"map", "scatter", "surface3d"})
+
     """Plot helpers for :class:`BatchVortexPhaseDiagramResult`."""
 
     def __init__(self, result: BatchVortexPhaseDiagramResult):
@@ -1043,7 +1044,10 @@ class BatchVortexSpectrumMapResult:
         )
 
 
-class BatchVortexSpectrumMapPlotAccessor:
+class BatchVortexSpectrumMapPlotAccessor(InteractiveNodeMixin):
+    _interactive_owner = "spectrum_map.plt"
+    _interactive_nodes = frozenset({"heatmap"})
+
     """Plot helpers for :class:`BatchVortexSpectrumMapResult`."""
 
     def __init__(self, result: BatchVortexSpectrumMapResult):
@@ -1127,7 +1131,8 @@ class BatchSolitonsInterface:
     def __init__(self, results: list[Any], mmpp_instance: Any | None = None):
         self._results = list(results)
         self._mmpp = mmpp_instance
-        self._vortex = None
+        self._vortex: Any | None = None
+        self._skyrmion: Any | None = None
 
     @property
     def vortex(self):
@@ -1136,15 +1141,29 @@ class BatchSolitonsInterface:
             self._vortex = BatchVortexInterface(self._results, self._mmpp)
         return self._vortex
 
+    @property
+    def skyrmion(self):
+        """Batch skyrmion analysis namespace."""
+        if self._skyrmion is None:
+            from .skyrmion.batch import BatchSkyrmionInterface
+
+            self._skyrmion = BatchSkyrmionInterface(self._results, self._mmpp)
+        return self._skyrmion
+
     def __repr__(self) -> str:
         return f"BatchSolitonsInterface({len(self._results)} results)"
 
     def _repr_html_(self) -> str:
+        import uuid as _uuid
+
         api = api_help_html(
             self,
             title="Batch solitons API help",
             prefix="job[:].solitons",
-            properties=[("vortex", "Batch vortex analysis namespace")],
+            properties=[
+                ("vortex", "Batch vortex analysis namespace"),
+                ("skyrmion", "Batch skyrmion analysis namespace"),
+            ],
             methods=[],
             subtitle="Top-level batch entry point for soliton-related analysis namespaces.",
             chrome=False,
@@ -1158,15 +1177,26 @@ class BatchSolitonsInterface:
                     [("n_results", str(len(self._results)), NODE_COLOR_COMPUTE)]
                 ),
                 accessors_section_html(
-                    [("Namespaces:", [(".vortex", NODE_COLOR_ANALYSIS)])]
+                    [
+                        (
+                            "Namespaces:",
+                            [
+                                (".vortex", NODE_COLOR_ANALYSIS),
+                                (".skyrmion", NODE_COLOR_ANALYSIS),
+                            ],
+                        )
+                    ]
                 ),
             ],
             api=api,
-            uid="batch-solitons-interface",
+            uid=f"batch-solitons-interface-{_uuid.uuid4().hex[:8]}",
         )
 
 
-class BatchVortexSpectrumAccessor:
+class BatchVortexSpectrumAccessor(InteractiveNodeMixin):
+    _interactive_owner = "jobs[:].vortex.spectrum"
+    _interactive_nodes = frozenset({"map", "current_map"})
+
     """Batch spectrum namespace for vortex runs."""
 
     def __init__(self, interface: BatchVortexInterface):
@@ -1239,7 +1269,10 @@ class BatchVortexSpectrumAccessor:
         )
 
 
-class BatchVortexAnalyzeAccessor:
+class BatchVortexAnalyzeAccessor(InteractiveNodeMixin):
+    _interactive_owner = "jobs[:].vortex.analyze"
+    _interactive_nodes = frozenset({"phase_diagram"})
+
     """Batch vortex analysis namespace."""
 
     def __init__(self, interface: BatchVortexInterface):
@@ -1304,14 +1337,28 @@ class BatchVortexAnalyzeAccessor:
         )
 
 
-class BatchVortexInterface:
+class BatchVortexInterface(InteractiveNodeMixin):
+    _interactive_owner = "jobs[:].vortex"
+    _interactive_nodes = frozenset(
+        {
+            "summary",
+            "regimes",
+            "phase_diagram",
+            "current_phase_diagram",
+            "spectrum_map",
+            "current_spectrum_map",
+            "frequency_sweep",
+            "interactive",
+        }
+    )
+
     """Batch helpers for vortex trajectory, spectrum and regime analysis."""
 
     def __init__(self, results: list[Any], mmpp_instance: Any | None = None):
         self._results = list(results)
         self._mmpp = mmpp_instance
-        self._spectrum = None
-        self._analyze = None
+        self._spectrum: Any | None = None
+        self._analyze: Any | None = None
 
     @property
     def plt(self):
@@ -1575,7 +1622,9 @@ class BatchVortexInterface:
         """Alias for :meth:`summary` to emphasize regime classification."""
         return self.summary(**kwargs)
 
-    def _axis_values_from_attrs(self, axis_name: str, ordered_results: list[Any]) -> dict[int, float]:
+    def _axis_values_from_attrs(
+        self, axis_name: str, ordered_results: list[Any]
+    ) -> dict[int, float]:
         """Return numeric axis values keyed by summary row index."""
         values: dict[int, float] = {}
         for index, result in enumerate(ordered_results):
@@ -1819,7 +1868,9 @@ class BatchVortexInterface:
                 or 4
             )
             workers = max(1, workers)
-            executor_cls = ProcessPoolExecutor if multiprocessing else ThreadPoolExecutor
+            executor_cls = (
+                ProcessPoolExecutor if multiprocessing else ThreadPoolExecutor
+            )
             if isinstance(parallel, str) and parallel.lower() in {
                 "process",
                 "processes",
@@ -1879,7 +1930,7 @@ class BatchVortexInterface:
                     "memory_end_mb": mem_end,
                     "memory_delta_mb": mem_end - mem_start
                     if np.isfinite(mem_start) and np.isfinite(mem_end)
-                        else float("nan"),
+                    else float("nan"),
                 }
             result = BatchVortexSpectrumMapResult(
                 coordinate=np.asarray([], dtype=float),
@@ -2197,7 +2248,22 @@ class BatchVortexInterface:
         )
 
 
-class BatchVortexPlotAccessor:
+class BatchVortexPlotAccessor(InteractiveNodeMixin):
+    _interactive_owner = "jobs[:].vortex.plt"
+    _interactive_nodes = frozenset(
+        {
+            "spectrum_map",
+            "current_spectrum_map",
+            "phase_diagram",
+            "orbit_radius",
+            "regimes",
+            "frequency_vs_current",
+            "dashboard",
+            "orbits",
+            "orbits_grid",
+        }
+    )
+
     """Plot helpers for :class:`BatchVortexInterface`."""
 
     def __init__(self, interface: BatchVortexInterface):
@@ -2483,7 +2549,7 @@ class BatchVortexPlotAccessor:
             rows, cols, squeeze=False, figsize=(3.2 * cols, 3.2 * rows)
         )
         flat = axes.ravel()
-        for axis, result in zip(flat, ordered):
+        for axis, result in zip(flat, ordered, strict=False):
             trajectory = result.solitons.vortex.trajectory.steady_state()
             axis.plot(np.asarray(trajectory.x) * 1e9, np.asarray(trajectory.y) * 1e9)
             radius = disk_radius

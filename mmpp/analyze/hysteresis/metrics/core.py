@@ -87,9 +87,7 @@ def compute_coercive_field(
                 hc_neg_candidates.append(float(value))
 
     hc_plus = float(np.mean(hc_pos_candidates)) if hc_pos_candidates else float("nan")
-    hc_minus = (
-        float(np.mean(hc_neg_candidates)) if hc_neg_candidates else float("nan")
-    )
+    hc_minus = float(np.mean(hc_neg_candidates)) if hc_neg_candidates else float("nan")
 
     mean_val = _nanmean_abs([hc_minus, hc_plus])
     asym = float(np.abs(hc_plus) - np.abs(hc_minus))
@@ -137,7 +135,9 @@ def _saturation_mask_from_derivative(
 ) -> np.ndarray:
     mask = np.abs(np.asarray(derivative, dtype=float)) < float(threshold)
     n = len(mask)
-    w = int(min(window, n))  # clamp: konwolucja mode='same' zwraca max(M,N) jeśli kernel > dane
+    w = int(
+        min(window, n)
+    )  # clamp: konwolucja mode='same' zwraca max(M,N) jeśli kernel > dane
     if w <= 1:
         return mask
 
@@ -214,7 +214,9 @@ def compute_loop_area(field: np.ndarray, magnetization: np.ndarray) -> float:
     return float(np.abs(area))
 
 
-def compute_squareness(remanence: RemanenceResult, saturation: SaturationResult) -> float:
+def compute_squareness(
+    remanence: RemanenceResult, saturation: SaturationResult
+) -> float:
     """Compute squareness S = Mr / Ms."""
     mr = float(remanence.mean)
     ms = float(saturation.ms_mean)
@@ -242,6 +244,8 @@ def compute_max_susceptibility(
 
 def compute_exchange_bias(coercive_field: CoerciveFieldResult) -> float:
     """Compute exchange bias field H_EB = (Hc+ + Hc-) / 2."""
-    if not np.isfinite(coercive_field.hc_plus) or not np.isfinite(coercive_field.hc_minus):
+    if not np.isfinite(coercive_field.hc_plus) or not np.isfinite(
+        coercive_field.hc_minus
+    ):
         return float("nan")
     return float((coercive_field.hc_plus + coercive_field.hc_minus) / 2.0)

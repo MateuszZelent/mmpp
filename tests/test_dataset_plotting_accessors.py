@@ -82,7 +82,9 @@ def test_plot_mpl_extended_api():
         colorwheel_args={"loc": "upper left", "width": 1.2, "height": 1.2},
     )
     ax_lightness_alias = frame.plot.lightness(colorwheel=False)
-    ax_scalar_um = frame.plot.mpl.scalar(component="mz", colorbar=False, multiplier=1e-6)
+    ax_scalar_um = frame.plot.mpl.scalar(
+        component="mz", colorbar=False, multiplier=1e-6
+    )
     ax_snapshot_um = frame.plot.snapshot(colorbar=False, multiplier=1e-6)
 
     fig_cb, ax_cb = plt.subplots()
@@ -196,7 +198,8 @@ def test_plot_mpl_vector_uses_cell_centers_from_geometry():
     )
 
     quiver = next(
-        artist for artist in getattr(ax, "collections", [])
+        artist
+        for artist in getattr(ax, "collections", [])
         if artist.__class__.__name__ == "Quiver"
     )
     offsets = np.asarray(quiver.get_offsets(), dtype=np.float32)
@@ -222,7 +225,9 @@ def test_plot_mpl_magnetization_composes_scalar_and_vector_layers():
 
     arr = np.zeros((1, 1, 12, 16, 3), dtype=np.float32)
     arr[..., 0] = 1.0
-    arr[..., 2] = np.linspace(-1.0, 1.0, 12 * 16, dtype=np.float32).reshape(1, 1, 12, 16)
+    arr[..., 2] = np.linspace(-1.0, 1.0, 12 * 16, dtype=np.float32).reshape(
+        1, 1, 12, 16
+    )
     wrapped = _wrapper(arr, attrs={"dx": 1e-9, "dy": 1e-9})
     view = wrapped.frame(t=0, z=0, y=(0, 12), x=(0, 16))
 
@@ -233,9 +238,14 @@ def test_plot_mpl_magnetization_composes_scalar_and_vector_layers():
     )
 
     assert len(ax.images) == 1
-    assert any(artist.__class__.__name__ == "Quiver" for artist in getattr(ax, "collections", []))
+    assert any(
+        artist.__class__.__name__ == "Quiver"
+        for artist in getattr(ax, "collections", [])
+    )
     assert "nm" in ax.get_xlabel()
-    assert np.allclose(ax.get_facecolor()[:3], [0.91372549, 0.91372549, 0.9372549], atol=1e-3)
+    assert np.allclose(
+        ax.get_facecolor()[:3], [0.91372549, 0.91372549, 0.9372549], atol=1e-3
+    )
     assert len(ax.xaxis.get_minorticklocs()) > 0
     assert len(ax.yaxis.get_minorticklocs()) > 0
 
@@ -424,7 +434,9 @@ def test_plot_k3d_scalar_thin_geometry_camera_and_bounds(monkeypatch):
     assert len(p_scalar.objects) == 1
     vox = p_scalar.objects[0]
     assert "bounds" in vox.kwargs
-    assert np.allclose(np.asarray(vox.kwargs["bounds"], dtype=np.float64), [0, 32, 0, 16, 0, 3])
+    assert np.allclose(
+        np.asarray(vox.kwargs["bounds"], dtype=np.float64), [0, 32, 0, 16, 0, 3]
+    )
     assert hasattr(p_scalar, "axes")
     assert len(p_scalar.axes) == 3
     assert getattr(p_scalar, "camera_auto_fit", None) is True
@@ -686,9 +698,18 @@ def test_plot_k3d_vector_accepts_wrapper_color_field_with_resample(monkeypatch):
     )
     monkeypatch.setitem(__import__("sys").modules, "k3d", fake_k3d)
 
-    attrs = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 8.0, "zmin": 0.0, "zmax": 2.0}
+    attrs = {
+        "xmin": 0.0,
+        "xmax": 10.0,
+        "ymin": 0.0,
+        "ymax": 8.0,
+        "zmin": 0.0,
+        "zmax": 2.0,
+    }
     vec = np.random.default_rng(24).normal(size=(1, 2, 8, 10, 3)).astype(np.float32)
-    color = np.linspace(0.0, 1.0, 1 * 2 * 4 * 5 * 1, dtype=np.float32).reshape(1, 2, 4, 5, 1)
+    color = np.linspace(0.0, 1.0, 1 * 2 * 4 * 5 * 1, dtype=np.float32).reshape(
+        1, 2, 4, 5, 1
+    )
 
     wrapped = _wrapper(vec, attrs=attrs)
     color_wrapped = _wrapper(color, attrs=attrs)
@@ -731,12 +752,19 @@ def test_plot_k3d_vector_accepts_wrapper_component_tuple_color_field(monkeypatch
     )
     monkeypatch.setitem(__import__("sys").modules, "k3d", fake_k3d)
 
-    attrs = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 8.0, "zmin": 0.0, "zmax": 2.0}
+    attrs = {
+        "xmin": 0.0,
+        "xmax": 10.0,
+        "ymin": 0.0,
+        "ymax": 8.0,
+        "zmin": 0.0,
+        "zmax": 2.0,
+    }
     vec = np.random.default_rng(26).normal(size=(1, 2, 8, 10, 3)).astype(np.float32)
     color_vec = np.zeros((1, 2, 4, 5, 3), dtype=np.float32)
-    color_vec[..., 2] = np.linspace(0.0, 1.0, color_vec[..., 2].size, dtype=np.float32).reshape(
-        color_vec[..., 2].shape
-    )
+    color_vec[..., 2] = np.linspace(
+        0.0, 1.0, color_vec[..., 2].size, dtype=np.float32
+    ).reshape(color_vec[..., 2].shape)
 
     wrapped = _wrapper(vec, attrs=attrs)
     color_wrapped = _wrapper(color_vec, attrs=attrs)
@@ -783,7 +811,14 @@ def test_plot_k3d_scalar_accepts_wrapper_filter_field_with_resample(monkeypatch)
     )
     monkeypatch.setitem(__import__("sys").modules, "k3d", fake_k3d)
 
-    attrs = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 8.0, "zmin": 0.0, "zmax": 2.0}
+    attrs = {
+        "xmin": 0.0,
+        "xmax": 10.0,
+        "ymin": 0.0,
+        "ymax": 8.0,
+        "zmin": 0.0,
+        "zmax": 2.0,
+    }
     scalar = np.ones((1, 2, 8, 10, 1), dtype=np.float32)
     mask = np.ones((1, 2, 4, 5, 1), dtype=np.float32)
     mask[..., :, 3:, :] = 0.0
@@ -830,7 +865,14 @@ def test_plot_k3d_scalar_accepts_wrapper_component_tuple_filter_field(monkeypatc
     )
     monkeypatch.setitem(__import__("sys").modules, "k3d", fake_k3d)
 
-    attrs = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 8.0, "zmin": 0.0, "zmax": 2.0}
+    attrs = {
+        "xmin": 0.0,
+        "xmax": 10.0,
+        "ymin": 0.0,
+        "ymax": 8.0,
+        "zmin": 0.0,
+        "zmax": 2.0,
+    }
     scalar = np.ones((1, 2, 8, 10, 1), dtype=np.float32)
     mask_vec = np.ones((1, 2, 4, 5, 3), dtype=np.float32)
     mask_vec[..., 2] = 1.0
@@ -878,7 +920,14 @@ def test_plot_k3d_scalar_hide_zeros_hides_zero_background(monkeypatch):
     )
     monkeypatch.setitem(__import__("sys").modules, "k3d", fake_k3d)
 
-    attrs = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 8.0, "zmin": 0.0, "zmax": 2.0}
+    attrs = {
+        "xmin": 0.0,
+        "xmax": 10.0,
+        "ymin": 0.0,
+        "ymax": 8.0,
+        "zmin": 0.0,
+        "zmax": 2.0,
+    }
     scalar = np.zeros((1, 2, 8, 10, 1), dtype=np.float32)
     scalar[..., 2:6, 3:7, 0] = 1.0
 
@@ -932,7 +981,9 @@ def test_plot_k3d_scalar_grid_from_centers_insets_display_grid(monkeypatch):
     plot = wrapped.plot.k3d.scalar(t=0, grid_from_centers=True)
 
     assert plot.grid_auto_fit is False
-    assert np.allclose(tuple(float(v) for v in plot.grid), (10.5, 19.5, 21.0, 35.0, 31.5, 40.5))
+    assert np.allclose(
+        tuple(float(v) for v in plot.grid), (10.5, 19.5, 21.0, 35.0, 31.5, 40.5)
+    )
 
 
 def test_plot_k3d_scalar_uses_runtime_job_dz_override_for_bounds(monkeypatch):
@@ -1168,8 +1219,12 @@ def test_plot_hv_extended_api_with_stub(monkeypatch):
         extension=_extension,
         Dimension=_Dimension,
         DynamicMap=_DynamicMap,
-        Image=lambda *a, **k: _Obj("Image", payload=a, kdims=k.get("kdims"), vdims=k.get("vdims")),
-        VectorField=lambda *a, **k: _Obj("VectorField", payload=a, kdims=k.get("kdims"), vdims=k.get("vdims")),
+        Image=lambda *a, **k: _Obj(
+            "Image", payload=a, kdims=k.get("kdims"), vdims=k.get("vdims")
+        ),
+        VectorField=lambda *a, **k: _Obj(
+            "VectorField", payload=a, kdims=k.get("kdims"), vdims=k.get("vdims")
+        ),
     )
     monkeypatch.setitem(__import__("sys").modules, "holoviews", fake_hv)
 

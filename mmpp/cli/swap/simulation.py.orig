@@ -1,0 +1,1412 @@
+import errno
+import filecmp
+import itertools
+import os
+import re
+import subprocess
+import time
+from typing import Any
+
+import yaml
+import zarr
+
+# Import shared logging configuration optimized for dark themes
+from mmpp.cli.logging_config import get_mmpp_logger
+
+# Get logger for simulation module with dark theme optimization
+log = get_mmpp_logger("mmpp.simulation")
+
+
+def upgrade_log_level(current_level: str, new_level: str) -> str:
+    """
+    Pomocnicza funkcja do "promowania" poziomu logowania.
+    Zwraca "najgorszy" (najwyższy priorytetem) z podanych.
+    Priorytet: ERROR > WARNING > INFO
+    """
+    levels = ["INFO", "WARNING", "ERROR"]
+    # Wybieramy poziom, który ma "wyższy" indeks w liście
+    return levels[max(levels.index(current_level), levels.index(new_level))]
+
+
+class SimulationManager:
+    def __init__(self, main_path: str, destination_path: str, prefix: str) -> None:
+        self.main_path = main_path
+        self.destination_path = destination_path
+        self.prefix = prefix
+
+    @staticmethod
+    def create_path_if_not_exists(file_path: str) -> None:
+        """Ensure the directory for a given file path exists."""
+        if not os.path.exists(os.path.dirname(file_path)):
+            try:
+                os.makedirs(os.path.dirname(file_path))
+            except OSError as exc:
+                if exc.errno != errno.EEXIST:
+                    raise
+
+    @staticmethod
+    def verify_or_replace_file(new_file_path: str, existing_file_path: str) -> bool:
+        """Check if a file needs replacing and replace if necessary."""
+        if os.path.exists(existing_file_path):
+            if filecmp.cmp(new_file_path, existing_file_path, shallow=False):
+                os.remove(new_file_path)
+                return True
+            else:
+                os.remove(existing_file_path)
+        return False
+
+    @staticmethod
+    def find_status_file(path: str, sim_name: str, status: str) -> str | None:
+        """Locate a status file based on its name and type."""
+        pattern = re.compile(rf"{sim_name}\.mx3_status\.{status}.*")
+        for file in os.listdir(path):
+            if pattern.match(file):
+                return os.path.join(path, file)
+        return None
+
+    @staticmethod
+    def get_file_status(file_path: str) -> str:
+        """Determine the status of a file based on its name."""
+        if ".mx3_status.lock" in file_path:
+            return "locked"
+        elif ".mx3_status.done" in file_path:
+            return "finished"
+        elif ".mx3_status.interrupted" in file_path:
+            return "interrupted"
+        return "unknown"
+
+    @staticmethod
+    def extract_sim_key(file_path: str) -> str:
+        """Extract a concise simulation key from a file path."""
+        return os.path.basename(file_path).split(".mx3_status")[0]
+
+    @staticmethod
+    def check_simulation_completion(zarr_path: str) -> tuple[bool, int]:
+        """
+        Check if a simulation represented by a .zarr directory is complete
+        and return a tuple (is_complete, file_count).
+
+        is_complete: bool
+            True jeśli spełniony warunek >= 3000 plików w grupie 'm' oraz obecny 'end_time'.
+            False w przeciwnym razie, np. gdy brakuje 'end_time', 'm' albo jest < 3000 plików.
+
+        file_count: int
+            Rzeczywista liczba plików (kroków) w grupie 'm'; 0 w razie błędu lub braku danych.
+        """
+        file_count = 0
+        try:
+            zarr_store = zarr.open(zarr_path, mode="r")
+            # Sprawdzamy, czy atrybut 'end_time' istnieje
+            if "end_time" not in zarr_store.attrs:
+                return (False, file_count)
+            # Sprawdzamy, czy istnieje grupa 'm'
+            if "m" not in zarr_store:
+                return (False, file_count)
+            # Grupa 'm'
+            m_group = zarr_store["m"]
+            file_count = m_group.shape[0] if hasattr(m_group, "shape") else 0
+            # Warunek 3000 plików
+            if file_count >= 3000:
+                return (True, file_count)
+            else:
+                return (False, file_count)
+        except Exception:
+            # Jeśli cokolwiek się wykrzaczy, zwracamy (False, 0)
+            return (False, file_count)
+
+    def submit_python_code(
+        self,
+        code_to_execute: str,
+        last_param_name: str | None = None,
+        cleanup: bool = False,
+        sbatch: bool = True,
+        check: bool = False,
+        force: bool = False,
+        full_name: bool = False,
+        **kwargs: str | float | int,
+    ) -> None:
+        """
+        Submit a Python simulation based on provided parameters.
+        Zmodyfikowana tak, aby wszystkie komunikaty na końcu łączyć w jeden raport.
+        """
+        report_lines: list[str] = []
+        report_log_level = "INFO"  # Poziom logowania: INFO / WARNING / ERROR
+        restart_required = False  # Czy powtarzać / uruchamiać symulację?
+        # skip_further_checks = (
+        #     False  # Gdy np. mamy lock, done, itp. i nie chcemy powielać sprawdzeń
+        # )
+        sim_status_str = "unknown"
+        zarr_status_str = "N/A"  # Informacja o stanie plików .zarr
+
+        # -----------------------------
+        # 2. Przygotowanie nazw i ścieżek
+        # -----------------------------
+        if len(kwargs) > 0 and last_param_name is None:
+            last_param_name = list(kwargs.keys())[-1]
+
+        # Build simulation parameters string (unused but kept for potential future use)
+        # sim_params = "_".join(
+        #     [
+        #         f"{key}_{format(val, '.5g') if isinstance(val, (int, float)) else val}"
+        #         for key, val in kwargs.items()
+        #         if key not in [last_param_name, "i", "prefix", "template"]
+        #     ]
+        # )
+
+        # par_sep = ","
+        val_sep = "_"
+        path = (
+            f"{self.main_path}{kwargs['prefix']}/"
+            + "/".join(
+                [
+                    f"{key}{val_sep}{format(val, '.5g') if isinstance(val, (int, float)) else val}"
+                    for key, val in kwargs.items()
+                    if key not in [last_param_name, "i", "prefix", "template"]
+                ]
+            )
+            + "/"
+        )
+
+        # Wyjmujemy ostatni klucz/wartość jako klucz parametru
+        last_key, last_val = kwargs.popitem()
+        sim_name = f"{last_key}{val_sep}{format(last_val, '.5g')}"
+
+        # Informacja początkowa
+        report_lines.append(
+            f"Checking simulation '{sim_name}', PATH: {path}{sim_name}.zarr"
+        )
+
+        self.create_path_if_not_exists(path)
+
+        lock_file = self.find_status_file(path, sim_name, "lock")
+        done_file = self.find_status_file(path, sim_name, "done")
+        interrupted_file = self.find_status_file(path, sim_name, "interrupted")
+        zarr_path = f"{path}{sim_name}.zarr"
+        new_file_path = f"{path}{sim_name}.mx3.tmp"
+        existing_file_path = f"{path}{sim_name}.mx3"
+
+        # -----------------------------
+        # 3. Logika sprawdzania plików statusu
+        # -----------------------------
+
+        # (A) lock_file => symulacja zablokowana
+        if lock_file:
+            sim_status_str = "locked"
+            zarr_status_str = "not checked"
+            # skip_further_checks = True
+            # Dodatkowo możemy (opcjonalnie) sprawdzić, czy .zarr jest kompletne
+            # ale z Twoich założeń: "nie ma sensu sprawdzać dalej" - więc pomijamy.
+
+        # (B) done_file => symulacja zakończona
+        elif done_file:
+            sim_status_str = "finished"
+            # Sprawdź jednak .zarr, bo może być niekompletne
+            zarr_file_complete, zarr_file_count = self.check_simulation_completion(
+                zarr_path
+            )
+            if zarr_file_complete:
+                zarr_status_str = f"complete ({zarr_file_count} files)"
+            else:
+                zarr_status_str = (
+                    f"incomplete ({zarr_file_count} files) => restart requaired"
+                )
+                restart_required = True
+                report_log_level = upgrade_log_level(report_log_level, "ERROR")
+            # skip_further_checks = True
+
+        # (C) interrupted_file => symulacja przerwana
+        elif interrupted_file:
+            sim_status_str = "interrupted => will restart"
+            zarr_status_str = "not checked"
+            restart_required = True
+            # skip_further_checks = True
+            # Usuwamy plik, żeby móc wystartować ponownie
+            os.remove(interrupted_file)
+
+        # (D) Brak statusu => sprawdzamy .zarr (o ile istnieje)
+        else:
+            if os.path.exists(zarr_path):
+                zarr_file_complete, zarr_file_count = self.check_simulation_completion(
+                    zarr_path
+                )
+                if zarr_file_complete:
+                    sim_status_str = "done => no status file"
+                    zarr_status_str = f"complete ({zarr_file_count} files)"
+                    # W takim wypadku niby nic nie trzeba robić
+                else:
+                    sim_status_str = "zarr incomplete => restart"
+                    zarr_status_str = "incomplete => restart"
+                    restart_required = True
+            else:
+                sim_status_str = "no status => new => restart"
+                zarr_status_str = "no .zarr => start"
+                restart_required = True
+
+        # -----------------------------
+        # 4. Jeśli restart_required => generujemy plik .mx3 i ewentualnie odpalamy sbatch
+        # -----------------------------
+        if restart_required:
+            # Tworzymy nowy plik .mx3 (nadpisujemy istniejący, jeśli jest)
+            with open(new_file_path, "w") as f:
+                f.write(code_to_execute)
+
+            os.rename(new_file_path, existing_file_path)
+
+            # Uruchomienie (o ile sbatch == True)
+            if sbatch:
+                sim_sbatch_path = (
+                    f"{self.main_path}{kwargs['prefix']}/sbatch/{sim_name}.sb"
+                )
+                self.create_path_if_not_exists(sim_sbatch_path)
+                with open(sim_sbatch_path, "w") as f:
+                    f.write(self.gen_sbatch_script(sim_name, path + sim_name))
+                subprocess.call(f"sbatch < {sim_sbatch_path}", shell=True)
+
+                sim_status_str = f"{sim_status_str} => submitted"
+            else:
+                report_log_level = upgrade_log_level(report_log_level, "ERROR")
+                sim_status_str = f"{sim_status_str}, but not submitted (sbatch=False)"
+
+        # -----------------------------
+        # 5. Budujemy ostateczny raport (jednorazowy komunikat)
+        # -----------------------------
+        report_lines.append(f"Simulation status: {sim_status_str}")
+        report_lines.append(f"Simulation results condition: {zarr_status_str}")
+
+        report_message = "\n".join(report_lines)
+
+        if report_log_level == "ERROR":
+            log.error(report_message)
+        elif report_log_level == "WARNING":
+            log.warning(report_message)
+        else:
+            log.info(report_message)
+        # Koniec funkcji
+
+    def gen_sbatch_script(self, name: str, path: str) -> str:
+        """Generate an sbatch script for submitting jobs."""
+        mx3_file = f"{path}.mx3"
+        lock_file = f"{path}.mx3_status.lock"
+        done_file = f"{path}.mx3_status.done"
+        interrupted_file = f"{path}.mx3_status.interrupted"
+        # final_path = self.destination_path + path.replace(self.main_path, "") + ".zarr"
+
+        return f"""#!/bin/bash -l
+#SBATCH --job-name="{name}"
+#SBATCH --mail-type=NONE
+#SBATCH --time=168:00:00
+#SBATCH --nodes=1
+#SBATCH --mem=149GB
+#SBATCH --ntasks-per-core=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --partition=proxima
+#SBATCH --gpus-per-node=1
+#SBATCH --gres=gpu:1
+#SBATCH --exclude=gpu39
+
+sleep 10
+
+# Log node name
+echo "Running on node: $SLURMD_NODENAME"
+
+nvidia-smi
+echo "CUDA_VISIBLE_DEVICES = $CUDA_VISIBLE_DEVICES"
+
+source /mnt/storage_3/home/kkingdyoun/.bashrc
+export TMPDIR="/mnt/storage_3/home/MateuszZelent/pl0095-01/scratch/tmp/"
+
+mv "{mx3_file}" "{lock_file}"
+/mnt/storage_3/home/MateuszZelent/pl0095-01/scratch/bin/amumax -f --hide-progress-bar -o "{path}.zarr" "{lock_file}"
+RESULT=$?
+
+if [ $RESULT -eq 0 ]; then
+    echo "FINISHED"
+    mv "{lock_file}" "{done_file}"
+else
+    echo "INTERRUPTED"
+    mv "{lock_file}" "{interrupted_file}"
+
+    # Check if it was a CUDA error
+    if grep -q "CUDA_ERROR" "{path}.zarr/amumax.out" || nvidia-smi | grep -q "No devices were found"; then
+        # Add this node to the bad nodes list if not already present
+    fi
+fi
+    """
+
+    @staticmethod
+    def replace_variables_in_template(
+        file_path: str | list, variables: dict[str, str | float | int]
+    ) -> str:
+        """Replace placeholders in a template file with actual values."""
+        # Jeśli file_path jest listą, weź pierwszy element
+        if isinstance(file_path, list):
+            file_path = file_path[0] if file_path else "template.mx3"
+
+        with open(file_path) as file:
+            content = file.read()
+        for key, value in variables.items():
+            content = content.replace(f"{{{key}}}", str(value))
+        return content
+
+    @staticmethod
+    def raw_code(*args: Any, **kwargs: str | float | int) -> str:
+        """Generate the raw code by filling in a template with parameters."""
+        import os
+
+        t = kwargs["template"]
+        template_path = f"{os.getcwd()}/{t}"
+        return SimulationManager.replace_variables_in_template(template_path, kwargs)
+
+    def submit_all_simulations(
+        self,
+        params: dict[str, Any],  # Changed from np.ndarray to Any to accept numpy arrays
+        last_param_name: str,
+        minsim: int = 0,
+        maxsim: int | None = None,
+        sbatch: bool = True,
+        remote_run: bool = False,
+        cleanup: bool = False,
+        template: str = "template.mx3",
+        check: bool = False,
+        force: bool = False,
+        pairs: bool = False,
+    ) -> None:
+        """Submit all simulations based on parameter combinations.
+
+        If pairs=False (default), generates all combinations using itertools.product.
+        If pairs=True, generates paired values (par1[i], par2[i], ...) where each parameter
+        must have the same number of values.
+        """
+        param_names = list(params.keys())
+
+        if pairs:
+            # Check that all parameter arrays have the same length
+            param_lengths = [len(params[name]) for name in param_names]
+            if len(set(param_lengths)) != 1:
+                raise ValueError(
+                    "When using pairs=True, all parameter arrays must have the same length. "
+                    f"Found lengths: {dict(zip(param_names, param_lengths, strict=False))}"
+                )
+
+            # Zip parameter values instead of computing product
+            value_sets = zip(*[params[name] for name in param_names], strict=False)
+        else:
+            # Original behavior - compute Cartesian product
+            value_sets = itertools.product(*params.values())
+
+        for i, values in enumerate(value_sets):
+            if i < minsim:
+                continue
+            if maxsim is not None and i >= maxsim:
+                break
+
+            kwargs = {"prefix": self.prefix, "i": i, "template": template}
+            for name, value in zip(param_names, values, strict=False):
+                kwargs[name] = value
+
+            time.sleep(1)
+
+            self.submit_python_code(
+                self.raw_code(**kwargs),
+                last_param_name=last_param_name,
+                sbatch=sbatch,
+                cleanup=cleanup,
+                check=check,
+                force=force,
+                **kwargs,
+            )
+
+    def submit_all_simulations_with_progress(
+        self,
+        params: dict[str, Any],
+        last_param_name: str,
+        minsim: int = 0,
+        maxsim: int | None = None,
+        sbatch: bool = True,
+        remote_run: bool = False,
+        submission_method: str = "auto",
+        cleanup: bool = False,
+        template: str = "template.mx3",
+        check: bool = False,
+        force: bool = False,
+        pairs: bool = False,
+        progress_callback: Any | None = None,
+    ) -> None:
+        """Submit all simulations with progress tracking and folder structure like original swapper."""
+        import itertools
+        import os
+
+        param_names = list(params.keys())
+
+        if pairs:
+            # Check that all parameter arrays have the same length
+            param_lengths = [len(params[name]) for name in param_names]
+            if len(set(param_lengths)) != 1:
+                raise ValueError(
+                    "When using pairs=True, all parameter arrays must have the same length. "
+                    f"Found lengths: {dict(zip(param_names, param_lengths, strict=False))}"
+                )
+            # Zip parameter values instead of computing product
+            value_sets = zip(*[params[name] for name in param_names], strict=False)
+        else:
+            # Original behavior - compute Cartesian product
+            value_sets = itertools.product(*params.values())
+
+        for i, values in enumerate(value_sets):
+            if i < minsim:
+                continue
+            if maxsim is not None and i >= maxsim:
+                break
+
+            kwargs = {
+                "prefix": self.prefix,
+                "i": i,
+                "template": template,
+                "submission_method": submission_method,
+            }
+            for name, value in zip(param_names, values, strict=False):
+                kwargs[name] = value
+
+            # Create folder structure like original swapper: prefix/param1_val1/param2_val2/.../
+            val_sep = "_"
+            path = (
+                os.path.join(self.main_path, kwargs["prefix"])
+                + "/"
+                + "/".join(
+                    [
+                        f"{key}{val_sep}{format(val, '.5g') if isinstance(val, (int, float)) else val}"
+                        for key, val in kwargs.items()
+                        if key not in [last_param_name, "i", "prefix", "template"]
+                    ]
+                )
+                + "/"
+            )
+
+            # Extract last parameter for file name
+            last_key = last_param_name
+            last_val = kwargs[last_param_name]
+            sim_name = f"{last_key}{val_sep}{format(last_val, '.5g') if isinstance(last_val, (int, float)) else last_val}"
+
+            # Create directory
+            self.create_path_if_not_exists(path)
+
+            # Generate MX3 file path
+            mx3_file_path = f"{path}{sim_name}.mx3"
+
+            # Generate MX3 content by replacing variables in template
+            mx3_content = self.replace_variables_in_template(template, kwargs)
+
+            # Write MX3 file
+            with open(mx3_file_path, "w") as f:
+                f.write(mx3_content)
+
+            # Call progress callback if provided
+            if progress_callback:
+                relative_path = os.path.relpath(path, self.main_path)
+                progress_callback(i, f"{relative_path}{sim_name}.mx3")
+
+            # Handle submission based on remote_run and sbatch settings
+            if remote_run:
+                # Force remote execution via MMPP Run
+                success = self._submit_via_mmpp_run(
+                    sim_name, mx3_file_path, require_auth=True
+                )
+                if not success:
+                    log.error(
+                        f"Failed to submit {sim_name} via MMPP Run (remote_run=True)"
+                    )
+            elif sbatch:
+                submission_method = kwargs.get("submission_method", "auto")
+
+                if submission_method == "slurm":
+                    # Force SLURM submission
+                    self._submit_via_slurm(kwargs, sim_name, path)
+                elif submission_method == "mmpp":
+                    # Force MMPP Run submission
+                    success = self._submit_via_mmpp_run(sim_name, mx3_file_path)
+                    if not success:
+                        log.error(f"Failed to submit {sim_name} via MMPP Run")
+                else:
+                    # Auto mode - prefer SLURM for local execution when remote_run=False
+                    self._submit_via_slurm(kwargs, sim_name, path)
+
+            time.sleep(0.01)  # Small delay to see progress
+
+    def _submit_via_mmpp_run(
+        self, sim_name: str, mx3_file_path: str, require_auth: bool = False
+    ) -> bool:
+        """Submit simulation via MMPP Run system.
+
+        Args:
+            sim_name: Name of the simulation
+            mx3_file_path: Path to the MX3 file
+            require_auth: If True, fail if authentication is not available
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Try to import MMPP run system
+            import argparse
+
+            from mmpp.auth import AuthManager
+            from mmpp.cli.run import _submit_single_file
+
+            # Check if authentication is available
+            auth_manager = AuthManager()
+            token = auth_manager.get_token()
+            base_url = auth_manager.get_base_url()
+
+            if not (token and base_url):
+                if require_auth:
+                    log.error(
+                        "Authentication required for remote_run but not available. Please run 'mmpp auth login' first."
+                    )
+                    # Try to refresh token from saved credentials
+                    try:
+                        auth_manager.load_credentials()
+                        token = auth_manager.get_token()
+                        base_url = auth_manager.get_base_url()
+                        if not (token and base_url):
+                            log.error(
+                                "Failed to refresh authentication. Please run 'mmpp auth login'."
+                            )
+                            return False
+                    except Exception as e:
+                        log.error(f"Failed to load saved credentials: {e}")
+                        return False
+                else:
+                    return False
+
+            # Create args object for submission
+            args = argparse.Namespace()
+            args.file = mx3_file_path
+            args.detach = True  # Always detached for batch
+            args.time = "168:00:00"  # Default time
+            args.cpus = 5
+            args.memory = 24
+            args.gpus = 1
+            args.partition = "proxima"
+            args.priority = 0
+            args.name = sim_name
+
+            # Submit via MMPP Run
+            task_id = _submit_single_file(args)
+            if task_id:
+                log.info(f"Submitted {sim_name} via MMPP Run: {task_id}")
+                return True
+            else:
+                return False
+
+        except ImportError:
+            if require_auth:
+                log.error("MMPP Run module not available but required for remote_run")
+            return False
+        except Exception as e:
+            log.warning(f"Error with MMPP Run submission for {sim_name}: {e}")
+            return False
+
+    def _submit_via_slurm(self, kwargs: dict, sim_name: str, path: str) -> None:
+        """Submit simulation via traditional SLURM sbatch."""
+        import os
+        import subprocess
+
+        sim_sbatch_path = os.path.join(
+            self.main_path, kwargs["prefix"], "sbatch", f"{sim_name}.sb"
+        )
+        self.create_path_if_not_exists(sim_sbatch_path)
+        with open(sim_sbatch_path, "w") as f:
+            f.write(self.gen_sbatch_script(sim_name, path + sim_name))
+
+        # Submit to SLURM
+        try:
+            result = subprocess.run(
+                f"sbatch < {sim_sbatch_path}",
+                shell=True,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                log.info(f"Submitted {sim_name} via SLURM sbatch")
+            else:
+                log.error(f"SLURM submission failed for {sim_name}: {result.stderr}")
+        except Exception as e:
+            log.error(f"Error submitting {sim_name} via SLURM: {e}")
+
+
+class SimulationSwapper:
+    """
+    Klasa do obsługi swapowania symulacji na podstawie plików konfiguracyjnych.
+    Parsuje pliki YAML z parametrami i zarządza wykonaniem symulacji.
+    """
+
+    def __init__(self, config_file: str):
+        """
+        Inicjalizacja SwappeParsera z plikiem konfiguracyjnym.
+
+        Args:
+            config_file: Ścieżka do pliku konfiguracyjnego (YAML)
+        """
+        self.config_file = config_file
+        self.config_data = self._load_config()
+        self.parameters = self._extract_parameters()
+        self.config_options = self._extract_config_options()
+
+    def _load_config(self) -> dict[str, Any]:
+        """Wczytaj plik konfiguracyjny YAML."""
+        try:
+            with open(self.config_file) as f:
+                content = f.read()
+
+            # Obsługa numpy w YAML - zastąp numpy calls przed parsowaniem
+            content = self._preprocess_numpy_content(content)
+
+            # Parsuj YAML
+            data = yaml.safe_load(content)
+            return data
+        except FileNotFoundError:
+            log.error(f"Configuration file not found: {self.config_file}")
+            raise
+        except yaml.YAMLError as e:
+            log.error(f"Error parsing YAML configuration: {e}")
+            raise
+        except Exception as e:
+            log.error(f"Unexpected error loading configuration: {e}")
+            raise
+
+    def _preprocess_numpy_content(self, content: str) -> str:
+        """
+        Preprocess content to handle parameter ranges and numpy expressions.
+        Supports:
+        - (min,max,count) - generates linspace
+        - numpy expressions like np.linspace(), np.arange(), np.logspace()
+        - mathematical expressions with basic functions
+        - list comprehensions
+        """
+        import math
+
+        import numpy as np
+
+        # Create safe namespace for eval
+        safe_namespace = {
+            "np": np,
+            "numpy": np,
+            "math": math,
+            "pi": math.pi,
+            "e": math.e,
+            # Safe mathematical functions
+            "sin": math.sin,
+            "cos": math.cos,
+            "tan": math.tan,
+            "exp": math.exp,
+            "log": math.log,
+            "log10": math.log10,
+            "sqrt": math.sqrt,
+            "abs": abs,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "len": len,
+            "range": range,
+            "list": list,
+            "float": float,
+            "int": int,
+            # YAML boolean keywords
+            "true": True,
+            "false": False,
+            "null": None,
+        }
+
+        # Znajdź wszystkie linie z parametrami
+        lines = content.split("\n")
+        processed_lines = []
+
+        for line in lines:
+            # Pomiń komentarze
+            if line.strip().startswith("#"):
+                processed_lines.append(line)
+                continue
+
+            # Sprawdź czy linia zawiera parametr
+            if ":" in line:
+                try:
+                    key_part, value_part = line.split(":", 1)
+                    value_part = value_part.strip()
+
+                    # Usuń komentarz na końcu jeśli istnieje
+                    comment = ""
+                    if "#" in value_part:
+                        value_part, comment = value_part.split("#", 1)
+                        value_part = value_part.strip()
+                        comment = " #" + comment
+
+                    processed = False
+
+                    # Obsługa format: (min,max,count) - prosta składnia linspace
+                    if (
+                        value_part.startswith("(")
+                        and value_part.endswith(")")
+                        and value_part.count(",") == 2
+                    ):
+                        try:
+                            params_str = value_part[1:-1]  # usuń nawiasy
+                            parts = [p.strip() for p in params_str.split(",")]
+
+                            if len(parts) == 3:
+                                # Ewaluuj każdy parametr (może być wyrażeniem matematycznym)
+                                min_val = eval(
+                                    parts[0], {"__builtins__": {}}, safe_namespace
+                                )
+                                max_val = eval(
+                                    parts[1], {"__builtins__": {}}, safe_namespace
+                                )
+                                count = int(
+                                    eval(parts[2], {"__builtins__": {}}, safe_namespace)
+                                )
+
+                                # Wygeneruj linspace
+                                result = np.linspace(min_val, max_val, count)
+                                result_list = result.tolist()
+
+                                processed_lines.append(
+                                    f"{key_part}: {result_list}{comment}"
+                                )
+                                processed = True
+                        except (ValueError, SyntaxError, NameError) as e:
+                            log.warning(
+                                f"Error processing range syntax in line '{line}': {e}"
+                            )
+
+                    # Obsługa list comprehensions i wyrażeń zaczynających się od [
+                    if (
+                        not processed
+                        and value_part.startswith("[")
+                        and "for" in value_part
+                    ):
+                        try:
+                            result = eval(
+                                value_part, {"__builtins__": {}}, safe_namespace
+                            )
+                            processed_lines.append(f"{key_part}: {result}{comment}")
+                            processed = True
+                        except (ValueError, SyntaxError, NameError, TypeError) as e:
+                            log.warning(
+                                f"Error evaluating list comprehension in line '{line}': {e}"
+                            )
+
+                    # Obsługa wyrażeń numpy/math - sprawdź czy zawiera funkcje numpy lub operatory
+                    if not processed and any(
+                        pattern in value_part
+                        for pattern in [
+                            "np.",
+                            "numpy.",
+                            "linspace",
+                            "arange",
+                            "logspace",
+                            "geomspace",
+                            "math.",
+                            "sin",
+                            "cos",
+                            "tan",
+                            "exp",
+                            "log",
+                            "sqrt",
+                            "pi",
+                            "e",
+                            "**",
+                        ]
+                    ):
+                        try:
+                            # Bezpieczna ewaluacja wyrażenia numpy/math
+                            result = eval(
+                                value_part, {"__builtins__": {}}, safe_namespace
+                            )
+
+                            # Konwertuj wynik na listę jeśli to numpy array
+                            if hasattr(result, "tolist"):
+                                result_list = result.tolist()
+                            elif isinstance(result, (list, tuple)):
+                                result_list = list(result)
+                            elif isinstance(result, (int, float)):
+                                result_list = [result]
+                            else:
+                                result_list = [result]
+
+                            processed_lines.append(
+                                f"{key_part}: {result_list}{comment}"
+                            )
+                            processed = True
+                        except (ValueError, SyntaxError, NameError, TypeError) as e:
+                            log.warning(
+                                f"Error evaluating expression in line '{line}': {e}"
+                            )
+
+                    # Jeśli nie zostało przetworzone, zostaw oryginalną linię
+                    if not processed:
+                        processed_lines.append(line)
+
+                except Exception as e:
+                    log.warning(f"Error processing line '{line}': {e}")
+                    processed_lines.append(line)
+            else:
+                processed_lines.append(line)
+
+        return "\n".join(processed_lines)
+
+    def _extract_parameters(self) -> dict[str, list[Any]]:
+        """Wyciągnij parametry symulacji z konfiguracji."""
+        parameters = {}
+
+        # Sprawdź czy istnieje sekcja 'swap'
+        if "swap" in self.config_data:
+            for key, value in self.config_data["swap"].items():
+                if isinstance(value, list):
+                    parameters[key] = value
+        else:
+            # Fallback do starego formatu (bezpośrednio w root)
+            for key, value in self.config_data.items():
+                if key != "config" and isinstance(value, list):
+                    parameters[key] = value
+
+        return parameters
+
+    def _extract_config_options(self) -> dict[str, Any]:
+        """Wyciągnij opcje konfiguracyjne."""
+        import os
+
+        # Ustaw ścieżki na bieżący katalog
+        current_dir = os.getcwd()
+
+        default_config = {
+            "last_param_name": None,
+            "prefix": "v1",
+            "sbatch": True,  # Fixed: should be True by default
+            "remote_run": False,  # Use remote MMPP server for execution
+            "submission_method": "auto",  # "auto", "mmpp", "slurm"
+            "full_name": False,
+            "template_name": "template.mx3",  # Changed from template to template_name
+            "main_path": current_dir,  # Set to current directory
+            "destination_path": current_dir,  # Set to current directory
+            "minsim": 0,
+            "maxsim": None,
+            "pairs": False,
+            "cleanup": False,
+            "check": False,
+            "force": False,
+        }
+
+        # Merge with user config
+        if "config" in self.config_data:
+            user_config = self.config_data["config"]
+            default_config.update(user_config)
+
+            # Fix: Convert list values to proper types for boolean fields
+            boolean_fields = [
+                "pairs",
+                "remote_run",
+                "sbatch",
+                "cleanup",
+                "check",
+                "force",
+                "full_name",
+            ]
+            for field in boolean_fields:
+                if field in default_config:
+                    value = default_config[field]
+                    if isinstance(value, list) and len(value) > 0:
+                        # Take first element from list
+                        default_config[field] = value[0]
+
+            # Fix: Convert list values for string fields
+            string_fields = ["template_name", "prefix", "last_param_name"]
+            for field in string_fields:
+                if field in default_config:
+                    value = default_config[field]
+                    if isinstance(value, list) and len(value) > 0:
+                        # Take first element from list
+                        default_config[field] = value[0]
+
+        # Always override paths to current directory
+        default_config["main_path"] = current_dir
+        default_config["destination_path"] = current_dir
+
+        # Debug: sprawdź typ template_name
+        if "template_name" in default_config:
+            template_name = default_config["template_name"]
+            print(
+                f"DEBUG: template_name type: {type(template_name)}, value: {template_name}"
+            )
+            # Upewnij się, że template_name jest stringiem
+            if isinstance(template_name, list):
+                default_config["template_name"] = (
+                    template_name[0] if template_name else "template.mx3"
+                )
+                print(
+                    f"DEBUG: Fixed template_name to: {default_config['template_name']}"
+                )
+
+        # Debug: sprawdź typ prefix
+        if "prefix" in default_config:
+            prefix = default_config["prefix"]
+            print(f"DEBUG: prefix type: {type(prefix)}, value: {prefix}")
+            # Upewnij się, że prefix jest stringiem
+            if isinstance(prefix, list):
+                default_config["prefix"] = prefix[0] if prefix else "v1"
+                print(f"DEBUG: Fixed prefix to: {default_config['prefix']}")
+
+        return default_config
+
+    def get_simulation_manager(self) -> "SimulationManager":
+        """Stwórz instancję SimulationManager na podstawie konfiguracji."""
+        return SimulationManager(
+            main_path=self.config_options["main_path"],
+            destination_path=self.config_options["destination_path"],
+            prefix=self.config_options["prefix"],
+        )
+
+    def run_simulations(self) -> None:
+        """Uruchom wszystkie symulacje na podstawie konfiguracji."""
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TaskProgressColumn,
+            TextColumn,
+        )
+        from rich.table import Table
+
+        console = Console()
+
+        if not self.parameters:
+            console.print(
+                "⚠️  [yellow]No parameters found in configuration file[/yellow]"
+            )
+            return
+
+        # Check authorization if remote_run is enabled
+        if self.config_options.get("remote_run", False):
+            try:
+                from mmpp.auth import AuthManager
+
+                auth_manager = AuthManager()
+                token = auth_manager.get_token()
+                base_url = auth_manager.get_base_url()
+
+                if not (token and base_url):
+                    console.print(
+                        "❌ [red]Authentication required for remote_run but not available[/red]"
+                    )
+                    console.print(
+                        "💡 [yellow]Please run 'mmpp auth login' first to configure remote server access[/yellow]"
+                    )
+                    return
+
+                console.print(f"✅ [green]Remote server configured: {base_url}[/green]")
+            except ImportError:
+                console.print(
+                    "❌ [red]MMPP Run module not available for remote execution[/red]"
+                )
+                return
+
+        # Sprawdź czy last_param_name jest ustawione
+        last_param_name = self.config_options.get("last_param_name")
+        if not last_param_name:
+            console.print(
+                "❌ [red]last_param_name not specified in configuration[/red]"
+            )
+            raise ValueError("last_param_name must be specified in config section")
+
+        if last_param_name not in self.parameters:
+            console.print(
+                f"❌ [red]last_param_name '{last_param_name}' not found in parameters[/red]"
+            )
+            raise ValueError(
+                f"Parameter '{last_param_name}' not found in parameter list"
+            )
+
+        # Oblicz liczbę kombinacji
+        if self.config_options.get("pairs", False):
+            # Dla pairs sprawdź czy wszystkie parametry mają tę samą długość
+            param_lengths = [len(values) for values in self.parameters.values()]
+            if len(set(param_lengths)) > 1:
+                console.print(
+                    "❌ [red]When using pairs=True, all parameter arrays must have the same length[/red]"
+                )
+                raise ValueError("Parameter length mismatch in pairs mode")
+            total_combinations = param_lengths[0] if param_lengths else 0
+        else:
+            # Cartesian product
+            total_combinations = 1
+            for values in self.parameters.values():
+                total_combinations *= len(values)
+
+        # Zastosuj minsim/maxsim
+        minsim = self.config_options.get("minsim", 0)
+        maxsim = self.config_options.get("maxsim")
+        if maxsim is not None:
+            actual_simulations = min(maxsim, total_combinations) - minsim
+        else:
+            actual_simulations = total_combinations - minsim
+
+        # Pokaż informacje o uruchomieniu
+        info_table = Table(show_header=True, header_style="bold magenta")
+        info_table.add_column("Parameter", style="cyan")
+        info_table.add_column("Values", style="green")
+        info_table.add_column("Count", style="yellow")
+
+        for param, values in self.parameters.items():
+            values_str = (
+                str(values) if len(str(values)) < 50 else str(values)[:47] + "..."
+            )
+            info_table.add_row(param, values_str, str(len(values)))
+
+        console.print(
+            Panel(info_table, title="📊 Simulation Parameters", border_style="blue")
+        )
+
+        config_info = f"""
+🚀 Total combinations: [bold green]{total_combinations}[/bold green]
+📁 Working directory: [cyan]{self.config_options["main_path"]}[/cyan]
+🏷️  Prefix: [yellow]{self.config_options["prefix"]}[/yellow]
+🔧 Template: [blue]{self.config_options["template_name"]}[/blue]
+📋 Last parameter: [magenta]{last_param_name}[/magenta]
+⏯️  Simulation range: [orange]{minsim}[/orange] to [orange]{maxsim or "end"}[/orange]
+🎯 Will execute: [bold red]{actual_simulations}[/bold red] simulations
+🖥️  Execution mode: [cyan]{"Remote (MMPP Server)" if self.config_options["remote_run"] else "Local SLURM" if self.config_options["sbatch"] else "Files only"}[/cyan]
+"""
+        console.print(
+            Panel(config_info.strip(), title="🔧 Configuration", border_style="green")
+        )
+
+        # Sprawdź czy faktycznie uruchomić
+        if actual_simulations <= 0:
+            console.print(
+                "⚠️  [yellow]No simulations to run with current settings[/yellow]"
+            )
+            return
+
+        # Stwórz SimulationManager
+        manager = self.get_simulation_manager()
+
+        # Uruchom symulacje z progress barem
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Running simulations...", total=actual_simulations)
+
+            manager.submit_all_simulations_with_progress(
+                params=self.parameters,
+                last_param_name=last_param_name,
+                minsim=minsim,
+                maxsim=maxsim,
+                sbatch=self.config_options["sbatch"],
+                remote_run=self.config_options["remote_run"],
+                submission_method=self.config_options["submission_method"],
+                cleanup=self.config_options["cleanup"],
+                template=self.config_options["template_name"],
+                check=self.config_options["check"],
+                force=self.config_options["force"],
+                pairs=self.config_options["pairs"],
+                progress_callback=lambda i, path: progress.update(
+                    task, advance=1, description=f"Created: {path}"
+                ),
+            )
+
+        console.print("✅ [bold green]Simulation execution completed![/bold green]")
+
+    def validate_config(self) -> list[str]:
+        """
+        Waliduj konfigurację i zwróć listę błędów/ostrzeżeń.
+
+        Returns:
+            Lista komunikatów o błędach/ostrzeżeniach
+        """
+        issues = []
+
+        # Sprawdź czy są jakieś parametry
+        if not self.parameters:
+            issues.append("ERROR: No simulation parameters found")
+
+        # Sprawdź last_param_name
+        last_param_name = self.config_options.get("last_param_name")
+        if not last_param_name:
+            issues.append("ERROR: last_param_name not specified in config section")
+        elif last_param_name not in self.parameters:
+            issues.append(
+                f"ERROR: last_param_name '{last_param_name}' not found in parameters"
+            )
+
+        # Sprawdź ścieżki
+        main_path = self.config_options.get("main_path")
+        if main_path and not os.path.exists(os.path.dirname(main_path)):
+            issues.append(f"WARNING: main_path directory may not exist: {main_path}")
+
+        # Sprawdź template
+        template = self.config_options.get("template_name")
+        if template:
+            # Jeśli template jest listą, weź pierwszy element
+            if isinstance(template, list):
+                template = template[0] if template else None
+            # Sprawdź czy plik istnieje
+            if template and not os.path.exists(template):
+                issues.append(f"WARNING: template file not found: {template}")
+
+        # Sprawdź czy pairs jest sensowne
+        if self.config_options.get("pairs", False):
+            param_lengths = [len(values) for values in self.parameters.values()]
+            if len(set(param_lengths)) > 1:
+                issues.append(
+                    "ERROR: When using pairs=True, all parameter arrays must have the same length"
+                )
+
+        return issues
+
+    def get_info(self) -> dict[str, Any]:
+        """Zwróć informacje o konfiguracji."""
+        # Oblicz liczbę kombinacji
+        if self.config_options.get("pairs", False):
+            # Dla pairs - liczba wartości pierwszego parametru
+            total_combinations = (
+                len(list(self.parameters.values())[0]) if self.parameters else 0
+            )
+        else:
+            # Dla product - iloczyn kartezjański
+            total_combinations = 1
+            for values in self.parameters.values():
+                total_combinations *= len(values)
+
+        return {
+            "config_file": self.config_file,
+            "parameters": list(self.parameters.keys()),
+            "parameter_counts": {
+                key: len(values) for key, values in self.parameters.items()
+            },
+            "total_combinations": total_combinations,
+            "config_options": self.config_options,
+            "validation_issues": self.validate_config(),
+        }
+
+
+class TemplateParser:
+    """
+    Klasa do parsowania plików template.mx3 i wyciągania parametrów do swapowania.
+    """
+
+    def __init__(self, template_path: str):
+        """
+        Inicjalizacja parsera z ścieżką do pliku template.
+
+        Args:
+            template_path: Ścieżka do pliku template.mx3
+        """
+        self.template_path = template_path
+        self.parameters = self._extract_parameters()
+
+    def _extract_parameters(self) -> set[str]:
+        """
+        Wyciąga wszystkie parametry z pliku template.mx3.
+        Parametry są oznaczone jako {nazwa_parametru}.
+
+        Returns:
+            Set nazw parametrów znalezionych w template
+        """
+        try:
+            with open(self.template_path) as f:
+                content = f.read()
+
+            # Znajdź wszystkie parametry w formacie {nazwa}
+            pattern = r"\{([^}]+)\}"
+            matches = re.findall(pattern, content)
+
+            # Filtruj tylko prawidłowe nazwy parametrów (bez spacji, znaków specjalnych)
+            valid_params = set()
+            for match in matches:
+                # Sprawdź czy to prawidłowa nazwa parametru
+                if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", match):
+                    valid_params.add(match)
+
+            return valid_params
+
+        except FileNotFoundError:
+            log.error(f"Template file not found: {self.template_path}")
+            return set()
+        except Exception as e:
+            log.error(f"Error parsing template file: {e}")
+            return set()
+
+    def get_parameters(self) -> list[str]:
+        """Zwróć listę parametrów w kolejności alfabetycznej."""
+        return sorted(self.parameters)
+
+    def generate_yaml_template(
+        self,
+        last_param: str | None = None,
+        prefix: str = "v1",
+        template_name: str = "template.mx3",
+    ) -> str:
+        """
+        Generuj szablon YAML na podstawie wykrytych parametrów.
+
+        Args:
+            last_param: Nazwa ostatniego parametru (do iteracji)
+            prefix: Prefix symulacji
+            template_name: Nazwa pliku template
+
+        Returns:
+            String z zawartością YAML
+        """
+        # Sprawdź czy last_param jest prawidłowy
+        if last_param and last_param not in self.parameters:
+            log.warning(
+                f"Last parameter '{last_param}' not found in template. Using first parameter."
+            )
+            last_param = None
+
+        if not last_param and self.parameters:
+            # Użyj pierwszego parametru alfabetycznie
+            last_param = sorted(self.parameters)[0]
+
+        # Generuj sekcję swap z przykładowymi wartościami
+        swap_section = "swap:\n"
+        for param in sorted(self.parameters):
+            if param == "Material":
+                swap_section += f"  {param}: [1, 2, 3]  # Material type\n"
+            elif param in ["xsize", "ysize"]:
+                swap_section += f"  {param}: [100.0, 200.0, 300.0]  # Size in nm\n"
+                swap_section += (
+                    f"  # {param}: (100, 600, 5)  # Range: 5 sizes from 100 to 600 nm\n"
+                )
+                swap_section += (
+                    f"  # {param}: np.linspace(100, 600, 5)  # Numpy alternative\n"
+                )
+            elif param == "Tx":
+                swap_section += f"  {param}: [6000e-9]  # Thickness in m\n"
+            elif param == "rotation":
+                swap_section += f"  {param}: [0, 45, 90]  # Rotation in degrees\n"
+                swap_section += (
+                    f"  # {param}: (0, 90, 5)  # Range: 5 values from 0 to 90 degrees\n"
+                )
+                swap_section += (
+                    f"  # {param}: np.arange(0, 91, 15)  # Every 15 degrees\n"
+                )
+            elif param in ["B0", "Bx", "By", "Bz"]:
+                swap_section += (
+                    f"  {param}: [0.001, 0.01, 0.1]  # Magnetic field in T\n"
+                )
+                swap_section += f"  # {param}: (0.005, 0.05, 10)  # Range: 10 values from 0.005 to 0.05\n"
+                swap_section += (
+                    f"  # {param}: np.logspace(-3, -1, 10)  # Logarithmic spacing\n"
+                )
+            elif param == "sq_parm":
+                swap_section += f"  {param}: [0.5, 1.0, 1.5]  # Squircle parameter\n"
+            elif param in ["alpha", "alpha0"]:
+                swap_section += f"  {param}: [0.001, 0.01, 0.1]  # Damping parameter\n"
+                swap_section += (
+                    f"  # {param}: np.logspace(-3, -1, 5)  # Logarithmic spacing\n"
+                )
+            elif param in ["msat", "Ms_1"]:
+                swap_section += (
+                    f"  {param}: [800e3, 1000e3, 1200e3]  # Saturation magnetization\n"
+                )
+                swap_section += f"  # {param}: (800e3, 1200e3, 5)  # Range in A/m\n"
+            elif param in ["aex", "Aex_1"]:
+                swap_section += (
+                    f"  {param}: [10e-12, 15e-12, 20e-12]  # Exchange constant\n"
+                )
+                swap_section += (
+                    f"  # {param}: np.linspace(10e-12, 20e-12, 5)  # Linear spacing\n"
+                )
+            elif param == "anetnna":
+                swap_section += f"  {param}: [0, 1]  # Antenna parameter\n"
+            else:
+                # Domyślne wartości dla nieznanych parametrów
+                swap_section += f"  {param}: [1.0]  # Custom parameter\n"
+                swap_section += f"  # {param}: (0.5, 2.0, 5)  # Range example\n"
+
+        # Sekcja config
+        config_section = f"""
+config:
+  last_param_name: "{last_param}"     # Parameter for last iteration
+  prefix: "{prefix}"                  # Simulation prefix/version
+  template_name: "{template_name}"    # Template file name
+
+  # Execution modes (choose one)
+  sbatch: true                        # Use SLURM batch system locally
+  remote_run: false                   # Use remote MMPP server for execution
+
+  full_name: false                    # Use full parameter names in paths
+
+  # Execution control
+  minsim: 0                          # Minimum simulation index
+  maxsim: null                       # Maximum simulation index (null = no limit)
+  pairs: false                       # Use paired parameters instead of cartesian product
+  cleanup: false                     # Cleanup temporary files
+  check: false                       # Check simulation status
+  force: false                       # Force re-run completed simulations
+"""
+
+        # Nagłówek z instrukcjami - rozszerzony o nową składnię
+        header = f"""# MMPP Simulation Parameters Template
+# Auto-generated from: {self.template_path}
+# Found parameters: {", ".join(sorted(self.parameters))}
+#
+# Parameter Syntax Options:
+# 1. Discrete values: [value1, value2, value3]
+# 2. Range syntax: (min, max, count) - generates linspace
+# 3. NumPy expressions:
+#    - np.linspace(start, stop, num)    # Linear spacing
+#    - np.arange(start, stop, step)     # Step-based range
+#    - np.logspace(start, stop, num)    # Logarithmic spacing
+#    - np.geomspace(start, stop, num)   # Geometric spacing
+# 4. Mathematical expressions:
+#    - [sin(pi/4), cos(pi/4), tan(pi/6)]
+#    - np.linspace(0, 2*pi, 10)
+#    - [i**2 for i in range(1, 6)]     # List comprehensions
+#
+# Execution Modes:
+#   sbatch: true, remote_run: false    # Local SLURM execution
+#   sbatch: false, remote_run: true    # Remote MMPP server execution
+#   sbatch: false, remote_run: false   # Files only (no execution)
+#
+# Examples:
+#   B0: [0.001, 0.01, 0.1]                    # Discrete values
+#   B0: (0.005, 0.05, 10)                     # Range: 10 values from 0.005 to 0.05
+#   B0: np.linspace(0.005, 0.05, 10)          # Numpy linear spacing
+#   B0: np.logspace(-3, -1, 10)               # Logarithmic from 0.001 to 0.1
+#   rotation: np.arange(0, 91, 15)             # Every 15 degrees
+#   angles: [i*pi/4 for i in range(8)]        # Angles in radians
+#   freq: np.logspace(log10(1e9), log10(10e9), 20)  # Frequency sweep
+
+"""
+
+        return header + swap_section + config_section
+
+
+# -----------------------
+# PRZYKŁAD UŻYCIA
+# -----------------------
+# if __name__ == "__main__":
+#     import itertools
+
+#     params = {
+#         "b0": np.linspace(0.0001, 0.01, 7),
+#         "fcut": np.linspace(2.6, 2.8, 25),
+#     }
+#     num_cases = len(list(itertools.product(*params.values())))
+#     log.info(f"Total number of cases: {num_cases}")
+
+#     manager = SimulationManager(
+#         main_path="/mnt/storage_2/scratch/pl0095-01/jakzwo/simulations/",
+#         destination_path="/mnt/storage_2/scratch/pl0095-01/jakzwo/simulations/",
+#         prefix="v5",
+#     )
+#     manager.submit_all_simulations(params, last_param_name="fcut", minsim=0,
+#                                     maxsim=None,
+#                                     sbatch=0
+#                                 )

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -39,8 +39,8 @@ class IndexPlan:
 def make_index_plan(
     key: Any,
     source_shape: tuple[int, ...],
-    previous_plan: Optional["IndexPlan"] = None,
-) -> "IndexPlan":
+    previous_plan: IndexPlan | None = None,
+) -> IndexPlan:
     """Build an :class:`IndexPlan` from a raw user key.
 
     If *previous_plan* is supplied the new key is composed on top of it so
@@ -50,7 +50,9 @@ def make_index_plan(
     user_tuple = key if isinstance(key, tuple) else (key,)
 
     # Expand Ellipsis
-    normalized_user: list[Any] = list(normalize_index_key(user_tuple, ndim, keep_dims=False))
+    normalized_user: list[Any] = list(
+        normalize_index_key(user_tuple, ndim, keep_dims=False)
+    )
 
     # Compute which axes the user selects with an integer
     dropped: list[int] = []
@@ -63,7 +65,9 @@ def make_index_plan(
 
     # Compose with previous plan when chaining
     if previous_plan is not None:
-        storage_key = compose_index_keys(previous_plan.storage_key, storage_key, previous_plan.source_shape)
+        storage_key = compose_index_keys(
+            previous_plan.storage_key, storage_key, previous_plan.source_shape
+        )
         # The analysis/storage view preserves dimensionality, so child keys are
         # still expressed in source-axis coordinates.  Do not remap by position
         # inside ``previous_plan.dropped_axes``; that confuses "axis 0/1/2" with
@@ -76,9 +80,7 @@ def make_index_plan(
     analysis_shape = shape_after_index(source_shape, storage_key)
 
     # numpy_shape: remove axes in dropped_axes from analysis_shape
-    numpy_shape = tuple(
-        s for i, s in enumerate(analysis_shape) if i not in dropped
-    )
+    numpy_shape = tuple(s for i, s in enumerate(analysis_shape) if i not in dropped)
 
     return IndexPlan(
         user_key=user_tuple,
@@ -108,11 +110,11 @@ class AxisLayout:
 
     time_axis: int
     spatial_axes: tuple
-    component_axis: Optional[int]
+    component_axis: int | None
     ndim: int
 
     @property
-    def n_components(self) -> Optional[int]:
+    def n_components(self) -> int | None:
         """Number of components if layout has a component axis, else None."""
         return None  # resolved at runtime from actual array
 
@@ -137,45 +139,90 @@ def infer_axis_layout(shape: tuple[int, ...], attrs: Any = None) -> AxisLayout:
     """
     ndim = len(shape)
 
+    def _metadata_layout() -> str | None:
+        if attrs is None or not hasattr(attrs, "get"):
+            return None
+        for key in ("axis_order", "axes", "dims", "dimensions"):
+            raw = attrs.get(key)
+            if raw is None:
+                continue
+            if isinstance(raw, str):
+                tokens = raw.lower().replace("-", "").replace("_", "")
+                if "comp" in tokens or tokens.endswith("c"):
+                    return "vector"
+                if "z" in tokens:
+                    return "scalar"
+            elif isinstance(raw, (list, tuple)):
+                tokens_set = {str(token).strip().lower() for token in raw}
+                if tokens_set & {
+                    "c",
+                    "comp",
+                    "component",
+                    "components",
+                    "valuedim",
+                    "value_dim",
+                }:
+                    return "vector"
+                if "z" in tokens:
+                    return "scalar"
+
+        last = int(shape[-1]) if shape else 0
+        for key in ("valuedim", "value_dim", "n_comp", "component_count"):
+            value = attrs.get(key)
+            if value is not None:
+                try:
+                    return "vector" if int(value) == last else None
+                except Exception:
+                    pass
+        for key in ("components", "component_names", "vector_components"):
+            value = attrs.get(key)
+            if isinstance(value, (list, tuple)) and value:
+                return "vector" if len(value) == last else None
+        return None
+
     # Helper: last axis is likely a component if its size is small (≤ 4 for magnetization)
     def _last_is_component() -> bool:
         if ndim < 2:
             return False
+        metadata_layout = _metadata_layout()
+        if metadata_layout is not None:
+            return metadata_layout == "vector"
         last = int(shape[-1])
         # Strongly component-like: size in {1, 2, 3, 4}
         if last <= 4:
             # But only if other spatial dims are larger — avoids false positives on tiny grids
             if any(int(shape[i]) > 4 for i in range(1, ndim - 1)):
                 return True
-        # Check metadata override
-        if attrs is not None and hasattr(attrs, "get"):
-            for key in ("valuedim", "value_dim", "n_comp", "component_count"):
-                val = attrs.get(key)
-                if val is not None:
-                    try:
-                        return int(val) == last
-                    except Exception:
-                        pass
         return False
 
     if ndim == 5:
         # (t, z, y, x, c) — always vector with z
-        return AxisLayout(time_axis=0, spatial_axes=(1, 2, 3), component_axis=4, ndim=ndim)
+        return AxisLayout(
+            time_axis=0, spatial_axes=(1, 2, 3), component_axis=4, ndim=ndim
+        )
 
     if ndim == 4:
         if _last_is_component():
             # (t, y, x, c)
-            return AxisLayout(time_axis=0, spatial_axes=(1, 2), component_axis=3, ndim=ndim)
+            return AxisLayout(
+                time_axis=0, spatial_axes=(1, 2), component_axis=3, ndim=ndim
+            )
         # (t, z, y, x)
-        return AxisLayout(time_axis=0, spatial_axes=(1, 2, 3), component_axis=None, ndim=ndim)
+        return AxisLayout(
+            time_axis=0, spatial_axes=(1, 2, 3), component_axis=None, ndim=ndim
+        )
 
     if ndim == 3:
         # (t, y, x)
-        return AxisLayout(time_axis=0, spatial_axes=(1, 2), component_axis=None, ndim=ndim)
+        return AxisLayout(
+            time_axis=0, spatial_axes=(1, 2), component_axis=None, ndim=ndim
+        )
 
     if ndim == 2:
         # (t, x)
-        return AxisLayout(time_axis=0, spatial_axes=(1,), component_axis=None, ndim=ndim)
+        return AxisLayout(
+            time_axis=0, spatial_axes=(1,), component_axis=None, ndim=ndim
+        )
 
     # ndim == 1 or unknown
     return AxisLayout(time_axis=0, spatial_axes=(), component_axis=None, ndim=ndim)
@@ -245,7 +292,11 @@ def normalize_index_key(
 
     normalized: list[Any] = []
     for token in key:
-        if keep_dims and isinstance(token, (int, np.integer)) and not isinstance(token, bool):
+        if (
+            keep_dims
+            and isinstance(token, (int, np.integer))
+            and not isinstance(token, bool)
+        ):
             idx = int(token)
             normalized.append(slice(idx, idx + 1 if idx != -1 else None))
         else:
@@ -270,7 +321,7 @@ def shape_after_index(shape: tuple[int, ...], key: Any) -> tuple[int, ...]:
     normalized = normalize_index_key(key, len(shape), keep_dims=True)
     return tuple(
         int(_axis_length(int(size), token))
-        for size, token in zip(shape, normalized)
+        for size, token in zip(shape, normalized, strict=False)
     )
 
 
@@ -317,7 +368,7 @@ def compose_index_keys(
 
     composed: list[Any] = []
     for size, base_token, child_token in zip(
-        source_shape, normalized_base, normalized_child
+        source_shape, normalized_base, normalized_child, strict=False
     ):
         if not isinstance(base_token, slice) or not isinstance(child_token, slice):
             raise TypeError(
@@ -328,8 +379,8 @@ def compose_index_keys(
 
 
 def source_spatial_axes(
-    source_shape: Optional[tuple[int, ...]],
-) -> Optional[dict[str, int]]:
+    source_shape: tuple[int, ...] | None, attrs: Any = None
+) -> dict[str, int | None] | None:
     """Infer spatial axis mapping for common mmpp dataset layouts."""
     if source_shape is None:
         return None
@@ -338,15 +389,17 @@ def source_spatial_axes(
     if ndim == 5:
         return {"x": 3, "y": 2, "z": 1}
     if ndim == 4:
-        if int(source_shape[-1]) <= 4:
-            return {"x": 2, "y": 1, "z": 0}
+        if infer_axis_layout(source_shape, attrs).is_vector():
+            return {"x": 2, "y": 1, "z": None}
         return {"x": 3, "y": 2, "z": 1}
     if ndim == 3:
-        return {"x": 2, "y": 1, "z": 0}
+        return {"x": 2, "y": 1, "z": None}
+    if ndim == 2:
+        return {"x": 1, "y": None, "z": None}
     return None
 
 
-def _attr_triplet(attrs: Any, *, key: str) -> Optional[tuple[float, float, float]]:
+def _attr_triplet(attrs: Any, *, key: str) -> tuple[float, float, float] | None:
     if not hasattr(attrs, "get"):
         return None
     raw = attrs.get(key, None)
@@ -463,7 +516,7 @@ class AxisGeometry:
 
     axis: str
     name: str
-    index: int
+    index: int | None
     size: int
     min_m: float
     max_m: float
@@ -487,7 +540,9 @@ class AxisGeometry:
             raise ValueError(f"Axis {self.axis!r} is empty")
         if not np.isfinite(value_m):
             raise ValueError(f"Selection on axis {self.axis!r} must be finite")
-        raw = (float(value_m) - float(self.min_m)) / max(float(self.cell_m), 1e-30) - 0.5
+        raw = (float(value_m) - float(self.min_m)) / max(
+            float(self.cell_m), 1e-30
+        ) - 0.5
         idx = int(np.floor(raw + 0.5))
         return int(np.clip(idx, 0, self.size - 1))
 
@@ -523,7 +578,7 @@ class DatasetGeometry:
     """Current-view geometry for dataset-backed fields."""
 
     shape: tuple[int, ...]
-    spatial_axes: Optional[dict[str, int]]
+    spatial_axes: dict[str, int | None] | None
     axes: dict[str, AxisGeometry]
 
     def canonical_axis(self, name: str) -> str:
@@ -536,7 +591,7 @@ class DatasetGeometry:
         raise KeyError(f"Unknown spatial axis {name!r}")
 
     @property
-    def pmin(self) -> Optional[tuple[float, float, float]]:
+    def pmin(self) -> tuple[float, float, float] | None:
         if not self.axes:
             return None
         return (
@@ -546,7 +601,7 @@ class DatasetGeometry:
         )
 
     @property
-    def pmax(self) -> Optional[tuple[float, float, float]]:
+    def pmax(self) -> tuple[float, float, float] | None:
         if not self.axes:
             return None
         return (
@@ -579,7 +634,7 @@ class DatasetGeometry:
             str(self.axes["z"].name),
         )
 
-    def spatial_shape_zyx(self) -> Optional[tuple[int, int, int]]:
+    def spatial_shape_zyx(self) -> tuple[int, int, int] | None:
         if self.spatial_axes is None or not self.axes:
             return None
         return (
@@ -588,7 +643,7 @@ class DatasetGeometry:
             int(self.axes["x"].size),
         )
 
-    def sliced(self, key: Any) -> "DatasetGeometry":
+    def sliced(self, key: Any) -> DatasetGeometry:
         normalized = normalize_index_key(key, len(self.shape), keep_dims=True)
         new_shape = shape_after_index(self.shape, normalized)
         if self.spatial_axes is None or not self.axes:
@@ -596,6 +651,9 @@ class DatasetGeometry:
 
         new_axes: dict[str, AxisGeometry] = {}
         for axis, axis_geom in self.axes.items():
+            if axis_geom.index is None:
+                new_axes[axis] = axis_geom
+                continue
             token = normalized[axis_geom.index]
             size = int(new_shape[axis_geom.index])
             min_m, max_m, cell_m = _axis_selection_geometry(
@@ -621,7 +679,7 @@ class DatasetGeometry:
             axes=new_axes,
         )
 
-    def resampled(self, new_shape: tuple[int, ...]) -> "DatasetGeometry":
+    def resampled(self, new_shape: tuple[int, ...]) -> DatasetGeometry:
         new_shape = tuple(int(v) for v in new_shape)
         if len(new_shape) != len(self.shape):
             raise ValueError(
@@ -632,6 +690,9 @@ class DatasetGeometry:
 
         new_axes: dict[str, AxisGeometry] = {}
         for axis, axis_geom in self.axes.items():
+            if axis_geom.index is None:
+                new_axes[axis] = axis_geom
+                continue
             size = int(new_shape[axis_geom.index])
             extent = float(axis_geom.max_m - axis_geom.min_m)
             if size > 0 and np.isfinite(extent) and extent > 0.0:
@@ -665,13 +726,13 @@ def _dataset_attrs(dataset_obj) -> Any:
     for candidate in (owner, dataset_obj):
         if candidate is None:
             continue
-        raw_attrs = getattr(candidate, "attrs", None)
-        if hasattr(raw_attrs, "as_dict"):
+        raw_attrs: Any = getattr(candidate, "attrs", None)
+        if raw_attrs is not None and hasattr(raw_attrs, "as_dict"):
             try:
                 attrs.update(raw_attrs.as_dict())
             except Exception:
                 pass
-        elif hasattr(raw_attrs, "items"):
+        elif raw_attrs is not None and hasattr(raw_attrs, "items"):
             try:
                 attrs.update(dict(raw_attrs.items()))
             except Exception:
@@ -694,7 +755,7 @@ def _dataset_attrs(dataset_obj) -> Any:
     return attrs
 
 
-def _raw_source_shape(dataset_obj) -> Optional[tuple[int, ...]]:
+def _raw_source_shape(dataset_obj) -> tuple[int, ...] | None:
     materialized = getattr(dataset_obj, "_materialized_data", None)
     if materialized is not None:
         return tuple(int(v) for v in np.asarray(materialized).shape)
@@ -723,9 +784,10 @@ def resolve_dataset_geometry(
 
     source_shape = _raw_source_shape(dataset_obj)
     if source_shape is None:
-        return DatasetGeometry(shape=tuple(), spatial_axes=None, axes={})
+        return DatasetGeometry(shape=(), spatial_axes=None, axes={})
 
-    spatial_axes = source_spatial_axes(source_shape)
+    attrs = _dataset_attrs(dataset_obj)
+    spatial_axes = source_spatial_axes(source_shape, attrs)
     if spatial_axes is None:
         active_shape = (
             shape_after_index(source_shape, slice_info)
@@ -734,7 +796,6 @@ def resolve_dataset_geometry(
         )
         return DatasetGeometry(shape=active_shape, spatial_axes=None, axes={})
 
-    attrs = _dataset_attrs(dataset_obj)
     if hasattr(attrs, "get"):
         dx_m = float(attrs.get("dx", 1e-9))
         dy_m = float(attrs.get("dy", 1e-9))
@@ -752,36 +813,59 @@ def resolve_dataset_geometry(
         "x": _axis_min_and_cell(
             attrs=attrs,
             axis="x",
-            total_n=int(source_shape[spatial_axes["x"]]),
+            total_n=(
+                int(source_shape[spatial_axes["x"]])
+                if spatial_axes["x"] is not None
+                else 1
+            ),
             default_cell_m=dx_m,
         ),
         "y": _axis_min_and_cell(
             attrs=attrs,
             axis="y",
-            total_n=int(source_shape[spatial_axes["y"]]),
+            total_n=(
+                int(source_shape[spatial_axes["y"]])
+                if spatial_axes["y"] is not None
+                else 1
+            ),
             default_cell_m=dy_m,
         ),
         "z": _axis_min_and_cell(
             attrs=attrs,
             axis="z",
-            total_n=int(source_shape[spatial_axes["z"]]),
+            total_n=(
+                int(source_shape[spatial_axes["z"]])
+                if spatial_axes["z"] is not None
+                else 1
+            ),
             default_cell_m=dz_m,
         ),
     }
 
     normalized_slice = None
     if include_slice and slice_info is not None:
-        normalized_slice = normalize_index_key(slice_info, len(source_shape), keep_dims=True)
+        normalized_slice = normalize_index_key(
+            slice_info, len(source_shape), keep_dims=True
+        )
         active_shape = shape_after_index(source_shape, normalized_slice)
     else:
         active_shape = source_shape
 
     axes: dict[str, AxisGeometry] = {}
     for axis in ("x", "y", "z"):
-        axis_index = int(spatial_axes[axis])
-        total_n = int(source_shape[axis_index])
-        size = int(active_shape[axis_index])
-        token = normalized_slice[axis_index] if normalized_slice is not None else slice(None)
+        axis_index = spatial_axes[axis]
+        if axis_index is None:
+            total_n = size = 1
+            token = None
+        else:
+            axis_index = int(axis_index)
+            total_n = int(source_shape[axis_index])
+            size = int(active_shape[axis_index])
+            token = (
+                normalized_slice[axis_index]
+                if normalized_slice is not None
+                else slice(None)
+            )
         min_m, max_m, cell_m = _axis_selection_geometry(
             total_n=total_n,
             token=token,

@@ -31,11 +31,15 @@ def detect_polarity_switches(
 ) -> list[PolaritySwitchEvent]:
     """Detect polarity switches from tracked polarity time series."""
     time = np.asarray(trajectory.time, dtype=float)
-    polarity = _binary_polarity_series(np.asarray(trajectory.polarity, dtype=float), threshold)
+    polarity = _binary_polarity_series(
+        np.asarray(trajectory.polarity, dtype=float), threshold
+    )
     confidence = np.asarray(trajectory.confidence, dtype=float)
 
     if time.size != polarity.size:
-        raise ValueError("trajectory.time and trajectory.polarity must have the same length")
+        raise ValueError(
+            "trajectory.time and trajectory.polarity must have the same length"
+        )
 
     events: list[PolaritySwitchEvent] = []
     if polarity.size < 2:
@@ -53,7 +57,9 @@ def detect_polarity_switches(
             continue
         last_time = t
 
-        conf = float(np.mean(confidence[max(0, idx - 1) : min(idx + 1, confidence.size)]))
+        conf = float(
+            np.mean(confidence[max(0, idx - 1) : min(idx + 1, confidence.size)])
+        )
         events.append(
             PolaritySwitchEvent(
                 time=t,

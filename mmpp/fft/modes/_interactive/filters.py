@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional, Sequence, Union
 
 import numpy as np
 
 try:
     from scipy.signal import find_peaks as scipy_find_peaks
 except ImportError:  # pragma: no cover - optional dependency
-    scipy_find_peaks = None
+    scipy_find_peaks = None  # type: ignore[assignment]
 
 from ...filters.postprocess import (
     apply_baseline as _shared_apply_baseline,
+)
+from ...filters.postprocess import (
     apply_percentile_clip as _shared_apply_percentile_clip,
-    apply_soft_threshold as _shared_apply_soft_threshold,
+)
+from ...filters.postprocess import (
     apply_smoothing as _shared_apply_smoothing,
+)
+from ...filters.postprocess import (
+    apply_soft_threshold as _shared_apply_soft_threshold,
 )
 
 CARTESIAN_COMPONENT_NAMES = ("x", "y", "z")
@@ -32,9 +39,7 @@ COMPONENT_LABELS = {
     "rho": r"$m_{\rho}$",
     "phi": r"$m_{\phi}$",
 }
-_COMPONENT_INDEX = {
-    name: idx for idx, name in enumerate(CARTESIAN_COMPONENT_NAMES)
-}
+_COMPONENT_INDEX = {name: idx for idx, name in enumerate(CARTESIAN_COMPONENT_NAMES)}
 
 
 @dataclass
@@ -53,18 +58,69 @@ class SpectrumFilterState:
     normalize: bool = True
     log_scale: bool = False
 
+    def __post_init__(self) -> None:
+        self.freq_min = float(self.freq_min)
+        self.freq_max = float(self.freq_max)
+        if not np.isfinite(self.freq_min) or not np.isfinite(self.freq_max):
+            raise ValueError("Frequency filter bounds must be finite")
 
-def _component_from_label(label: Optional[str]) -> Optional[str]:
+        self.smooth_filter = str(self.smooth_filter).strip().lower()
+        valid_smoothing = {
+            "none",
+            "",
+            "moving",
+            "moving_average",
+            "gaussian",
+            "gaussian_smooth",
+            "savgol",
+            "savgol_smooth",
+        }
+        if self.smooth_filter not in valid_smoothing:
+            raise ValueError(f"Unknown smoothing filter: {self.smooth_filter!r}")
+        if (
+            isinstance(self.smooth_window, (bool, np.bool_))
+            or int(self.smooth_window) != self.smooth_window
+            or int(self.smooth_window) < 1
+        ):
+            raise ValueError("smooth_window must be a positive integer")
+        self.smooth_window = int(self.smooth_window)
+        self.smooth_sigma = float(self.smooth_sigma)
+        if not np.isfinite(self.smooth_sigma) or self.smooth_sigma < 0:
+            raise ValueError("smooth_sigma must be finite and non-negative")
+
+        self.baseline_mode = str(self.baseline_mode).strip().lower()
+        if self.baseline_mode not in {"none", "mean", "median", "linear"}:
+            raise ValueError(f"Unknown baseline mode: {self.baseline_mode!r}")
+        self.clip_percentile_low = float(self.clip_percentile_low)
+        self.clip_percentile_high = float(self.clip_percentile_high)
+        if not (
+            np.isfinite(self.clip_percentile_low)
+            and np.isfinite(self.clip_percentile_high)
+            and 0 <= self.clip_percentile_low <= self.clip_percentile_high <= 100
+        ):
+            raise ValueError("clip percentiles must satisfy 0 <= low <= high <= 100")
+        self.soft_threshold_percentile = float(self.soft_threshold_percentile)
+        if not (
+            np.isfinite(self.soft_threshold_percentile)
+            and 0 <= self.soft_threshold_percentile <= 100
+        ):
+            raise ValueError("soft_threshold_percentile must be in [0, 100]")
+        if not isinstance(self.normalize, (bool, np.bool_)):
+            raise TypeError("normalize must be boolean")
+        if not isinstance(self.log_scale, (bool, np.bool_)):
+            raise TypeError("log_scale must be boolean")
+        self.normalize = bool(self.normalize)
+        self.log_scale = bool(self.log_scale)
+
+
+def _component_from_label(label: str | None) -> str | None:
     """Infer component key from a label like '$m_x$' or 'my'."""
     if not label:
         return None
-    text = str(label).lower().replace("$", "")
-    if "x" in text:
-        return "x"
-    if "y" in text:
-        return "y"
-    if "z" in text:
-        return "z"
+    text = re.sub(r"[\s$\\{}_^]", "", str(label).strip().lower())
+    match = re.fullmatch(r"m?([xyz])", text)
+    if match:
+        return match.group(1)
     return None
 
 
@@ -101,9 +157,9 @@ def component_plot_label(component: str) -> str:
     return COMPONENT_LABELS.get(key, f"$m_{{{key}}}$")
 
 
-def _normalize_component_key(component: Union[int, str]) -> Optional[str]:
+def _normalize_component_key(component: int | str) -> str | None:
     """Normalize a single component selector token to canonical key."""
-    key: Optional[str] = None
+    key: str | None = None
     if isinstance(component, int):
         if 0 <= component < len(CARTESIAN_COMPONENT_NAMES):
             key = CARTESIAN_COMPONENT_NAMES[component]
@@ -117,8 +173,8 @@ def _normalize_component_key(component: Union[int, str]) -> Optional[str]:
 
 
 def normalize_component_selection(
-    components: Optional[Sequence[Union[int, str]]],
-    available: Optional[Sequence[str]] = None,
+    components: Sequence[int | str] | None,
+    available: Sequence[str] | None = None,
 ) -> list[str]:
     """Normalize mixed component input to canonical component keys."""
     if components is None:
@@ -145,8 +201,8 @@ def normalize_component_selection(
 
 
 def normalize_spectrum_component_selection(
-    components: Optional[Sequence[Union[int, str]]],
-    available: Optional[Sequence[str]],
+    components: Sequence[int | str] | None,
+    available: Sequence[str] | None,
 ) -> list[str]:
     """Normalize selection strictly to available spectrum-trace components."""
     available_keys = []
@@ -166,9 +222,13 @@ def normalize_spectrum_component_selection(
     return selected or list(available_keys)
 
 
-def _extract_cartesian_components(mode_array: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _extract_cartesian_components(
+    mode_array: np.ndarray,
+    *,
+    singleton_component: str = "z",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Extract (mx, my, mz) arrays from a mode tensor with robust fallbacks."""
-    arr = np.asarray(mode_array)
+    arr = np.asanyarray(mode_array)
     if arr.ndim == 2:
         arr = arr[:, :, np.newaxis]
 
@@ -179,7 +239,17 @@ def _extract_cartesian_components(mode_array: np.ndarray) -> tuple[np.ndarray, n
     zeros = np.zeros((ny, nx), dtype=arr.dtype)
 
     if arr.shape[-1] == 1:
-        return zeros, zeros, arr[:, :, 0]
+        selected = arr[:, :, 0]
+        if singleton_component == "x":
+            return selected, zeros, zeros
+        if singleton_component == "y":
+            return zeros, selected, zeros
+        if singleton_component == "z":
+            return zeros, zeros, selected
+        raise ValueError(
+            "singleton_component must be one of 'x', 'y', or 'z', "
+            f"got {singleton_component!r}"
+        )
     if arr.shape[-1] == 2:
         return arr[:, :, 0], arr[:, :, 1], zeros
     return arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
@@ -198,16 +268,38 @@ def resolve_mode_components(
     if not requested:
         requested = ["z"]
 
-    m_x, m_y, m_z = _extract_cartesian_components(mode_array)
+    arr = np.asarray(mode_array)
+    singleton_component = "z"
+    if arr.ndim >= 3 and arr.shape[-1] == 1:
+        requested_cartesian = [
+            key for key in requested if key in CARTESIAN_COMPONENT_NAMES
+        ]
+        requested_topological = [
+            key for key in requested if key in TOPOLOGICAL_COMPONENT_NAMES
+        ]
+        if requested_topological:
+            raise ValueError(
+                "Circular/cylindrical components require both mx and my; "
+                "the selected mode view contains only one component"
+            )
+        if len(requested_cartesian) != 1:
+            raise ValueError(
+                "A singleton mode tensor requires exactly one requested "
+                "cartesian component so its identity is unambiguous"
+            )
+        singleton_component = requested_cartesian[0]
+
+    m_x, m_y, m_z = _extract_cartesian_components(
+        arr,
+        singleton_component=singleton_component,
+    )
     resolved: dict[str, np.ndarray] = {
         "x": m_x,
         "y": m_y,
         "z": m_z,
     }
 
-    needs_topological = any(
-        key in TOPOLOGICAL_COMPONENT_NAMES for key in requested
-    )
+    needs_topological = any(key in TOPOLOGICAL_COMPONENT_NAMES for key in requested)
     if needs_topological:
         try:
             from ..vortex_optics import VortexOptics
@@ -218,16 +310,18 @@ def resolve_mode_components(
                 m_z,
                 list(requested),
             )
-        except Exception:
-            # Fallback to cartesian-only rendering when transformation fails.
+        except ImportError:
+            # Optional visualization dependencies must not break cartesian data.
             pass
 
-    return {key: resolved.get(key) for key in requested if key in resolved}
+    return {key: resolved[key] for key in requested if key in resolved}
 
 
 def collapse_spectrum_components(
     spectrum_power: np.ndarray,
-    component_hint: Optional[str] = None,
+    component_hint: str | None = None,
+    *,
+    single_component: bool = False,
 ) -> dict[str, np.ndarray]:
     """Collapse arbitrary spectrum shapes into per-component 1D traces."""
     spec = np.asarray(spectrum_power)
@@ -237,6 +331,11 @@ def collapse_spectrum_components(
     if spec.ndim == 1:
         key = component_hint or "z"
         return {key: spec.astype(float, copy=False)}
+
+    if single_component:
+        reduced = np.mean(spec, axis=tuple(range(1, spec.ndim)))
+        key = component_hint or "z"
+        return {key: np.asarray(reduced, dtype=float)}
 
     if spec.shape[-1] <= 3:
         if spec.ndim == 2:
@@ -248,7 +347,9 @@ def collapse_spectrum_components(
         out: dict[str, np.ndarray] = {}
         n_comp = min(traces.shape[-1], 3)
         for idx in range(n_comp):
-            out[CARTESIAN_COMPONENT_NAMES[idx]] = np.asarray(traces[:, idx], dtype=float)
+            out[CARTESIAN_COMPONENT_NAMES[idx]] = np.asarray(
+                traces[:, idx], dtype=float
+            )
         return out
 
     reduced = np.mean(spec, axis=tuple(range(1, spec.ndim)))
@@ -298,13 +399,24 @@ def apply_spectrum_filters(
     """Apply frequency range, smoothing, normalization and optional log transform."""
     freqs = np.asarray(frequencies_ghz, dtype=float)
     if freqs.size == 0:
-        return freqs, {key: np.asarray(val, dtype=float) for key, val in component_power.items()}
+        return freqs, {
+            key: np.asarray(val, dtype=float) for key, val in component_power.items()
+        }
 
     fmin = float(min(filters.freq_min, filters.freq_max))
     fmax = float(max(filters.freq_min, filters.freq_max))
     mask = (freqs >= fmin) & (freqs <= fmax)
     if not np.any(mask):
-        mask = np.ones_like(freqs, dtype=bool)
+        finite_freqs = freqs[np.isfinite(freqs)]
+        available = (
+            f"{float(np.min(finite_freqs)):.6g}–{float(np.max(finite_freqs)):.6g} GHz"
+            if finite_freqs.size
+            else "no finite frequencies"
+        )
+        raise ValueError(
+            f"Requested frequency range {fmin:.6g}–{fmax:.6g} GHz does not "
+            f"overlap available data ({available})"
+        )
 
     filtered_freqs = freqs[mask]
     output: dict[str, np.ndarray] = {}
@@ -312,13 +424,12 @@ def apply_spectrum_filters(
     for comp, values in component_power.items():
         arr = np.asarray(values, dtype=float)
         if arr.shape[0] != freqs.shape[0]:
-            length = min(arr.shape[0], freqs.shape[0])
-            arr = arr[:length]
-            local_mask = mask[:length]
-            local_freqs = freqs[:length]
-        else:
-            local_mask = mask
-            local_freqs = freqs
+            raise ValueError(
+                f"Spectrum component '{comp}' has {arr.shape[0]} samples, "
+                f"but the frequency axis has {freqs.shape[0]}"
+            )
+        local_mask = mask
+        local_freqs = freqs
 
         sub = arr[local_mask]
         if sub.size == 0:
@@ -376,7 +487,24 @@ def detect_spectrum_peaks(
     freqs = np.asarray(frequencies_ghz, dtype=float)
     values = np.asarray(spectrum_1d, dtype=float)
 
-    if freqs.size < 3 or values.size < 3 or freqs.shape[0] != values.shape[0]:
+    if freqs.ndim != 1 or values.ndim != 1:
+        raise ValueError("frequencies and spectrum must be one-dimensional")
+    if freqs.shape[0] != values.shape[0]:
+        raise ValueError("frequencies and spectrum must have matching lengths")
+    if not np.all(np.isfinite(freqs)):
+        raise ValueError("frequencies must contain only finite values")
+    prominence_fraction = float(min_prominence)
+    if not np.isfinite(prominence_fraction) or not 0 <= prominence_fraction <= 1:
+        raise ValueError("min_prominence must be a fraction in [0, 1]")
+    if (
+        isinstance(min_distance, (bool, np.bool_))
+        or int(min_distance) != min_distance
+        or int(min_distance) < 1
+    ):
+        raise ValueError("min_distance must be a positive integer")
+    distance = int(min_distance)
+
+    if freqs.size < 3:
         return []
 
     finite = np.isfinite(values)
@@ -385,34 +513,32 @@ def detect_spectrum_peaks(
 
     data = values.copy()
     data[~finite] = np.nanmin(data[finite])
+    data_min = float(np.min(data))
+    data_max = float(np.max(data))
+    dynamic_range = data_max - data_min
+    if dynamic_range <= 0:
+        return []
+    prominence = prominence_fraction * dynamic_range
 
     if scipy_find_peaks is not None:
-        max_val = float(np.nanmax(data))
-        prominence = float(min_prominence)
-        if 0 < prominence < 1 and max_val > 1:
-            prominence = prominence * max_val
-
-        try:
-            idx, _ = scipy_find_peaks(
-                data,
-                prominence=max(prominence, 0.0),
-                distance=max(int(min_distance), 1),
-            )
-        except Exception:
-            idx = np.array([], dtype=int)
-    else:
-        idx = []
-        threshold = np.nanmin(data) + float(min_prominence) * (
-            np.nanmax(data) - np.nanmin(data)
+        idx, _ = scipy_find_peaks(
+            data,
+            prominence=prominence,
+            distance=distance,
         )
+    else:
+        candidates: list[int] = []
         for i in range(1, data.size - 1):
-            if (
-                data[i] > data[i - 1]
-                and data[i] > data[i + 1]
-                and data[i] >= threshold
-            ):
-                idx.append(i)
-        idx = np.asarray(idx, dtype=int)
+            if data[i] > data[i - 1] and data[i] > data[i + 1]:
+                left_base = float(np.min(data[: i + 1]))
+                right_base = float(np.min(data[i:]))
+                if data[i] - max(left_base, right_base) >= prominence:
+                    candidates.append(i)
+        selected: list[int] = []
+        for index in sorted(candidates, key=lambda i: data[i], reverse=True):
+            if all(abs(index - other) >= distance for other in selected):
+                selected.append(index)
+        idx = np.asarray(selected, dtype=int)
 
     peaks = [(float(freqs[i]), float(data[i])) for i in idx]
     peaks.sort(key=lambda item: item[1], reverse=True)

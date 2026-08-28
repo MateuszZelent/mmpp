@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from .serializers import serialize_config, serialize_slice
 
@@ -12,10 +12,10 @@ from .serializers import serialize_config, serialize_slice
 @dataclass(frozen=True)
 class CacheKey:
     """Immutable cache key for post-processing results.
-    
+
     Provides consistent key generation across all cache types
     (FFT spectrum, transmission, modes, batch operations).
-    
+
     Attributes
     ----------
     analysis_type : str
@@ -32,7 +32,7 @@ class CacheKey:
         16-char hash of configuration
     slice_hash : str
         16-char hash of slice_info
-    
+
     Examples
     --------
     >>> key = CacheKey.create(
@@ -46,7 +46,7 @@ class CacheKey:
     >>> key.to_entry_name()
     'fft_spectrum_a1b2c3d4'
     """
-    
+
     analysis_type: str
     job_path: str
     dataset_name: str
@@ -54,43 +54,43 @@ class CacheKey:
     method: int
     config_hash: str
     slice_hash: str
-    
+
     def __hash__(self) -> int:
         """Hash for use in dictionaries."""
         return hash(self.to_string())
-    
+
     def to_string(self) -> str:
         """Human-readable key representation for debugging."""
         return (
             f"{self.analysis_type}|{self.dataset_name}|z{self.z_layer}|"
             f"m{self.method}|cfg:{self.config_hash[:8]}|sl:{self.slice_hash[:8]}"
         )
-    
+
     def to_hash(self) -> str:
         """16-character hex hash for file/group naming.
-        
+
         Includes job_path to ensure uniqueness across different jobs.
         """
         full = f"{self.job_path}|{self.to_string()}"
         return hashlib.sha256(full.encode()).hexdigest()[:16]
-    
+
     def to_entry_name(self) -> str:
         """Entry name for zarr storage.
-        
+
         Format: {analysis_type}_{hash}
         Example: fft_spectrum_a1b2c3d4e5f6g7h8
         """
         return f"{self.analysis_type}_{self.to_hash()}"
-    
+
     def to_zarr_path(self) -> str:
         """Full zarr group path for storage.
-        
+
         Format: /fft/{analysis_type}/{dataset}/{entry_name}
         Example: /fft/spectrum/m/spectrum_a1b2c3d4
         """
         safe_dataset = self.dataset_name.replace("/", "_")
         return f"fft/{self.analysis_type}/{safe_dataset}/{self.to_entry_name()}"
-    
+
     @classmethod
     def create(
         cls,
@@ -99,11 +99,11 @@ class CacheKey:
         dataset_name: str,
         z_layer: int = -1,
         method: int = 1,
-        config: Optional[Any] = None,
-        slice_info: Optional[Any] = None,
-    ) -> "CacheKey":
+        config: Any | None = None,
+        slice_info: Any | None = None,
+    ) -> CacheKey:
         """Factory method to create cache key from parameters.
-        
+
         Parameters
         ----------
         analysis_type : str
@@ -120,7 +120,7 @@ class CacheKey:
             Configuration object (dataclass, dict, etc.)
         slice_info : Any, optional
             Slice information
-            
+
         Returns
         -------
         CacheKey
@@ -128,7 +128,7 @@ class CacheKey:
         """
         config_hash = serialize_config(config) if config else "none"
         slice_hash = serialize_slice(slice_info) if slice_info else "none"
-        
+
         return cls(
             analysis_type=analysis_type,
             job_path=str(job_path),
@@ -138,21 +138,21 @@ class CacheKey:
             config_hash=config_hash,
             slice_hash=slice_hash,
         )
-    
+
     @classmethod
     def for_batch(
         cls,
         analysis_type: str,
         job_paths: list[str],
         dataset_name: str,
-        config: Optional[Any] = None,
-        slice_info: Optional[Any] = None,
-        extract_parameters: Optional[list[str]] = None,
-    ) -> "CacheKey":
+        config: Any | None = None,
+        slice_info: Any | None = None,
+        extract_parameters: list[str] | None = None,
+    ) -> CacheKey:
         """Create cache key for batch operations.
-        
+
         Uses sorted job paths and parameters list in the hash.
-        
+
         Parameters
         ----------
         analysis_type : str
@@ -167,7 +167,7 @@ class CacheKey:
             Slice information
         extract_parameters : List[str], optional
             Parameters to extract from jobs
-            
+
         Returns
         -------
         CacheKey
@@ -177,21 +177,19 @@ class CacheKey:
         sorted_paths = sorted(str(p) for p in job_paths)
         paths_str = "|".join(sorted_paths)
         paths_hash = hashlib.sha256(paths_str.encode()).hexdigest()[:16]
-        
+
         # Include extract_parameters in config hash
-        config_dict = {"config": serialize_config(config)}
+        config_dict: dict[str, Any] = {"config": serialize_config(config)}
         if extract_parameters:
             config_dict["extract_params"] = sorted(extract_parameters)
-        config_hash = hashlib.sha256(
-            str(config_dict).encode()
-        ).hexdigest()[:16]
-        
+        config_hash = hashlib.sha256(str(config_dict).encode()).hexdigest()[:16]
+
         return cls(
             analysis_type=analysis_type,
             job_path=f"batch:{len(job_paths)}:{paths_hash}",
             dataset_name=dataset_name,
             z_layer=-1,  # Not used for batch
-            method=1,    # Not used for batch
+            method=1,  # Not used for batch
             config_hash=config_hash,
             slice_hash=serialize_slice(slice_info) if slice_info else "none",
         )

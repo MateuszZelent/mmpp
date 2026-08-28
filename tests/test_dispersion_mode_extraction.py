@@ -4,11 +4,11 @@ Fast unit tests for dispersion mode extraction helpers.
 These tests are synthetic and do not require zarr/job infrastructure.
 """
 
+import json
+import logging
 import os
 import sys
 import types
-import logging
-import json
 
 import numpy as np
 import pytest
@@ -18,7 +18,9 @@ import zarr
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-def _make_axes(n_k: int, n_f: int, *, dx: float, dt: float) -> tuple[np.ndarray, np.ndarray]:
+def _make_axes(
+    n_k: int, n_f: int, *, dx: float, dt: float
+) -> tuple[np.ndarray, np.ndarray]:
     k_axis = np.fft.fftshift(2 * np.pi * np.fft.fftfreq(n_k, dx))
     f_axis = np.fft.fftshift(np.fft.fftfreq(n_f, dt))
     return k_axis, f_axis
@@ -610,7 +612,9 @@ def test_dispersion_viewer_passes_analytical_overlay_to_heatmap_widget(monkeypat
             captured["toolbar"] = toolbar
             return "fake-widget"
 
-    monkeypatch.setattr(interactive_module, "DispersionHeatmapWidget", FakeHeatmapWidget)
+    monkeypatch.setattr(
+        interactive_module, "DispersionHeatmapWidget", FakeHeatmapWidget
+    )
 
     n_k, n_f = 8, 6
     dx, dt = 5e-9, 2e-9
@@ -736,7 +740,9 @@ def test_dispersion_result_plot_interactive_show_false_returns_viewer():
     assert full_viewer.options["positive_frequencies"] is False
 
 
-def test_dispersion_interactive_viewer_can_save_load_preset_and_export_selection(tmp_path):
+def test_dispersion_interactive_viewer_can_save_load_preset_and_export_selection(
+    tmp_path,
+):
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
 
     n_k, n_f = 8, 6
@@ -979,9 +985,7 @@ def test_dispersion_interactive_viewer_show_builds_heatmap_widget(monkeypatch):
     assert fake_ax.images
     assert viewer.state["widget_status"] == "ready"
     assert viewer.state["options"]["fmax"] == 1.0
-    assert {"tabs", "status_log", "preset_select", "output"}.issubset(
-        viewer._controls
-    )
+    assert {"tabs", "status_log", "preset_select", "output"}.issubset(viewer._controls)
     assert viewer.diagnostics()["toolbar_enabled"] is True
     assert displayed and displayed[-1] is viewer._widget
 
@@ -1457,7 +1461,10 @@ def test_find_branches_defaults_to_raw_spectrum_not_display_view():
     assert np.allclose(raw_branches.branches[0].f_hz, 1.0)
     assert np.allclose(display_branches.branches[0].f_hz, 2.0)
     assert raw_branches.branches[0].quality_metrics["coverage"] == 1.0
-    assert raw_branches.branches[0].quality_metrics["confidence"] == raw_branches.branches[0].quality
+    assert (
+        raw_branches.branches[0].quality_metrics["confidence"]
+        == raw_branches.branches[0].quality
+    )
 
 
 def test_find_branches_can_search_full_frequency_axis_when_requested():
@@ -1665,9 +1672,7 @@ def _write_complex_xy_wave_zarr(
     t = np.arange(n_t, dtype=float)[:, None, None]
     y = np.arange(n_y, dtype=float)[None, :, None]
     x = np.arange(n_x, dtype=float)[None, None, :]
-    phase = 2.0 * np.pi * (
-        (f_bin * t / n_t) + (ky_bin * y / n_y) + (kx_bin * x / n_x)
-    )
+    phase = 2.0 * np.pi * ((f_bin * t / n_t) + (ky_bin * y / n_y) + (kx_bin * x / n_x))
     wave = amplitude * np.exp(1j * phase)
     data = np.zeros((n_t, 1, n_y, n_x, 3), dtype=np.float32)
     data[:, 0, :, :, 0] = wave.real
@@ -1756,7 +1761,9 @@ def test_dispersion_amplitude_squared_scaling_corrects_fft_and_window_gain(tmp_p
         amplitude=amplitude,
     )
 
-    no_window_config = DispersionConfig(time_window=None, space_window=None, detrend=None)
+    no_window_config = DispersionConfig(
+        time_window=None, space_window=None, detrend=None
+    )
     small = SpinWaveAnalyzer(small_path, config=no_window_config, tmax=None)
     large = SpinWaveAnalyzer(large_path, config=no_window_config, tmax=None)
 
@@ -2140,7 +2147,9 @@ def test_compute_1d_y_axis_uses_effective_spacing_after_spatial_stride(tmp_path)
     idx_k, idx_f = np.unravel_index(int(np.argmax(result.S_raw)), result.S_raw.shape)
     effective_n_y = n_y // 2
     effective_dy = 2 * dy
-    expected_k_axis = np.fft.fftshift(2 * np.pi * np.fft.fftfreq(effective_n_y, effective_dy))
+    expected_k_axis = np.fft.fftshift(
+        2 * np.pi * np.fft.fftfreq(effective_n_y, effective_dy)
+    )
 
     assert result.axis == "y"
     assert result.S_raw.shape == (effective_n_y, n_t)
@@ -2304,11 +2313,15 @@ def test_dispersion_numpy_and_scipy_backends_match_on_synthetic_wave(tmp_path):
     assert np.allclose(numpy_result.k_axis, scipy_result.k_axis)
     assert np.allclose(numpy_result.f_axis, scipy_result.f_axis)
     assert np.allclose(numpy_result.S_raw, scipy_result.S_raw, rtol=1e-6, atol=1e-9)
-    assert np.allclose(numpy_result.S_display, scipy_result.S_display, rtol=1e-6, atol=1e-9)
+    assert np.allclose(
+        numpy_result.S_display, scipy_result.S_display, rtol=1e-6, atol=1e-9
+    )
     assert numpy_result.S_complex is not None
     assert scipy_result.S_complex is not None
     complex_scale = max(float(np.abs(numpy_result.S_complex).max()), 1.0)
-    complex_delta = float(np.max(np.abs(numpy_result.S_complex - scipy_result.S_complex)))
+    complex_delta = float(
+        np.max(np.abs(numpy_result.S_complex - scipy_result.S_complex))
+    )
     assert complex_delta <= complex_scale * 1e-6
 
 
@@ -2362,7 +2375,9 @@ def test_dispersion_pyfftw_backend_matches_numpy_when_available(tmp_path):
     assert numpy_result.S_complex is not None
     assert pyfftw_result.S_complex is not None
     complex_scale = max(float(np.abs(numpy_result.S_complex).max()), 1.0)
-    complex_delta = float(np.max(np.abs(numpy_result.S_complex - pyfftw_result.S_complex)))
+    complex_delta = float(
+        np.max(np.abs(numpy_result.S_complex - pyfftw_result.S_complex))
+    )
     assert complex_delta <= complex_scale * 1e-6
 
 
@@ -2391,13 +2406,19 @@ def test_compute_2d_complex_wave_extracts_kx_ky_frequency_peak_and_slice(tmp_pat
         tmax=None,
     )
 
-    result = analyzer.compute_dispersion_2d(component="perp", time_window=None, detrend=None)
+    result = analyzer.compute_dispersion_2d(
+        component="perp", time_window=None, detrend=None
+    )
     idx_kx, idx_ky, idx_f = np.unravel_index(int(np.argmax(result.S)), result.S.shape)
     slice_kx = result.slice_1d("kx", k_value=float(result.ky_axis[idx_ky]), dk_max=0.0)
 
     assert result.shape == (n_x, n_y, n_t // 2 + 1)
-    assert np.allclose(result.kx_axis, np.fft.fftshift(2 * np.pi * np.fft.fftfreq(n_x, dx)))
-    assert np.allclose(result.ky_axis, np.fft.fftshift(2 * np.pi * np.fft.fftfreq(n_y, dy)))
+    assert np.allclose(
+        result.kx_axis, np.fft.fftshift(2 * np.pi * np.fft.fftfreq(n_x, dx))
+    )
+    assert np.allclose(
+        result.ky_axis, np.fft.fftshift(2 * np.pi * np.fft.fftfreq(n_y, dy))
+    )
     assert np.allclose(result.f_axis, np.abs(np.fft.fftfreq(n_t, dt)[: n_t // 2 + 1]))
     assert np.isclose(abs(result.kx_axis[idx_kx]), 2 * 2 * np.pi / (n_x * dx))
     assert np.isclose(abs(result.ky_axis[idx_ky]), 1 * 2 * np.pi / (n_y * dy))
@@ -2881,9 +2902,9 @@ def test_interactive_dispersion_modes_plot_interactive_applies_startup_options(
 ):
     from types import SimpleNamespace
 
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
     from mmpp.fft.dispersion.modes import interactive as interactive_module
     from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
-    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
 
     n_k, n_f = 8, 6
     dx, dt = 5e-9, 2e-9
@@ -2933,9 +2954,9 @@ def test_interactive_dispersion_modes_plot_interactive_uses_shared_viewer_normal
 ):
     from types import SimpleNamespace
 
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
     from mmpp.fft.dispersion.modes import interactive as interactive_module
     from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
-    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
 
     n_k, n_f = 8, 6
     dx, dt = 5e-9, 2e-9
@@ -2996,8 +3017,8 @@ def test_interactive_dispersion_modes_plot_interactive_uses_shared_viewer_normal
 def test_interactive_dispersion_modes_exports_and_applies_shared_selection():
     from types import SimpleNamespace
 
-    from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+    from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
 
     n_k, n_f = 8, 6
     dx, dt = 5e-9, 2e-9
@@ -3043,8 +3064,8 @@ def test_interactive_dispersion_modes_exports_and_applies_shared_selection():
 def test_interactive_dispersion_modes_collects_and_applies_shared_preset():
     from types import SimpleNamespace
 
-    from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+    from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
 
     n_k, n_f = 8, 6
     dx, dt = 5e-9, 2e-9
@@ -3098,9 +3119,9 @@ def test_interactive_dispersion_modes_close_cleans_display_animation_and_figure(
 ):
     from types import SimpleNamespace
 
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
     from mmpp.fft.dispersion.modes import interactive as interactive_module
     from mmpp.fft.dispersion.modes.interactive import InteractiveDispersionModes
-    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
 
     n_k, n_f = 8, 6
     dx, dt = 5e-9, 2e-9
@@ -3122,7 +3143,9 @@ def test_interactive_dispersion_modes_close_cleans_display_animation_and_figure(
     closed = []
     fig = object()
 
-    modes._display_handle = SimpleNamespace(update=lambda value: display_updates.append(value))
+    modes._display_handle = SimpleNamespace(
+        update=lambda value: display_updates.append(value)
+    )
     modes._animation = SimpleNamespace(
         event_source=SimpleNamespace(stop=lambda: stopped.append(True))
     )
@@ -3691,11 +3714,8 @@ def test_spin_wave_analyzer_infers_dt_from_uniform_time_axis(tmp_path):
     assert np.allclose(analyzer.time_axis, np.arange(4, dtype=float) * 2e-12)
 
 
-def test_spin_wave_analyzer_accepts_nonuniform_time_axis_with_effective_dt(tmp_path):
-    from types import SimpleNamespace
-
+def test_spin_wave_analyzer_rejects_nonuniform_time_axis(tmp_path):
     from mmpp.fft.dispersion.core import SpinWaveAnalyzer
-    from mmpp.fft.dispersion.interface import FFTDispersionInterface
     from mmpp.fft.dispersion.models import DispersionConfig
 
     zarr_path = tmp_path / "dispersion_nonuniform_time_axis.zarr"
@@ -3707,33 +3727,12 @@ def test_spin_wave_analyzer_accepts_nonuniform_time_axis_with_effective_dt(tmp_p
     root.attrs["dx"] = 1e-9
     root.attrs["dy"] = 1e-9
 
-    analyzer = SpinWaveAnalyzer(
-        zarr_path,
-        config=DispersionConfig(dt=9e-12),
-        tmax=None,
-    )
-
-    assert np.isclose(analyzer.dt, 1.5e-12)
-    assert np.isclose(analyzer.config.dt, 1.5e-12)
-    assert np.allclose(analyzer.time_axis, [0.0, 1.2e-12, 2.8e-12, 4.5e-12])
-
-    result = analyzer.compute_dispersion_1d(axis="x", component="mx")
-    assert any("Non-uniform time axis" in note for note in result.notes)
-    assert any("declared t_sampl=1e-12" in note for note in result.notes)
-
-    iface = FFTDispersionInterface(
-        SimpleNamespace(job_result=SimpleNamespace(path=str(zarr_path), name="run")),
-        dataset_name="m",
-    )
-    viewer = iface.plot.interactive(
-        show=False,
-        axis="x",
-        component="mx",
-        disk_cache=False,
-        progress=False,
-    )
-    assert viewer.state["show"] is False
-    assert any("Non-uniform time axis" in note for note in viewer.state["result_notes"])
+    with pytest.raises(ValueError, match="Non-uniform time axis.*resample"):
+        SpinWaveAnalyzer(
+            zarr_path,
+            config=DispersionConfig(dt=9e-12),
+            tmax=None,
+        )
 
 
 def test_spin_wave_analyzer_infers_spacing_from_uniform_spatial_axes(tmp_path):
@@ -4207,7 +4206,9 @@ def test_dispersion_interactive_toolbar_exposes_analytical_overlay_controls(
     assert explorer.controls["render_dispersion"].description == (
         "Render / refresh dispersion"
     )
-    assert "Render / refresh dispersion" in explorer.controls["output_placeholder"].value
+    assert (
+        "Render / refresh dispersion" in explorer.controls["output_placeholder"].value
+    )
     display_tab = explorer.controls["tabs"].kwargs["children"][0]
     assert display_tab.children[0] is explorer.controls["render_dispersion"]
     assert explorer.controls["export_refresh"].description == "Refresh export snapshot"
@@ -4422,7 +4423,9 @@ def test_dispersion_interactive_mode_request_reports_unavailable_without_complex
         viewer.mode_at_selection(k_rad_um=1.0, f_ghz=2.0)
 
 
-def test_dispersion_interactive_modes_panel_extracts_current_selection(monkeypatch, tmp_path):
+def test_dispersion_interactive_modes_panel_extracts_current_selection(
+    monkeypatch, tmp_path
+):
     import types
 
     from mmpp.fft.dispersion._interactive import widgets as toolbar_widgets
@@ -4628,7 +4631,9 @@ def test_dispersion_plot_interactive_reports_progress_without_polluting_compute_
     assert events[0]["time_steps"] == 100
 
 
-def test_dispersion_plot_interactive_finishes_progress_before_notebook_show(monkeypatch):
+def test_dispersion_plot_interactive_finishes_progress_before_notebook_show(
+    monkeypatch,
+):
     from types import SimpleNamespace
 
     from mmpp.fft.dispersion._interactive_viewer import DispersionInteractiveViewer
@@ -4717,3 +4722,1860 @@ def test_dispersion_progress_bar_does_not_advance_past_declared_stage_total():
     assert reporter.count == 2
     assert bar.updates == [1, 1]
     assert bar.closed is True
+
+
+def test_fft_view_time_slice_stride_changes_effective_dt():
+    from types import SimpleNamespace
+
+    from mmpp.fft._compute_loading import resolve_dt_from_metadata
+
+    class Logger:
+        debug = info = warning = lambda *args, **kwargs: None
+
+    dt = resolve_dt_from_metadata(
+        data_set=SimpleNamespace(attrs={"t_sampl": 2e-12}),
+        job=SimpleNamespace(attrs={}),
+        logger=Logger(),
+        slice_info=(slice(None, None, 3), slice(None)),
+    )
+    assert dt == 6e-12
+
+
+def test_materialized_fft_time_scale_changes_effective_dt():
+    from types import SimpleNamespace
+
+    from mmpp.fft._compute_loading import load_fft_input_data
+
+    class Logger:
+        debug = info = warning = lambda *args, **kwargs: None
+
+    dataset = SimpleNamespace(shape=(8, 1, 2, 2, 3), attrs={"t_sampl": 2e-12})
+
+    class Job:
+        attrs = {}
+        m = dataset
+
+        def __getitem__(self, key):
+            return dataset
+
+    job = Job()
+
+    class Pyzfn:
+        def __new__(cls, path):
+            return job
+
+    data = np.zeros((4, 1, 2, 2, 3), dtype=np.float32)
+    _, dt = load_fft_input_data(
+        zarr_path="unused",
+        dataset="m",
+        z_layer=0,
+        tmax=None,
+        slice_info=None,
+        pyzfn_available=True,
+        pyzfn_cls=Pyzfn,
+        psutil_module=None,
+        logger=Logger(),
+        preloaded_data=data,
+        time_step_scale=2.0,
+    )
+    assert dt == 4e-12
+
+
+def test_materialized_fft_views_have_content_sensitive_cache_identity():
+    from mmpp.fft.spectrum.compute import fingerprint_array
+
+    first = np.zeros((4, 1, 2, 3, 3), dtype=np.float32)
+    second = first.copy()
+    second[0, 0, 0, 0, 0] = 1
+    assert fingerprint_array(first) != fingerprint_array(second)
+    assert fingerprint_array(first) == fingerprint_array(first.copy())
+
+
+def test_fft_compute_forwards_materialized_view(monkeypatch):
+    import mmpp.fft.compute_fft as module
+
+    expected = np.zeros((8, 2, 2, 3), dtype=np.float32)
+    captured = {}
+
+    def fake_load(**kwargs):
+        captured.update(kwargs)
+        return expected, 1e-12, object()
+
+    monkeypatch.setattr(module, "load_fft_input_data_profiled", fake_load)
+    monkeypatch.setattr(module, "normalize_z_layer_index", lambda **_: 0)
+    monkeypatch.setattr(module, "log_input_load_metrics", lambda **_: None)
+    monkeypatch.setattr(
+        module.FFTCompute,
+        "calculate_fft_method1",
+        lambda *args, **kwargs: module.FFTComputeResult(
+            frequencies=np.arange(2), spectrum=np.arange(2), metadata={}, config={}
+        ),
+    )
+    module.FFTCompute().calculate_fft_data(
+        "/tmp/source.zarr", "m", preloaded_data=expected, force=True
+    )
+    assert captured["preloaded_data"] is expected
+
+
+def test_filter_pipeline_forwards_configured_preprocess_parameters(monkeypatch):
+    import mmpp.fft.filters.pipeline as pipeline_module
+
+    calls = []
+
+    def fake_filter(data, name, **parameters):
+        calls.append((name, parameters))
+        return data
+
+    monkeypatch.setattr(pipeline_module, "apply_preprocess_filter", fake_filter)
+    pipeline_module.FilterPipeline().preprocess(
+        np.arange(8.0),
+        filters={
+            "pre": {
+                "high_pass": {"cutoff_fraction": 0.125},
+                "band_pass": {"low_fraction": 0.05, "high_fraction": 0.2},
+                "spectral_derivative": {"order": 2},
+            }
+        },
+    )
+    assert calls == [
+        ("high_pass", {"cutoff_fraction": 0.125}),
+        ("band_pass", {"low_fraction": 0.05, "high_fraction": 0.2}),
+        ("spectral_derivative", {"order": 2, "spacing": 1.0}),
+    ]
+
+
+def test_single_selected_mode_component_is_restored_to_cartesian_slot():
+    from types import SimpleNamespace
+
+    pytest.importorskip("matplotlib")
+    from mmpp.fft.modes import FMRModeAnalyzer
+
+    analyzer = object.__new__(FMRModeAnalyzer)
+    analyzer.frequencies = np.asarray([1.0])
+    analyzer.modes_path = "modes/m/views/test/arr"
+    analyzer.mode_group = "modes/m/views/test"
+    analyzer.component_index = 0
+    analyzer.dx = analyzer.dy = 1.0
+    analyzer._mode_cache = SimpleNamespace(
+        get=lambda *args: None, put=lambda *args: None
+    )
+    array = np.ones((1, 1, 2, 3, 1), dtype=np.complex64)
+    analyzer.zarr_file = {analyzer.modes_path: array}
+
+    mode = analyzer.get_mode(1.0, z_layer=0)
+    assert np.all(mode.mode_array[..., 0] == 1)
+    assert np.all(mode.mode_array[..., 1:] == 0)
+
+
+def test_transmission_cache_distinguishes_materialized_view_identity():
+    from types import SimpleNamespace
+
+    from mmpp.fft.transmission.cache import TransmissionCache
+    from mmpp.fft.transmission.compute import TransmissionConfig
+
+    cache = TransmissionCache(SimpleNamespace(), dataset_name="m")
+    config = TransmissionConfig(dataset_name="m")
+    first = cache.generate_cache_key(
+        config, slice_info=None, view_identity="float32:(4,):aaa;dt_scale=1"
+    )
+    second = cache.generate_cache_key(
+        config, slice_info=None, view_identity="float32:(4,):bbb;dt_scale=2"
+    )
+    assert first != second
+
+
+def test_band_pass_fractions_are_relative_to_nyquist():
+    from mmpp.fft.filters.preprocess import band_pass
+
+    n = 1024
+    samples = np.arange(n, dtype=float)
+    pass_tone = np.sin(2 * np.pi * 0.05 * samples)  # 0.1 Nyquist
+    stop_tone = np.sin(2 * np.pi * 0.20 * samples)  # 0.4 Nyquist
+    filtered_pass = band_pass(pass_tone, low_fraction=0.05, high_fraction=0.2)
+    filtered_stop = band_pass(stop_tone, low_fraction=0.05, high_fraction=0.2)
+    assert np.std(filtered_pass) > 5 * np.std(filtered_stop)
+
+
+@pytest.mark.parametrize(
+    "low,high",
+    [(0.0, 0.5), (0.5, 0.5), (0.6, 0.5), (0.1, 1.1)],
+)
+def test_band_pass_rejects_invalid_fraction_ranges(low, high):
+    from mmpp.fft.filters.preprocess import band_pass
+
+    with pytest.raises(ValueError, match="fractions"):
+        band_pass(np.arange(16.0), low_fraction=low, high_fraction=high)
+
+
+def test_fft_engine_rejects_unknown_name_instead_of_silent_numpy_fallback():
+    from mmpp.fft._compute_engines import compute_fft_data
+
+    with pytest.raises(ValueError, match="Unsupported FFT engine"):
+        compute_fft_data(
+            data=np.arange(8.0),
+            dt=1.0,
+            engine="numpyy",
+            zero_padding=False,
+            nfft=None,
+            scipy_available=False,
+            pyfftw_available=False,
+        )
+
+
+def test_requested_unavailable_fft_engine_fails_explicitly():
+    from mmpp.fft._compute_engines import determine_engine_name
+
+    with pytest.raises(ImportError, match="scipy"):
+        determine_engine_name(
+            configured_engine="scipy",
+            data_size=10,
+            scipy_available=False,
+            pyfftw_available=False,
+        )
+
+
+def test_spectrum_filter_chain_preserves_preprocess_parameters():
+    from mmpp.fft.spectrum.filter_chain import SpectrumFilterChain
+
+    captured = {}
+
+    def spectrum_callable(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    SpectrumFilterChain(
+        spectrum_callable,
+        {
+            "pre": {
+                "high_pass": {"cutoff_fraction": 0.125},
+                "band_pass": {"low_fraction": 0.05, "high_fraction": 0.2},
+            }
+        },
+    ).spectrum()
+    assert captured["filter_type"] == {
+        "high_pass": {"cutoff_fraction": 0.125},
+        "band_pass": {"low_fraction": 0.05, "high_fraction": 0.2},
+    }
+
+
+def test_fft_save_failure_is_not_reported_as_success(monkeypatch):
+    import mmpp.fft.compute_fft as module
+
+    data = np.arange(8.0)
+    monkeypatch.setattr(module, "normalize_z_layer_index", lambda **_: 0)
+    monkeypatch.setattr(
+        module,
+        "load_fft_input_data_profiled",
+        lambda **_: (data, 1.0, object()),
+    )
+    monkeypatch.setattr(module, "log_input_load_metrics", lambda **_: None)
+    monkeypatch.setattr(
+        module.FFTCompute,
+        "calculate_fft_method1",
+        lambda *args, **kwargs: module.FFTComputeResult(
+            frequencies=np.arange(5.0),
+            spectrum=np.arange(5.0),
+            metadata={},
+            config=module.FFTComputeConfig(),
+        ),
+    )
+    monkeypatch.setattr(
+        module.FFTComputeResult,
+        "save_to_zarr",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("read-only")),
+    )
+
+    with pytest.raises(RuntimeError, match="save=True failed"):
+        module.FFTCompute().calculate_fft_data(
+            "/tmp/source.zarr", "m", save=True, force=True
+        )
+
+
+def test_fft_cache_missing_requested_slice_metadata_is_not_a_match():
+    from types import SimpleNamespace
+
+    from mmpp.fft._compute_cache import verify_fft_parameters
+
+    cached = SimpleNamespace(
+        config=SimpleNamespace(
+            window_function="hann",
+            filter_type="remove_mean",
+            fft_engine="numpy",
+            scaling="raw",
+            zero_padding=True,
+            nfft=None,
+        ),
+        metadata={"z_layer": 0, "source_dataset": "m"},
+    )
+    assert not verify_fft_parameters(
+        existing_result=cached,
+        window="hann",
+        filter_type="remove_mean",
+        engine="numpy",
+        scaling="raw",
+        zero_padding=True,
+        nfft=None,
+        metadata_overrides={
+            "z_layer": 0,
+            "source_dataset": "m",
+            "slice_identifier": "slice=0:10:None",
+        },
+    )
+
+
+def test_dispersion_pipeline_executes_standard_parameterized_pre_filter():
+    from mmpp.fft.dispersion.utils import apply_filter_pipeline
+
+    n = 512
+    samples = np.arange(n, dtype=float)
+    low = np.sin(2 * np.pi * 0.01 * samples)
+    high = 0.2 * np.sin(2 * np.pi * 0.20 * samples)
+    signal = (low + high)[:, None, None, None]
+    filtered = apply_filter_pipeline(
+        signal,
+        {"pre": {"high_pass": {"cutoff_fraction": 0.2}}},
+        time_axis=0,
+    )
+    assert not np.allclose(filtered, signal)
+    assert np.std(filtered) < np.std(signal)
+
+
+def test_spectral_derivative_uses_physical_time_spacing():
+    from mmpp.fft.filters.pipeline import FilterPipeline
+
+    dt = 2.5e-12
+    slope = 3.0e6
+    time = np.arange(32, dtype=float) * dt
+    signal = (slope * time)[:, None]
+
+    differentiated = FilterPipeline().preprocess(
+        signal,
+        dt=dt,
+        filters={"pre": {"spectral_derivative": {"order": 1}}},
+    )
+
+    assert np.allclose(differentiated, slope, rtol=1e-12, atol=1e-9)
+
+
+def test_dispersion_spectral_derivative_uses_physical_time_spacing():
+    from mmpp.fft.dispersion.utils import apply_filter_pipeline
+
+    dt = 4.0e-12
+    slope = 7.0e5
+    time = np.arange(24, dtype=float) * dt
+    signal = (slope * time)[:, None, None, None]
+
+    differentiated = apply_filter_pipeline(
+        signal,
+        {"pre": {"spectral_derivative": {"order": 1}}},
+        time_axis=0,
+        dt=dt,
+    )
+
+    assert np.allclose(differentiated, slope, rtol=1e-12, atol=1e-9)
+
+
+def test_dispersion_welch_rejects_unsupported_physical_scaling(tmp_path):
+    from mmpp.fft.dispersion.core import SpinWaveAnalyzer
+    from mmpp.fft.dispersion.models import DispersionConfig
+
+    path = _write_complex_wave_zarr(
+        tmp_path / "welch_scaling.zarr",
+        n_t=16,
+        n_x=8,
+    )
+    analyzer = SpinWaveAnalyzer(
+        path,
+        config=DispersionConfig(time_window=None, space_window=None, detrend=None),
+        tmax=None,
+    )
+
+    with pytest.raises(ValueError, match="supports only scaling='raw_power'"):
+        analyzer.compute_dispersion_1d(
+            axis="x",
+            component="perp",
+            scaling="psd",
+            filters={"pre": {"welch_average": {"n_segments": 2}}},
+        )
+
+
+def test_dispersion_preloaded_single_component_is_normalized_before_1d_and_2d(
+    tmp_path,
+):
+    from mmpp.fft.dispersion.core import SpinWaveAnalyzer
+    from mmpp.fft.dispersion.models import DispersionConfig
+
+    n_t, n_y, n_x = 16, 6, 8
+    path = _write_complex_xy_wave_zarr(
+        tmp_path / "preloaded_scalar_dispersion.zarr",
+        n_t=n_t,
+        n_y=n_y,
+        n_x=n_x,
+        f_bin=2,
+        kx_bin=2,
+        ky_bin=1,
+    )
+    full = np.asarray(zarr.open(str(path), mode="r")["m"])
+    selected_mx = full[..., 0]
+    analyzer = SpinWaveAnalyzer(
+        path,
+        config=DispersionConfig(time_window=None, space_window=None, detrend=None),
+        tmax=None,
+        preloaded_data=selected_mx,
+    )
+
+    assert analyzer.M_data.shape == (n_t, 1, n_y, n_x, 1)
+    result_1d = analyzer.compute_dispersion_1d(
+        axis="x", component="auto", store_complex=False
+    )
+    result_2d = analyzer.compute_dispersion_2d(
+        component="auto", time_window=None, detrend=None
+    )
+    assert result_1d.shape == (n_x, n_t)
+    assert result_2d.shape == (n_x, n_y, n_t // 2 + 1)
+
+
+def test_dispersion_filter_chain_compute_2d_does_not_forward_false_cache_flags():
+    from mmpp.fft.dispersion.filter_chain import DispersionFilterChain
+
+    class FakeInterface:
+        def compute_2d(self, component=None, **kwargs):
+            return component, kwargs
+
+    chain = DispersionFilterChain(FakeInterface())
+    assert chain.compute_2d(component="perp") == ("perp", {})
+    with pytest.raises(NotImplementedError, match="not implemented"):
+        chain.compute_2d(save=True)
+    with pytest.raises(ValueError, match="has no effect"):
+        chain.compute_2d(force=True)
+
+
+def test_dispersion_2d_scaling_windows_and_filter_contract(tmp_path):
+    from mmpp.fft.dispersion.core import SpinWaveAnalyzer
+    from mmpp.fft.dispersion.models import DispersionConfig
+
+    amplitude = 0.25
+    path = _write_complex_xy_wave_zarr(
+        tmp_path / "dispersion_2d_scaling.zarr",
+        n_t=16,
+        n_y=8,
+        n_x=8,
+        amplitude=amplitude,
+        f_bin=2,
+        kx_bin=2,
+        ky_bin=1,
+    )
+    analyzer = SpinWaveAnalyzer(
+        path,
+        config=DispersionConfig(time_window=None, space_window=None, detrend=None),
+        tmax=None,
+    )
+
+    scaled = analyzer.compute_dispersion_2d(
+        component="perp",
+        time_window="hann",
+        space_window="hann",
+        detrend=None,
+        scaling="amplitude_squared",
+        filters={"pre": {"remove_mean": True}},
+    )
+    assert np.isclose(scaled.S.max(), amplitude**2, rtol=1e-5)
+    assert scaled.scaling == "amplitude_squared"
+    assert scaled.scaling_factors["scale"] > 0
+    assert any("Pre-filters: remove_mean" in note for note in scaled.notes)
+
+    with pytest.raises(NotImplementedError, match="Post/live filters"):
+        analyzer.compute_dispersion_2d(
+            component="perp",
+            filters={"post": {"normalize": True}},
+        )
+
+
+def test_circular_basis_is_unitary_and_uses_documented_algebraic_sign():
+    from mmpp.fft.modes.vortex_optics import VortexOptics
+
+    mx = np.array([1.0 + 2.0j, -0.5j])
+    my = np.array([0.25 - 1.0j, 3.0])
+    plus, minus = VortexOptics.to_circular_basis(mx, my)
+
+    assert np.allclose(plus, (mx + 1j * my) / np.sqrt(2.0))
+    assert np.allclose(minus, (mx - 1j * my) / np.sqrt(2.0))
+    assert np.allclose(
+        np.abs(plus) ** 2 + np.abs(minus) ** 2,
+        np.abs(mx) ** 2 + np.abs(my) ** 2,
+    )
+
+
+def test_transmission_cpsd_uses_fixed_external_reference_spectrum():
+    from mmpp.fft.transmission.compute import _apply_transmission_method
+
+    spectrum = np.array([[[[2.0 + 0.0j], [3.0 + 0.0j]]]])
+    reference = np.array([[[5.0 + 0.0j]]])
+    metric = _apply_transmission_method(
+        spectrum,
+        component_weights=np.array([1.0]),
+        method="cpsd",
+        window_axis=2,
+        reference_spectrum=reference,
+    )
+
+    assert metric.shape == (1, 1, 2)
+    assert np.allclose(metric, [[[10.0, 15.0]]])
+    with pytest.raises(ValueError, match="fixed reference spectrum"):
+        _apply_transmission_method(
+            spectrum,
+            component_weights=np.array([1.0]),
+            method="cpsd",
+            window_axis=2,
+        )
+
+
+def test_transmission_power_metrics_use_squared_fft_magnitude():
+    from mmpp.fft.transmission.compute import _apply_transmission_method
+
+    spectrum = np.array([[[3.0 + 4.0j, 0.0j, 2.0j]]])
+    metric = _apply_transmission_method(
+        spectrum,
+        component_weights=np.array([1.0, 0.0, 0.5]),
+        method="power_ratio",
+        window_axis=None,
+    )
+    assert np.allclose(metric, [[25.0 + 0.5 * 4.0]])
+
+    circular_spectrum = np.array([[[1.0 + 0.0j, 0.0 + 1.0j]]])
+    circular = _apply_transmission_method(
+        circular_spectrum,
+        component_weights=np.array([1.0, 1.0]),
+        method="circular",
+        window_axis=None,
+    )
+    assert np.allclose(circular, [[1.0]])
+
+
+def test_transmission_reference_normalization_marks_zero_reference_undefined():
+    from mmpp.fft.transmission.compute import _normalize_transmission_map
+
+    power = np.array([[0.0, 2.0], [3.0, 6.0]])
+    reference = np.array([0.0, 3.0])
+    normalized, invalid = _normalize_transmission_map(power, reference, "reference")
+
+    assert invalid == 1
+    assert np.all(np.isnan(normalized[0]))
+    assert np.allclose(normalized[1], [1.0, 2.0])
+
+
+@pytest.mark.parametrize("component", ["x", "y", "z"])
+def test_interactive_mode_resolver_preserves_singleton_component_identity(component):
+    from mmpp.fft.modes._interactive.filters import resolve_mode_components
+
+    singleton = np.full((3, 4, 1), 7.0 + 2.0j)
+    resolved = resolve_mode_components(singleton, [component])
+    assert list(resolved) == [component]
+    assert np.array_equal(resolved[component], singleton[..., 0])
+
+
+def test_interactive_mode_resolver_rejects_topological_basis_from_single_channel():
+    from mmpp.fft.modes._interactive.filters import resolve_mode_components
+
+    with pytest.raises(ValueError, match="require both mx and my"):
+        resolve_mode_components(np.ones((3, 4, 1), dtype=complex), ["+"])
+
+
+def test_interactive_holography_forwards_gamma_and_noise_threshold(monkeypatch):
+    from mmpp.fft.modes._interactive.callbacks import _resolve_mode_viz
+    from mmpp.fft.modes.vortex_optics import VortexOptics
+
+    captured = {}
+
+    def fake_holography(data, gamma=0.6, noise_threshold=1e-4, saturation=1.0):
+        captured.update(gamma=gamma, noise_threshold=noise_threshold)
+        return np.zeros(data.shape + (3,))
+
+    monkeypatch.setattr(VortexOptics, "complex_holography", fake_holography)
+    rendered, vmin, vmax = _resolve_mode_viz(
+        np.ones((2, 3), dtype=complex),
+        viz_type="phase",
+        use_holography=True,
+        holography_gamma=0.35,
+        holography_noise_threshold=0.02,
+    )
+    assert rendered.shape == (2, 3, 3)
+    assert (vmin, vmax) == (None, None)
+    assert captured == {"gamma": 0.35, "noise_threshold": 0.02}
+
+
+def test_interactive_show_rejects_unknown_options_before_loading_data():
+    from mmpp.fft.modes.interactive import InteractiveSpectrum
+
+    viewer = object.__new__(InteractiveSpectrum)
+    with pytest.raises(TypeError, match="unknown_typo"):
+        viewer.show(unknown_typo=True)
+
+
+def test_topological_holography_preserves_arbitrary_input_shape(monkeypatch):
+    import mmpp.fft.modes.vortex_optics as module
+
+    monkeypatch.setattr(module, "_hsv_to_rgb", lambda hsv: hsv)
+    data = np.ones((2, 3, 4), dtype=complex)
+    static = module.VortexOptics.complex_holography(data)
+    animated = module.TopologicalAnimator(data).get_hologram_frame(0.5)
+    assert static.shape == (2, 3, 4, 3)
+    assert animated.shape == (2, 3, 4, 3)
+
+
+@pytest.mark.parametrize("gamma,noise", [(0.0, 1e-4), (0.6, -0.1)])
+def test_topological_holography_rejects_invalid_scaling(gamma, noise):
+    from mmpp.fft.modes.vortex_optics import VortexOptics
+
+    with pytest.raises(ValueError):
+        VortexOptics.complex_holography(
+            np.ones((2, 2), dtype=complex),
+            gamma=gamma,
+            noise_threshold=noise,
+        )
+
+
+def test_phase_preview_time_is_undefined_for_dc_without_division_by_zero():
+    from mmpp.fft.modes._interactive.callbacks import _phase_preview_time_ns
+
+    assert np.isnan(_phase_preview_time_ns(0.0, 0.25))
+    assert np.isclose(_phase_preview_time_ns(2.0, 0.25), 0.125)
+
+
+def test_cylindrical_basis_uses_right_handed_increasing_y_axis():
+    from mmpp.fft.modes.vortex_optics import VortexOptics
+
+    ny, nx = 5, 7
+    cx, cy = (nx - 1) / 2.0, (ny - 1) / 2.0
+    y, x = np.indices((ny, nx))
+    mx = x - cx
+    my = y - cy
+    rho, phi = VortexOptics.to_cylindrical_basis(mx, my, center=(cx, cy))
+
+    assert np.allclose(rho, np.hypot(mx, my))
+    assert np.allclose(phi, 0.0, atol=1e-14)
+
+
+def test_fft_numeric_interfaces_import_without_plotting_dependencies():
+    import mmpp.fft.core as fft_core
+    import mmpp.fft.electromagnetic_analysis as electromagnetic
+    import mmpp.fft.transmission.experimental as transmission_experimental
+    import mmpp.fft.transmission.interface as transmission_interface
+    import mmpp.fft.transmission.overlay_experimental as overlay_experimental
+    from mmpp.fft.modes.analyzer.data_access import DataAccessMixin
+
+    assert fft_core.FFT is not None
+    assert electromagnetic.PoyntingVectorAnalysis is not None
+    assert transmission_interface.FFTTransmissionInterface is not None
+    assert transmission_experimental.overlay_transmission is not None
+    assert overlay_experimental.overlay_experimental_transmission is not None
+    assert DataAccessMixin is not None
+
+
+def test_legacy_modes_init_exports_only_defined_names():
+    import mmpp.fft.modes.init as legacy_init
+
+    assert all(hasattr(legacy_init, name) for name in legacy_init.__all__)
+
+
+def test_manual_dispersion_diagnostic_is_silent_on_import(capsys):
+    import importlib
+
+    import mmpp.fft.dispersion.test_dispersion_models as diagnostic
+
+    importlib.reload(diagnostic)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_transmission_batch_cache_hash_preserves_input_job_order():
+    from types import SimpleNamespace
+
+    from mmpp.fft.transmission.batch import BatchTransmission
+    from mmpp.fft.transmission.compute import TransmissionConfig
+
+    first = SimpleNamespace(path="/tmp/job-a.zarr")
+    second = SimpleNamespace(path="/tmp/job-b.zarr")
+    batch = BatchTransmission([first, second], mmpp_ref=None)
+    config = TransmissionConfig(metadata={"tag": "ordered"})
+    forward = batch._generate_batch_cache_hash(config, "m", None, ["B0"])
+    batch.results = [second, first]
+    reverse = batch._generate_batch_cache_hash(config, "m", None, ["B0"])
+    assert forward != reverse
+
+
+def test_transmission_batch_result_persists_partial_errors(tmp_path):
+    from mmpp.fft.transmission.batch import BatchTransmissionResult
+
+    batch = BatchTransmissionResult(
+        results=[object()],
+        parameters={"B0": [0.1]},
+        job_paths=["job-a.zarr"],
+        errors=[{"index": 1, "path": "job-b.zarr", "error": "broken"}],
+    )
+    path = tmp_path / "batch.pkl"
+    batch.save(path)
+    loaded = BatchTransmissionResult.load(path)
+    assert loaded.errors == batch.errors
+
+
+def test_transmission_batch_cache_hash_changes_when_source_state_changes(tmp_path):
+    from types import SimpleNamespace
+
+    from mmpp.fft.transmission.batch import BatchTransmission
+    from mmpp.fft.transmission.compute import TransmissionConfig
+
+    source = tmp_path / "job.zarr"
+    source.mkdir()
+    chunk = source / "0.0.0"
+    chunk.write_bytes(b"first")
+    batch = BatchTransmission([SimpleNamespace(path=source)], mmpp_ref=None)
+    config = TransmissionConfig()
+    initial = batch._generate_batch_cache_hash(config, "m", None, [])
+    chunk.write_bytes(b"second-payload")
+    changed = batch._generate_batch_cache_hash(config, "m", None, [])
+    assert changed != initial
+
+
+def test_transmission_batch_detects_shifted_same_length_frequency_grid():
+    from mmpp.fft.transmission.batch import _frequency_grids_match
+
+    reference = np.array([1.0, 2.0, 3.0])
+    shifted = np.array([1.5, 2.5, 3.5])
+    assert not _frequency_grids_match(reference, shifted)
+
+
+def test_transmission_batch_frequency_interpolation_preserves_unknown_support():
+    from mmpp.fft.transmission.batch import _interpolate_frequency_series
+
+    source_freq = np.array([1.0, 2.0, 3.0])
+    source_values = np.array([10.0, 20.0, 30.0])
+    target_freq = np.array([0.5, 1.5, 2.5, 3.5])
+
+    aligned = _interpolate_frequency_series(source_freq, source_values, target_freq)
+
+    assert np.isnan(aligned[[0, -1]]).all()
+    assert np.allclose(aligned[1:3], [15.0, 25.0])
+
+
+def test_transmission_batch_frequency_interpolation_handles_descending_grids():
+    from mmpp.fft.transmission.batch import _interpolate_frequency_series
+
+    aligned = _interpolate_frequency_series(
+        np.array([3.0, 2.0, 1.0]),
+        np.array([30.0, 20.0, 10.0]),
+        np.array([2.5, 1.5]),
+    )
+
+    assert np.allclose(aligned, [25.0, 15.0])
+
+
+def test_mode_extent_converts_view_geometry_from_metres_to_nanometres():
+    from types import SimpleNamespace
+
+    from mmpp.fft.modes import _mode_extent_nm
+
+    geometry = SimpleNamespace(
+        axes={
+            "x": SimpleNamespace(min_m=100e-9, max_m=500e-9),
+            "y": SimpleNamespace(min_m=20e-9, max_m=220e-9),
+        }
+    )
+
+    extent = _mode_extent_nm(geometry, nx=4, ny=2, dx_nm=100.0, dy_nm=100.0)
+
+    assert np.allclose(extent, (100.0, 500.0, 20.0, 220.0))
+
+
+def test_mode_get_reuses_cached_actual_frequency_bin():
+    from mmpp.fft.modes import FMRModeAnalyzer
+    from mmpp.fft.modes.analyzer.cache import ModeCache
+
+    class CountingModesArray:
+        shape = (2, 1, 2, 3, 3)
+
+        def __init__(self):
+            self.reads = 0
+
+        def __getitem__(self, key):
+            self.reads += 1
+            return np.ones((2, 3, 3), dtype=complex)
+
+    modes_array = CountingModesArray()
+    analyzer = object.__new__(FMRModeAnalyzer)
+    analyzer.frequencies = np.array([1.0, 2.0])
+    analyzer.modes_path = "modes/m/arr"
+    analyzer.mode_group = "modes/m"
+    analyzer.zarr_file = {analyzer.modes_path: modes_array}
+    analyzer.component_index = None
+    analyzer.view_geometry = None
+    analyzer.dx = 5.0
+    analyzer.dy = 7.0
+    analyzer._mode_cache = ModeCache(maxsize=4)
+
+    first = analyzer.get_mode(1.01)
+    second = analyzer.get_mode(0.99)
+
+    assert second is first
+    assert modes_array.reads == 1
+
+
+def test_mode_time_axis_selection_matches_view_and_nested_time_slice():
+    from mmpp.fft.modes import _select_mode_time_axis, _uniform_mode_dt
+
+    raw_time = np.arange(12, dtype=float) * 2e-12
+    selected = _select_mode_time_axis(
+        raw_time,
+        total_samples=5,
+        view_slice=(slice(1, 11, 2), slice(None)),
+        time_slice=slice(1, 5, 2),
+        expected_samples=2,
+    )
+
+    assert np.array_equal(selected, raw_time[1:11:2][1:5:2])
+    assert np.isclose(_uniform_mode_dt(selected), 8e-12)
+
+
+def test_mode_time_axis_selection_rejects_mismatched_materialized_metadata():
+    from mmpp.fft.modes import _select_mode_time_axis
+
+    selected = _select_mode_time_axis(
+        np.arange(20, dtype=float),
+        total_samples=5,
+        view_slice=None,
+        time_slice=slice(None),
+        expected_samples=5,
+    )
+
+    assert selected is None
+
+
+def test_mode_fft_rejects_nonuniform_time_axis():
+    from mmpp.fft.modes import _uniform_mode_dt
+
+    with pytest.raises(ValueError, match="uniformly sampled"):
+        _uniform_mode_dt(np.array([0.0, 1e-12, 3e-12, 4e-12]))
+
+
+def test_fft_dt_uses_full_selected_time_axis_and_rejects_irregular_sampling():
+    from types import SimpleNamespace
+
+    from mmpp.fft._compute_loading import resolve_dt_from_metadata
+
+    class Logger:
+        debug = info = warning = lambda *args, **kwargs: None
+
+    uniform = np.arange(10, dtype=float) * 2e-12
+    dt = resolve_dt_from_metadata(
+        data_set=SimpleNamespace(attrs={"t": uniform}),
+        job=SimpleNamespace(attrs={}),
+        logger=Logger(),
+        slice_info=(slice(1, 9, 2), slice(None)),
+    )
+    assert np.isclose(dt, 4e-12)
+
+    irregular = uniform.copy()
+    irregular[5:] += 0.4e-12
+    with pytest.raises(ValueError, match="uniformly sampled"):
+        resolve_dt_from_metadata(
+            data_set=SimpleNamespace(attrs={"t": irregular}),
+            job=SimpleNamespace(attrs={}),
+            logger=Logger(),
+        )
+
+
+@pytest.mark.parametrize(
+    "source_shape,component_index,expected_shape",
+    [
+        ((8, 2, 3, 4, 3), None, (8, 2, 3, 4, 3)),
+        ((8, 3, 4, 3), None, (8, 1, 3, 4, 3)),
+        ((8, 2, 3, 4), 1, (8, 2, 3, 4, 1)),
+        ((8, 3, 4), 2, (8, 1, 3, 4, 1)),
+        ((8, 1, 3, 4, 1), 2, (8, 1, 3, 4, 1)),
+        ((8, 3, 4, 1), 0, (8, 1, 3, 4, 1)),
+    ],
+)
+def test_mode_input_shape_preserves_selected_z_and_component_axes(
+    source_shape, component_index, expected_shape
+):
+    from mmpp.fft.modes import _normalize_mode_input_shape
+
+    normalized = _normalize_mode_input_shape(
+        np.zeros(source_shape), component_index=component_index
+    )
+
+    assert normalized.shape == expected_shape
+
+
+def test_mode_power_cache_candidates_never_fall_back_to_full_dataset_for_view():
+    from mmpp.fft.modes import _mode_power_paths
+
+    view_group = "modes/m/views/abc123"
+    paths = _mode_power_paths(view_group, dataset_name="m", include_legacy=False)
+
+    assert paths == [
+        (f"{view_group}/power_sum", "power_sum"),
+        (f"{view_group}/power_max", "power_max"),
+    ]
+    assert all(path.startswith(view_group) for path, _ in paths)
+
+
+def test_mode_power_summaries_use_squared_fft_magnitude():
+    from mmpp.fft.modes import _mode_power_summaries
+
+    fft_result = np.array(
+        [
+            [[3.0 + 4.0j, 0.0j]],
+            [[1.0j, 2.0 + 0.0j]],
+        ]
+    )
+    power_max, power_sum = _mode_power_summaries(fft_result)
+
+    assert np.allclose(power_max, [25.0, 4.0])
+    assert np.allclose(power_sum, [25.0, 5.0])
+
+
+def test_mode_power_cache_requires_explicit_squared_definition():
+    from types import SimpleNamespace
+
+    from mmpp.fft.modes import _mode_power_cache_is_squared
+
+    assert _mode_power_cache_is_squared(
+        SimpleNamespace(attrs={"power_definition": "abs_fft_squared"})
+    )
+    assert not _mode_power_cache_is_squared(SimpleNamespace(attrs={}))
+    assert not _mode_power_cache_is_squared(
+        SimpleNamespace(attrs={"power_definition": "abs_fft"})
+    )
+
+
+def test_mode_find_peaks_honors_component_and_explicit_threshold():
+    from types import SimpleNamespace
+
+    from mmpp.fft.modes import FMRModeAnalyzer
+
+    analyzer = object.__new__(FMRModeAnalyzer)
+    analyzer.config = SimpleNamespace(
+        peak_threshold=0.1,
+        peak_min_distance=1,
+        spectrum_normalize=True,
+        f_min=0.0,
+        f_max=4.0,
+    )
+    frequencies = np.arange(5, dtype=float)
+    spectrum = np.array(
+        [
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [0.0, 0.0],
+            [0.0, 7.0],
+            [0.0, 0.0],
+        ]
+    )
+
+    first = analyzer.find_peaks(
+        spectrum=spectrum, frequencies=frequencies, component=0, threshold=0.0
+    )
+    second = analyzer.find_peaks(
+        spectrum=spectrum, frequencies=frequencies, component=1, threshold=0.0
+    )
+    suppressed = analyzer.find_peaks(
+        spectrum=spectrum, frequencies=frequencies, component=1, threshold=1.1
+    )
+
+    assert [peak.freq for peak in first] == [1.0]
+    assert [peak.freq for peak in second] == [3.0]
+    assert suppressed == []
+
+
+def test_mode_data_loader_resolves_only_exact_view_group():
+    from mmpp.fft.modes.data_loader import ModeDataContext, ModeDataLoader
+
+    view_group = "modes/m/views/exact"
+    context = ModeDataContext(
+        zarr_path="unused", dataset_name="m", mode_group=view_group
+    )
+    loader = ModeDataLoader(context)
+    loader._zarr_file = {
+        f"{view_group}/arr": np.zeros((3, 1, 2, 2, 3)),
+        f"{view_group}/freqs": np.arange(3.0),
+        f"{view_group}/power_sum": np.arange(3.0),
+        "modes/m/arr": np.zeros((7, 1, 2, 2, 3)),
+        "modes/m/freqs": np.arange(7.0),
+        "modes/m/power_sum": np.arange(7.0),
+    }
+
+    modes_path, freqs_path, spectrum_path = loader._resolve_paths()
+
+    assert modes_path == f"{view_group}/arr"
+    assert freqs_path == f"{view_group}/freqs"
+    assert spectrum_path == f"{view_group}/power_sum"
+
+
+def test_mode_data_loader_refuses_to_invent_frequency_axis():
+    from types import SimpleNamespace
+
+    from mmpp.fft.modes.data_loader import ModeDataContext, ModeDataLoader
+
+    group = "modes/m/views/exact"
+    loader = ModeDataLoader(
+        ModeDataContext(zarr_path="unused", dataset_name="m", mode_group=group)
+    )
+    loader._zarr_file = {
+        f"{group}/arr": np.zeros((2, 1, 1, 1, 3)),
+        f"{group}/freqs": np.arange(2.0),
+        f"{group}/power_sum": np.arange(3.0),
+        group: SimpleNamespace(attrs={"power_definition": "abs_fft_squared"}),
+    }
+
+    with pytest.raises(RuntimeError, match="No frequency axis matches"):
+        loader.load_spectrum()
+
+
+def test_interactive_spectrum_uses_explicit_hz_to_ghz_contract_for_low_frequency():
+    from types import SimpleNamespace
+
+    from mmpp.fft.modes._interactive.data import load_spectrum_data
+    from mmpp.fft.spectrum.result import SpectrumResult
+
+    result = SpectrumResult(
+        frequencies=np.array([100e3, 200e3]),
+        spectrum=np.array([1.0 + 0.0j, 2.0 + 0.0j]),
+    )
+    explorer = SimpleNamespace(
+        spectrum_result=result,
+        data_loader=None,
+        analyzer=None,
+        _component_label=None,
+    )
+
+    load_spectrum_data(explorer)
+
+    assert np.allclose(explorer._raw_frequencies_ghz, [1e-4, 2e-4])
+
+
+def test_interactive_spectrum_filters_reject_frequency_length_mismatch():
+    from mmpp.fft.modes._interactive.filters import (
+        SpectrumFilterState,
+        apply_spectrum_filters,
+    )
+
+    with pytest.raises(ValueError, match="frequency axis has 3"):
+        apply_spectrum_filters(
+            np.arange(3.0),
+            {"z": np.arange(2.0)},
+            SpectrumFilterState(freq_min=0.0, freq_max=2.0),
+        )
+
+
+def test_interactive_spectrum_filters_reject_empty_frequency_window():
+    from mmpp.fft.modes._interactive.filters import (
+        SpectrumFilterState,
+        apply_spectrum_filters,
+    )
+
+    with pytest.raises(ValueError, match="does not overlap available data"):
+        apply_spectrum_filters(
+            np.array([1.0, 2.0, 3.0]),
+            {"z": np.array([2.0, 4.0, 2.0])},
+            SpectrumFilterState(freq_min=10.0, freq_max=20.0),
+        )
+
+
+def test_modes_fluent_frequency_properties_and_default_are_in_ghz():
+    from types import SimpleNamespace
+
+    from mmpp.fft.modes.interface import FFTModeInterfaceNew
+    from mmpp.fft.spectrum.result import SpectrumResult
+
+    result = SpectrumResult(
+        frequencies=np.array([1e9, 2e9, 3e9]),
+        spectrum=np.array([1.0 + 0.0j, 4.0 + 0.0j, 2.0 + 0.0j]),
+    )
+    parent = SimpleNamespace(
+        job_result=SimpleNamespace(path="unused"),
+        _spectrum_impl=lambda **kwargs: result,
+    )
+    interface = FFTModeInterfaceNew(0, parent)
+    interface._dataset_context = "m"
+
+    assert np.allclose(interface.frequencies, [1.0, 2.0, 3.0])
+    assert np.isclose(interface._default_mode_frequency(), 2.0)
+
+
+def test_spectrum_modes_bridge_clones_and_preserves_materialized_view_context():
+    from types import SimpleNamespace
+
+    from mmpp.fft.spectrum.modes.bridge import SpectrumModes
+    from mmpp.fft.spectrum.result import SpectrumResult
+
+    class BaseInterface:
+        _dataset_context = None
+        _slice_context = None
+
+        def _clone(self):
+            return SimpleNamespace(
+                _dataset_context=self._dataset_context,
+                _slice_context=self._slice_context,
+            )
+
+    base = BaseInterface()
+    source_fft = SimpleNamespace(modes=base)
+    materialized = np.arange(6.0).reshape(2, 3)
+    geometry = object()
+    spectrum = SpectrumResult(
+        frequencies=np.array([1e9]),
+        spectrum=np.array([1.0 + 0.0j]),
+        source_fft=source_fft,
+        mode_context={
+            "dset": "m_view",
+            "slice_info": (slice(2, 8), Ellipsis),
+            "preloaded_data": materialized,
+            "time_step_scale": 3.0,
+            "view_geometry": geometry,
+        },
+    )
+
+    resolved = SpectrumModes(spectrum)._resolve_interface()
+
+    assert resolved is not base
+    assert base._dataset_context is None
+    assert resolved._dataset_context == "m_view"
+    assert resolved._slice_context == (slice(2, 8), Ellipsis)
+    assert resolved._preloaded_context is materialized
+    assert resolved._time_step_scale_context == 3.0
+    assert resolved._geometry_context is geometry
+
+
+def test_bulk_dispersion_aligns_shifted_same_length_k_grid_without_fake_zeros():
+    from mmpp.fft.dispersion.bulk import _align_crosssection_to_k_grid
+
+    aligned = _align_crosssection_to_k_grid(
+        np.array([1.0, 2.0, 3.0]),
+        np.array([10.0, 20.0, 30.0]),
+        np.array([0.5, 1.5, 2.5, 3.5]),
+    )
+
+    assert np.isnan(aligned[[0, -1]]).all()
+    assert np.allclose(aligned[1:3], [15.0, 25.0])
+
+
+def test_bulk_dispersion_alignment_handles_descending_k_grid():
+    from mmpp.fft.dispersion.bulk import _align_crosssection_to_k_grid
+
+    aligned = _align_crosssection_to_k_grid(
+        np.array([3.0, 2.0, 1.0]),
+        np.array([30.0, 20.0, 10.0]),
+        np.array([2.5, 1.5]),
+    )
+
+    assert np.allclose(aligned, [25.0, 15.0])
+
+
+def test_bulk_dispersion_heatmap_rows_follow_sorted_parameter_values():
+    from mmpp.fft.dispersion.bulk import _prepare_bulk_heatmap_matrix
+
+    params = np.array([20.0, 0.0, 10.0])
+    k_axes = [np.array([0.0, 1.0])] * 3
+    crosssections = [
+        np.array([20.0, 21.0]),
+        np.array([0.0, 1.0]),
+        np.array([10.0, 11.0]),
+    ]
+
+    matrix, k_ref, sorted_params, order = _prepare_bulk_heatmap_matrix(
+        params, k_axes, crosssections
+    )
+
+    assert np.array_equal(sorted_params, [0.0, 10.0, 20.0])
+    assert np.array_equal(order, [1, 2, 0])
+    assert np.array_equal(k_ref, [0.0, 1.0])
+    assert np.array_equal(matrix[:, 0], [0.0, 10.0, 20.0])
+
+
+def test_bulk_dispersion_heatmap_preserves_nonuniform_parameter_coordinates():
+    from mmpp.fft.dispersion.bulk import _prepare_bulk_heatmap_matrix
+
+    params = np.array([10.0, 0.0, 1.0])
+    axes = [np.array([0.0, 1.0])] * 3
+    rows = [np.full(2, value) for value in params]
+
+    matrix, _, sorted_params, _ = _prepare_bulk_heatmap_matrix(params, axes, rows)
+
+    assert np.array_equal(sorted_params, [0.0, 1.0, 10.0])
+    assert np.array_equal(matrix[:, 0], sorted_params)
+
+    with pytest.raises(ValueError, match="unique and strictly increasing"):
+        _prepare_bulk_heatmap_matrix(np.array([1.0, 1.0]), axes[:2], rows[:2])
+
+
+def _bulk_result_for_serialization_tests():
+    from mmpp.fft.dispersion.bulk import BulkMinimumFrequencyResult
+
+    return BulkMinimumFrequencyResult(
+        param_values=np.array([20.0, 10.0]),
+        param_label="B [mT]",
+        f_min_hz=np.array([2e9, 1e9]),
+        k_star_rad_m=np.array([2e6, 1e6]),
+        vg_at_min=np.array([2000.0, 1000.0]),
+        f_at_k0_hz=np.array([2.2e9, 1.1e9]),
+        crosssections_at_fmin=[np.array([2.0, 3.0]), np.array([1.0, 2.0])],
+        crosssections_at_fk0=[np.array([4.0, 5.0]), np.array([3.0, 4.0])],
+        branches_f=[np.array([2e9]), np.array([1e9])],
+        branches_k=[np.array([2e6]), np.array([1e6])],
+        k_axes=[np.array([0.0, 2e6]), np.array([0.0, 1e6])],
+        errors={1: "synthetic failure"},
+        meta={"axis": "x", "component": "perp"},
+        analytical_f_min_hz=np.array([1.9e9, 0.9e9]),
+        analytical_k_star_rad_m=np.array([1.9e6, 0.9e6]),
+        analytical_f_k0_hz=np.array([2.1e9, 1.0e9]),
+        analytical_model="latest",
+        analytical_params={"Ms": 800e3},
+        analytical_overlays=[
+            {
+                "label": "model A",
+                "model": "kalinikos",
+                "f_min_hz": np.array([1.8e9, 0.8e9]),
+                "k_star_rad_m": np.array([1.8e6, 0.8e6]),
+                "f_k0_hz": np.array([2.0e9, 0.9e9]),
+                "params": {"Ku": 0.0},
+            },
+            {
+                "label": "model B",
+                "model": "kalinikos",
+                "f_min_hz": np.array([1.9e9, 0.9e9]),
+                "k_star_rad_m": np.array([1.9e6, 0.9e6]),
+                "f_k0_hz": np.array([2.1e9, 1.0e9]),
+                "params": {"Ku": 1.0},
+            },
+        ],
+    )
+
+
+def test_bulk_result_roundtrip_preserves_metadata_and_all_overlays(tmp_path):
+    from mmpp.fft.dispersion.bulk import BulkMinimumFrequencyResult
+
+    original = _bulk_result_for_serialization_tests()
+    restored = BulkMinimumFrequencyResult.load(original.save(tmp_path / "bulk"))
+
+    assert restored.meta == original.meta
+    assert restored.errors == original.errors
+    assert len(restored.analytical_overlays) == 2
+    assert [item["label"] for item in restored.analytical_overlays] == [
+        "model A",
+        "model B",
+    ]
+    assert restored.analytical_overlays[1]["params"] == {"Ku": 1.0}
+    assert np.array_equal(
+        restored.analytical_overlays[0]["f_min_hz"],
+        original.analytical_overlays[0]["f_min_hz"],
+    )
+
+
+def test_bulk_result_rejects_silently_truncated_per_point_sequences():
+    result = _bulk_result_for_serialization_tests()
+    fields = dict(result.__dict__)
+    fields["k_axes"] = fields["k_axes"][:1]
+
+    from mmpp.fft.dispersion.bulk import BulkMinimumFrequencyResult
+
+    with pytest.raises(ValueError, match="one array per scan point"):
+        BulkMinimumFrequencyResult(**fields)
+
+
+def test_bulk_result_rejects_crosssection_axis_length_mismatch():
+    result = _bulk_result_for_serialization_tests()
+    fields = dict(result.__dict__)
+    fields["crosssections_at_fmin"] = [
+        np.array([1.0]),
+        fields["crosssections_at_fmin"][1],
+    ]
+
+    from mmpp.fft.dispersion.bulk import BulkMinimumFrequencyResult
+
+    with pytest.raises(ValueError, match="cross-section/k-axis length mismatch"):
+        BulkMinimumFrequencyResult(**fields)
+
+
+def test_bulk_result_roundtrip_accepts_numpy_analytical_parameters(tmp_path):
+    from mmpp.fft.dispersion.bulk import BulkMinimumFrequencyResult
+
+    original = _bulk_result_for_serialization_tests()
+    original.analytical_params = {
+        "Ms": np.float64(800e3),
+        "sampled_k": np.array([0.0, 1e6]),
+    }
+    restored = BulkMinimumFrequencyResult.load(original.save(tmp_path / "numpy"))
+
+    assert restored.analytical_params["Ms"] == np.float64(800e3)
+    assert np.array_equal(restored.analytical_params["sampled_k"], np.array([0.0, 1e6]))
+
+
+def test_bz_mask_does_not_project_out_of_range_replicas_to_edge_bins():
+    from mmpp.fft.dispersion.modes.extraction import build_bz_k_mask
+
+    k_axis = np.linspace(-2e6, 2e6, 9)
+    mask = build_bz_k_mask(
+        k_axis,
+        k_0=0.0,
+        lattice_constant=1e-6,
+        n_bz=2,
+    )
+
+    assert np.array_equal(np.flatnonzero(mask), [4])
+
+
+def test_bz_mask_explicit_empty_delta_window_fails_closed():
+    from mmpp.fft.dispersion.modes.extraction import build_bz_k_mask
+
+    with pytest.raises(ValueError, match="does not contain any sampled bin"):
+        build_bz_k_mask(
+            np.array([-1.0, 0.0, 1.0]),
+            k_0=0.4,
+            lattice_constant=2 * np.pi,
+            n_bz=0,
+            delta_k=0.1,
+        )
+
+
+def test_frequency_selection_explicit_empty_delta_window_fails_closed():
+    from mmpp.fft.dispersion.modes.extraction import select_frequency_indices
+
+    with pytest.raises(ValueError, match="does not contain any sampled"):
+        select_frequency_indices(
+            np.array([0.0, 1e9, 2e9]),
+            f_0=1.4e9,
+            delta_f=0.1e9,
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"k_direction": "sideways"}, "k_direction"),
+        ({"n_bz": -1}, "n_bz"),
+        ({"k_margin_bins": -1}, "k_margin_bins"),
+        ({"delta_k": 0.0}, "delta_k"),
+    ],
+)
+def test_bz_mask_rejects_invalid_selection_parameters(kwargs, message):
+    from mmpp.fft.dispersion.modes.extraction import build_bz_k_mask
+
+    base = {
+        "k_axis": np.array([-1.0, 0.0, 1.0]),
+        "k_0": 0.0,
+        "lattice_constant": 2 * np.pi,
+        "n_bz": 0,
+    }
+    base.update(kwargs)
+    with pytest.raises(ValueError, match=message):
+        build_bz_k_mask(**base)
+
+
+def test_dispersion_result_rejects_axis_and_spectrum_shape_mismatches():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    with pytest.raises(ValueError, match="k_axis length"):
+        DispersionResult1D(
+            S=np.ones((3, 4)),
+            k_axis=np.arange(2),
+            f_axis=np.arange(4),
+            axis="x",
+            component="mz",
+            config=DispersionConfig(),
+        )
+
+    with pytest.raises(ValueError, match="S_complex shape"):
+        DispersionResult1D(
+            S=np.ones((3, 4)),
+            k_axis=np.arange(3),
+            f_axis=np.arange(4),
+            axis="x",
+            component="mz",
+            config=DispersionConfig(),
+            S_complex=np.ones((2, 4), dtype=complex),
+        )
+
+
+def test_dispersion_result_canonicalizes_legacy_transposed_complex_spectrum():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    legacy = np.arange(12).reshape(4, 3).astype(complex)
+    result = DispersionResult1D(
+        S=np.ones((3, 4)),
+        k_axis=np.arange(3),
+        f_axis=np.arange(4),
+        axis="x",
+        component="mz",
+        config=DispersionConfig(),
+        S_complex=legacy,
+    )
+
+    assert result.S_complex.shape == (3, 4)
+    assert np.array_equal(result.S_complex, legacy.T)
+
+
+def test_select_orthogonal_slice_does_not_reuse_aggregate_folded_spectrum():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    local = np.stack([np.ones((3, 4)), np.full((3, 4), 2.0)])
+    result = DispersionResult1D(
+        S=np.mean(local, axis=0),
+        k_axis=np.arange(3),
+        f_axis=np.arange(4),
+        axis="x",
+        component="mz",
+        config=DispersionConfig(),
+        S_local=local,
+        S_complex=local.astype(complex),
+        orth_axis=np.array([0.0, 1.0]),
+        S_folded=np.full((2, 4), 99.0),
+        k_folded=np.array([-0.5, 0.5]),
+        fold_period=1.0,
+    )
+
+    selected = result.select_orthogonal_slice(1)
+
+    assert np.array_equal(selected.S, local[1])
+    assert selected.S_folded is None
+    assert selected.k_folded is None
+    active, _, _ = selected.get_active_data()
+    assert np.array_equal(active, local[1])
+
+
+def test_dispersion_filtered_rejects_unknown_filter_instead_of_noop():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    result = DispersionResult1D(
+        S=np.arange(12, dtype=float).reshape(3, 4),
+        k_axis=np.arange(3),
+        f_axis=np.arange(4),
+        axis="x",
+        component="mz",
+        config=DispersionConfig(),
+    )
+
+    with pytest.raises(ValueError, match="Unknown live dispersion filter"):
+        result.filtered(live={"gausian_morph": True})
+
+
+def test_dispersion_filtered_applies_keyword_filter_and_preserves_raw_data():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    raw = np.arange(12, dtype=float).reshape(3, 4)
+    result = DispersionResult1D(
+        S=raw.copy(),
+        k_axis=np.arange(3),
+        f_axis=np.arange(4),
+        axis="x",
+        component="mz",
+        config=DispersionConfig(),
+    )
+
+    filtered = result.filtered(normalize=True)
+
+    assert np.isclose(np.max(filtered.S), 1.0)
+    assert np.array_equal(result.S, raw)
+    assert np.array_equal(filtered.S_raw, raw)
+
+
+def test_remove_mean_and_static_does_not_reintroduce_dc_component():
+    from mmpp.fft.filters.preprocess import remove_mean_and_static
+
+    data = np.array([10.0, 12.0, 15.0, 19.0])[:, None]
+    filtered = remove_mean_and_static(data)
+
+    assert np.allclose(np.mean(filtered, axis=0), 0.0)
+
+
+def test_common_filter_pipeline_rejects_unknown_filters_and_bad_stages():
+    from mmpp.fft.filters.pipeline import normalize_filter_config
+
+    with pytest.raises(ValueError, match="Unknown FFT filter"):
+        normalize_filter_config({"gausian_smooth": True})
+    with pytest.raises(ValueError, match="Unknown post FFT filter"):
+        normalize_filter_config({"post": {"gausian_smooth": True}})
+    with pytest.raises(TypeError, match="post filter stage"):
+        normalize_filter_config({"post": ["normalize"]})
+
+
+def test_postprocess_filter_failure_is_not_silently_ignored():
+    from mmpp.fft.filters.postprocess import apply_postprocess_filters
+
+    with pytest.raises(ValueError, match="gamma must be"):
+        apply_postprocess_filters(
+            np.arange(5, dtype=float),
+            np.arange(5, dtype=float),
+            {"gamma": {"gamma": -1.0}},
+        )
+    with pytest.raises(ValueError, match="Unknown baseline mode"):
+        apply_postprocess_filters(
+            np.arange(5, dtype=float),
+            np.arange(5, dtype=float),
+            {"baseline_correction": {"mode": "linar"}},
+        )
+
+
+def test_tracewise_preprocessing_does_not_truncate_integer_input():
+    from mmpp.fft.filters.preprocess import _apply_tracewise
+
+    data = np.array([[1, 2], [2, 4], [4, 8]], dtype=int)
+    result = _apply_tracewise(data, lambda trace: trace / 2.0)
+
+    assert np.issubdtype(result.dtype, np.floating)
+    assert np.allclose(result[:, 0], [0.5, 1.0, 2.0])
+
+
+def test_common_postprocess_rejects_wrong_frequency_axis_orientation():
+    from mmpp.fft.filters.pipeline import FilterPipeline
+
+    spectrum = np.ones((2, 5))
+    with pytest.raises(ValueError, match="match spectrum axis 0"):
+        FilterPipeline().postprocess(
+            spectrum,
+            np.arange(5),
+            filters={"post": {"normalize": True}},
+        )
+    with pytest.raises(ValueError, match="stage must be"):
+        FilterPipeline().postprocess(
+            np.ones(5),
+            np.arange(5),
+            filters=None,
+            stage="display",
+        )
+
+
+def test_dispersion_result_2d_validates_axis_shapes_and_slice_width():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult2D
+
+    with pytest.raises(ValueError, match="does not match axis lengths"):
+        DispersionResult2D(
+            S=np.ones((3, 2, 4)),
+            kx_axis=np.arange(2),
+            ky_axis=np.arange(2),
+            f_axis=np.arange(4),
+            component="mz",
+            config=DispersionConfig(),
+        )
+
+    result = DispersionResult2D(
+        S=np.ones((3, 2, 4)),
+        kx_axis=np.arange(3),
+        ky_axis=np.arange(2),
+        f_axis=np.arange(4),
+        component="mz",
+        config=DispersionConfig(),
+    )
+    with pytest.raises(ValueError, match="dk_max must be"):
+        result.slice_1d("kx", dk_max=-1.0)
+
+
+def test_dispersion_branch_smooth_flag_performs_real_smoothing():
+    from mmpp.fft.dispersion.models import DispersionBranch
+
+    k = np.linspace(0.0, 10.0, 21)
+    true_slope = 3.0
+    noise = 0.8 * (-1.0) ** np.arange(k.size)
+    branch = DispersionBranch(
+        k_path=k,
+        f_values=true_slope * k + noise,
+        amplitudes=np.ones_like(k),
+    )
+
+    raw = branch.compute_group_velocity(smooth=False)
+    smoothed = branch.compute_group_velocity(smooth=True)
+    expected = 2 * np.pi * true_slope
+
+    assert not np.array_equal(raw, smoothed)
+    assert np.mean(np.abs(smoothed - expected)) < np.mean(np.abs(raw - expected))
+
+
+def test_dispersion_branch_rejects_nonmonotonic_or_mismatched_coordinates():
+    from mmpp.fft.dispersion.models import DispersionBranch
+
+    with pytest.raises(ValueError, match="matching lengths"):
+        DispersionBranch(
+            k_path=np.arange(3),
+            f_values=np.arange(2),
+            amplitudes=np.arange(3),
+        )
+    with pytest.raises(ValueError, match="strictly monotonic"):
+        DispersionBranch(
+            k_path=np.array([0.0, 1.0, 0.5]),
+            f_values=np.arange(3),
+            amplitudes=np.arange(3),
+        )
+
+
+def _lowest_frequency_test_result(raw, display=None):
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    raw = np.asarray(raw, dtype=float)
+    shown = raw.copy() if display is None else np.asarray(display, dtype=float)
+    return DispersionResult1D(
+        S=shown,
+        S_raw=raw,
+        S_display=shown,
+        k_axis=np.array([-1e6, 0.0, 1e6]),
+        f_axis=np.array([0.0, 1e9, 2e9, 3e9]),
+        axis="x",
+        component="mz",
+        config=DispersionConfig(),
+    )
+
+
+def test_find_lowest_uses_raw_spectrum_by_default():
+    raw = np.zeros((3, 4))
+    raw[1, 2] = 5.0
+    raw[2, 1] = 4.0
+    display = np.zeros_like(raw)
+    display[1:, 3] = 10.0
+    result = _lowest_frequency_test_result(raw, display)
+
+    lowest = result.analyze.find_lowest_possible_frequency(
+        smooth_sigma=None,
+        min_snr=0.1,
+    )
+
+    assert lowest.f_min_hz == 1e9
+    assert lowest.f_at_k0_hz == 2e9
+
+
+def test_find_lowest_rejects_zero_spectrum_and_empty_snr_gate():
+    zero = _lowest_frequency_test_result(np.zeros((3, 4)))
+    with pytest.raises(ValueError, match="no positive spectral power"):
+        zero.analyze.find_lowest_possible_frequency(smooth_sigma=None)
+
+    power = np.zeros((3, 4))
+    power[0, 2] = 10.0
+    power[1, 2] = 10.0
+    power[2, 1] = 1.0
+    weak_positive = _lowest_frequency_test_result(power)
+    with pytest.raises(ValueError, match="passes the min_snr"):
+        weak_positive.analyze.find_lowest_possible_frequency(
+            smooth_sigma=None,
+            min_snr=0.5,
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"side": "right"}, "side must be"),
+        ({"peak_method": "maximum"}, "peak_method"),
+        ({"min_snr": -0.1}, "min_snr"),
+        ({"smooth_sigma": -1.0}, "smooth_sigma"),
+        ({"k_min_rad_um": 2.0, "k_max_rad_um": 1.0}, "k_max_rad_um"),
+        ({"fmin_hz": "ten"}, "fmin_hz"),
+    ],
+)
+def test_find_lowest_rejects_invalid_quantitative_options(kwargs, message):
+    power = np.ones((3, 4))
+    result = _lowest_frequency_test_result(power)
+    with pytest.raises(ValueError, match=message):
+        result.analyze.find_lowest_possible_frequency(**kwargs)
+
+
+def test_branch_peak_detection_does_not_bypass_prominence_with_argmax():
+    from mmpp.fft.dispersion._branch_linker import _find_peaks_column
+
+    frequencies, amplitudes = _find_peaks_column(
+        np.ones(9),
+        np.arange(9, dtype=float),
+        min_prominence_log=0.3,
+        noise_floor=0.0,
+    )
+
+    assert frequencies.size == 0
+    assert amplitudes.size == 0
+
+
+def test_find_branches_rejects_zero_power_and_invalid_options():
+    zero = _lowest_frequency_test_result(np.zeros((3, 4)))
+    with pytest.raises(ValueError, match="no positive spectral power"):
+        zero.analyze.find_branches(min_branch_length=1)
+
+    power = np.full((3, 4), 0.01)
+    power[:, 2] = 10.0
+    result = _lowest_frequency_test_result(power)
+    invalid = [
+        ({"n_branches": 0}, "n_branches"),
+        ({"side": "right"}, "side must be"),
+        ({"min_peak_distance": 0}, "min_peak_distance"),
+        ({"max_df_ghz": 0.0}, "max_df_ghz"),
+        ({"noise_floor_percentile": 101.0}, "noise_floor_percentile"),
+        ({"min_quality": -0.1}, "min_quality"),
+        ({"smooth_sigma": -1.0}, "smooth_sigma"),
+    ]
+    for kwargs, message in invalid:
+        with pytest.raises(ValueError, match=message):
+            result.analyze.find_branches(**kwargs)
+
+
+def test_find_branches_sorts_descending_frequency_axis_with_spectrum():
+    from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+
+    ascending = np.full((3, 5), 0.01)
+    ascending[:, 2] = 10.0
+    descending = ascending[:, ::-1]
+    result = DispersionResult1D(
+        S=descending,
+        k_axis=np.array([-1e6, 0.0, 1e6]),
+        f_axis=np.array([4e9, 3e9, 2e9, 1e9, 0.0]),
+        axis="x",
+        component="mz",
+        config=DispersionConfig(),
+    )
+
+    branches = result.analyze.find_branches(
+        n_branches=1,
+        min_peak_distance=1,
+        min_branch_length=1,
+        min_quality=0.0,
+        smooth_sigma=None,
+        noise_floor_percentile=0.0,
+    )
+
+    assert len(branches) == 1
+    assert np.all(branches[0].f_hz == 2e9)
+
+
+def test_branch_quality_smoothness_uses_physical_k_spacing():
+    from mmpp.fft.dispersion._branch_linker import _branch_quality_metrics
+
+    k = np.array([0.0, 1.0, 3.0, 6.0])
+    metrics = _branch_quality_metrics(
+        k,
+        2.0 * k + 5.0,
+        np.ones_like(k),
+        reference_k_axis=k,
+    )
+
+    assert np.isclose(metrics["smoothness"], 1.0)
+
+
+def test_branch_plot_unit_conversion_handles_cycles_per_meter_consistently():
+    from mmpp.fft.dispersion._branch_linker import (
+        TrackedBranch,
+        _branch_plot_values,
+    )
+
+    branch = TrackedBranch(
+        k=np.array([2 * np.pi, 4 * np.pi]),
+        f_hz=np.array([1e9, 2e9]),
+        amplitude=np.ones(2),
+    )
+    k_plot, f_plot, k_label, f_label = _branch_plot_values(
+        branch,
+        kscale="cycles_m",
+        f_units="GHz",
+    )
+
+    assert np.allclose(k_plot, [1.0, 2.0])
+    assert np.allclose(f_plot, [1.0, 2.0])
+    assert "m" in k_label
+    assert f_label == "f [GHz]"
+    with pytest.raises(ValueError, match="kscale must be"):
+        _branch_plot_values(branch, kscale="metres", f_units="GHz")
+
+
+def test_interactive_dispersion_does_not_apply_hidden_default_k_crop():
+    from types import SimpleNamespace
+
+    from mmpp.fft.dispersion._interactive.rendering import _display_k_xlim
+
+    explorer = SimpleNamespace(options={}, state=SimpleNamespace(kscale="rad_um"))
+    assert _display_k_xlim(explorer, np.array([-50.0, 50.0])) is None
+
+    explorer.options["k_xlim"] = (-25.0, 30.0)
+    assert _display_k_xlim(explorer, np.array([-50.0, 50.0])) == (-25.0, 30.0)
+
+    explorer.options["k_xlim"] = (5.0, -5.0)
+    with pytest.raises(ValueError, match="strictly increasing"):
+        _display_k_xlim(explorer, np.array([-50.0, 50.0]))
+
+
+def test_interactive_dispersion_rejects_unknown_k_scale():
+    from mmpp.fft.dispersion._interactive.rendering import _scaled_k_axis
+
+    with pytest.raises(ValueError, match="kscale must be"):
+        _scaled_k_axis(np.arange(3), "micrometers")
+
+
+def test_legacy_mode_peak_detection_preserves_frequency_axis_in_2d():
+    from mmpp.fft.modes.utils.peak_detection import detect_peaks_simple
+
+    frequencies = np.arange(7, dtype=float)
+    trace = np.array([0.0, 0.0, 1.0, 0.0, 0.5, 0.0, 0.0])
+    spectrum = np.stack([trace, trace * 0.5], axis=1)
+
+    peaks = detect_peaks_simple(
+        spectrum,
+        frequencies,
+        threshold=0.1,
+        min_distance=1,
+    )
+
+    assert [peak.idx for peak in peaks] == [2, 4]
+    assert [peak.freq for peak in peaks] == [2.0, 4.0]
+
+
+def test_simple_peak_fallback_honors_minimum_distance():
+    from mmpp.fft.modes.utils.peak_detection import detect_peaks_simple
+
+    spectrum = np.array([0.0, 3.0, 0.0, 2.0, 0.0, 1.0, 0.0])
+    peaks = detect_peaks_simple(
+        spectrum,
+        np.arange(spectrum.size, dtype=float),
+        threshold=0.0,
+        min_distance=3,
+    )
+
+    assert [peak.idx for peak in peaks] == [1, 5]
+
+
+def test_mode_peak_detection_rejects_ambiguous_or_invalid_data():
+    from mmpp.fft.modes.models import Peak
+    from mmpp.fft.modes.utils.peak_detection import detect_peaks_simple
+
+    with pytest.raises(ValueError, match="Cannot identify"):
+        detect_peaks_simple(np.ones((2, 3)), np.arange(5, dtype=float))
+    with pytest.raises(ValueError, match="finite non-negative"):
+        detect_peaks_simple(np.array([0.0, np.nan, 1.0]), np.arange(3, dtype=float))
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        Peak(idx=0, freq=np.nan, amplitude=1.0)
+
+
+def test_fmr_mode_crop_reports_actual_selected_cell_extent():
+    from mmpp.fft.modes.models import FMRModeData
+
+    mode = FMRModeData(
+        frequency=2.0,
+        mode_array=np.ones((4, 4, 3), dtype=complex),
+        extent=(0.0, 40.0, 0.0, 40.0),
+    )
+    cropped = mode.crop_to_region((-5.0, 25.0), (15.0, 50.0))
+
+    assert cropped.spatial_shape == (3, 3)
+    assert cropped.extent == (0.0, 30.0, 10.0, 40.0)
+    assert cropped.width_nm == 30.0
+    assert cropped.height_nm == 30.0
+
+    with pytest.raises(ValueError, match="does not overlap"):
+        mode.crop_to_region((50.0, 60.0), (0.0, 10.0))
+
+
+def test_fmr_mode_validates_geometry_grid_and_numpy_component_index():
+    from mmpp.fft.modes.models import FMRModeData
+
+    mode = FMRModeData(
+        frequency=np.float64(1.0),
+        mode_array=np.ones((2, 3, 3), dtype=complex),
+        extent=np.array([0.0, 30.0, 0.0, 20.0]),
+    )
+    assert np.array_equal(mode.get_component(np.int64(1)), mode.mode_array[:, :, 1])
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        FMRModeData(1.0, np.ones((2, 2, 3)), extent=(0.0, 0.0, 0.0, 2.0))
+    with pytest.raises(ValueError, match="positive integers"):
+        mode.interpolate_to_grid((0, 3))

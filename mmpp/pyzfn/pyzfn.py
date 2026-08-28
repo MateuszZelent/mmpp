@@ -5,11 +5,10 @@ convenient methods for hierarchical dataset handling, array creation, metadata a
 and visual tree formatting for simulation outputs.
 """
 
-import tempfile
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 import numpy as np
 import zarr
@@ -21,6 +20,7 @@ from rich.tree import Tree
 # Check if this is Zarr v2 (has zarr.core.group) or v3
 try:
     import zarr.core.group
+
     # Zarr v2
     ZARR_VERSION = 2
     from zarr.core.group import AsyncGroup, Group
@@ -30,6 +30,7 @@ except (ImportError, AttributeError):
     # Zarr v3
     ZARR_VERSION = 3
     from zarr import Group
+
     AsyncGroup = None
     sync = None
     StoreLike = None
@@ -63,7 +64,7 @@ def inner_snapshot(self: "Pyzfn", *args, **kwargs):
     """Lazy wrapper for snapshot plotting helpers."""
     from .snapshot import inner_snapshot as _inner_snapshot
 
-    return _inner_snapshot(self, *args, **kwargs)
+    return cast(Any, _inner_snapshot)(self, *args, **kwargs)
 
 
 class Pyzfn:
@@ -71,7 +72,7 @@ class Pyzfn:
 
     Provides utility methods and properties for handling hierarchical datasets,
     including array creation, metadata access, and visual tree formatting.
-    
+
     In Zarr v2, this inherits from Group. In Zarr v3, it wraps a Group object.
     """
 
@@ -100,37 +101,37 @@ class Pyzfn:
             if not p.is_dir():
                 msg = f"Path '{store}' is not a directory."
                 raise NotADirectoryError(msg)
-        
+
         # Open the zarr group
-        self._group = zarr.open_group(store, mode='r')
-        
+        self._group = zarr.open_group(store, mode="r")
+
         # Store clean path
         path_str = str(store) if isinstance(store, Path) else store
         self.clean_path: str = path_str.replace("file://", "")
-    
+
     # Delegate all zarr Group methods to self._group
     def __getitem__(self, key):
         return self._group[key]
-    
+
     def __contains__(self, key):
         return key in self._group
-    
+
     def __iter__(self):
         return iter(self._group)
-    
+
     def __len__(self):
         return len(self._group)
 
     def __delitem__(self, key: str) -> None:
         """Delete a dataset or group from the Zarr store."""
         del self._group[key]
-    
+
     def keys(self):
         return self._group.keys()
-    
+
     def values(self):
         return self._group.values()
-    
+
     def items(self):
         return self._group.items()
 
@@ -140,7 +141,11 @@ class Pyzfn:
         Compatible with both Zarr v2 and v3.
         """
         if hasattr(self._group, "members"):
-            return self._group.members() if max_depth is None else self._group.members(max_depth=max_depth)
+            return (
+                self._group.members()
+                if max_depth is None
+                else self._group.members(max_depth=max_depth)
+            )
         # Zarr v3 uses .items() as the equivalent
         return list(self._group.items())
 
@@ -175,20 +180,20 @@ class Pyzfn:
             dtype=dtype,
             overwrite=overwrite,
         )
-    
+
     @property
     def attrs(self):
         return self._group.attrs
-    
+
     @property
     def attributes(self):
         """Alias for attrs - returns dictionary of all zarr attributes."""
         return dict(self._group.attrs)
-    
+
     @property
     def name(self):
         return self._group.name
-    
+
     @property
     def store(self):
         return self._group.store
@@ -224,7 +229,9 @@ class Pyzfn:
 
         """
         # In Zarr v3, use metadata.store_path if available
-        if hasattr(self._group, 'metadata') and hasattr(self._group.metadata, 'store_path'):
+        if hasattr(self._group, "metadata") and hasattr(
+            self._group.metadata, "store_path"
+        ):
             return str(self._group.metadata.store_path)
         # Fallback to clean_path
         return self.clean_path
@@ -239,7 +246,9 @@ class Pyzfn:
         """
 
         def add_to_tree(node_group, tree_node: Tree, prefix: str = "") -> None:
-            for key, node in sorted(self.members() if node_group is self else list(node_group.items())):
+            for key, node in sorted(
+                self.members() if node_group is self else list(node_group.items())
+            ):
                 full_key = f"{prefix}/{key}" if prefix else key
                 if isinstance(node, Group):
                     label = f"[bold]{key}[/bold]"
@@ -267,6 +276,7 @@ class Pyzfn:
         """
         # Security: reject paths that escape the base directory
         import shutil
+
         base = Path(self.clean_path).resolve()
         target = (base / name).resolve()
         if not str(target).startswith(str(base) + "/") and target != base:
@@ -378,7 +388,7 @@ class Pyzfn:
             return np.asarray(arr[:])
 
         if isinstance(slices, slice):
-            slice_tuple: tuple[slice, ...] = (slices,)
+            slice_tuple: Any = (slices,)
         else:
             slice_tuple = slices
 

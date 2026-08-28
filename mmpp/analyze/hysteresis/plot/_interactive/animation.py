@@ -7,7 +7,7 @@ try:
 
     _HAS_ANIM = True
 except Exception:  # pragma: no cover - optional dependency
-    FuncAnimation = None  # type: ignore[assignment]
+    FuncAnimation = None  # type: ignore[misc, assignment]
     _HAS_ANIM = False
 
 
@@ -23,7 +23,11 @@ def start_animation(explorer) -> None:
     stop_animation(explorer)
     explorer.state.is_animating = True
 
-    fps = max(1.0, float(explorer.result.config.animation_fps) * float(explorer.state.animation_speed))
+    fps = max(
+        1.0,
+        float(explorer.result.config.animation_fps)
+        * float(explorer.state.animation_speed),
+    )
     interval_ms = 1000.0 / fps
 
     def _step(_frame_idx):

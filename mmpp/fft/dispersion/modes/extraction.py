@@ -14,7 +14,7 @@ Key requirement:
 from __future__ import annotations
 
 import logging
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -103,18 +103,36 @@ def select_frequency_indices(
     delta_f: float | None = None,
 ) -> np.ndarray:
     """Select frequency-bin indices around f0 using either delta_f (Hz) or bin margin."""
-    f_axis = np.asarray(f_axis)
+    f_axis = np.asarray(f_axis, dtype=float)
     if f_axis.ndim != 1 or f_axis.size == 0:
         raise ValueError("f_axis must be 1D and non-empty")
+    if not np.all(np.isfinite(f_axis)):
+        raise ValueError("f_axis must contain only finite values")
+    f_target = float(f_0)
+    if not np.isfinite(f_target):
+        raise ValueError("f_0 must be finite")
+    if (
+        isinstance(f_margin_bins, (bool, np.bool_))
+        or int(f_margin_bins) != f_margin_bins
+    ):
+        raise ValueError("f_margin_bins must be a non-negative integer")
+    margin = int(f_margin_bins)
+    if margin < 0:
+        raise ValueError("f_margin_bins must be a non-negative integer")
 
-    if delta_f is not None and float(delta_f) > 0:
-        mask = np.abs(f_axis - float(f_0)) < float(delta_f)
+    if delta_f is not None:
+        width = float(delta_f)
+        if not np.isfinite(width) or width <= 0:
+            raise ValueError("delta_f must be finite and positive when provided")
+        mask = np.abs(f_axis - f_target) <= width
         idx = np.flatnonzero(mask)
-        if idx.size:
-            return idx.astype(int, copy=False)
+        if idx.size == 0:
+            raise ValueError(
+                "delta_f window does not contain any sampled frequency bin"
+            )
+        return idx.astype(int, copy=False)
 
-    idx0 = int(np.argmin(np.abs(f_axis - float(f_0))))
-    margin = max(0, int(f_margin_bins))
+    idx0 = int(np.argmin(np.abs(f_axis - f_target)))
     start = max(0, idx0 - margin)
     stop = min(f_axis.size, idx0 + margin + 1)
     return np.arange(start, stop, dtype=int)
@@ -132,26 +150,46 @@ def build_bz_k_mask(
 ) -> np.ndarray:
     """Build k-mask selecting k0 +/- n*G replicas (optionally with neighborhood width)."""
 
-    k_axis = np.asarray(k_axis)
+    k_axis = np.asarray(k_axis, dtype=float)
     if k_axis.ndim != 1 or k_axis.size == 0:
         raise ValueError("k_axis must be 1D and non-empty")
+    if not np.all(np.isfinite(k_axis)):
+        raise ValueError("k_axis must contain only finite values")
+    k_center = float(k_0)
+    if not np.isfinite(k_center):
+        raise ValueError("k_0 must be finite")
 
     a = float(lattice_constant)
     if not np.isfinite(a) or a <= 0:
         raise ValueError(f"lattice_constant must be positive, got {lattice_constant!r}")
 
-    n_bz_val = max(0, int(n_bz))
+    if isinstance(n_bz, (bool, np.bool_)) or int(n_bz) != n_bz or int(n_bz) < 0:
+        raise ValueError("n_bz must be a non-negative integer")
+    n_bz_val = int(n_bz)
     direction = str(k_direction).lower()
     if direction not in {"both", "positive", "negative"}:
-        direction = "both"
+        raise ValueError("k_direction must be 'both', 'positive', or 'negative'")
 
-    margin = max(0, int(k_margin_bins))
-    use_delta = delta_k is not None and float(delta_k) > 0
+    if (
+        isinstance(k_margin_bins, (bool, np.bool_))
+        or int(k_margin_bins) != k_margin_bins
+        or int(k_margin_bins) < 0
+    ):
+        raise ValueError("k_margin_bins must be a non-negative integer")
+    margin = int(k_margin_bins)
+    use_delta = delta_k is not None
+    if use_delta:
+        assert delta_k is not None
+        width = float(delta_k)
+        if not np.isfinite(width) or width <= 0:
+            raise ValueError("delta_k must be finite and positive when provided")
 
     G = 2.0 * np.pi / a
-    replicas = k_0 + np.arange(-n_bz_val, n_bz_val + 1, dtype=float) * G
+    replicas = k_center + np.arange(-n_bz_val, n_bz_val + 1, dtype=float) * G
+    k_min = float(np.min(k_axis))
+    k_max = float(np.max(k_axis))
 
-    mask = np.zeros(k_axis.size, dtype=bool)
+    mask: Any = np.zeros(k_axis.size, dtype=bool)
     n_targets = 0
     for k_target in replicas:
         if direction == "positive" and k_target < 0:
@@ -161,7 +199,12 @@ def build_bz_k_mask(
         n_targets += 1
 
         if use_delta:
-            mask |= np.abs(k_axis - k_target) < float(delta_k)
+            mask |= np.abs(k_axis - k_target) <= width
+            continue
+
+        # A non-sampled reciprocal-lattice replica must not be projected onto
+        # a boundary bin: doing so fabricates spectral weight at the edge.
+        if k_target < k_min or k_target > k_max:
             continue
 
         idx_k = int(np.argmin(np.abs(k_axis - k_target)))
@@ -180,22 +223,16 @@ def build_bz_k_mask(
                 "k-mask is empty: k_direction excluded all BZ replicas. "
                 "Try k_direction='both' or increase n_bz."
             )
-        # Numerical fallback: at least keep the nearest k-bin to k0.
-        idx_k = int(np.argmin(np.abs(k_axis - float(k_0))))
-        lo = max(0, idx_k - margin)
-        hi = min(k_axis.size, idx_k + margin + 1)
-        mask[lo:hi] = True
-        logger.warning(
-            "BZ k-mask selected 0 bins for k0=%.3f rad/um; falling back to nearest k-bin (idx=%d)",
-            float(k_0) / 1e6,
-            idx_k,
+        raise ValueError(
+            "k selection does not contain any sampled bin; the requested BZ "
+            "replicas/window lie outside the available k-axis"
         )
 
     return mask
 
 
 def extract_mode_2d(
-    result: "DispersionResult1D",
+    result: DispersionResult1D,
     *,
     k_0: float,
     f_0: float,
@@ -220,9 +257,11 @@ def extract_mode_2d(
     f_axis = np.asarray(result.f_axis)
     axis = str(getattr(result, "axis", "x")).lower()
     if axis not in {"x", "y"}:
-        axis = "x"
+        raise ValueError("Dispersion propagation axis must be 'x' or 'y'")
 
-    S_complex, has_orth = canonicalize_s_complex(result.S_complex, k_axis=k_axis, f_axis=f_axis)
+    S_complex, has_orth = canonicalize_s_complex(
+        result.S_complex, k_axis=k_axis, f_axis=f_axis
+    )
 
     # Frequency neighborhood selection.
     f_indices = select_frequency_indices(
@@ -233,7 +272,7 @@ def extract_mode_2d(
     )
     reducer = str(neighbor_reduce).lower()
     if reducer not in {"mean", "sum"}:
-        reducer = "mean"
+        raise ValueError("neighbor_reduce must be 'mean' or 'sum'")
 
     # BZ replica mask in k.
     k_mask = build_bz_k_mask(
@@ -277,15 +316,15 @@ def extract_mode_2d(
         M_mode = np.fft.ifft(S_k)  # (N_prop,)
         M_mode = M_mode[np.newaxis, :]  # (1, N_prop)
 
-    # Correct mirroring along the propagation axis if flipx convention correction was applied.
-    if getattr(result, "flipx", False):
-        M_mode = M_mode[:, ::-1]
+    # ``S_complex`` is stored in the public k-axis convention already.  The
+    # inverse transform above is therefore the complete reconstruction;
+    # applying ``flipx`` again would reverse and roll the physical profile.
 
     # Axes in real space.
     n_prop = int(M_mode.shape[1])
     dx = float(getattr(result, "dx", 0.0) or 0.0)
     if dx > 0:
-        prop_axis = np.arange(n_prop, dtype=float) * dx
+        prop_axis: Any = np.arange(n_prop, dtype=float) * dx
     else:
         if k_axis.size > 1:
             dk = float(np.abs(k_axis[1] - k_axis[0]))
@@ -295,9 +334,17 @@ def extract_mode_2d(
         prop_axis = np.linspace(0.0, L, n_prop, endpoint=False)
 
     if has_orth and getattr(result, "orth_axis", None) is not None:
-        orth_axis = np.asarray(getattr(result, "orth_axis"))
+        orth_axis = np.asarray(result.orth_axis, dtype=float)
+        if orth_axis.ndim != 1 or orth_axis.size != M_mode.shape[0]:
+            raise ValueError(
+                "orth_axis length must match the preserved orthogonal dimension"
+            )
+        if not np.all(np.isfinite(orth_axis)):
+            raise ValueError("orth_axis must contain only finite values")
     else:
-        orth_axis = np.arange(int(M_mode.shape[0]), dtype=float) * (dx if dx > 0 else 1.0)
+        orth_axis = np.arange(int(M_mode.shape[0]), dtype=float) * (
+            dx if dx > 0 else 1.0
+        )
 
     # Assign to x/y arrays and return mode_2d shaped as (Ny, Nx).
     if axis == "x":
@@ -329,7 +376,7 @@ def extract_mode_2d(
 
 
 def extract_mode_profile_1d(
-    result: "DispersionResult1D",
+    result: DispersionResult1D,
     *,
     k_0: float,
     f_0: float,
@@ -366,7 +413,7 @@ def extract_mode_profile_1d(
 
     reducer = str(orth_reduce).lower()
     if reducer not in {"mean", "sum"}:
-        reducer = "mean"
+        raise ValueError("orth_reduce must be 'mean' or 'sum'")
 
     axis = str(info.get("axis", "x"))
     if axis == "x":
@@ -387,4 +434,3 @@ def extract_mode_profile_1d(
     info = dict(info)
     info["orth_reduce"] = reducer
     return prop_axis, profile, info
-

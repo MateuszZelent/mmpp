@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from ...._method_helpers import InteractiveNodeMixin
 from ..._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -243,8 +244,11 @@ class SignalSpectrumResult:
         )
 
 
-class MagnetoresistancePlotAccessor:
+class MagnetoresistancePlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`MagnetoresistanceResult`."""
+
+    _interactive_owner = "result.plt"
+    _interactive_nodes = frozenset({"time_trace"})
 
     def __init__(self, result: MagnetoresistanceResult):
         self._result = result
@@ -284,8 +288,11 @@ class MagnetoresistancePlotAccessor:
         )
 
 
-class VoltagePlotAccessor:
+class VoltagePlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`VoltageResult`."""
+
+    _interactive_owner = "result.plt"
+    _interactive_nodes = frozenset({"time_trace"})
 
     def __init__(self, result: VoltageResult):
         self._result = result
@@ -325,8 +332,11 @@ class VoltagePlotAccessor:
         )
 
 
-class SignalSpectrumPlotAccessor:
+class SignalSpectrumPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`SignalSpectrumResult`."""
+
+    _interactive_owner = "result.plt"
+    _interactive_nodes = frozenset({"power_spectrum"})
 
     def __init__(self, result: SignalSpectrumResult):
         self._result = result

@@ -10,12 +10,22 @@ Integration: mmpp.fft.modes
 """
 
 import logging
-from typing import Optional
 
-import matplotlib.colors as mcolors
 import numpy as np
 
 log = logging.getLogger("mmpp.fft.modes.vortex_optics")
+
+
+def _hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
+    """Convert HSV to RGB while keeping Matplotlib an optional plot dependency."""
+    try:
+        from matplotlib.colors import hsv_to_rgb
+    except ImportError as exc:  # pragma: no cover - depends on optional environment
+        raise ImportError(
+            "Complex holography rendering requires matplotlib. "
+            "Install mmpp with plotting dependencies."
+        ) from exc
+    return hsv_to_rgb(hsv)
 
 
 class VortexOptics:
@@ -26,7 +36,9 @@ class VortexOptics:
     """
 
     @staticmethod
-    def to_circular_basis(m_x: np.ndarray, m_y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def to_circular_basis(
+        m_x: np.ndarray, m_y: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Transform to circular polarization basis (Helical Basis).
 
@@ -43,13 +55,16 @@ class VortexOptics:
         Returns:
         --------
         tuple[np.ndarray, np.ndarray]
-            (m_plus, m_minus) - Right (RCP) and Left (LCP) circular polarizations
+            ``(m_plus, m_minus)`` defined algebraically as
+            ``(m_x + i*m_y, m_x - i*m_y) / sqrt(2)``.
 
         Notes:
         ------
         The 1/√2 factor ensures unitary transformation (energy conservation).
-        - m_plus: Right-hand circular polarization (RCP) - counterclockwise
-        - m_minus: Left-hand circular polarization (LCP) - clockwise
+        The ``+``/``-`` names specify the algebraic sign only. Mapping them to
+        RCP/LCP or clockwise/counterclockwise additionally requires an explicit
+        Fourier time-sign convention and viewing direction, so no absolute
+        handedness label is assigned here.
 
         For gyrotropic vortex core: one of (m+, m-) dominates depending on core polarity.
         """
@@ -61,9 +76,7 @@ class VortexOptics:
 
     @staticmethod
     def to_cylindrical_basis(
-        m_x: np.ndarray,
-        m_y: np.ndarray,
-        center: Optional[tuple[float, float]] = None
+        m_x: np.ndarray, m_y: np.ndarray, center: tuple[float, float] | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Transform to cylindrical (magnetocentric) basis.
@@ -92,6 +105,16 @@ class VortexOptics:
 
         Perfect for analyzing modes with cylindrical symmetry (vortices, skyrmions).
         """
+        m_x = np.asanyarray(m_x)
+        m_y = np.asanyarray(m_y)
+        if m_x.shape != m_y.shape:
+            raise ValueError(
+                f"m_x and m_y must have identical shapes, got {m_x.shape} and {m_y.shape}"
+            )
+        if m_x.ndim < 2:
+            raise ValueError(
+                "cylindrical basis requires at least two spatial dimensions"
+            )
         ny, nx = m_x.shape[-2:]
         y_idx, x_idx = np.indices((ny, nx))
 
@@ -99,12 +122,14 @@ class VortexOptics:
         if center is None:
             cx, cy = (nx - 1) / 2.0, (ny - 1) / 2.0
         else:
-            cx, cy = center
+            cx, cy = (float(center[0]), float(center[1]))
+            if not np.isfinite(cx) or not np.isfinite(cy):
+                raise ValueError("cylindrical center coordinates must be finite")
 
-        # Zgodność z prawoskrętnym fizycznym układem odniesienia
-        # (Oś Y w NumPy rośnie w dół, więc ją odwracamy)
+        # Array axis -2 follows increasing physical y. Rendering uses
+        # origin='lower', so no image-coordinate sign inversion belongs here.
         X = x_idx - cx
-        Y = -(y_idx - cy)
+        Y = y_idx - cy
 
         phi = np.arctan2(Y, X)
 
@@ -119,7 +144,9 @@ class VortexOptics:
         m_rho = m_x * cos_phi + m_y * sin_phi
         m_phi = -m_x * sin_phi + m_y * cos_phi
 
-        log.debug(f"Cylindrical basis: m_rho shape={m_rho.shape}, m_phi shape={m_phi.shape}")
+        log.debug(
+            f"Cylindrical basis: m_rho shape={m_rho.shape}, m_phi shape={m_phi.shape}"
+        )
         return m_rho, m_phi
 
     @staticmethod
@@ -127,7 +154,7 @@ class VortexOptics:
         z_array: np.ndarray,
         gamma: float = 0.6,
         noise_threshold: float = 1e-4,
-        saturation: float = 1.0
+        saturation: float = 1.0,
     ) -> np.ndarray:
         """
         Complex Holography via Domain Coloring.
@@ -165,13 +192,32 @@ class VortexOptics:
         - Phase gradients → color wheel rotation
         - Amplitude modulation → brightness variation
         """
-        amp = np.abs(z_array)
-        phase = np.angle(z_array)
+        gamma = float(gamma)
+        noise_threshold = float(noise_threshold)
+        saturation = float(saturation)
+        if not np.isfinite(gamma) or gamma <= 0:
+            raise ValueError("gamma must be finite and positive")
+        if not np.isfinite(noise_threshold) or noise_threshold < 0:
+            raise ValueError("noise_threshold must be finite and non-negative")
+        if not np.isfinite(saturation) or not 0 <= saturation <= 1:
+            raise ValueError("saturation must be finite and within [0, 1]")
+
+        values = np.asanyarray(z_array)
+        input_mask = np.ma.getmaskarray(values) if np.ma.isMaskedArray(values) else None
+        values = np.ma.filled(values, 0.0)
+        finite = np.isfinite(values)
+        safe_values = np.where(finite, values, 0.0)
+        amp = np.abs(safe_values)
+        phase = np.angle(safe_values)
 
         max_amp = np.nanmax(amp)
         if max_amp == 0 or np.isnan(max_amp):
             # Return black image if no signal
-            return np.zeros(z_array.shape + (3,), dtype=np.float32)
+            channels = 4 if input_mask is not None else 3
+            empty = np.zeros(z_array.shape + (channels,), dtype=np.float32)
+            if input_mask is not None:
+                empty[..., 3] = (~input_mask).astype(np.float32)
+            return empty
 
         # Nonlinear amplitude enhancement (gamma correction)
         # Pulls weak wavefronts out of noise background
@@ -188,13 +234,19 @@ class VortexOptics:
         S = np.full_like(H, saturation)
 
         # Stack into HSV image
-        hsv_img = np.dstack((H, S, V))
+        hsv_img = np.stack((H, S, V), axis=-1)
 
         # Convert to RGB for Matplotlib
-        rgb_img = mcolors.hsv_to_rgb(hsv_img)
+        rgb_img = _hsv_to_rgb(hsv_img)
 
-        log.debug(f"Holography: input shape={z_array.shape}, RGB output shape={rgb_img.shape}")
-        return rgb_img
+        if input_mask is not None:
+            alpha = (~np.asarray(input_mask, dtype=bool)).astype(np.float32)
+            rgb_img = np.concatenate((rgb_img, alpha[..., None]), axis=-1)
+
+        log.debug(
+            f"Holography: input shape={z_array.shape}, RGB output shape={rgb_img.shape}"
+        )
+        return rgb_img.astype(np.float32, copy=False)
 
     @staticmethod
     def resolve_physical_components(
@@ -202,7 +254,7 @@ class VortexOptics:
         m_y: np.ndarray,
         m_z: np.ndarray,
         components: list[str],
-        vortex_center: Optional[tuple[float, float]] = None
+        vortex_center: tuple[float, float] | None = None,
     ) -> dict[str, np.ndarray]:
         """
         Intelligent router for physical basis transformations.
@@ -217,7 +269,7 @@ class VortexOptics:
         components : list[str]
             Requested components. Supported values:
             - 'x', 'y', 'z': Cartesian (standard)
-            - '+', '-': Circular/helical (RCP, LCP)
+            - '+', '-': Circular/helical, ``(mx ± i*my)/sqrt(2)``
             - 'rho', 'phi': Cylindrical (radial, azimuthal)
         vortex_center : tuple, optional
             Center for cylindrical transformation
@@ -230,26 +282,28 @@ class VortexOptics:
         Examples:
         ---------
         >>> data = resolve_physical_components(mx, my, mz, ['+', '-', 'z'])
-        >>> m_plus = data['+']  # Right circular polarization
-        >>> m_minus = data['-']  # Left circular polarization
+        >>> m_plus = data['+']  # (mx + i*my)/sqrt(2)
+        >>> m_minus = data['-']  # (mx - i*my)/sqrt(2)
         >>> m_z = data['z']  # Out-of-plane component
         """
-        resolved_data = {'x': m_x, 'y': m_y, 'z': m_z}
+        resolved_data = {"x": m_x, "y": m_y, "z": m_z}
 
         # Transform only if requested (lazy evaluation for performance)
-        needs_circular = any(c in ['+', '-'] for c in components)
-        needs_cylindrical = any(c in ['rho', 'phi'] for c in components)
+        needs_circular = any(c in ["+", "-"] for c in components)
+        needs_cylindrical = any(c in ["rho", "phi"] for c in components)
 
         if needs_circular:
             m_plus, m_minus = VortexOptics.to_circular_basis(m_x, m_y)
-            resolved_data['+'] = m_plus
-            resolved_data['-'] = m_minus
-            log.info("Circular basis computed: m+ (RCP), m- (LCP)")
+            resolved_data["+"] = m_plus
+            resolved_data["-"] = m_minus
+            log.info("Circular basis computed: m±=(mx±i*my)/sqrt(2)")
 
         if needs_cylindrical:
-            m_rho, m_phi = VortexOptics.to_cylindrical_basis(m_x, m_y, center=vortex_center)
-            resolved_data['rho'] = m_rho
-            resolved_data['phi'] = m_phi
+            m_rho, m_phi = VortexOptics.to_cylindrical_basis(
+                m_x, m_y, center=vortex_center
+            )
+            resolved_data["rho"] = m_rho
+            resolved_data["phi"] = m_phi
             log.info("Cylindrical basis computed: m_rho (radial), m_phi (azimuthal)")
 
         return resolved_data
@@ -273,23 +327,23 @@ class VortexOptics:
         """
         if latex:
             labels = {
-                'x': r'$m_x$',
-                'y': r'$m_y$',
-                'z': r'$m_z$',
-                '+': r'$m^+$ (RCP)',
-                '-': r'$m^-$ (LCP)',
-                'rho': r'$m_\rho$ (Radial)',
-                'phi': r'$m_\phi$ (Azimuthal)',
+                "x": r"$m_x$",
+                "y": r"$m_y$",
+                "z": r"$m_z$",
+                "+": r"$m^+=(m_x+i m_y)/\sqrt{2}$",
+                "-": r"$m^-=(m_x-i m_y)/\sqrt{2}$",
+                "rho": r"$m_\rho$ (Radial)",
+                "phi": r"$m_\phi$ (Azimuthal)",
             }
         else:
             labels = {
-                'x': 'mx',
-                'y': 'my',
-                'z': 'mz',
-                '+': 'm+ (RCP)',
-                '-': 'm- (LCP)',
-                'rho': 'm_rho (Radial)',
-                'phi': 'm_phi (Azimuthal)',
+                "x": "mx",
+                "y": "my",
+                "z": "mz",
+                "+": "m+ (mx+i·my)",
+                "-": "m- (mx-i·my)",
+                "rho": "m_rho (Radial)",
+                "phi": "m_phi (Azimuthal)",
             }
         return labels.get(component, component)
 
@@ -335,10 +389,16 @@ class TopologicalAnimator:
         gamma: float = 0.5,
         noise_threshold: float = 1e-4,
     ) -> None:
-        self.m_data = m_data
+        gamma = float(gamma)
+        noise_threshold = float(noise_threshold)
+        if not np.isfinite(gamma) or gamma <= 0:
+            raise ValueError("gamma must be finite and positive")
+        if not np.isfinite(noise_threshold) or noise_threshold < 0:
+            raise ValueError("noise_threshold must be finite and non-negative")
+        self.m_data = np.where(np.isfinite(m_data), m_data, 0.0)
 
         # ── Amplitude cache (Value channel in HSV, time-invariant) ───────────
-        amp = np.abs(m_data)
+        amp = np.abs(self.m_data)
         self.max_amp: float = float(np.nanmax(amp))
         if self.max_amp == 0 or np.isnan(self.max_amp):
             self.max_amp = 1e-12
@@ -348,7 +408,7 @@ class TopologicalAnimator:
 
         # ── Phase cache (Hue base in [0, 1], time-invariant shape) ───────────
         # Maps angle ∈ [-π, π]  →  hue ∈ [0, 1)
-        self.H_base: np.ndarray = (np.angle(m_data) + np.pi) / (2.0 * np.pi)
+        self.H_base: np.ndarray = (np.angle(self.m_data) + np.pi) / (2.0 * np.pi)
 
         # ── Saturation is always 1.0 ──────────────────────────────────────────
         self.S_base: np.ndarray = np.ones_like(self.H_base, dtype=np.float32)
@@ -376,8 +436,8 @@ class TopologicalAnimator:
         phase_shift = phase_offset / (2.0 * np.pi)
         H_anim = (self.H_base - phase_shift) % 1.0
 
-        hsv = np.dstack((H_anim, self.S_base, self.V_base))
-        return mcolors.hsv_to_rgb(hsv)
+        hsv = np.stack((H_anim, self.S_base, self.V_base), axis=-1)
+        return _hsv_to_rgb(hsv)
 
     def get_real_frame(self, phase_offset: float) -> np.ndarray:
         """
@@ -405,18 +465,14 @@ def to_circular(m_x: np.ndarray, m_y: np.ndarray) -> tuple[np.ndarray, np.ndarra
 
 
 def to_cylindrical(
-    m_x: np.ndarray,
-    m_y: np.ndarray,
-    center: Optional[tuple[float, float]] = None
+    m_x: np.ndarray, m_y: np.ndarray, center: tuple[float, float] | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Shorthand for VortexOptics.to_cylindrical_basis"""
     return VortexOptics.to_cylindrical_basis(m_x, m_y, center)
 
 
 def hologram(
-    z_array: np.ndarray,
-    gamma: float = 0.6,
-    noise_threshold: float = 1e-4
+    z_array: np.ndarray, gamma: float = 0.6, noise_threshold: float = 1e-4
 ) -> np.ndarray:
     """Shorthand for VortexOptics.complex_holography"""
     return VortexOptics.complex_holography(z_array, gamma, noise_threshold)

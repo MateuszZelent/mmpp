@@ -6,12 +6,12 @@ import json
 from html import escape
 from typing import Any
 
+from .._json import json_safe
 from .callbacks import on_display_change, on_mode_extract, sync_analytical_options
 from .frequency import normalize_frequency_window_ghz
 from .presets import list_presets, load_preset, save_preset
 from .rendering import draw_dispersion_panel, refresh_output_widget
 from .status import set_status
-from .._json import json_safe
 
 
 def _layout(widgets: Any, **kwargs: Any) -> Any:
@@ -85,10 +85,14 @@ def _render_current_dispersion(explorer: Any) -> None:
 def _show_dispersion_placeholder(explorer: Any) -> None:
     """Show a lightweight placeholder before the first Matplotlib render."""
     output = explorer.controls.get("output") if explorer.controls else None
-    placeholder = explorer.controls.get("output_placeholder") if explorer.controls else None
+    placeholder = (
+        explorer.controls.get("output_placeholder") if explorer.controls else None
+    )
     if output is None or placeholder is None:
         return
-    if not hasattr(output, "clear_output") or not hasattr(output, "append_display_data"):
+    if not hasattr(output, "clear_output") or not hasattr(
+        output, "append_display_data"
+    ):
         return
     output.clear_output(wait=False)
     output.append_display_data(placeholder)
@@ -141,7 +145,9 @@ def _mode_request_payload(explorer: Any, selection: dict[str, Any]) -> dict[str,
     return request
 
 
-def _axis_range(values: Any, *, scale: float = 1.0) -> tuple[float | None, float | None]:
+def _axis_range(
+    values: Any, *, scale: float = 1.0
+) -> tuple[float | None, float | None]:
     try:
         converted = [float(value) / scale for value in values]
     except Exception:
@@ -192,10 +198,10 @@ def _refresh_analysis_summary(explorer: Any, *, update_status: bool = True) -> N
         for key, value in payload.items()
     )
     if "analysis_summary" in explorer.controls:
-        explorer.controls["analysis_summary"].value = (
-            "<table style='border-collapse:collapse;font-size:12px;'>"
-            f"{rows}"
-            "</table>"
+        explorer.controls[
+            "analysis_summary"
+        ].value = (
+            f"<table style='border-collapse:collapse;font-size:12px;'>{rows}</table>"
         )
     if update_status:
         set_status(explorer, "Analysis summary refreshed", color="#0F766E")
@@ -208,7 +214,9 @@ def _export_snapshot(explorer: Any, *, update_status: bool = True) -> None:
         "viewer": explorer.collect_preset(),
         "selection": selection,
         "mode_request": _mode_request_payload(explorer, selection),
-        "diagnostics": explorer.diagnostics() if hasattr(explorer, "diagnostics") else {},
+        "diagnostics": explorer.diagnostics()
+        if hasattr(explorer, "diagnostics")
+        else {},
     }
     text = json.dumps(json_safe(payload), indent=2, sort_keys=True)
     if "export_snapshot" in explorer.controls:
@@ -216,7 +224,7 @@ def _export_snapshot(explorer: Any, *, update_status: bool = True) -> None:
             "<pre style='max-height:260px;overflow:auto;font-size:11px;"
             "line-height:1.25;background:#0f172a;color:#dbeafe;"
             "padding:8px;border-radius:6px;'>"
-            f"{escape(text)}"
+            f"{escape(text, quote=False)}"
             "</pre>"
         )
     if update_status:
@@ -264,7 +272,7 @@ def build_toolbar(
     )
     controls["render_dispersion"] = _make_button(
         widgets,
-        "Render heatmap",
+        "Render / refresh dispersion",
         color="#0f766e",
         button_style="success",
         tooltip="Render or refresh S(k, f) with the current display settings.",
@@ -280,7 +288,15 @@ def build_toolbar(
         **_maybe_layout(widgets, width="100%"),
     )
     controls["cmap"] = widgets.Dropdown(
-        options=["viridis", "cmc.davos", "plasma", "cividis", "turbo", "inferno", "magma"],
+        options=[
+            "viridis",
+            "cmc.davos",
+            "plasma",
+            "cividis",
+            "turbo",
+            "inferno",
+            "magma",
+        ],
         value=str(explorer.state.cmap),
         description="cmap",
         **_maybe_layout(widgets, width="100%"),
@@ -474,7 +490,9 @@ def build_toolbar(
         "D": ("D [J/m2]", None),
     }
     material_text_cls = getattr(widgets, "Text", None)
-    material_cls = material_text_cls if material_text_cls is not None else widgets.FloatText
+    material_cls = (
+        material_text_cls if material_text_cls is not None else widgets.FloatText
+    )
     for key, (description, default_value) in material_defaults.items():
         value = analytical.get(key, default_value)
         controls[f"analytical_{key}"] = material_cls(
@@ -545,7 +563,7 @@ def build_toolbar(
         "Initial heatmap render is starting after the toolbar appears."
         if initial_render_enabled
         else (
-            "Press <b>Render heatmap</b> to draw S(k, f). "
+            "Press <b>Render / refresh dispersion</b> to draw S(k, f). "
             "Manual first render is enabled for this viewer."
         )
     )
@@ -554,12 +572,13 @@ def build_toolbar(
             "<div style='padding:18px;font-family:monospace;color:#334155;'>"
             "<b>Dispersion viewer ready.</b><br>"
             f"{placeholder_body}"
+            "<br>Use <b>Render / refresh dispersion</b> to update the heatmap."
             "</div>"
         )
     )
     controls["export_refresh"] = _make_button(
         widgets,
-        "Refresh export",
+        "Refresh export snapshot",
         color="#334155",
         button_style="",
         tooltip="Refresh the JSON-like export snapshot.",
@@ -569,7 +588,7 @@ def build_toolbar(
     )
     controls["analysis_refresh"] = _make_button(
         widgets,
-        "Refresh summary",
+        "Refresh analysis summary",
         color="#334155",
         button_style="",
         tooltip="Refresh the analysis summary panel.",
@@ -579,7 +598,7 @@ def build_toolbar(
     )
 
     text_cls = getattr(widgets, "Text", None)
-    dropdown_cls = getattr(widgets, "Dropdown")
+    dropdown_cls = widgets.Dropdown
     controls["preset_name"] = (
         text_cls(
             value="",
@@ -658,18 +677,24 @@ def build_toolbar(
         "mode_type",
     ]:
         if hasattr(controls[key], "observe"):
-            controls[key].observe(lambda _change=None: on_display_change(explorer), names="value")
+            controls[key].observe(
+                lambda _change=None: on_display_change(explorer), names="value"
+            )
 
     if hasattr(controls["preset_save"], "on_click"):
         controls["preset_save"].on_click(lambda _btn: _save_current_preset(explorer))
     if hasattr(controls["preset_load"], "on_click"):
         controls["preset_load"].on_click(lambda _btn: _load_selected_preset(explorer))
     if hasattr(controls["render_dispersion"], "on_click"):
-        controls["render_dispersion"].on_click(lambda _btn: _render_current_dispersion(explorer))
+        controls["render_dispersion"].on_click(
+            lambda _btn: _render_current_dispersion(explorer)
+        )
     if hasattr(controls["mode_extract"], "on_click"):
         controls["mode_extract"].on_click(lambda _btn: on_mode_extract(explorer))
     if hasattr(controls["mode_show_dispersion"], "on_click"):
-        controls["mode_show_dispersion"].on_click(lambda _btn: _render_current_dispersion(explorer))
+        controls["mode_show_dispersion"].on_click(
+            lambda _btn: _render_current_dispersion(explorer)
+        )
     if hasattr(controls["export_refresh"], "on_click"):
         controls["export_refresh"].on_click(
             lambda _btn: _export_snapshot(explorer, update_status=True)
@@ -780,10 +805,10 @@ def build_toolbar(
                 display_tab,
                 overlays_tab,
                 analytical_tab,
-                filters_tab,
                 modes_tab,
                 analysis_tab,
                 export_tab,
+                filters_tab,
             ],
             selected_index=0,
             **_maybe_layout(widgets, width="100%"),
@@ -791,20 +816,20 @@ def build_toolbar(
         tabs.set_title(0, "Display")
         tabs.set_title(1, "Overlays")
         tabs.set_title(2, "Analytical")
-        tabs.set_title(3, "Filters")
-        tabs.set_title(4, "Modes")
-        tabs.set_title(5, "Analysis")
-        tabs.set_title(6, "Export")
+        tabs.set_title(3, "Modes")
+        tabs.set_title(4, "Analysis")
+        tabs.set_title(5, "Export")
+        tabs.set_title(6, "Filters")
     else:
         tabs = widgets.VBox(
             [
                 display_tab,
                 overlays_tab,
                 analytical_tab,
-                filters_tab,
                 modes_tab,
                 analysis_tab,
                 export_tab,
+                filters_tab,
             ]
         )
     controls["tabs"] = tabs
@@ -853,7 +878,7 @@ def build_toolbar(
         _show_dispersion_placeholder(explorer)
         set_status(
             explorer,
-            "Interactive toolbar ready; press Render heatmap to draw the heatmap",
+            "Interactive toolbar ready; press Render / refresh dispersion to draw the heatmap",
             color="#334155",
         )
 
@@ -862,7 +887,9 @@ def _save_current_preset(explorer: Any) -> None:
     try:
         name = getattr(explorer.controls["preset_name"], "value", "")
         path = save_preset(explorer, name)
-        explorer.controls["preset_select"].options = ["-- load --"] + list_presets(explorer)
+        explorer.controls["preset_select"].options = ["-- load --"] + list_presets(
+            explorer
+        )
         set_status(explorer, f"Preset saved: {path.name}", color="#0F766E")
     except Exception as exc:
         set_status(explorer, f"Preset save failed: {exc}", color="crimson")

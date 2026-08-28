@@ -61,7 +61,9 @@ class HysteresisExporter:
         if fmt_norm != "html":
             raise ValueError("Only fmt='html' is supported in this exporter")
 
-        fig, _ax, _meta = self._result.plot.loop(show_hc=True, show_mr=True, show_ms=True)
+        fig, _ax, _meta = self._result.plot.loop(
+            show_hc=True, show_mr=True, show_ms=True
+        )
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=self._result.config.dpi, bbox_inches="tight")
         buf.seek(0)
@@ -118,7 +120,11 @@ class HysteresisExporter:
     def export(self, path, fmt: str | None = None) -> Path:
         """Dispatch export based on explicit format or path suffix."""
         target = Path(path)
-        fmt_norm = (fmt or target.suffix.lstrip(".") or self._result.config.default_export_format).lower()
+        fmt_norm = (
+            fmt
+            or target.suffix.lstrip(".")
+            or self._result.config.default_export_format
+        ).lower()
 
         if fmt_norm == "csv":
             return self.to_csv(target)

@@ -12,8 +12,8 @@ try:
 
     _HAS_MATPLOTLIB = True
 except ImportError:  # pragma: no cover - optional dependency
-    plt = None  # type: ignore[assignment]
-    to_rgba = None  # type: ignore[assignment]
+    plt = None  # type: ignore[misc, assignment]
+    to_rgba = None  # type: ignore[misc, assignment]
     _HAS_MATPLOTLIB = False
 
 
@@ -42,8 +42,65 @@ def _generate_pastel_colors(n: int) -> list[Any]:
     """Generate distinct pastel-ish colors for component overlays."""
     if not _HAS_MATPLOTLIB:
         return [(0.4, 0.6, 0.8, 1.0)] * max(1, int(n))
-    colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
+    cmap = plt.cm.Accent  # type: ignore[attr-defined]
+    colors = cmap(np.linspace(0, 1, max(int(n), 3)))
     return [to_rgba(c) for c in colors[: int(n)]]
+
+
+def _prepare_spectrum_traces(result: Any) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Return validated ``(frequency, trace)`` power data for static plotting."""
+    frequencies = np.asarray(result.frequencies, dtype=float)
+    power = np.asarray(result.power, dtype=float)
+    if frequencies.ndim != 1 or frequencies.size == 0:
+        raise ValueError("Spectrum plot requires a non-empty 1D frequency axis")
+    if not np.isfinite(frequencies).all() or np.any(np.diff(frequencies) <= 0):
+        raise ValueError("Spectrum plot frequencies must be finite and increasing")
+    if power.ndim == 0 or power.shape[0] != frequencies.size:
+        raise ValueError("Spectrum power first axis must match frequencies")
+    if not np.isfinite(power).all():
+        raise ValueError("Spectrum power must be finite")
+
+    is_log_transformed = bool(
+        isinstance(getattr(result, "filter_config", None), dict)
+        and result.filter_config.get("post", {}).get("log_transform")
+    )
+    if np.any(power < 0) and not is_log_transformed:
+        raise ValueError("Spectrum power must be non-negative")
+
+    is_vector = (
+        power.ndim > 1
+        and power.shape[-1] == 3
+        and not getattr(result, "_single_component", False)
+    )
+    if is_vector:
+        if power.ndim > 2:
+            power = np.mean(power, axis=tuple(range(1, power.ndim - 1)))
+        traces = np.asarray(power, dtype=float)
+        labels = [r"$m_x$", r"$m_y$", r"$m_z$"]
+    else:
+        if power.ndim > 1:
+            power = np.mean(power, axis=tuple(range(1, power.ndim)))
+        traces = np.asarray(power, dtype=float).reshape(-1, 1)
+        labels = [getattr(result, "component_label", None) or "Average Power"]
+    if traces.shape[0] != frequencies.size or traces.shape[1] == 0:
+        raise ValueError("Reduced spectrum traces do not align with frequencies")
+    return frequencies, traces, labels
+
+
+def _peak_plot_points(
+    frequencies: np.ndarray,
+    traces: np.ndarray,
+    peak_indices: Any,
+    frequency_scale: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Select peak markers directly from the already transformed plot traces."""
+    indices = np.asarray(peak_indices)
+    if indices.ndim != 1 or not np.issubdtype(indices.dtype, np.integer):
+        raise TypeError("peak_indices must be a 1D integer array")
+    if np.any(indices < 0) or np.any(indices >= frequencies.size):
+        raise IndexError("peak index outside plotted frequency axis")
+    aggregate_trace = np.mean(np.asarray(traces, dtype=float), axis=1)
+    return frequencies[indices] / float(frequency_scale), aggregate_trace[indices]
 
 
 def plot_spectrum(
@@ -61,17 +118,51 @@ def plot_spectrum(
     if not _HAS_MATPLOTLIB:
         raise ImportError("Matplotlib required for plotting")
 
+    freq_scales = {"Hz": 1.0, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
+    if freq_unit not in freq_scales:
+        raise ValueError("freq_unit must be Hz, kHz, MHz, GHz, or THz")
+    for name, value in (
+        ("log_scale", log_scale),
+        ("normalize", normalize),
+        ("show_peaks", show_peaks),
+    ):
+        if not isinstance(value, (bool, np.bool_)):
+            raise TypeError(f"{name} must be boolean")
+    if dpi is not None:
+        if isinstance(dpi, (bool, np.bool_)) or not isinstance(dpi, (int, np.integer)):
+            raise TypeError("dpi must be a positive integer or None")
+        if dpi <= 0:
+            raise ValueError("dpi must be a positive integer or None")
+
     _try_enable_widget_backend()
 
-    freq_scales = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
-    freq_scale = freq_scales.get(freq_unit, 1e9)
-    freqs_display = np.asarray(result.frequencies, dtype=float) / float(freq_scale)
-
-    power = np.asarray(result.power, dtype=float)
-    if normalize and power.size:
-        vmax = float(np.nanmax(power))
+    frequencies, traces, labels = _prepare_spectrum_traces(result)
+    freq_scale = freq_scales[freq_unit]
+    freqs_display = frequencies / freq_scale
+    already_log = bool(
+        isinstance(getattr(result, "filter_config", None), dict)
+        and result.filter_config.get("post", {}).get("log_transform")
+    )
+    if normalize and already_log:
+        raise ValueError("Cannot normalize an already log-transformed spectrum")
+    if normalize:
+        vmax = float(np.max(traces))
         if vmax > 0:
-            power = power / vmax
+            traces = traces / vmax
+
+    quantity_label = getattr(result, "spectral_quantity_label", None) or (
+        "PSD" if getattr(result, "power_quantity", "") == "psd" else "Power"
+    )
+    scale_factor = 1.0
+    exponent = 0
+    effective_log_scale = bool(log_scale and not already_log)
+    if not normalize and not effective_log_scale and not already_log:
+        max_val = float(np.max(traces))
+        if max_val > 0:
+            exponent = int(np.floor(np.log10(max_val)))
+            if abs(exponent) >= 2:
+                scale_factor = float(10**exponent)
+                traces = traces / scale_factor
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 5), dpi=dpi)
@@ -80,60 +171,28 @@ def plot_spectrum(
         if dpi is not None:
             fig.set_dpi(dpi)
 
-    if power.ndim > 1 and power.shape[-1] == 3 and not getattr(result, "_single_component", False):
-        if power.ndim > 2:
-            spatial_axes = tuple(range(1, power.ndim - 1))
-            power_to_plot = np.mean(power, axis=spatial_axes)
-        else:
-            power_to_plot = power
-        labels = [r"$m_x$", r"$m_y$", r"$m_z$"]
-        colors = _generate_pastel_colors(3)
-        for idx in range(3):
-            ax.plot(freqs_display, power_to_plot[:, idx], label=labels[idx], color=colors[idx], **kwargs)
+    colors = _generate_pastel_colors(traces.shape[1])
+    for idx, label in enumerate(labels):
+        line_kwargs = dict(kwargs)
+        if "label" not in line_kwargs:
+            line_kwargs["label"] = label
+        if "color" not in line_kwargs:
+            line_kwargs["color"] = colors[idx]
+        ax.plot(freqs_display, traces[:, idx], **line_kwargs)
+    if traces.shape[1] > 1 or "label" in kwargs or labels[0] != "Average Power":
         ax.legend()
-    elif power.ndim > 1:
-        spatial_axes = tuple(range(1, power.ndim))
-        power_to_plot = np.mean(power, axis=spatial_axes)
-        if "label" not in kwargs and getattr(result, "component_label", None):
-            kwargs["label"] = result.component_label
-        elif "label" not in kwargs:
-            kwargs["label"] = "Average Power"
-        ax.plot(freqs_display, power_to_plot, **kwargs)
-        ax.legend()
-    else:
-        if "label" not in kwargs and getattr(result, "component_label", None):
-            kwargs["label"] = result.component_label
-        ax.plot(freqs_display, power, **kwargs)
-        if "label" in kwargs:
-            ax.legend()
 
     ax.set_xlabel(f"Frequency ({freq_unit})")
-    quantity_label = getattr(result, "spectral_quantity_label", None) or (
-        "PSD" if getattr(result, "power_quantity", "") == "psd" else "Power"
-    )
-
-    if not normalize and not log_scale:
-        max_val = float(np.nanmax(power)) if power.size else 0.0
-        if max_val > 0:
-            exponent = int(np.floor(np.log10(max_val)))
-            if abs(exponent) >= 2:
-                scale_factor = 10**exponent
-                for line in ax.get_lines():
-                    ydata = line.get_ydata()
-                    line.set_ydata(ydata / scale_factor)
-                ax.set_ylabel(f"{quantity_label} (×10$^{{{exponent}}}$ arb. u.)")
-                ax.relim()
-                ax.autoscale_view()
-            else:
-                ax.set_ylabel(f"{quantity_label} (arb. u.)")
-        else:
-            ax.set_ylabel(f"{quantity_label} (arb. u.)")
+    if already_log:
+        ax.set_ylabel(f"log₁₀({quantity_label})")
+    elif scale_factor != 1.0:
+        ax.set_ylabel(f"{quantity_label} (×10$^{{{exponent}}}$ arb. u.)")
     elif normalize:
         ax.set_ylabel(f"{quantity_label} (normalized)")
     else:
         ax.set_ylabel(f"{quantity_label} (arb. u.)")
 
-    if log_scale:
+    if effective_log_scale:
         ax.set_yscale("log")
 
     ax.set_title(title or "FFT Power Spectrum")
@@ -144,13 +203,10 @@ def plot_spectrum(
         and isinstance(peaks_info, dict)
         and len(peaks_info.get("indices", [])) > 0
     ):
-        peak_freqs = np.asarray(peaks_info.get("frequencies", []), dtype=float) / float(freq_scale)
-        peak_amps = np.asarray(peaks_info.get("amplitudes", []), dtype=float)
-        peak_powers = peak_amps**2
-        if normalize and np.asarray(result.power).size:
-            denom = float(np.nanmax(result.power))
-            if denom > 0:
-                peak_powers = peak_powers / denom
+        peak_indices = np.asarray(peaks_info["indices"], dtype=int)
+        peak_freqs, peak_powers = _peak_plot_points(
+            frequencies, traces, peak_indices, freq_scale
+        )
 
         ax.plot(
             peak_freqs,
@@ -170,7 +226,21 @@ def plot_spectrum(
                 freq = float(peak_freqs[idx])
                 power_val = float(peak_powers[idx])
                 if rank == 0:
-                    ax.vlines(x=freq, ymin=0, ymax=power_val, color="#E74C3C", linestyle=":", alpha=0.6, linewidth=1.2)
+                    positive = traces[traces > 0]
+                    ymin = (
+                        float(np.min(positive))
+                        if effective_log_scale and positive.size
+                        else 0.0
+                    )
+                    ax.vlines(
+                        x=freq,
+                        ymin=ymin,
+                        ymax=power_val,
+                        color="#E74C3C",
+                        linestyle=":",
+                        alpha=0.6,
+                        linewidth=1.2,
+                    )
 
                 freq_text = f"{freq:.2f}" if 0.01 < freq < 100 else f"{freq:.2e}"
                 ax.annotate(
@@ -203,7 +273,14 @@ def plot_spectrum(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.tick_params(axis="both", which="major", labelsize=10)
-    ax.legend(frameon=True, fancybox=True, shadow=False, framealpha=0.9, edgecolor="lightgray", fontsize=9)
+    ax.legend(
+        frameon=True,
+        fancybox=True,
+        shadow=False,
+        framealpha=0.9,
+        edgecolor="lightgray",
+        fontsize=9,
+    )
 
     fig.tight_layout()
     return fig, ax, peaks_info

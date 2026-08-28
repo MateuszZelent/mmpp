@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from mmpp._shared.repr_html import make_simple_card
+
 from ..._shared.models import TrajectoryResult
 
 
@@ -61,7 +62,9 @@ def fit_from_trajectory(*args, **kwargs):
         raise TypeError("fit_from_trajectory requires a TrajectoryResult argument")
     trajectory = args[0]
     if not isinstance(trajectory, TrajectoryResult):
-        raise TypeError("fit_from_trajectory expects TrajectoryResult as first argument")
+        raise TypeError(
+            "fit_from_trajectory expects TrajectoryResult as first argument"
+        )
 
     damping = float(kwargs.pop("damping", 0.0))
     if kwargs:

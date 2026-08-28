@@ -1,0 +1,236 @@
+"""Result containers for hysteresis analysis."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from functools import cached_property
+from html import escape as _esc
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from mmpp._repr_helpers import (
+    NODE_COLOR_ANALYSIS,
+    NODE_COLOR_COMPUTE,
+    NODE_COLOR_PLOT,
+    NODE_COLOR_UTIL,
+    accessors_section_html,
+    examples_section_html,
+    metrics_section_html,
+    node_card_html,
+)
+
+from .config import HysteresisConfig
+
+
+@dataclass
+class Branch:
+    """Monotonic branch segment on a hysteresis loop."""
+
+    name: str
+    start: int
+    stop: int
+    cycle_id: int = 0
+    is_major: bool = True
+
+    @property
+    def slice(self) -> slice:
+        """Slice view corresponding to the branch."""
+        return slice(int(self.start), int(self.stop))
+
+    @property
+    def n_points(self) -> int:
+        return max(0, int(self.stop) - int(self.start))
+
+
+@dataclass
+class HysteresisResult:
+    """Container for processed hysteresis data and fluent accessors."""
+
+    field: np.ndarray
+    magnetization: np.ndarray
+    branches: list[Branch]
+    frame_index: np.ndarray | None
+    config: HysteresisConfig = field(default_factory=HysteresisConfig)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.field = np.asarray(self.field, dtype=float).reshape(-1)
+        self.magnetization = np.asarray(self.magnetization, dtype=float).reshape(-1)
+        if self.frame_index is not None:
+            self.frame_index = np.asarray(self.frame_index, dtype=int).reshape(-1)
+
+    @cached_property
+    def metrics(self):
+        """Lazy metrics accessor."""
+        from .metrics import MetricsAccessor
+
+        return MetricsAccessor(self)
+
+    @property
+    def plot(self):
+        """Fluent plotting namespace."""
+        from .plot.accessor import HysteresisPlotAccessor
+
+        return HysteresisPlotAccessor(self)
+
+    @property
+    def compare(self):
+        """Comparison namespace rooted at this result."""
+        from .comparison import ComparisonAccessor
+
+        return ComparisonAccessor(self)
+
+    def export(self, path, fmt: str | None = None):
+        """Export result data/metrics to a selected format."""
+        from .export import HysteresisExporter
+
+        return HysteresisExporter(self).export(path, fmt=fmt)
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """Return loop samples as a tabular dataframe."""
+        branch_labels = np.full(self.field.shape[0], "unlabeled", dtype=object)
+        cycle_ids = np.full(self.field.shape[0], -1, dtype=int)
+
+        for branch in self.branches:
+            branch_labels[branch.slice] = branch.name
+            cycle_ids[branch.slice] = int(branch.cycle_id)
+
+        data = {
+            "field": self.field,
+            "magnetization": self.magnetization,
+            "branch": branch_labels,
+            "cycle_id": cycle_ids,
+        }
+        if self.frame_index is not None and self.frame_index.size == self.field.size:
+            data["frame_index"] = self.frame_index
+        return pd.DataFrame(data)
+
+    def cloneflip(self) -> HysteresisResult:
+        """Build a symmetric full loop from a single monotonic sweep.
+
+        Applies the centrosymmetric constraint **M(−B) = −M(B)**, valid for
+        reversible micromagnetic simulations where only one field polarity was
+        computed.  Both the field axis and the magnetization axis are reflected
+        around the origin and appended to form a closed two-branch loop
+        (ascending + descending) with the same absolute field range on both
+        polarities.
+
+        The returned result contains ``4N − 1`` points, where *N* is the
+        number of original samples.  For the interactive snapshot explorer,
+        reflected points are mapped to the original snapshot at the mirrored
+        field value.
+
+        Returns
+        -------
+        HysteresisResult
+            New result — the original is **not** modified.
+            ``result.metadata["cloneflip"] = True`` marks the copy.
+
+        Example
+        -------
+        >>> result = job[0].analyze.hysteresis.load(
+        ...     source="zarr_keys", key_prefix="B", component="y"
+        ... )
+        >>> full_loop = result.cloneflip()
+        >>> full_loop.plot.interactive()
+        """
+        from .compute import build_cloneflip_result
+
+        return build_cloneflip_result(self)
+
+    def __repr__(self) -> str:
+        return (
+            "HysteresisResult("
+            f"n={self.field.size}, branches={len(self.branches)}, "
+            f"source={self.metadata.get('source_type', 'unknown')!r})"
+        )
+
+    def _repr_html_(self) -> str:
+        try:
+            hc = self.metrics.coercive_field
+        except Exception:
+            hc = None
+        try:
+            mr = self.metrics.remanence
+        except Exception:
+            mr = None
+        try:
+            ms = self.metrics.saturation_points
+        except Exception:
+            ms = None
+
+        def _fmt(value: Any) -> str:
+            try:
+                if value is None:
+                    return "n/a"
+                if isinstance(value, (float, int)):
+                    if np.isnan(float(value)):
+                        return "n/a"
+                    return f"{float(value):.4g}"
+            except Exception:
+                pass
+            return _esc(str(value))
+
+        hc_mean = _fmt(getattr(hc, "mean", None))
+        mr_mean = _fmt(getattr(mr, "mean", None))
+        ms_mean = _fmt(getattr(ms, "ms_mean", None))
+        n_major = sum(1 for b in self.branches if b.is_major)
+        example = "\n".join(
+            [
+                "res.plot.loop(show_hc=True)",
+                "res.plot.interactive()",
+                "res.metrics.report()",
+                "res.compare.to(other_result).summary()",
+            ]
+        )
+        return node_card_html(
+            "HysteresisResult",
+            icon="🧲",
+            subtitle=f"{self.field.size} points across {len(self.branches)} branches ({n_major} major).",
+            badge=(str(self.metadata.get("source_type", "unknown")), NODE_COLOR_UTIL),
+            sections=[
+                metrics_section_html(
+                    [
+                        ("Hc mean", hc_mean, NODE_COLOR_COMPUTE),
+                        ("Mr mean", mr_mean, NODE_COLOR_ANALYSIS),
+                        ("Ms mean", ms_mean, NODE_COLOR_PLOT),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Accessors:",
+                            [
+                                (".plot", NODE_COLOR_COMPUTE),
+                                (".metrics", NODE_COLOR_ANALYSIS),
+                                (".compare", NODE_COLOR_PLOT),
+                            ],
+                        ),
+                        (
+                            "Export:",
+                            [
+                                (".export(...)", NODE_COLOR_UTIL),
+                                (".to_dataframe()", NODE_COLOR_UTIL),
+                                (".cloneflip()", NODE_COLOR_UTIL),
+                            ],
+                        ),
+                    ]
+                ),
+                examples_section_html(example),
+            ],
+            api="<div style='font-size:0.95em;color:#f8f8f2;'>"
+            "<div style='margin-bottom:10px;'>Use <code>res.plot</code> for visualization, "
+            "<code>res.metrics</code> for derived quantities and <code>res.compare</code> "
+            "for loop-to-loop comparisons.</div>"
+            "</div>",
+            uid="mmpp-hysteresis-result",
+        )
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        html = self._repr_html_()
+        text = self.__repr__()
+        if html:
+            return {"text/html": html, "text/plain": text}
+        return {"text/plain": text}

@@ -1,6 +1,6 @@
 """Analytical-model namespace for vortex dynamics."""
 
-from .interface import VortexModelInterface
 from . import thiele
+from .interface import VortexModelInterface
 
 __all__ = ["VortexModelInterface", "thiele"]

@@ -31,7 +31,9 @@ def detect_core_expulsions(
     confidence = np.asarray(trajectory.confidence, dtype=float)
 
     if time.size != radius.size:
-        raise ValueError("trajectory.time and trajectory radius must have the same length")
+        raise ValueError(
+            "trajectory.time and trajectory radius must have the same length"
+        )
 
     events: list[CoreExpulsionEvent] = []
     if radius.size < 2:
@@ -52,7 +54,9 @@ def detect_core_expulsions(
 
         t_event = float(time[start])
         duration = float(time[end] - time[start]) if end > start else 0.0
-        if t_event - last_event_time >= float(refractory) and duration >= float(min_duration):
+        if t_event - last_event_time >= float(refractory) and duration >= float(
+            min_duration
+        ):
             conf = float(np.mean(confidence[start : min(end + 1, confidence.size)]))
             events.append(
                 CoreExpulsionEvent(

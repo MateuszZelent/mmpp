@@ -15,7 +15,7 @@ def _make_mode_array(nx: int = 64, ny: int = 64) -> np.ndarray:
     radius = np.hypot(xg, yg)
     phi = np.arctan2(yg, xg)
 
-    mz = np.exp(-(radius / 6.0) ** 2)
+    mz = np.exp(-((radius / 6.0) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
     mx = -m_perp * np.sin(phi)
     my = m_perp * np.cos(phi)

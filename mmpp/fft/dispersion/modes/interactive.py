@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -39,7 +39,7 @@ _HAS_MATPLOTLIB = False
 
 try:
     import ipywidgets as widgets
-    from IPython.display import display, clear_output
+    from IPython.display import clear_output, display
 
     _HAS_WIDGETS = True
 except ImportError:
@@ -47,50 +47,89 @@ except ImportError:
 
 try:
     import matplotlib.pyplot as plt
-    from matplotlib.figure import Figure
     from matplotlib.axes import Axes
-    import matplotlib
+    from matplotlib.figure import Figure
 
     _HAS_MATPLOTLIB = True
 except ImportError:
     pass
 
 if TYPE_CHECKING:
-    from ..models import DispersionResult1D
     from ..interface import FFTDispersionInterface
-    from .models import FoldedDispersionResult
-    from .folding import BrillouinZoneFolding
+    from ..models import DispersionResult1D
     from .detection import BrillouinZoneDetector
+    from .folding import BrillouinZoneFolding
+    from .models import FoldedDispersionResult
 
-from .mode_profile import ModeProfile
-from .._json import json_safe
 from .._interactive_viewer import (
     normalize_dispersion_interactive_options,
     split_dispersion_interactive_kwargs,
 )
+from .._json import json_safe
 from ._interactive import (
     apply_params as _apply_params_impl,
+)
+from ._interactive import (
     base_default_params as _base_default_params_impl,
+)
+from ._interactive import (
     build_compute_filters_config as _build_compute_filters_config_impl,
+)
+from ._interactive import (
     build_live_filters_config as _build_live_filters_config_impl,
+)
+from ._interactive import (
     create_layout as _create_layout_impl,
-    on_animate as _on_animate_impl,
-    on_save_animation as _on_save_animation_impl,
-    stop_animation as _stop_animation_impl,
+)
+from ._interactive import (
     delete_preset as _delete_preset_impl,
+)
+from ._interactive import (
     ensure_animation_state as _ensure_animation_state_impl,
+)
+from ._interactive import (
     ensure_runtime_state as _ensure_runtime_state_impl,
+)
+from ._interactive import (
     get_current_params as _get_current_params_impl,
+)
+from ._interactive import (
     get_presets_dir as _get_presets_dir_impl,
+)
+from ._interactive import (
     list_presets as _list_presets_impl,
+)
+from ._interactive import (
     load_preset as _load_preset_impl,
+)
+from ._interactive import (
+    on_animate as _on_animate_impl,
+)
+from ._interactive import (
     on_delete_preset as _on_delete_preset_impl,
+)
+from ._interactive import (
     on_load_preset as _on_load_preset_impl,
+)
+from ._interactive import (
     on_refresh_presets as _on_refresh_presets_impl,
+)
+from ._interactive import (
+    on_save_animation as _on_save_animation_impl,
+)
+from ._interactive import (
     on_save_preset as _on_save_preset_impl,
+)
+from ._interactive import (
     refresh_preset_dropdown as _refresh_preset_dropdown_impl,
+)
+from ._interactive import (
     save_preset as _save_preset_impl,
 )
+from ._interactive import (
+    stop_animation as _stop_animation_impl,
+)
+from .mode_profile import ModeProfile
 
 
 class InteractiveDispersionModes:
@@ -108,7 +147,6 @@ class InteractiveDispersionModes:
     def _base_default_params(self) -> dict[str, object]:
         """Canonical defaults used by fresh and hot-reloaded instances."""
         return _base_default_params_impl()
-
 
     def _ensure_runtime_state(self):
         """Backfill attributes for stale/autoreloaded notebook instances."""
@@ -131,16 +169,16 @@ class InteractiveDispersionModes:
         self._fig: Figure | None = None
         self._ax_disp: Axes | None = None
         self._ax_mode: Axes | None = None
-        self._colorbar_disp = None
-        self._colorbar_mode = None
+        self._colorbar_disp: Any | None = None
+        self._colorbar_mode: Any | None = None
 
         # Selection state
-        self._selected_k = None
-        self._selected_f = None
-        self._mask_markers = []  # Artists for mask position markers
-        
+        self._selected_k: float | None = None
+        self._selected_f: float | None = None
+        self._mask_markers: list[Any] = []  # Artists for mask position markers
+
         # Animation state
-        self._animation = None  # FuncAnimation object
+        self._animation: Any | None = None  # FuncAnimation object
         self._is_animating = False
         self._last_compute_kwargs: dict[str, object] = {}
         self._interactive_viewer_options: dict[str, object] = {}
@@ -153,11 +191,11 @@ class InteractiveDispersionModes:
 
         # Figure settings
         self._dpi = 150
-        self._figsize = (10, 10)
-        
+        self._figsize: tuple[float, float] = (10.0, 10.0)
+
         # Preset management
         self._presets_dir = None  # Will be set when needed
-        
+
         # Geometry contour overlay (for mode visualization)
         self._geometry_contour: np.ndarray | None = None
 
@@ -170,83 +208,85 @@ class InteractiveDispersionModes:
             self._detector = BrillouinZoneDetector()
         return self._detector
 
-    def _get_folder(self, lattice_constant: float, n_periods: int) -> BrillouinZoneFolding:
+    def _get_folder(
+        self, lattice_constant: float, n_periods: int
+    ) -> BrillouinZoneFolding:
         """Get or create folder with specified parameters."""
         from .folding import BrillouinZoneFolding
 
         return BrillouinZoneFolding(lattice_constant, n_periods)
-    
+
     # =========================================================================
     # Preset Management
     # =========================================================================
-    
+
     def _get_presets_dir(self) -> Path:
         """Get or create directory for storing presets.
-        
+
         Presety są zapisywane w podfolderze '.mmpp_presets' w bieżącym
         katalogu roboczym (cwd), co pozwala na osobne presety dla każdego projektu.
         """
         return _get_presets_dir_impl(self, logger)
-    
+
     def _get_current_params(self) -> dict:
         """Extract current parameter values from widgets."""
         return _get_current_params_impl(self)
-    
+
     def _apply_params(self, params: dict):
         """Apply parameter values to widgets."""
         _apply_params_impl(self, params)
-    
+
     def save_preset(self, name: str) -> bool:
         """Save current parameters as a preset.
-        
+
         Preset jest zapisywany w podfolderze '.mmpp_presets' w bieżącym
         katalogu roboczym, dzięki czemu każdy projekt może mieć własne presety.
-        
+
         Parameters
         ----------
         name : str
             Name of the preset (without .json extension)
-            
+
         Returns
         -------
         bool
             True if saved successfully, False otherwise
         """
         return _save_preset_impl(self, name, logger)
-    
+
     def load_preset(self, name: str) -> bool:
         """Load parameters from a preset.
-        
+
         Parameters
         ----------
         name : str
             Name of the preset (without .json extension)
-            
+
         Returns
         -------
         bool
             True if loaded successfully, False otherwise
         """
         return _load_preset_impl(self, name, logger)
-    
+
     def delete_preset(self, name: str) -> bool:
         """Delete a saved preset.
-        
+
         Parameters
         ----------
         name : str
             Name of the preset (without .json extension)
-            
+
         Returns
         -------
         bool
             True if deleted successfully, False otherwise
         """
         return _delete_preset_impl(self, name, logger)
-    
+
     def list_presets(self) -> list[str]:
         """List all available presets.
-        
+
         Returns
         -------
         list[str]
@@ -273,9 +313,13 @@ class InteractiveDispersionModes:
             "default_params": json_safe(self._default_params),
         }
 
-    def _selection_payload(self, selection: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _selection_payload(
+        self, selection: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         payload = dict(selection or {})
-        if not payload and (self._selected_k is not None or self._selected_f is not None):
+        if not payload and (
+            self._selected_k is not None or self._selected_f is not None
+        ):
             payload["source"] = "legacy_modes"
         if (
             "k_rad_per_m" not in payload
@@ -295,11 +339,7 @@ class InteractiveDispersionModes:
             and payload["f_ghz"] is not None
         ):
             payload["f_hz"] = float(payload["f_ghz"]) * 1e9
-        if (
-            "f_ghz" not in payload
-            and "f_hz" in payload
-            and payload["f_hz"] is not None
-        ):
+        if "f_ghz" not in payload and "f_hz" in payload and payload["f_hz"] is not None:
             payload["f_ghz"] = float(payload["f_hz"]) / 1e9
         if "k_rad_per_m" not in payload and self._selected_k is not None:
             payload["k_rad_per_m"] = float(self._selected_k)
@@ -314,7 +354,9 @@ class InteractiveDispersionModes:
         f_ghz = selection.get("f_ghz")
         component = selection.get(
             "component",
-            getattr(self.result, "component", None) if self.result is not None else None,
+            getattr(self.result, "component", None)
+            if self.result is not None
+            else None,
         )
         request = {
             "available": False,
@@ -361,7 +403,7 @@ class InteractiveDispersionModes:
             },
         }
 
-    def apply_preset(self, payload: dict[str, Any]) -> "InteractiveDispersionModes":
+    def apply_preset(self, payload: dict[str, Any]) -> InteractiveDispersionModes:
         """Apply a shared interactive preset from legacy or new viewer state."""
         self._ensure_runtime_state()
         if not isinstance(payload, dict):
@@ -409,7 +451,7 @@ class InteractiveDispersionModes:
         self,
         payload: dict[str, Any] | None = None,
         **selection: Any,
-    ) -> "InteractiveDispersionModes":
+    ) -> InteractiveDispersionModes:
         """Apply a selection exported by this object or ``DispersionInteractiveViewer``."""
         merged = dict(selection)
         if payload:
@@ -429,8 +471,12 @@ class InteractiveDispersionModes:
         payload = self._selection_payload(selection)
         request = self._mode_request(payload)
         if not request.get("available", False):
-            raise ValueError(str(request.get("reason") or "Mode selection unavailable."))
-        return self.result.modes.at(
+            raise ValueError(
+                str(request.get("reason") or "Mode selection unavailable.")
+            )
+        result = self.result
+        assert result is not None
+        return result.modes.at(
             k_rad_um=float(request["k_rad_um"]),
             f_ghz=float(request["f_ghz"]),
             z_layer=int(request.get("z_layer", 0)),
@@ -452,7 +498,9 @@ class InteractiveDispersionModes:
 
         if lattice_constant is None:
             lattice_constant = 470e-9
-            logger.info("Using default lattice constant: %.1f nm", lattice_constant * 1e9)
+            logger.info(
+                "Using default lattice constant: %.1f nm", lattice_constant * 1e9
+            )
 
         folder = self._get_folder(lattice_constant, n_periods)
         self.folded = folder.fold_dispersion(result, peak_threshold)
@@ -570,7 +618,9 @@ class InteractiveDispersionModes:
                 self._geometry_contour = geom
                 logger.info(f"Geometry contour set with shape {geom.shape}")
             else:
-                logger.warning(f"add_contour must be 2D after squeeze, got {geom.ndim}D")
+                logger.warning(
+                    f"add_contour must be 2D after squeeze, got {geom.ndim}D"
+                )
                 self._geometry_contour = None
         else:
             self._geometry_contour = None
@@ -664,10 +714,11 @@ class InteractiveDispersionModes:
             continuous_update=False,
         )
 
+        fmax_value: Any = params["f_max_ghz"]
         self.w_fmax = widgets.FloatSlider(
             value=params["f_max_ghz"],
             min=0.1,
-            max=params["f_max_ghz"] * 1.5,
+            max=fmax_value * 1.5,
             step=0.1,
             description="f max [GHz]:",
             layout=widgets.Layout(width="95%"),
@@ -1153,7 +1204,7 @@ class InteractiveDispersionModes:
             max=200,
             step=10,
             description="Frames:",
-            style={'description_width': '60px'},
+            style={"description_width": "60px"},
             layout=widgets.Layout(width="95%"),
             tooltip="Number of frames per animation cycle (higher = smoother but slower)",
         )
@@ -1164,7 +1215,7 @@ class InteractiveDispersionModes:
             max=60,
             step=5,
             description="FPS:",
-            style={'description_width': '60px'},
+            style={"description_width": "60px"},
             layout=widgets.Layout(width="95%"),
             tooltip="Frames per second (higher = faster animation)",
         )
@@ -1183,7 +1234,7 @@ class InteractiveDispersionModes:
             ],
             value="mode",
             description="View:",
-            style={'description_width': '60px'},
+            style={"description_width": "60px"},
             layout=widgets.Layout(width="95%"),
             tooltip="Choose what to save: mode animation only or full interface",
         )
@@ -1195,7 +1246,7 @@ class InteractiveDispersionModes:
             ],
             value="gif",
             description="Format:",
-            style={'description_width': '60px'},
+            style={"description_width": "60px"},
             layout=widgets.Layout(width="95%"),
             tooltip="Choose file format: GIF or MP4",
         )
@@ -1216,7 +1267,9 @@ class InteractiveDispersionModes:
             value="<small>No mode selected</small>",
         )
 
-        self._output = widgets.Output(layout=widgets.Layout(width="100%", height="auto"))
+        self._output = widgets.Output(
+            layout=widgets.Layout(width="100%", height="auto")
+        )
 
         # === Connect callbacks ===
         self.w_update.on_click(self._on_update)
@@ -1229,7 +1282,13 @@ class InteractiveDispersionModes:
 
         # Connect changes that should update immediately
         # w_lattice also updates BZ lines on dispersion plot
-        for w in [self.w_cmap_disp, self.w_fmin, self.w_fmax, self.w_lattice, self.w_show_bz_lines]:
+        for w in [
+            self.w_cmap_disp,
+            self.w_fmin,
+            self.w_fmax,
+            self.w_lattice,
+            self.w_show_bz_lines,
+        ]:
             w.observe(self._on_display_param_change, names="value")
 
         # Connect mode visualization params
@@ -1245,10 +1304,10 @@ class InteractiveDispersionModes:
             self.w_lattice,
         ]:
             w.observe(self._on_mode_param_change, names="value")
-        
+
         # x_periods slider needs special handling to reset zoom
         self.w_mode_x_periods.observe(self._on_x_periods_change, names="value")
-        
+
         # Watch n_bz to show/hide k-direction widget
         self.w_n_bz_mask.observe(self._on_n_bz_change, names="value")
         self._update_k_direction_visibility()
@@ -1294,8 +1353,10 @@ class InteractiveDispersionModes:
 
         # === Preset Management (Top Priority) ===
         available_presets = self.list_presets()
-        preset_options = [("-- Load Preset --", "")] + [(name, name) for name in available_presets]
-        
+        preset_options = [("-- Load Preset --", "")] + [
+            (name, name) for name in available_presets
+        ]
+
         self.w_preset_load = widgets.Dropdown(
             options=preset_options,
             value="",
@@ -1303,35 +1364,35 @@ class InteractiveDispersionModes:
             layout=widgets.Layout(width="calc(100% - 90px)"),
             tooltip="Load saved preset from current folder",
         )
-        
+
         self.w_preset_refresh_btn = widgets.Button(
             description="🔄",
             button_style="",
             layout=widgets.Layout(width="40px"),
             tooltip="Refresh preset list",
         )
-        
+
         self.w_preset_name = widgets.Text(
             value="",
             placeholder="Preset name...",
             description="",
             layout=widgets.Layout(width="calc(100% - 90px)"),
         )
-        
+
         self.w_preset_save_btn = widgets.Button(
             description="💾",
             button_style="success",
             layout=widgets.Layout(width="40px"),
             tooltip="Save current settings as preset",
         )
-        
+
         self.w_preset_delete_btn = widgets.Button(
             description="🗑️",
             button_style="danger",
             layout=widgets.Layout(width="40px"),
             tooltip="Delete selected preset",
         )
-        
+
         # Connect preset callbacks
         self.w_preset_save_btn.on_click(self._on_save_preset)
         self.w_preset_delete_btn.on_click(self._on_delete_preset)
@@ -1346,7 +1407,10 @@ class InteractiveDispersionModes:
 
     def _initialize_figure(self):
         """Create the matplotlib figure with two subplots."""
-        with self._output:
+        output = self._output
+        if output is None:
+            raise RuntimeError("Interactive output widget has not been created")
+        with output:
             clear_output(wait=True)
 
             plt.ioff()
@@ -1361,7 +1425,10 @@ class InteractiveDispersionModes:
             )
 
             # Connect click events
-            self._fig.canvas.mpl_connect("button_press_event", self._on_click)
+            fig = cast(Figure, self._fig)
+            if fig is None:
+                raise RuntimeError("Interactive figure was not created")
+            fig.canvas.mpl_connect("button_press_event", self._on_click)
 
             plt.ion()
             plt.show()
@@ -1379,8 +1446,8 @@ class InteractiveDispersionModes:
 
         # Update mode info
         self.w_mode_info.value = (
-            f"<small><b>k</b> = {k_clicked/1e6:.2f} rad/μm<br>"
-            f"<b>f</b> = {f_clicked/1e9:.2f} GHz</small>"
+            f"<small><b>k</b> = {k_clicked / 1e6:.2f} rad/μm<br>"
+            f"<b>f</b> = {f_clicked / 1e9:.2f} GHz</small>"
         )
 
         # Update visualization
@@ -1398,12 +1465,16 @@ class InteractiveDispersionModes:
         self._first_mode_plot = True
         self._update_dispersion_plot()
         self._refresh_mode_or_animation()
-        self.w_info.value = "<small style='color:green'>✅ Zoom reset for both plots</small>"
+        self.w_info.value = (
+            "<small style='color:green'>✅ Zoom reset for both plots</small>"
+        )
 
     def _on_recompute_dispersion(self, _):
         """Recompute dispersion with selected compute-stage filters."""
         if self.result is None:
-            self.w_info.value = "<small style='color:red'>⚠️ No dispersion result to recompute</small>"
+            self.w_info.value = (
+                "<small style='color:red'>⚠️ No dispersion result to recompute</small>"
+            )
             return
 
         self.w_recompute.disabled = True
@@ -1425,7 +1496,7 @@ class InteractiveDispersionModes:
 
             # CRITICAL: Clear any cached filtered results to ensure we start from original raw data
             # This prevents "sticky filters" where unchecked filters still affect results
-            if hasattr(self.interface, '_clear_cache'):
+            if hasattr(self.interface, "_clear_cache"):
                 self.interface._clear_cache()
 
             if filters_cfg:
@@ -1435,15 +1506,19 @@ class InteractiveDispersionModes:
                 compute_kwargs["filters"] = None
 
             t0 = time.perf_counter()
-            self.result = self.interface.compute_1d(**compute_kwargs)
+            self.result = cast(Any, self.interface.compute_1d)(**compute_kwargs)
             elapsed = time.perf_counter() - t0
             self._last_compute_kwargs = {
-                k: v for k, v in compute_kwargs.items()
+                k: v
+                for k, v in compute_kwargs.items()
                 if k not in {"force", "save", "filters"}
             }
 
             # Refresh frequency slider bounds for new result.
-            f_max_ghz = float(self.result.f_axis.max() / 1e9)
+            result = self.result
+            if result is None:
+                raise RuntimeError("Dispersion recompute did not produce a result")
+            f_max_ghz = float(result.f_axis.max() / 1e9)
             self.w_fmin.max = max(f_max_ghz, 0.1)
             self.w_fmax.max = max(f_max_ghz * 1.5, 0.2)
             if self.w_fmax.value > self.w_fmax.max:
@@ -1452,20 +1527,38 @@ class InteractiveDispersionModes:
             # Count active filters for user info
             n_filters = 0
             if filters_cfg:
-                n_filters += sum(1 for k, v in filters_cfg.items() if k in ["remove_static", "remove_average", "hann_time", "hann_space"] and v)
+                n_filters += sum(
+                    1
+                    for k, v in filters_cfg.items()
+                    if k
+                    in ["remove_static", "remove_average", "hann_time", "hann_space"]
+                    and v
+                )
                 if "pre" in filters_cfg:
-                    n_filters += len([k for k, v in filters_cfg["pre"].items() if isinstance(v, dict) and v.get("enabled")])
-            
-            filter_info = f" | {n_filters} filter(s) applied" if n_filters > 0 else " | no filters (original data)"
-            self.w_info.value = (
-                f"<small style='color:green'>✅ Recomputed from original data in {elapsed:.2f} s{filter_info}</small>"
+                    n_filters += len(
+                        [
+                            k
+                            for k, v in cast(
+                                dict[str, object], filters_cfg["pre"]
+                            ).items()
+                            if isinstance(v, dict) and v.get("enabled")
+                        ]
+                    )
+
+            filter_info = (
+                f" | {n_filters} filter(s) applied"
+                if n_filters > 0
+                else " | no filters (original data)"
             )
+            self.w_info.value = f"<small style='color:green'>✅ Recomputed from original data in {elapsed:.2f} s{filter_info}</small>"
 
             self._update_dispersion_plot()
             self._refresh_mode_or_animation()
         except Exception as exc:
             logger.exception("Dispersion recompute failed")
-            self.w_info.value = f"<small style='color:red'>❌ Recompute error: {exc}</small>"
+            self.w_info.value = (
+                f"<small style='color:red'>❌ Recompute error: {exc}</small>"
+            )
         finally:
             self.w_recompute.description = old_desc
             self.w_recompute.disabled = False
@@ -1478,7 +1571,7 @@ class InteractiveDispersionModes:
         """Refresh mode visualization or restart animation if active."""
         if self._selected_k is None:
             return
-        
+
         self._ensure_animation_state()
         if self._is_animating:
             # Restart animation with new parameters
@@ -1491,13 +1584,13 @@ class InteractiveDispersionModes:
     def _on_mode_param_change(self, change):
         """Handle mode visualization parameter changes."""
         self._refresh_mode_or_animation()
-    
+
     def _on_x_periods_change(self, change):
         """Handle x_periods slider change - reset zoom to apply new width."""
         # Reset flag so new width from slider is applied
         self._first_mode_plot = True
         self._refresh_mode_or_animation()
-    
+
     def _on_n_bz_change(self, change):
         """Handle N_BZ slider change."""
         self._update_k_direction_visibility()
@@ -1514,39 +1607,38 @@ class InteractiveDispersionModes:
     def _on_live_filter_change(self, change):
         """Handle live post-filter parameter changes."""
         self._update_dispersion_plot()
-    
+
     def _on_save_preset(self, _):
         """Save current parameters as a preset."""
         _on_save_preset_impl(self, _, logger)
-    
+
     def _on_load_preset(self, change):
         """Load a selected preset."""
         _on_load_preset_impl(self, change, logger)
-    
+
     def _on_delete_preset(self, _):
         """Delete the selected preset."""
         _on_delete_preset_impl(self, _, logger)
-    
+
     def _on_refresh_presets(self, _):
         """Refresh the preset dropdown list."""
         _on_refresh_presets_impl(self, _, logger)
-    
+
     def _refresh_preset_dropdown(self):
         """Update the preset dropdown with current list of presets."""
         _refresh_preset_dropdown_impl(self, logger)
-    
+
     def _update_k_direction_visibility(self):
         """Show/hide k-direction dropdown based on N_BZ value.
-        
+
         With current mask definition (k0 ± n*G), direction is meaningful even
         for N_BZ=0, so keep it visible in normal operation.
         """
-        self.w_k_direction.layout.display = ''
+        self.w_k_direction.layout.display = ""
 
     def _build_live_filters_config(self) -> dict[str, object] | None:
         """Build live-capable post-filter config from widget values."""
         return _build_live_filters_config_impl(self)
-
 
     def _build_compute_filters_config(self) -> dict[str, object] | None:
         """Build compute-stage filter config for recomputation."""
@@ -1571,7 +1663,7 @@ class InteractiveDispersionModes:
         if results:
             detected_a = np.median(results)
             self.w_lattice.value = detected_a * 1e9
-            self.w_info.value = f"<small style='color:green'>Detected: {detected_a*1e9:.0f} nm</small>"
+            self.w_info.value = f"<small style='color:green'>Detected: {detected_a * 1e9:.0f} nm</small>"
         else:
             self.w_info.value = "<small style='color:orange'>Detection failed</small>"
 
@@ -1579,41 +1671,49 @@ class InteractiveDispersionModes:
         """Display detailed system information from simulation data."""
         try:
             analyzer = self.interface.analyzer
-            
+
             # Grid spacings
-            dx = analyzer.grid_spacings.get('dx', 0) * 1e9  # m → nm
-            dy = analyzer.grid_spacings.get('dy', 0) * 1e9
-            dz = analyzer.grid_spacings.get('dz', 0) * 1e9
+            dx = analyzer.grid_spacings.get("dx", 0) * 1e9  # m → nm
+            dy = analyzer.grid_spacings.get("dy", 0) * 1e9
+            dz = analyzer.grid_spacings.get("dz", 0) * 1e9
             dt = analyzer.dt * 1e12  # s → ps
-            
+
             # Data dimensions
             if analyzer.M_data is not None:
                 shape = analyzer.M_data.shape
                 nt, nz, ny, nx = shape[0], shape[1], shape[2], shape[3]
             else:
                 nt = ny = nx = nz = 0
-            
+
             # Physical domain sizes
             Lx = nx * dx  # nm
             Ly = ny * dy  # nm
             Lz = nz * dz  # nm
             T_total = nt * dt / 1000  # ps → ns
-            
+
             # Frequency/k-space info from result
             if self.result is not None:
                 fmax = self.result.f_axis.max() / 1e9  # Hz → GHz
                 fmin = self.result.f_axis.min() / 1e9
-                df = (self.result.f_axis[1] - self.result.f_axis[0]) / 1e9 if len(self.result.f_axis) > 1 else 0
-                
+                df = (
+                    (self.result.f_axis[1] - self.result.f_axis[0]) / 1e9
+                    if len(self.result.f_axis) > 1
+                    else 0
+                )
+
                 kmax = self.result.k_axis.max() / 1e6  # 1/m → rad/μm
                 kmin = self.result.k_axis.min() / 1e6
-                dk = (self.result.k_axis[1] - self.result.k_axis[0]) / 1e6 if len(self.result.k_axis) > 1 else 0
-                
+                dk = (
+                    (self.result.k_axis[1] - self.result.k_axis[0]) / 1e6
+                    if len(self.result.k_axis) > 1
+                    else 0
+                )
+
                 nf = len(self.result.f_axis)
                 nk = len(self.result.k_axis)
             else:
                 fmax = fmin = df = kmax = kmin = dk = nf = nk = 0
-            
+
             # Format HTML info
             info_html = f"""
             <div style='font-family:monospace; font-size:11px; line-height:1.4; background:#f5f5f5; padding:8px; border-radius:4px; margin:5px 0;'>
@@ -1622,9 +1722,9 @@ class InteractiveDispersionModes:
             <b>Spatial Grid:</b><br>
             • dx = {dx:.2f} nm, dy = {dy:.2f} nm, dz = {dz:.2f} nm<br>
             • Nx = {nx}, Ny = {ny}, Nz = {nz}<br>
-            • Lx = {Lx:.1f} nm ({Lx/1000:.3f} μm)<br>
-            • Ly = {Ly:.1f} nm ({Ly/1000:.3f} μm)<br>
-            • Lz = {Lz:.1f} nm ({Lz/1000:.3f} μm)<br>
+            • Lx = {Lx:.1f} nm ({Lx / 1000:.3f} μm)<br>
+            • Ly = {Ly:.1f} nm ({Ly / 1000:.3f} μm)<br>
+            • Lz = {Lz:.1f} nm ({Lz / 1000:.3f} μm)<br>
             <br>
             <b>Time Domain:</b><br>
             • dt = {dt:.3f} ps (t_sampl)<br>
@@ -1643,16 +1743,19 @@ class InteractiveDispersionModes:
             <br>
             <b>Current Lattice:</b><br>
             • a = {self.w_lattice.value:.1f} nm<br>
-            • G = 2π/a = {2*np.pi/(self.w_lattice.value/1000):.3f} rad/μm<br>
+            • G = 2π/a = {2 * np.pi / (self.w_lattice.value / 1000):.3f} rad/μm<br>
             </div>
             """
-            
+
             self.w_info.value = info_html
-            
+
         except Exception as e:
             import traceback
+
             logger.error(f"System info display failed:\n{traceback.format_exc()}")
-            self.w_info.value = f"<small style='color:red'>❌ Error: {str(e)[:100]}</small>"
+            self.w_info.value = (
+                f"<small style='color:red'>❌ Error: {str(e)[:100]}</small>"
+            )
 
     def _ensure_animation_state(self):
         """Backfill animation attributes for legacy/stale live instances."""
@@ -1661,7 +1764,7 @@ class InteractiveDispersionModes:
     def _on_animate(self, _):
         """Toggle animation of selected mode in the mode visualization panel."""
         _on_animate_impl(self, _, logger)
-    
+
     def _on_save_animation(self, _):
         """Save the current animation to file.
 
@@ -1676,10 +1779,11 @@ class InteractiveDispersionModes:
 
     def _update_dispersion_plot(self):
         """Update the dispersion heatmap."""
-        if self.result is None or self._ax_disp is None:
+        if self.result is None or self._ax_disp is None or self._fig is None:
             return
 
         ax = self._ax_disp
+        fig = self._fig
 
         # Save current zoom/pan state BEFORE clearing
         xlim_saved = ax.get_xlim()
@@ -1726,7 +1830,7 @@ class InteractiveDispersionModes:
         # Check if there's any valid data at all
         if len(f_axis) < 2:
             ax.text(0.5, 0.5, "No data available", transform=ax.transAxes, ha="center")
-            self._fig.canvas.draw_idle()
+            fig.canvas.draw_idle()
             return
 
         # Cut data to show only positive frequencies (upper half)
@@ -1740,7 +1844,7 @@ class InteractiveDispersionModes:
             f_axis_positive = f_axis
 
         # Plot data with extent from 0 to fmax
-        extent = [k_axis[0], k_axis[-1], 0, f_axis_positive[-1]]
+        extent = (k_axis[0], k_axis[-1], 0.0, f_axis_positive[-1])
 
         # Plot heatmap
         im = ax.imshow(
@@ -1752,24 +1856,28 @@ class InteractiveDispersionModes:
             interpolation="bilinear",
         )
 
-        self._colorbar_disp = self._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+        self._colorbar_disp = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
         self._colorbar_disp.set_label("log₁₀(S)", fontsize=9)
 
         # Calculate reciprocal lattice vector (for BZ boundaries and default zoom)
         a = self.w_lattice.value * 1e-9
         G = 2 * np.pi / a / 1e6  # rad/μm (reciprocal lattice vector)
-        
+
         # Restore zoom/pan state (or set default ±1.5G on first plot)
         k_limit = 1.5 * G  # ±1.5 zones
-        
+
         # Check if this is first plot (matplotlib default xlim is 0,1)
         # OR if user explicitly reset zoom via reset button
-        is_first_plot = (abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01)
-        
+        is_first_plot = (
+            abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01
+        )
+
         if is_first_plot or self._first_dispersion_plot:
             # First plot or explicit reset - use default ±1.5G for k, full range for f
             ax.set_xlim(-k_limit, k_limit)
-            ax.set_ylim(0, f_axis_positive[-1])  # Show all available positive frequencies
+            ax.set_ylim(
+                0, f_axis_positive[-1]
+            )  # Show all available positive frequencies
             self._first_dispersion_plot = False
         else:
             # Preserve user's zoom/pan for k
@@ -1778,33 +1886,43 @@ class InteractiveDispersionModes:
             view_f_min = max(ylim_saved[0], f_min, 0)
             view_f_max = min(ylim_saved[1], f_max, f_axis_positive[-1])
             ax.set_ylim(view_f_min, view_f_max)
-        
+
         # Add BZ boundary lines (reciprocal lattice vectors G = 2π/a) if enabled
         if self.w_show_bz_lines.value:
             # Show multiple BZ boundaries within k-range
             k_range = ax.get_xlim()
             k_max = max(abs(k_range[0]), abs(k_range[1]))
             n_zones = int(np.ceil(k_max / G)) + 1
-            
+
             for n in range(-n_zones, n_zones + 1):
                 if n == 0:
                     continue
                 k_line = n * G
                 if abs(k_line) <= k_max * 1.1:  # Show if within range
                     alpha = 0.8 if abs(n) == 1 else 0.4  # Emphasize ±1G
-                    ax.axvline(k_line, color="red", linestyle="--",
-                              linewidth=1.5 if abs(n) == 1 else 1.0, alpha=alpha)
-            
+                    ax.axvline(
+                        k_line,
+                        color="red",
+                        linestyle="--",
+                        linewidth=1.5 if abs(n) == 1 else 1.0,
+                        alpha=alpha,
+                    )
+
             # Add legend
-            ax.legend([f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8)
-        
+            ax.legend(
+                [f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8
+            )
+
         # Always add k=0 reference line
         ax.axvline(0, color="gray", linestyle=":", alpha=0.5, linewidth=1)
 
         # Labels
         ax.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
         ax.set_ylabel("f [GHz]", fontsize=10)
-        ax.set_title(f"Dispersion S(k, f) | a = {a*1e9:.0f} nm | Click to select mode", fontsize=11)
+        ax.set_title(
+            f"Dispersion S(k, f) | a = {a * 1e9:.0f} nm | Click to select mode",
+            fontsize=11,
+        )
         ax.grid(True, alpha=0.3, linestyle=":")
         ax.tick_params(labelsize=9)
 
@@ -1812,11 +1930,11 @@ class InteractiveDispersionModes:
         if self._selected_k is not None and self._selected_f is not None:
             self._draw_selection_markers(ax)
 
-        self._fig.canvas.draw_idle()
+        fig.canvas.draw_idle()
 
     def _draw_selection_markers(self, ax: Axes, *, update_info: bool = True):
         """Draw markers showing selected (k, f) and all mask positions."""
-        if self._selected_k is None:
+        if self._selected_k is None or self._selected_f is None:
             return
 
         k_sel = self._selected_k / 1e6  # rad/μm
@@ -1839,7 +1957,9 @@ class InteractiveDispersionModes:
         )
 
         # Draw all mask positions as circles
-        k_axis = self.result.k_axis / 1e6
+        result = self.result
+        assert result is not None
+        k_axis = result.k_axis / 1e6
         k_min, k_max = k_axis.min(), k_axis.max()
 
         for n in range(-n_bz, n_bz + 1):
@@ -1883,7 +2003,7 @@ class InteractiveDispersionModes:
                 continue
             if k_direction == "negative" and k_copy > 0:
                 continue
-            if self.result.k_axis.min() <= k_copy <= self.result.k_axis.max():
+            if result.k_axis.min() <= k_copy <= result.k_axis.max():
                 mask_positions.append(k_copy / 1e6)
 
         if update_info:
@@ -1897,12 +2017,13 @@ class InteractiveDispersionModes:
 
     def _update_mode_visualization(self):
         """Update the 2D spatial mode visualization m(x, y)."""
-        if self.result is None or self._ax_mode is None:
+        if self.result is None or self._ax_mode is None or self._fig is None:
             return
         if self._selected_k is None or self._selected_f is None:
             return
 
         ax = self._ax_mode
+        fig = self._fig
 
         # Save current zoom/pan state BEFORE clearing
         xlim_saved = ax.get_xlim()
@@ -1936,31 +2057,32 @@ class InteractiveDispersionModes:
                 f_margin_bins=self.w_f_margin.value,
                 neighbor_reduce=self.w_neighbor_reduce.value,
             )
-            
+
             # Extract requested component
-            if mode_type == 'real':
+            if mode_type == "real":
                 mode_2d = np.real(mode_2d_complex)
                 cmap = self.w_cmap_mode.value
                 cbar_label = "Re[M]"
                 use_rgb = False
-            elif mode_type == 'imag':
+            elif mode_type == "imag":
                 mode_2d = np.imag(mode_2d_complex)
                 cmap = self.w_cmap_mode.value
                 cbar_label = "Im[M]"
                 use_rgb = False
-            elif mode_type == 'abs':
+            elif mode_type == "abs":
                 mode_2d = np.abs(mode_2d_complex)
-                cmap = 'hot'  # Better for amplitude
+                cmap = "hot"  # Better for amplitude
                 cbar_label = "|M|"
                 use_rgb = False
-            elif mode_type == 'phase':
+            elif mode_type == "phase":
                 mode_2d = np.angle(mode_2d_complex)
-                cmap = 'hsv'  # Cyclic colormap for phase
+                cmap = "hsv"  # Cyclic colormap for phase
                 cbar_label = "φ[M] [rad]"
                 use_rgb = False
-            elif mode_type == 'ampl_phase':
+            elif mode_type == "ampl_phase":
                 # Use RGB colormap: hue=phase, brightness=amplitude
                 from ..utils import create_amplitude_phase_colormap
+
                 mode_2d = create_amplitude_phase_colormap(mode_2d_complex)
                 cmap = None  # RGB data doesn't use colormap
                 cbar_label = "Ampl×Phase"
@@ -1971,26 +2093,26 @@ class InteractiveDispersionModes:
             y_um = y_axis * 1e6  # μm
 
             # Plot 2D spatial heatmap
-            extent = [x_um[0], x_um[-1], y_um[0], y_um[-1]]
+            extent = (x_um[0], x_um[-1], y_um[0], y_um[-1])
 
             # Auto color limits based on mode type
-            if mode_type in ['real', 'imag']:
+            if mode_type in ["real", "imag"]:
                 # Symmetric for real/imag
                 vmax = np.max(np.abs(mode_2d))
                 if vmax < 1e-20:
                     vmax = 1.0
                 vmin = -vmax
-            elif mode_type == 'abs':
+            elif mode_type == "abs":
                 # Always positive
                 vmin = 0
                 vmax = np.max(mode_2d)
                 if vmax < 1e-20:
                     vmax = 1.0
-            elif mode_type == 'phase':
+            elif mode_type == "phase":
                 # Phase range
                 vmin = -np.pi
                 vmax = np.pi
-            elif mode_type == 'ampl_phase':
+            elif mode_type == "ampl_phase":
                 # RGB image - no vmin/vmax needed
                 vmin = None
                 vmax = None
@@ -2019,7 +2141,7 @@ class InteractiveDispersionModes:
 
             # Only add colorbar for scalar data
             if not use_rgb:
-                self._colorbar_mode = self._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+                self._colorbar_mode = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
                 self._colorbar_mode.set_label(cbar_label, fontsize=9)
 
             # Overlay geometry contour if provided
@@ -2030,23 +2152,27 @@ class InteractiveDispersionModes:
                     # Assume geometry spans the same spatial domain as mode data
                     geom_y = np.linspace(y_um[0], y_um[-1], geom.shape[0])
                     geom_x = np.linspace(x_um[0], x_um[-1], geom.shape[1])
-                    
+
                     # Draw contour at level 0.5 (boundary between 0 and 1)
                     # Use a distinct color that stands out on any colormap
                     ax.contour(
-                        geom_x, geom_y, geom,
+                        geom_x,
+                        geom_y,
+                        geom,
                         levels=[0.5],
-                        colors=['white'],
+                        colors=["white"],
                         linewidths=[1.5],
-                        linestyles=['solid'],
+                        linestyles=["solid"],
                     )
                     # Add black outline for visibility on light backgrounds
                     ax.contour(
-                        geom_x, geom_y, geom,
+                        geom_x,
+                        geom_y,
+                        geom,
                         levels=[0.5],
-                        colors=['black'],
+                        colors=["black"],
                         linewidths=[0.5],
-                        linestyles=['solid'],
+                        linestyles=["solid"],
                     )
                 except Exception as contour_err:
                     logger.warning(f"Failed to draw geometry contour: {contour_err}")
@@ -2055,25 +2181,26 @@ class InteractiveDispersionModes:
             ax.set_xlabel("x [μm]", fontsize=10)
             ax.set_ylabel("y [μm]", fontsize=10)
 
-
             # Title with mode type
             mode_type_labels = {
-                'real': 'Re[M]',
-                'imag': 'Im[M]',
-                'abs': '|M|',
-                'phase': 'φ[M]',
-                'ampl_phase': 'Ampl×Phase',
+                "real": "Re[M]",
+                "imag": "Im[M]",
+                "abs": "|M|",
+                "phase": "φ[M]",
+                "ampl_phase": "Ampl×Phase",
             }
             mode_label = mode_type_labels.get(mode_type, mode_type)
-            k_str = f"k = {self._selected_k/1e6:.2f} rad/μm"
-            f_str = f"f = {self._selected_f/1e9:.2f} GHz"
+            k_str = f"k = {self._selected_k / 1e6:.2f} rad/μm"
+            f_str = f"f = {self._selected_f / 1e9:.2f} GHz"
             ax.set_title(f"{mode_label} Mode | {k_str}, {f_str}", fontsize=11)
             ax.tick_params(labelsize=9)
 
             # Restore zoom/pan state (or use auto limits on first plot)
             # Check if this is first plot (matplotlib default xlim is 0,1)
-            is_first_plot = (abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01)
-            
+            is_first_plot = (
+                abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01
+            )
+
             if not is_first_plot and not self._first_mode_plot:
                 # Preserve user's zoom/pan
                 ax.set_xlim(xlim_saved)
@@ -2104,7 +2231,7 @@ class InteractiveDispersionModes:
             )
             logger.exception("Mode extraction failed")
 
-        self._fig.canvas.draw_idle()
+        fig.canvas.draw_idle()
 
     def _extract_mode_2d_custom(
         self,
@@ -2119,7 +2246,7 @@ class InteractiveDispersionModes:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Extract 2D spatial mode profile m(x, y) using pre-computed S_complex.
-        
+
         Algorithm (following Rychły et al.):
         1. Use S_complex from dispersion result (already FFT'd!)
         2. Select frequency neighborhood around f_0 and create mask for k_0 ± n·G
@@ -2127,9 +2254,9 @@ class InteractiveDispersionModes:
         3. Aggregate selected frequency bins (mean/sum), then IFFT only over k
            → propagation axis (phase preserved!)
         4. Result: M(x, y) spatial profile of the mode
-        
+
         This is FAST - no re-computation of FFT! Uses cached S_complex.
-        
+
         Returns x_axis, y_axis, mode_2d(x, y).
         """
         from .extraction import extract_mode_2d
@@ -2146,10 +2273,10 @@ class InteractiveDispersionModes:
             f_0=float(f_0),
             lattice_constant=float(lattice_constant),
             n_bz=int(n_bz),
-            k_direction=str(k_direction),
+            k_direction=cast(Any, k_direction),
             k_margin_bins=int(k_margin_bins),
             f_margin_bins=int(f_margin_bins),
-            neighbor_reduce=str(neighbor_reduce),
+            neighbor_reduce=cast(Any, neighbor_reduce),
         )
 
         logger.info(
@@ -2177,11 +2304,11 @@ class InteractiveDispersionModes:
     ) -> ModeProfile:
         """
         Extract 2D spatial mode profile m(x, y) and return visualization object.
-        
+
         Returns a ModeProfile object with plotting and animation capabilities.
         Uses the Rychły et al. algorithm to reconstruct spatial mode from
         pre-computed S_complex data.
-        
+
         Parameters
         ----------
         k : float
@@ -2200,7 +2327,7 @@ class InteractiveDispersionModes:
             Number of neighboring frequency bins (±) to include around selected f.
         neighbor_reduce : {'mean', 'sum'}, default='mean'
             Reduction over the selected frequency neighborhood.
-            
+
         Returns
         -------
         ModeProfile
@@ -2209,23 +2336,23 @@ class InteractiveDispersionModes:
             - .animate(duration_ns=..., n_frames=..., fps=...)
             - .get_components() → dict with all components
             - .to_dict() → legacy dict format
-            
+
         Examples
         --------
         >>> modes = job[0].m_layer13[...].fft.dispersion.dispersion_modes(save=True)
-        >>> 
+        >>>
         >>> # Get mode object
         >>> mode = modes.mode(k=2.30, f=1.12)
-        >>> 
+        >>>
         >>> # Plot different components
         >>> mode.plot(mode_type='abs', cmap='hot', dpi=150)
         >>> mode.plot(mode_type='phase', cmap='hsv')
         >>> mode.plot(mode_type='real', figsize=(12, 8))
-        >>> 
+        >>>
         >>> # Animate
         >>> anim = mode.animate(duration_ns=10, n_frames=100, fps=30)
         >>> anim.save('mode.gif', writer='pillow')
-        >>> 
+        >>>
         >>> # Access data
         >>> print(mode.m_xy.shape)  # Complex array (N_y, N_x)
         >>> components = mode.get_components()  # dict with real, imag, abs, phase
@@ -2235,16 +2362,18 @@ class InteractiveDispersionModes:
                 "No dispersion result available. "
                 "Run dispersion_modes() with save=True first."
             )
-            
+
         # Convert to SI units
         k_si = k * 1e6  # rad/μm → rad/m
         f_si = f * 1e9  # GHz → Hz
-        
+
         # Get lattice constant
         if lattice_constant_nm is None:
-            lattice_constant_nm = self._default_params.get("lattice_nm", 470.0)
+            lattice_constant_nm = float(
+                cast(float, self._default_params.get("lattice_nm", 470.0))
+            )
         a = lattice_constant_nm * 1e-9  # nm → m
-        
+
         # Extract mode using internal method (returns COMPLEX data!)
         x_axis, y_axis, mode_2d_complex = self._extract_mode_2d_custom(
             k_0=k_si,
@@ -2256,21 +2385,21 @@ class InteractiveDispersionModes:
             f_margin_bins=f_margin_bins,
             neighbor_reduce=neighbor_reduce,
         )
-        
+
         # Build metadata
         info = {
-            'k_rad_um': k,
-            'f_GHz': f,
-            'lattice_constant_nm': lattice_constant_nm,
-            'n_bz': n_bz,
-            'k_direction': k_direction,
-            'k_margin_bins': int(k_margin_bins),
-            'f_margin_bins': int(f_margin_bins),
-            'neighbor_reduce': str(neighbor_reduce),
-            'shape': mode_2d_complex.shape,
-            'amplitude_max': float(np.abs(mode_2d_complex).max()),
+            "k_rad_um": k,
+            "f_GHz": f,
+            "lattice_constant_nm": lattice_constant_nm,
+            "n_bz": n_bz,
+            "k_direction": k_direction,
+            "k_margin_bins": int(k_margin_bins),
+            "f_margin_bins": int(f_margin_bins),
+            "neighbor_reduce": str(neighbor_reduce),
+            "shape": mode_2d_complex.shape,
+            "amplitude_max": float(np.abs(mode_2d_complex).max()),
         }
-        
+
         # Return ModeProfile object
         return ModeProfile(
             m_xy=mode_2d_complex,
@@ -2434,7 +2563,7 @@ class InteractiveDispersionModes:
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
-            fig = ax.get_figure()
+            fig = cast(Figure, ax.get_figure())
 
         # Plot heatmap
         if show_heatmap:
@@ -2451,7 +2580,7 @@ class InteractiveDispersionModes:
                 f_axis_positive = f_axis
 
             # Plot data with extent from 0 to fmax
-            extent = [k_axis[0], k_axis[-1], 0, f_axis_positive[-1]]
+            extent = (k_axis[0], k_axis[-1], 0.0, f_axis_positive[-1])
             ax.imshow(
                 np.log10(S + 1e-20),
                 aspect="auto",
@@ -2467,18 +2596,22 @@ class InteractiveDispersionModes:
         if show_bz_lines:
             G = 2 * np.pi / lattice_constant / 1e6  # rad/μm
             ax.axvline(-G, color="red", linestyle="--", linewidth=1.5)
-            ax.axvline(G, color="red", linestyle="--", linewidth=1.5, label=f"±G = ±{G:.1f}")
+            ax.axvline(
+                G, color="red", linestyle="--", linewidth=1.5, label=f"±G = ±{G:.1f}"
+            )
 
             # Show ±2G as well if in range
             k_range = ax.get_xlim()
             k_max = max(abs(k_range[0]), abs(k_range[1]))
-            if 2*G <= k_max:
-                ax.axvline(-2*G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
-                ax.axvline(2*G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
+            if 2 * G <= k_max:
+                ax.axvline(
+                    -2 * G, color="red", linestyle="--", linewidth=1.0, alpha=0.4
+                )
+                ax.axvline(2 * G, color="red", linestyle="--", linewidth=1.0, alpha=0.4)
 
         ax.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
         ax.set_ylabel("f [GHz]", fontsize=10)
-        ax.set_title(f"Dispersion | a = {lattice_constant*1e9:.0f} nm", fontsize=11)
+        ax.set_title(f"Dispersion | a = {lattice_constant * 1e9:.0f} nm", fontsize=11)
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3, linestyle=":")
 

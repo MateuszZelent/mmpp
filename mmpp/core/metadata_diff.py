@@ -5,41 +5,38 @@ Utilities for comparing simulation metadata across jobs and generating
 auto-labels based on differing parameters.
 """
 
-from typing import Any, Optional, Union
 from dataclasses import dataclass
+from typing import Any
 
 # Known parameters with units and display names
 PARAM_CONFIG = {
     # Magnetic field parameters
-    'B0': {'unit': 'T', 'scale': 1.0, 'display': 'B₀', 'alt_scale': {'mT': 1e3}},
-    'Bext': {'unit': 'T', 'scale': 1.0, 'display': 'Bₑₓₜ', 'alt_scale': {'mT': 1e3}},
-    'H0': {'unit': 'A/m', 'scale': 1.0, 'display': 'H₀'},
-    
+    "B0": {"unit": "T", "scale": 1.0, "display": "B₀", "alt_scale": {"mT": 1e3}},
+    "Bext": {"unit": "T", "scale": 1.0, "display": "Bₑₓₜ", "alt_scale": {"mT": 1e3}},
+    "H0": {"unit": "A/m", "scale": 1.0, "display": "H₀"},
     # Material parameters
-    'Ms': {'unit': 'A/m', 'scale': 1.0, 'display': 'Mₛ', 'alt_scale': {'kA/m': 1e-3}},
-    'Aex': {'unit': 'J/m', 'scale': 1.0, 'display': 'Aₑₓ', 'alt_scale': {'pJ/m': 1e12}},
-    'alpha': {'unit': '', 'scale': 1.0, 'display': 'α'},
-    'Ku': {'unit': 'J/m³', 'scale': 1.0, 'display': 'Kᵤ', 'alt_scale': {'kJ/m³': 1e-3}},
-    
+    "Ms": {"unit": "A/m", "scale": 1.0, "display": "Mₛ", "alt_scale": {"kA/m": 1e-3}},
+    "Aex": {"unit": "J/m", "scale": 1.0, "display": "Aₑₓ", "alt_scale": {"pJ/m": 1e12}},
+    "alpha": {"unit": "", "scale": 1.0, "display": "α"},
+    "Ku": {"unit": "J/m³", "scale": 1.0, "display": "Kᵤ", "alt_scale": {"kJ/m³": 1e-3}},
     # Frequency/time parameters
-    'f0': {'unit': 'Hz', 'scale': 1.0, 'display': 'f₀', 'alt_scale': {'GHz': 1e-9}},
-    'omega': {'unit': 'rad/s', 'scale': 1.0, 'display': 'ω'},
-    
+    "f0": {"unit": "Hz", "scale": 1.0, "display": "f₀", "alt_scale": {"GHz": 1e-9}},
+    "omega": {"unit": "rad/s", "scale": 1.0, "display": "ω"},
     # Geometry parameters
-    'd': {'unit': 'nm', 'scale': 1e9, 'display': 'd'},
-    'p': {'unit': 'nm', 'scale': 1e9, 'display': 'p'},
-    'w': {'unit': 'nm', 'scale': 1e9, 'display': 'w'},
-    'L': {'unit': 'nm', 'scale': 1e9, 'display': 'L'},
-    'thickness': {'unit': 'nm', 'scale': 1e9, 'display': 't'},
-    
+    "d": {"unit": "nm", "scale": 1e9, "display": "d"},
+    "p": {"unit": "nm", "scale": 1e9, "display": "p"},
+    "w": {"unit": "nm", "scale": 1e9, "display": "w"},
+    "L": {"unit": "nm", "scale": 1e9, "display": "L"},
+    "thickness": {"unit": "nm", "scale": 1e9, "display": "t"},
     # Indices
-    'index': {'unit': '', 'scale': 1.0, 'display': '#'},
+    "index": {"unit": "", "scale": 1.0, "display": "#"},
 }
 
 
 @dataclass
 class DiffResult:
     """Result of metadata comparison."""
+
     differing_params: dict[str, list[Any]]
     common_params: dict[str, Any]
     job_count: int
@@ -47,50 +44,51 @@ class DiffResult:
 
 def extract_job_metadata(job: Any) -> dict[str, Any]:
     """Extract relevant metadata from a job result.
-    
+
     Parameters
     ----------
     job : ZarrJobResult
         Job result object
-        
+
     Returns
     -------
     dict
         Dictionary of parameter names to values
     """
     metadata = {}
-    
+
     def is_numeric(val):
         """Check if value is numeric (int or float)."""
         return isinstance(val, (int, float)) and not isinstance(val, bool)
-    
+
     # Try multiple sources of metadata
     try:
         # 1. From zarr file attributes (access _z directly to avoid __getattr__)
-        zarr_group = getattr(job, '_z', None)
-        if zarr_group is None and hasattr(job, 'z'):
+        zarr_group = getattr(job, "_z", None)
+        if zarr_group is None and hasattr(job, "z"):
             zarr_group = job.z  # Some jobs use .z property
-        
-        if zarr_group is not None and hasattr(zarr_group, 'attrs'):
+
+        if zarr_group is not None and hasattr(zarr_group, "attrs"):
             for key, value in dict(zarr_group.attrs).items():
-                if not key.startswith('_') and is_numeric(value):
+                if not key.startswith("_") and is_numeric(value):
                     metadata[key] = value
-        
+
         # 2. From job.attributes dict (NOT __getattr__ - avoids dataset access)
-        if hasattr(job, 'attributes') and isinstance(job.attributes, dict):
-            for attr in ['B0', 'Bext', 'Ms', 'Aex', 'alpha', 'f0', 'd', 'p', 'w', 'L']:
+        if hasattr(job, "attributes") and isinstance(job.attributes, dict):
+            for attr in ["B0", "Bext", "Ms", "Aex", "alpha", "f0", "d", "p", "w", "L"]:
                 val = job.attributes.get(attr)
                 if val is not None and is_numeric(val):
                     metadata[attr] = val
-        
+
         # 3. From path-based parameters (common in parameter sweeps)
-        if hasattr(job, 'path'):
+        if hasattr(job, "path"):
             path_str = str(job.path)
             # Parse common patterns like "d_100nm" or "B0_0.1T"
             import re
+
             patterns = [
-                r'(\w+)_(\d+\.?\d*)(nm|um|mm|T|mT|GHz|MHz)',
-                r'(\w+)=(\d+\.?\d*)',
+                r"(\w+)_(\d+\.?\d*)(nm|um|mm|T|mT|GHz|MHz)",
+                r"(\w+)=(\d+\.?\d*)",
             ]
             for pattern in patterns:
                 for match in re.finditer(pattern, path_str):
@@ -100,27 +98,27 @@ def extract_job_metadata(job: Any) -> dict[str, Any]:
                             metadata[param_name] = float(match.group(2))
                         except (ValueError, IndexError):
                             pass
-        
+
         # 4. From database row if available
-        if hasattr(job, '_db_row') and job._db_row is not None:
+        if hasattr(job, "_db_row") and job._db_row is not None:
             for key, value in job._db_row.items():
                 if key not in metadata and value is not None:
                     metadata[key] = value
-                    
+
     except Exception:
         pass
-    
+
     return metadata
 
 
 def find_differing_parameters(jobs: list[Any]) -> DiffResult:
     """Compare metadata across jobs, identify differing parameters.
-    
+
     Parameters
     ----------
     jobs : list[ZarrJobResult]
         List of job results to compare
-        
+
     Returns
     -------
     DiffResult
@@ -128,23 +126,23 @@ def find_differing_parameters(jobs: list[Any]) -> DiffResult:
     """
     if not jobs:
         return DiffResult({}, {}, 0)
-    
+
     # Extract metadata from all jobs
     all_metadata = [extract_job_metadata(job) for job in jobs]
-    
+
     # Find all unique keys
-    all_keys = set()
+    all_keys: set[str] = set()
     for m in all_metadata:
         all_keys.update(m.keys())
-    
+
     differing = {}
     common = {}
-    
+
     for key in all_keys:
         values = []
         for m in all_metadata:
             values.append(m.get(key, None))
-        
+
         # Check if all values are the same
         unique_values = set()
         for v in values:
@@ -154,18 +152,20 @@ def find_differing_parameters(jobs: list[Any]) -> DiffResult:
                     unique_values.add(v)
                 except TypeError:
                     unique_values.add(str(v))
-        
+
         if len(unique_values) > 1:
             differing[key] = values
         elif len(unique_values) == 1:
             common[key] = values[0]
-    
+
     return DiffResult(differing, common, len(jobs))
 
 
-def format_value_with_unit(param_name: str, value: Any, prefer_scaled: bool = True) -> str:
+def format_value_with_unit(
+    param_name: str, value: Any, prefer_scaled: bool = True
+) -> str:
     """Format a parameter value with appropriate unit.
-    
+
     Parameters
     ----------
     param_name : str
@@ -174,7 +174,7 @@ def format_value_with_unit(param_name: str, value: Any, prefer_scaled: bool = Tr
         Parameter value
     prefer_scaled : bool
         If True, use scaled units (e.g., mT instead of T)
-        
+
     Returns
     -------
     str
@@ -182,27 +182,29 @@ def format_value_with_unit(param_name: str, value: Any, prefer_scaled: bool = Tr
     """
     if value is None:
         return "N/A"
-    
+
     # Try to convert to float, return string representation if not possible
     try:
         float_value = float(value)
     except (ValueError, TypeError):
         return str(value)
-    
-    config = PARAM_CONFIG.get(param_name, {})
-    unit = config.get('unit', '')
-    scale = config.get('scale', 1.0)
-    
+
+    config: dict[str, Any] = PARAM_CONFIG.get(param_name, {})
+    unit = str(config.get("unit", ""))
+    scale = float(config.get("scale", 1.0))
+
     # Apply base scale
     scaled_value = float_value * scale
-    
+
     # Try alternative units for better readability
-    if prefer_scaled and 'alt_scale' in config:
-        for alt_unit, alt_scale in config['alt_scale'].items():
+    alt_scales = config.get("alt_scale")
+    if prefer_scaled and isinstance(alt_scales, dict):
+        for alt_unit, alt_scale in alt_scales.items():
+            alt_scale = float(alt_scale)
             alt_value = float_value * alt_scale
             if 0.1 <= abs(alt_value) <= 1000:
                 return f"{alt_value:.3g}{alt_unit}"
-    
+
     # Default formatting
     if unit:
         return f"{scaled_value:.3g}{unit}"
@@ -217,7 +219,7 @@ def generate_auto_labels(
     show_units: bool = True,
 ) -> list[str]:
     """Generate labels for jobs based on differing parameters.
-    
+
     Parameters
     ----------
     jobs : list[ZarrJobResult]
@@ -228,59 +230,61 @@ def generate_auto_labels(
         Separator between parameters in label
     show_units : bool, default True
         Include units in labels
-        
+
     Returns
     -------
     list[str]
         List of labels, one per job
-        
+
     Examples
     --------
     >>> labels = generate_auto_labels([job1, job2, job3])
     >>> # ['B₀=100mT', 'B₀=200mT', 'B₀=300mT']
     """
     diff_result = find_differing_parameters(jobs)
-    
+
     if not diff_result.differing_params:
         # No differing params - use job indices
         return [f"Job {i}" for i in range(len(jobs))]
-    
+
     # Prioritize commonly varied parameters
-    priority_order = ['B0', 'Bext', 'Ms', 'f0', 'd', 'p', 'w', 'alpha', 'Aex']
-    
+    priority_order = ["B0", "Bext", "Ms", "f0", "d", "p", "w", "alpha", "Aex"]
+
     sorted_params = sorted(
         diff_result.differing_params.keys(),
-        key=lambda k: priority_order.index(k) if k in priority_order else 999
+        key=lambda k: priority_order.index(k) if k in priority_order else 999,
     )[:max_params]
-    
+
     labels = []
     for i in range(len(jobs)):
         parts = []
         for param in sorted_params:
             values = diff_result.differing_params[param]
             value = values[i] if i < len(values) else None
-            
+
             # Get display name
             config = PARAM_CONFIG.get(param, {})
-            display_name = config.get('display', param)
-            
+            display_name = config.get("display", param)
+
             if show_units:
                 formatted = format_value_with_unit(param, value)
             else:
-                formatted = f"{value:.3g}" if isinstance(value, (int, float)) else str(value)
-            
+                formatted = (
+                    f"{value:.3g}" if isinstance(value, (int, float)) else str(value)
+                )
+
             parts.append(f"{display_name}={formatted}")
-        
+
         labels.append(separator.join(parts))
-    
+
     return labels
 
 
 __all__ = [
-    'extract_job_metadata',
-    'find_differing_parameters',
-    'generate_auto_labels',
-    'format_value_with_unit',
-    'DiffResult',
-    'PARAM_CONFIG',
+    "extract_job_metadata",
+    "find_differing_parameters",
+    "generate_auto_labels",
+    "format_value_with_unit",
+    "DiffResult",
+    "PARAM_CONFIG",
 ]

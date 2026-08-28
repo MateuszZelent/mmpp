@@ -5,13 +5,13 @@ import numpy as np
 from mmpp.solitons.vortex._shared.models import TrajectoryResult
 from mmpp.solitons.vortex.bridge import BridgeInterface
 from mmpp.solitons.vortex.config import VortexConfig
+from mmpp.solitons.vortex.events.interface import EventsInterface
 from mmpp.solitons.vortex.events.models import (
     CoreExpulsionEvent,
     DwellTimeResult,
     PolaritySwitchEvent,
     StateSwitchEvent,
 )
-from mmpp.solitons.vortex.events.interface import EventsInterface
 from mmpp.solitons.vortex.model.interface import VortexModelInterface
 from mmpp.solitons.vortex.modes.models import VortexModeResult
 from mmpp.solitons.vortex.numerical.topology.interface import TopologyInterface

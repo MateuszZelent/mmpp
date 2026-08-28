@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..._coordinates import XYConvention
+from ..._field import select_snapshot
 from ..._topology import berg_luscher_Q, normalize_magnetization, topological_density_fd
-from .._utils import XYConvention
 from .invariants import (
     chirality_ring_with_confidence,
     winding_number,
@@ -18,41 +19,6 @@ def _resolve_convention(convention: XYConvention | None) -> XYConvention:
     if convention is None:
         return XYConvention(y_axis="down")
     return convention
-
-
-def _select_snapshot(m: np.ndarray, frame: int = 0, z_layer: int = -1) -> np.ndarray:
-    """Normalize supported input shapes to a single (Ny, Nx, 3) snapshot."""
-    arr = np.asarray(m, dtype=float)
-
-    if arr.ndim == 3 and arr.shape[-1] == 3:
-        return arr
-
-    if arr.ndim == 4 and arr.shape[-1] == 3:
-        if frame < 0:
-            frame += arr.shape[0]
-        if frame < 0 or frame >= arr.shape[0]:
-            raise IndexError(f"frame index {frame} out of bounds for shape {arr.shape}")
-        return arr[frame]
-
-    if arr.ndim == 5 and arr.shape[-1] == 3:
-        if frame < 0:
-            frame += arr.shape[0]
-        if frame < 0 or frame >= arr.shape[0]:
-            raise IndexError(f"frame index {frame} out of bounds for shape {arr.shape}")
-
-        nz = arr.shape[1]
-        if z_layer < 0:
-            z_layer += nz
-        if z_layer < 0 or z_layer >= nz:
-            raise IndexError(
-                f"z_layer index {z_layer} out of bounds for shape {arr.shape}"
-            )
-        return arr[frame, z_layer]
-
-    raise ValueError(
-        "Unsupported magnetization shape. Expected (Ny,Nx,3), (Nt,Ny,Nx,3), "
-        "or (Nt,Nz,Ny,Nx,3)."
-    )
 
 
 def _pix_to_y(y_pix: float, ny: int, dy: float, convention: XYConvention) -> float:
@@ -84,11 +50,13 @@ def _estimate_core_position(
     total = float(np.sum(weights))
 
     if total <= 0.0:
-        yi, xi = np.unravel_index(int(np.argmax(abs_mz)), abs_mz.shape)
-        x_phys = float(xi) * float(dx)
-        y_down = float(yi) * float(dy)
-        y_phys = _pix_to_y(float(yi), abs_mz.shape[0], dy, convention)
-        return x_phys, y_phys, y_down, int(xi), int(yi)
+        fallback_yi, fallback_xi = np.unravel_index(
+            int(np.argmax(abs_mz)), abs_mz.shape
+        )
+        x_phys = float(fallback_xi) * float(dx)
+        y_down = float(fallback_yi) * float(dy)
+        y_phys = _pix_to_y(float(fallback_yi), abs_mz.shape[0], dy, convention)
+        return x_phys, y_phys, y_down, int(fallback_xi), int(fallback_yi)
 
     ny, nx = abs_mz.shape
     x_idx = np.arange(nx, dtype=float)
@@ -170,7 +138,7 @@ def detect_topology(
 ) -> TopologyResult:
     """Detect topological state from magnetization data."""
     conv = _resolve_convention(convention)
-    snapshot = _select_snapshot(m, frame=frame, z_layer=z_layer)
+    snapshot = select_snapshot(m, frame=frame, z_layer=z_layer)
     snapshot = normalize_magnetization(snapshot)
 
     core_x, core_y_phys, core_y_down, core_x_idx, core_y_idx = _estimate_core_position(
@@ -219,7 +187,7 @@ def detect_topology(
             convention=conv,
         )
     elif method_norm == "berg_luscher":
-        topological_density, q_total = berg_luscher_Q(
+        topological_density, q_total = berg_luscher_Q(  # type: ignore[misc]
             snapshot,
             convention=conv,
             return_density=True,

@@ -25,7 +25,10 @@ def _get_freq_scale(freq_unit: str) -> float:
         "ghz": 1.0,
         "thz": 1e-3,
     }
-    return float(mapping.get(str(freq_unit).lower(), 1.0))
+    key = str(freq_unit).strip().lower()
+    if key not in mapping:
+        raise ValueError("freq_unit must be Hz, kHz, MHz, GHz, or THz")
+    return float(mapping[key])
 
 
 def plot(
@@ -57,9 +60,11 @@ def plot(
 
     frequencies, spectrum, component_label = data_loader.load_spectrum()
     freqs_ghz = _to_ghz(np.asarray(frequencies, dtype=float))
+    component_hint = _component_from_label(component_label)
     power = collapse_spectrum_components(
         _to_power(np.asarray(spectrum)),
-        _component_from_label(component_label),
+        component_hint,
+        single_component=component_hint is not None,
     )
 
     data_fmin = float(np.nanmin(freqs_ghz))

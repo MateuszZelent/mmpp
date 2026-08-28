@@ -2,38 +2,55 @@
 
 from __future__ import annotations
 
+import math
+import os
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional, Tuple, Union
-import math
-import time
-import os
 from pathlib import Path
+from typing import Any, Literal, cast
 
 import numpy as np
-from tqdm import tqdm
 
-from mmpp.core.mmpp import _running_in_ipython_kernel
+try:
+    from tqdm import tqdm as _tqdm
+except ImportError:  # pragma: no cover - depends on optional environment
+    _tqdm = None
+
+
+def _running_in_ipython_kernel() -> bool:
+    """Return True in a notebook kernel without importing the full core package."""
+    try:
+        import builtins
+
+        get_ipython = getattr(builtins, "get_ipython", None)
+        if get_ipython is None:
+            return False
+        return get_ipython().__class__.__name__ == "ZMQInteractiveShell"
+    except Exception:
+        return False
 
 
 def _progress(iterable, **kwargs):
-    if _running_in_ipython_kernel():
+    if _running_in_ipython_kernel() or _tqdm is None:
         return iterable
-    return tqdm(iterable, **kwargs)
+    return _tqdm(iterable, **kwargs)
 
 
 # Try to use scipy.fft (faster) with fallback to numpy.fft
 # Can be disabled via environment variable MMPP_USE_NUMPY_FFT=1
 _FORCE_NUMPY = os.environ.get("MMPP_USE_NUMPY_FFT", "").lower() in ("1", "true", "yes")
 
+scipy_fft: Any = None
 if _FORCE_NUMPY:
     scipy_fft = None
     _USE_SCIPY_FFT = False
     print("🔧 Forced numpy.fft via MMPP_USE_NUMPY_FFT environment variable")
 else:
     try:
-        from scipy import fft as scipy_fft
+        from scipy import fft as _scipy_fft
 
+        scipy_fft = _scipy_fft
         _USE_SCIPY_FFT = True
     except ImportError:
         scipy_fft = None
@@ -47,16 +64,14 @@ try:
 except ImportError:
     _USE_JOBLIB = False
 
-from ..compute_fft import FFTCompute, FILTER_TYPES, WINDOW_TYPES
-
 from ...cli.logging_config import get_mmpp_logger
-
+from ..compute_fft import FILTER_TYPES, WINDOW_TYPES, FFTCompute
 
 log = get_mmpp_logger("mmpp.fft.transmission")
 
 
 def _report_progress(
-    callback: Optional[Callable[[float, str], None]],
+    callback: Callable[[float, str], None] | None,
     current: int,
     total: int,
     stage: str,
@@ -96,13 +111,13 @@ class TransmissionConfig:
     All processing steps are optional - can be disabled to match raw FFT behavior.
     """
 
-    dataset_name: Optional[str] = None
+    dataset_name: str | None = None
     z_layer: int = -1
     method: TransmissionMethod = "power_ratio"
 
     # Temporal preprocessing (can be disabled with None)
-    window_function: Optional[WINDOW_TYPES] = "hann"  # None = no windowing
-    filter_type: Optional[FILTER_TYPES] = "remove_mean"  # None = no filtering
+    window_function: WINDOW_TYPES | None = "hann"  # None = no windowing
+    filter_type: FILTER_TYPES | None = "remove_mean"  # None = no filtering
 
     # Spatial averaging controls
     spatial_window: int = (
@@ -115,16 +130,16 @@ class TransmissionConfig:
     y_integration_mode: YIntegrationMode = "sum_fft"  # "sum_m" = sum before FFT, "sum_fft" = sum complex FFT along y (phase-preserving), "none" = no y-sum
 
     # Component selection
-    component_weights: Tuple[float, float, float] = (1.0, 1.0, 0.1)
+    component_weights: tuple[float, float, float] = (1.0, 1.0, 0.1)
     enable_circular_components: bool = False
 
     # Normalization (can be disabled)
     normalize: NormalizeMode = "reference"  # "none" = raw power
-    reference_window: Optional[Tuple[int, int]] = None
+    reference_window: tuple[int, int] | None = None
     reference_statistic: ReferenceStatistic = "mean"
 
     # Other options
-    tmax: Optional[int] = None
+    tmax: int | None = None
     keep_complex_fft: bool = False
     store_component_maps: bool = False
     engine: FFTEngine = (
@@ -133,11 +148,11 @@ class TransmissionConfig:
     raw_fft_output: bool = (
         False  # If True, skip all post-FFT processing and return raw full_spectrum
     )
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # Progress reporting callback
     # Signature: callback(progress: float, stage: str) where progress is 0-100%
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Callable[[float, str], None] | None = None
 
     def ensure_valid(self) -> None:
         """Validate configuration values."""
@@ -206,14 +221,14 @@ class TransmissionResult:
     power_map: np.ndarray
     reference_power: np.ndarray
     config: TransmissionConfig
-    dx: Optional[float] = None  # Cell size in meters (None if not available)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    power_plus: Optional[np.ndarray] = None
-    power_minus: Optional[np.ndarray] = None
-    transverse_power: Optional[np.ndarray] = None
-    longitudinal_power: Optional[np.ndarray] = None
+    dx: float | None = None  # Cell size in meters (None if not available)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    power_plus: np.ndarray | None = None
+    power_minus: np.ndarray | None = None
+    transverse_power: np.ndarray | None = None
+    longitudinal_power: np.ndarray | None = None
     # Optional lightweight complex-spectrum summary when keep_complex_fft is True
-    complex_spectra_summary: Optional[np.ndarray] = None
+    complex_spectra_summary: np.ndarray | None = None
 
     def _repr_html_(self) -> str:
         """HTML representation for Jupyter notebooks."""
@@ -257,7 +272,7 @@ class TransmissionResult:
         (e.g., dpi, ax) are forwarded to the plotter.
         """
         # Import here to avoid circular imports at module import time
-        from .plot import TransmissionPlotter, TransmissionPlotConfig
+        from .plot import TransmissionPlotConfig, TransmissionPlotter
 
         # Convert dict -> TransmissionPlotConfig when needed (same behaviour as FFT interface)
         if plot_config is not None and isinstance(plot_config, dict):
@@ -295,20 +310,20 @@ class TransmissionResult:
         self,
         x: float,
         freq_unit: str = "GHz",
-        trim_0f: Optional[int] = None,
-        fmin: Optional[float] = None,
-        fmax: Optional[float] = None,
+        trim_0f: int | None = None,
+        fmin: float | None = None,
+        fmax: float | None = None,
         flip: bool = False,
         log_scale: bool = False,
         ax=None,
         mark_on_ax=None,
-        find_minima: Optional[dict] = None,
-        x_width: Optional[float] = None,
+        find_minima: dict | None = None,
+        x_width: float | None = None,
         disable_averaging: bool = False,
         normalize: bool = False,
         use_power_map: bool = False,
         verbose: bool = False,
-        legend: Union[bool, dict] = False,
+        legend: bool | dict = False,
         **kwargs,
     ):
         """Plot 1D transmission cross-section at specific x position.
@@ -420,10 +435,11 @@ class TransmissionResult:
         try:
             import matplotlib.pyplot as plt
         except ImportError:
-            raise ImportError("matplotlib is required for plotting")
+            raise ImportError("matplotlib is required for plotting") from None
+
+        import logging
 
         from .plot import FREQ_SCALE
-        import logging
 
         log = logging.getLogger(__name__)
 
@@ -480,7 +496,7 @@ class TransmissionResult:
         if disable_averaging:
             # FORCE single point extraction - no averaging
             if verbose:
-                print(f"[VERBOSE] MODE: Single point (disable_averaging=True)")
+                print("[VERBOSE] MODE: Single point (disable_averaging=True)")
                 print(f"[VERBOSE] Extracting source_data[:, {x_idx}]")
             transmission_slice = source_data[:, x_idx]
 
@@ -529,12 +545,12 @@ class TransmissionResult:
                 )
                 if verbose:
                     print(f"[VERBOSE] WARNING: {msg}")
-                warnings.warn(msg, UserWarning)
+                warnings.warn(msg, UserWarning, stacklevel=2)
                 transmission_slice = source_data[:, x_idx]
             elif num_points == 1:
                 # Exactly one point in range - extract it directly
                 if verbose:
-                    print(f"[VERBOSE] Exactly 1 point in range, extracting directly")
+                    print("[VERBOSE] Exactly 1 point in range, extracting directly")
                 transmission_slice = source_data[:, mask].flatten()
             else:
                 # Multiple points - average transmission over all x positions in range
@@ -550,7 +566,7 @@ class TransmissionResult:
         else:
             # Single x position (no averaging)
             if verbose:
-                print(f"[VERBOSE] MODE: Single point (x_width not specified)")
+                print("[VERBOSE] MODE: Single point (x_width not specified)")
                 print(f"[VERBOSE] Extracting source_data[:, {x_idx}]")
             transmission_slice = source_data[:, x_idx]
 
@@ -741,7 +757,7 @@ class TransmissionResult:
                 from scipy.signal import find_peaks
 
                 # Default parameters
-                minima_params = {
+                minima_params: dict[str, Any] = {
                     "height": None,  # Will be set to median if None
                     "distance": 5,
                     "prominence": None,
@@ -779,7 +795,8 @@ class TransmissionResult:
                         import warnings
 
                         warnings.warn(
-                            f"Invalid value for 'label_rounding': {minima_params['label_rounding']}. Using default format."
+                            f"Invalid value for 'label_rounding': {minima_params['label_rounding']}. Using default format.",
+                            stacklevel=2,
                         )
 
                 # Create frequency mask if freq_range is specified
@@ -847,7 +864,7 @@ class TransmissionResult:
 
                     # Add text labels for each minimum if requested
                     if minima_params["label_minima"]:
-                        for freq, val in zip(minima_freqs, minima_values):
+                        for freq, val in zip(minima_freqs, minima_values, strict=False):
                             label_text = minima_params["label_format"].format(freq)
 
                             # Build text kwargs
@@ -862,14 +879,14 @@ class TransmissionResult:
 
                             # Add background box for better visibility
                             if minima_params.get("label_bbox", True):
-                                text_kwargs["bbox"] = dict(
-                                    boxstyle="round,pad=0.3",
-                                    facecolor=minima_params.get(
+                                text_kwargs["bbox"] = {
+                                    "boxstyle": "round,pad=0.3",
+                                    "facecolor": minima_params.get(
                                         "label_bbox_color", "black"
                                     ),
-                                    alpha=minima_params.get("label_bbox_alpha", 0.7),
-                                    edgecolor="none",
-                                )
+                                    "alpha": minima_params.get("label_bbox_alpha", 0.7),
+                                    "edgecolor": "none",
+                                }
 
                             if flip:
                                 # Text to the right of the point (horizontal layout)
@@ -904,7 +921,8 @@ class TransmissionResult:
                 import warnings
 
                 warnings.warn(
-                    "scipy is required for find_minima functionality. Install with: pip install scipy"
+                    "scipy is required for find_minima functionality. Install with: pip install scipy",
+                    stacklevel=2,
                 )
                 minima_freqs = None
 
@@ -925,7 +943,7 @@ class TransmissionResult:
             return fig, ax
 
     @staticmethod
-    def _resolve_component_index(component: Union[int, str], n_comp: int) -> int:
+    def _resolve_component_index(component: int | str, n_comp: int) -> int:
         """Resolve component alias/index with single-component fallback."""
         if isinstance(component, str):
             comp_alias = {
@@ -1003,7 +1021,7 @@ class TransmissionResult:
         t_idx: int,
         z_idx: int,
         comp_idx: int,
-        y_slice: Optional[slice],
+        y_slice: slice | None,
         copy_y: int,
         phase_offset_rad: float = 0.0,
         reconstruction: ReconstructionMode = "real_signal",
@@ -1032,16 +1050,16 @@ class TransmissionResult:
 
     def visualize_mode(
         self,
-        f: Optional[float] = None,
+        f: float | None = None,
         *,
-        k: Optional[int] = None,
+        k: int | None = None,
         freq_unit: str = "GHz",
         t_show: int = 0,
         phase_deg: float = 0.0,
         reconstruction: ReconstructionMode = "real_signal",
         z_layer: int = 0,
-        component: Union[int, str] = "z",
-        y_slice: Optional[slice] = None,
+        component: int | str = "z",
+        y_slice: slice | None = None,
         copy_y: int = 1,
         mode: str = "real",
         vlim_scale: float = 0.1,
@@ -1050,14 +1068,14 @@ class TransmissionResult:
         dpi: int = 100,
         aspect: str = "auto",
         origin: str = "lower",
-        cmap: Optional[str] = None,
+        cmap: str | None = None,
         colorbar: bool = True,
         interpolation: str = "nearest",
         x_unit: str = "nm",
-        x_lines: Optional[Sequence[float]] = None,
+        x_lines: Sequence[float] | None = None,
         x_lines_in_index: bool = False,
-        y_lines: Optional[Sequence[float]] = None,
-        y_spans: Optional[Sequence[tuple[float, float]]] = None,
+        y_lines: Sequence[float] | None = None,
+        y_spans: Sequence[tuple[float, float]] | None = None,
         y_span_color: str = "cyan",
         y_span_alpha: float = 0.15,
         flip_x: bool = True,
@@ -1151,7 +1169,7 @@ class TransmissionResult:
                 raise ValueError(
                     f"Unsupported freq_unit={freq_unit!r}. Use one of {list(unit_scales)}."
                 )
-            target_hz = float(f) * freq_scale
+            target_hz = float(cast(float, f)) * freq_scale
             k = int(np.argmin(np.abs(freqs - target_hz)))
         else:
             k = int(k)
@@ -1162,7 +1180,7 @@ class TransmissionResult:
 
         n_time_meta = self.metadata.get("n_time")
         try:
-            n_time = int(n_time_meta)
+            n_time = int(n_time_meta) if n_time_meta is not None else 0
         except (TypeError, ValueError):
             n_time = int(2 * (freqs.size - 1))
         if n_time <= 0:
@@ -1359,7 +1377,7 @@ class TransmissionResult:
         *,
         freq_unit: str = "GHz",
         ncols: int = 3,
-        figsize: Optional[tuple[float, float]] = None,
+        figsize: tuple[float, float] | None = None,
         dpi: int = 100,
         colorbar: bool = False,
         **kwargs,
@@ -1405,18 +1423,18 @@ class TransmissionResult:
         self,
         *,
         animate: Literal["k", "t"] = "t",
-        f: Optional[float] = None,
-        k: Optional[int] = None,
+        f: float | None = None,
+        k: int | None = None,
         freq_unit: str = "GHz",
         t_show: int = 0,
-        frames: Optional[Union[Sequence[int], slice]] = None,
-        k_frames: Optional[Union[Sequence[int], slice]] = None,
-        t_frames: Optional[Union[Sequence[int], slice]] = None,
+        frames: Sequence[int] | slice | None = None,
+        k_frames: Sequence[int] | slice | None = None,
+        t_frames: Sequence[int] | slice | None = None,
         phase_deg: float = 0.0,
         reconstruction: ReconstructionMode = "real_signal",
         z_layer: int = 0,
-        component: Union[int, str] = "z",
-        y_slice: Optional[slice] = None,
+        component: int | str = "z",
+        y_slice: slice | None = None,
         copy_y: int = 1,
         mode: str = "real",
         vlim_scale: float = 0.1,
@@ -1425,14 +1443,14 @@ class TransmissionResult:
         dpi: int = 100,
         aspect: str = "auto",
         origin: str = "lower",
-        cmap: Optional[str] = None,
+        cmap: str | None = None,
         colorbar: bool = True,
         interpolation: str = "nearest",
         x_unit: str = "nm",
-        x_lines: Optional[Sequence[float]] = None,
+        x_lines: Sequence[float] | None = None,
         x_lines_in_index: bool = False,
-        y_lines: Optional[Sequence[float]] = None,
-        y_spans: Optional[Sequence[tuple[float, float]]] = None,
+        y_lines: Sequence[float] | None = None,
+        y_spans: Sequence[tuple[float, float]] | None = None,
         y_span_color: str = "cyan",
         y_span_alpha: float = 0.15,
         flip_x: bool = True,
@@ -1444,9 +1462,9 @@ class TransmissionResult:
         fps: int = 15,
         repeat: bool = True,
         color_scale: Literal["global", "frame"] = "global",
-        saveas: Optional[Union[str, Path]] = None,
-        writer: Optional[str] = None,
-        animation_save_kwargs: Optional[dict[str, Any]] = None,
+        saveas: str | Path | None = None,
+        writer: str | None = None,
+        animation_save_kwargs: dict[str, Any] | None = None,
         show_progress: bool = False,
         **imshow_kwargs,
     ):
@@ -1489,7 +1507,7 @@ class TransmissionResult:
 
         n_time_meta = self.metadata.get("n_time")
         try:
-            n_time = int(n_time_meta)
+            n_time = int(n_time_meta) if n_time_meta is not None else 0
         except (TypeError, ValueError):
             n_time = int(2 * (freqs.size - 1))
         if n_time <= 0:
@@ -1540,11 +1558,11 @@ class TransmissionResult:
             raise ValueError("animate must be either 'k' or 't'")
 
         def _materialize_indices(
-            spec: Optional[Union[Sequence[int], slice]],
+            spec: Sequence[int] | slice | None,
             *,
             upper: int,
             name: str,
-        ) -> Optional[list[int]]:
+        ) -> list[int] | None:
             if spec is None:
                 return None
             if isinstance(spec, slice):
@@ -1594,7 +1612,9 @@ class TransmissionResult:
                 )
 
             if k is None:
-                k_fixed = int(np.argmin(np.abs(freqs - float(f) * float(freq_scale))))
+                k_fixed = int(
+                    np.argmin(np.abs(freqs - float(cast(float, f)) * float(freq_scale)))
+                )
             else:
                 k_fixed = int(k)
             if k_fixed < 0 or k_fixed >= freqs.size:
@@ -1794,7 +1814,7 @@ class TransmissionResult:
             blit=False,
         )
 
-        save_path: Optional[Path] = None
+        save_path: Path | None = None
         if saveas is not None:
             save_path = Path(saveas)
             save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1836,18 +1856,18 @@ class TransmissionResult:
 
     def save_mode_visualizations(
         self,
-        output_dir: Union[str, Path],
+        output_dir: str | Path,
         *,
-        f: Optional[Union[float, Sequence[float]]] = None,
-        k: Optional[Union[int, Sequence[int]]] = None,
+        f: float | Sequence[float] | None = None,
+        k: int | Sequence[int] | None = None,
         freq_unit: str = "GHz",
         filename_template: str = "mode_k{k:05d}_f{frequency:.6f}_{unit}.{ext}",
         image_format: str = "png",
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         overwrite: bool = True,
         close_figures: bool = True,
         show_progress: bool = True,
-        savefig_kwargs: Optional[dict[str, Any]] = None,
+        savefig_kwargs: dict[str, Any] | None = None,
         **visualize_kwargs,
     ) -> list[Path]:
         """Save per-frequency mode visualizations to ``output_dir``.
@@ -1876,12 +1896,18 @@ class TransmissionResult:
 
         selected_bins: list[int] = []
         if f is not None:
-            freq_values = [float(f)] if np.isscalar(f) else [float(v) for v in f]
+            if isinstance(f, Sequence):
+                freq_values = [float(v) for v in f]
+            else:
+                freq_values = [float(cast(float, f))]
             for f_val in freq_values:
                 hz = float(f_val) * float(freq_scale)
                 selected_bins.append(int(np.argmin(np.abs(freqs - hz))))
         elif k is not None:
-            k_values = [int(k)] if np.isscalar(k) else [int(v) for v in k]
+            if isinstance(k, Sequence):
+                k_values = [int(v) for v in k]
+            else:
+                k_values = [int(cast(int, k))]
             for k_val in k_values:
                 if k_val < 0 or k_val >= freqs.size:
                     raise ValueError(f"k={k_val} out of range [0, {freqs.size - 1}]")
@@ -1941,18 +1967,18 @@ class TransmissionResult:
 
     def calculate_modes(
         self,
-        f: Optional[Union[float, Sequence[float]]] = None,
+        f: float | Sequence[float] | None = None,
         *,
-        k: Optional[Union[int, Sequence[int]]] = None,
+        k: int | Sequence[int] | None = None,
         freq_unit: str = "GHz",
         t_show: int = 0,
         phase_deg: float = 0.0,
         reconstruction: ReconstructionMode = "real_signal",
         z_layer: int = 0,
-        component: Union[int, str] = "z",
-        y_slice: Optional[slice] = None,
+        component: int | str = "z",
+        y_slice: slice | None = None,
         copy_y: int = 1,
-    ) -> "TransmissionModesResult":
+    ) -> TransmissionModesResult:
         """Precompute reconstructed mode maps for selected frequencies/bins.
 
         Parameters
@@ -2002,13 +2028,19 @@ class TransmissionResult:
         selected_bins: list[int] = []
         requested_hz: list[float] = []
         if f is not None:
-            freq_values = [float(f)] if np.isscalar(f) else [float(v) for v in f]
+            if isinstance(f, Sequence):
+                freq_values = [float(v) for v in f]
+            else:
+                freq_values = [float(cast(float, f))]
             for f_val in freq_values:
                 hz = f_val * float(freq_scale)
                 selected_bins.append(int(np.argmin(np.abs(freqs - hz))))
                 requested_hz.append(float(hz))
         else:
-            k_values = [int(k)] if np.isscalar(k) else [int(v) for v in k]
+            if isinstance(k, Sequence):
+                k_values = [int(v) for v in k]
+            else:
+                k_values = [int(cast(int, k))]
             for k_val in k_values:
                 if k_val < 0 or k_val >= freqs.size:
                     raise ValueError(f"k={k_val} out of range [0, {freqs.size - 1}]")
@@ -2017,7 +2049,7 @@ class TransmissionResult:
 
         n_time_meta = self.metadata.get("n_time")
         try:
-            n_time = int(n_time_meta)
+            n_time = int(n_time_meta) if n_time_meta is not None else 0
         except (TypeError, ValueError):
             n_time = int(2 * (freqs.size - 1))
         if n_time <= 0:
@@ -2043,7 +2075,7 @@ class TransmissionResult:
 
         precomputed: list[dict[str, Any]] = []
 
-        for k_idx, req_hz in zip(selected_bins, requested_hz):
+        for k_idx, req_hz in zip(selected_bins, requested_hz, strict=False):
             xy_complex, y_block = self._reconstruct_mode_xy(
                 spectrum,
                 k_idx=int(k_idx),
@@ -2089,7 +2121,7 @@ class TransmissionModesResult:
     """Precomputed transmission mode maps for selected frequencies."""
 
     modes: list[dict[str, Any]]
-    dx: Optional[float] = None
+    dx: float | None = None
     freq_unit: str = "GHz"
 
     def __len__(self) -> int:
@@ -2126,9 +2158,9 @@ class TransmissionModesResult:
     def _select_indices(
         self,
         *,
-        index: Optional[int],
-        f: Optional[float],
-        k: Optional[int],
+        index: int | None,
+        f: float | None,
+        k: int | None,
         freq_unit: str,
     ) -> list[int]:
         if index is not None:
@@ -2164,24 +2196,24 @@ class TransmissionModesResult:
     def visualize(
         self,
         *,
-        index: Optional[int] = None,
-        f: Optional[float] = None,
-        k: Optional[int] = None,
-        freq_unit: Optional[str] = None,
+        index: int | None = None,
+        f: float | None = None,
+        k: int | None = None,
+        freq_unit: str | None = None,
         mode: str = "real",
         ncols: int = 3,
-        figsize: Optional[tuple[float, float]] = None,
+        figsize: tuple[float, float] | None = None,
         dpi: int = 100,
         aspect: str = "auto",
         origin: str = "lower",
-        cmap: Optional[str] = None,
+        cmap: str | None = None,
         colorbar: bool = True,
         interpolation: str = "nearest",
         x_unit: str = "nm",
-        x_lines: Optional[Sequence[float]] = None,
+        x_lines: Sequence[float] | None = None,
         x_lines_in_index: bool = False,
-        y_lines: Optional[Sequence[float]] = None,
-        y_spans: Optional[Sequence[tuple[float, float]]] = None,
+        y_lines: Sequence[float] | None = None,
+        y_spans: Sequence[tuple[float, float]] | None = None,
         y_span_color: str = "cyan",
         y_span_alpha: float = 0.15,
         flip_x: bool = True,
@@ -2351,19 +2383,19 @@ class TransmissionModesResult:
 
     def save_visualizations(
         self,
-        output_dir: Union[str, Path],
+        output_dir: str | Path,
         *,
-        index: Optional[int] = None,
-        f: Optional[float] = None,
-        k: Optional[int] = None,
-        freq_unit: Optional[str] = None,
+        index: int | None = None,
+        f: float | None = None,
+        k: int | None = None,
+        freq_unit: str | None = None,
         filename_template: str = "mode_k{k:05d}_f{frequency:.6f}_{unit}.{ext}",
         image_format: str = "png",
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         overwrite: bool = True,
         close_figures: bool = True,
         show_progress: bool = True,
-        savefig_kwargs: Optional[dict[str, Any]] = None,
+        savefig_kwargs: dict[str, Any] | None = None,
         **visualize_kwargs,
     ) -> list[Path]:
         """Save one image per precomputed mode to ``output_dir``."""
@@ -2466,7 +2498,8 @@ def _apply_transmission_method(
     *,
     component_weights: np.ndarray,
     method: TransmissionMethod,
-    window_axis: Optional[int],
+    window_axis: int | None,
+    reference_spectrum: np.ndarray | None = None,
 ) -> np.ndarray:
     """Convert complex spectrum to real-valued transmission metric."""
     if spectrum.ndim < 2:
@@ -2486,23 +2519,23 @@ def _apply_transmission_method(
             w = float(component_weights[comp_idx])
             if w == 0.0:
                 continue
-            metric += np.abs(spectrum[..., comp_idx]) * w
+            metric += np.abs(spectrum[..., comp_idx]) ** 2 * w
         return metric
 
     if method == "circular":
         if n_comp < 2:
             raise ValueError("method='circular' requires at least 2 components (mx,my)")
-        mx = spectrum[..., 0] * float(component_weights[0])
-        my = spectrum[..., 1] * float(component_weights[1])
+        mx = spectrum[..., 0] * np.sqrt(float(component_weights[0]))
+        my = spectrum[..., 1] * np.sqrt(float(component_weights[1]))
         m_plus = (mx + 1j * my) / np.sqrt(2.0)
         m_minus = (mx - 1j * my) / np.sqrt(2.0)
-        metric = 0.5 * (np.abs(m_plus) + np.abs(m_minus))
+        metric = 0.5 * (np.abs(m_plus) ** 2 + np.abs(m_minus) ** 2)
         # Keep optional longitudinal/extra contributions explicit via weights.
         for comp_idx in range(2, n_comp):
             w = float(component_weights[comp_idx])
             if w == 0.0:
                 continue
-            metric += np.abs(spectrum[..., comp_idx]) * w
+            metric += np.abs(spectrum[..., comp_idx]) ** 2 * w
         return metric
 
     if method == "cpsd":
@@ -2510,18 +2543,64 @@ def _apply_transmission_method(
             raise ValueError(
                 "method='cpsd' requires per-window spectrum. Use spatial_window_mode='post_fft'."
             )
+        if reference_spectrum is None:
+            raise ValueError(
+                "method='cpsd' requires a fixed reference spectrum derived "
+                "from reference_window"
+            )
+        reference_array = np.asarray(reference_spectrum)
+        expected_shape = (
+            spectrum.shape[:window_axis] + spectrum.shape[window_axis + 1 :]
+        )
+        if reference_array.shape != expected_shape:
+            raise ValueError(
+                "CPSD reference spectrum shape mismatch: "
+                f"expected {expected_shape}, got {reference_array.shape}"
+            )
         metric = np.zeros(spectrum.shape[:-1], dtype=float)
         for comp_idx in range(n_comp):
             w = float(component_weights[comp_idx])
             if w == 0.0:
                 continue
             comp_spec = spectrum[..., comp_idx]
-            ref = np.take(comp_spec, indices=0, axis=window_axis)
+            ref = reference_array[..., comp_idx]
             ref = np.expand_dims(ref, axis=window_axis)
             metric += np.abs(comp_spec * np.conj(ref)) * w
         return metric
 
     raise ValueError(f"Unsupported transmission method: {method}")
+
+
+def _normalize_component_weights(
+    component_weights: Any, n_components: int
+) -> np.ndarray:
+    """Resolve configured weights against the components present in the view."""
+    n_components = int(n_components)
+    if n_components < 1:
+        raise ValueError("n_components must be >= 1")
+    weights = np.atleast_1d(np.asarray(component_weights, dtype=float))
+    if weights.size == 0 or not np.all(np.isfinite(weights)) or np.any(weights < 0):
+        raise ValueError("component_weights must be finite non-negative values")
+
+    if n_components == 1:
+        # A sliced singleton no longer carries a reliable source-component
+        # index. A single explicit weight is unambiguous; a vector weight set
+        # is replaced by unity so selecting mz cannot accidentally inherit mx.
+        if weights.size == 1:
+            return weights.astype(float, copy=True)
+        return np.ones(1, dtype=float)
+
+    if weights.size == 1:
+        raise ValueError(
+            "A single component weight is only valid for single-component input; "
+            f"got {n_components} components"
+        )
+    if weights.size < n_components:
+        raise ValueError(
+            f"Insufficient component_weights size={weights.size} for "
+            f"n_components={n_components}"
+        )
+    return weights[:n_components].astype(float, copy=True)
 
 
 def _aggregate_pre_fft(
@@ -2621,6 +2700,28 @@ def _aggregate_spatial(
     raise ValueError(f"Expected power array ndim 3 or 4, got shape {arr.shape}")
 
 
+def _normalize_transmission_map(
+    power_map: np.ndarray,
+    reference_values: np.ndarray,
+    mode: NormalizeMode,
+) -> tuple[np.ndarray, int]:
+    """Normalize without inventing values for zero reference power."""
+    power = np.asarray(power_map, dtype=float)
+    if mode == "reference":
+        reference = np.asarray(reference_values, dtype=float)
+        valid = np.isfinite(reference) & (reference > 0.0)
+        normalized = np.full(power.shape, np.nan, dtype=float)
+        np.divide(power, reference[:, None], out=normalized, where=valid[:, None])
+        return normalized, int(np.count_nonzero(~valid))
+    if mode == "max":
+        maxima = np.max(power, axis=1, keepdims=True)
+        valid = np.isfinite(maxima) & (maxima > 0.0)
+        normalized = np.zeros(power.shape, dtype=float)
+        np.divide(power, maxima, out=normalized, where=valid)
+        return normalized, int(np.count_nonzero(~valid))
+    return power.copy(), 0
+
+
 class TransmissionCompute:
     """Compute transmission profiles for FFT datasets."""
 
@@ -2628,7 +2729,7 @@ class TransmissionCompute:
         self._fft_compute = fft_compute
         self._job_result = job_result
 
-    def _get_dx(self, dataset_name: str) -> Optional[float]:
+    def _get_dx(self, dataset_name: str) -> float | None:
         """Resolve spatial cell size (dx) in **meters** using job[0]-style access."""
 
         dx_attr_names = [
@@ -2640,7 +2741,7 @@ class TransmissionCompute:
             "grid_size_x",
         ]
 
-        def _normalize_dx(value: Any, source: str) -> Optional[float]:
+        def _normalize_dx(value: Any, source: str) -> float | None:
             if value is None:
                 return None
             if isinstance(value, (list, tuple, np.ndarray)):
@@ -2673,7 +2774,7 @@ class TransmissionCompute:
             )
             return dx_m
 
-        def _from_attrs(attrs: Any, source: str) -> Optional[float]:
+        def _from_attrs(attrs: Any, source: str) -> float | None:
             if attrs is None:
                 return None
             mapping: Mapping[Any, Any]
@@ -2693,7 +2794,7 @@ class TransmissionCompute:
                         return dx_m
             return None
 
-        def _from_object(obj: Any, source: str) -> Optional[float]:
+        def _from_object(obj: Any, source: str) -> float | None:
             if obj is None:
                 return None
 
@@ -2805,7 +2906,10 @@ class TransmissionCompute:
     def _prepare_data(
         self,
         config: TransmissionConfig,
-        slice_info: Optional[Any] = None,
+        slice_info: Any | None = None,
+        preloaded_data: np.ndarray | None = None,
+        time_step_scale: float = 1.0,
+        view_geometry=None,
     ) -> tuple[np.ndarray, float]:
         dataset = config.dataset_name or self._job_result.get_largest_m_dataset()
 
@@ -2815,6 +2919,8 @@ class TransmissionCompute:
             z_layer=config.z_layer,
             tmax=config.tmax,
             slice_info=slice_info,
+            preloaded_data=preloaded_data,
+            time_step_scale=time_step_scale,
         )
 
         # Check if component was pre-selected via slicing
@@ -2844,15 +2950,30 @@ class TransmissionCompute:
                 data = data[:, np.newaxis, ...]
                 log.debug("Added z-axis to (t,y,x,comp) data → (t,1,y,x,comp)")
         elif data.ndim == 3:
-            # Could be (t, y, x) with component pre-selected
-            if component_was_selected:
+            # Could be scalar (t,y,x) or vector traces (t,y,component).
+            geometry_axes = getattr(view_geometry, "axes", {})
+            geometry_y = geometry_axes.get("y")
+            geometry_x = geometry_axes.get("x")
+            geometry_is_scalar_plane = (
+                geometry_y is not None
+                and geometry_x is not None
+                and int(geometry_y.size) == int(data.shape[1])
+                and int(geometry_x.size) == int(data.shape[2])
+            )
+            if component_was_selected or geometry_is_scalar_plane or data.shape[-1] > 3:
                 # (t, y, x) → add z and component axes → (t, 1, y, x, 1)
                 data = data[:, np.newaxis, :, :, np.newaxis]
                 log.debug("Added z and component axes to (t,y,x) data → (t,1,y,x,1)")
-            else:
+            elif data.shape[-1] in {1, 2, 3} and geometry_axes:
                 # Ambiguous - assume (t, y, comp), add z and x
                 data = data[:, np.newaxis, :, np.newaxis, :]
                 log.debug("Added z and x axes to (t,y,comp) data → (t,1,y,1,comp)")
+            else:
+                raise ValueError(
+                    "Ambiguous 3D transmission layout. Expected scalar (t,y,x) "
+                    "with DatasetGeometry or vector (t,y,component) with explicit "
+                    "axis metadata; refusing to guess."
+                )
         else:
             raise ValueError(
                 f"Transmission analysis requires 3D, 4D or 5D datasets, got {data.ndim}D with shape {data.shape}"
@@ -2867,14 +2988,23 @@ class TransmissionCompute:
         return data, dt
 
     def compute(
-        self, config: TransmissionConfig, slice_info: Optional[Any] = None
+        self,
+        config: TransmissionConfig,
+        slice_info: Any | None = None,
+        preloaded_data: np.ndarray | None = None,
+        time_step_scale: float = 1.0,
+        view_geometry=None,
     ) -> TransmissionResult:
-        import gc  # Garbage collector for memory management
-
         config.ensure_valid()
 
         dataset = config.dataset_name or self._job_result.get_largest_m_dataset()
-        data, dt = self._prepare_data(config, slice_info=slice_info)
+        data, dt = self._prepare_data(
+            config,
+            slice_info=slice_info,
+            preloaded_data=preloaded_data,
+            time_step_scale=time_step_scale,
+            view_geometry=view_geometry,
+        )
 
         # Check if component was pre-selected via slicing
         component_was_selected = False
@@ -2913,7 +3043,23 @@ class TransmissionCompute:
 
         # Get cell size (dx) for spatial positions
         dx_m = self._get_dx(dataset)
+        x_offset_cells = 0
+        x_stride = 1
+        if slice_info is not None:
+            key = slice_info if isinstance(slice_info, tuple) else (slice_info,)
+            # DatasetAwareWrapper stores composed, dimension-preserving keys.
+            if len(key) >= 4 and isinstance(key[3], slice):
+                x_offset_cells = int(key[3].start or 0)
+                x_stride = int(key[3].step or 1)
+        geometry_x = None
+        if view_geometry is not None:
+            geometry_x = getattr(view_geometry, "axes", {}).get("x")
+        if geometry_x is not None:
+            dx_m = float(geometry_x.cell_m)
+            x_offset_cells = 0
+            x_stride = 1
         if dx_m is not None:
+            dx_m *= x_stride
             dx_nm = dx_m * 1e9
             log.debug(
                 "Using dx=%.6e m (%.3f nm) for spatial positions",
@@ -2935,7 +3081,6 @@ class TransmissionCompute:
             # Free original data if filtered is a new array
             if filtered is not data:
                 del data
-                gc.collect()
             log.debug(
                 f"Filtered data: min={filtered.min():.8e}, max={filtered.max():.8e}"
             )
@@ -2949,7 +3094,6 @@ class TransmissionCompute:
             # Free filtered data if windowed is a new array
             if windowed is not filtered:
                 del filtered
-                gc.collect()
             log.debug(
                 f"Windowed data: min={windowed.min():.8e}, max={windowed.max():.8e}"
             )
@@ -2982,7 +3126,16 @@ class TransmissionCompute:
 
         # Convert to nanometers if dx is available
         if dx_nm is not None:
-            x_centers = x_centers_idx * dx_nm
+            # Preserve the physical origin of the selected source view while
+            # using its effective (possibly strided) cell spacing.
+            x_origin_nm = (
+                float(geometry_x.min_m) * 1e9 if geometry_x is not None else 0.0
+            )
+            x_centers = (
+                x_centers_idx * dx_nm
+                + x_offset_cells * (dx_nm / x_stride)
+                + x_origin_nm
+            )
             log.debug(
                 "Converted x_positions to nanometers (first 3 values: %s)",
                 x_centers[:3],
@@ -2992,6 +3145,15 @@ class TransmissionCompute:
             log.debug("Using x_positions as cell indices")
 
         n_windows = len(window_starts)
+
+        reference_mask = self._select_reference_windows(
+            x_centers,
+            window_size,
+            config.reference_window,
+        )
+        if not np.any(reference_mask):
+            reference_mask[0] = True
+
         n_freq = n_time // 2 + 1
 
         # Generate frequency array (same for both scipy and numpy)
@@ -3024,33 +3186,18 @@ class TransmissionCompute:
         # 🔑 SPECIAL CASE: If component was pre-selected via slicing (n_comp=1),
         # user's component_weights=(0,0,1) would be trimmed to [0], giving zero transmission!
         # Solution: When n_comp=1 AND component was pre-selected, override to (1,)
-        if component_was_selected and n_comp == 1:
-            component_weights = np.array([1.0], dtype=float)
+        configured_weights = np.atleast_1d(np.asarray(config.component_weights))
+        component_weights = _normalize_component_weights(
+            config.component_weights, n_comp
+        )
+        if n_comp == 1 and configured_weights.size != 1:
             log.info(
-                "Component pre-selected via slicing → auto-setting component_weights=(1,) "
-                "(ignoring user-provided weights %s)",
+                "Single-component input → auto-setting component_weights=(1,) "
+                "because source-component identity is no longer available "
+                "(configured weights were %s)",
                 config.component_weights,
             )
-        else:
-            component_weights = np.asarray(config.component_weights, dtype=float)
-            if component_weights.ndim == 0:
-                component_weights = np.full(
-                    (n_comp,), float(component_weights), dtype=float
-                )
-            elif component_weights.size < n_comp:
-                # If fewer weights provided, repeat last value to match n_comp
-                last = (
-                    float(component_weights[-1]) if component_weights.size > 0 else 1.0
-                )
-                component_weights = np.concatenate(
-                    [
-                        component_weights,
-                        np.full((n_comp - component_weights.size,), last, dtype=float),
-                    ]
-                )
-            elif component_weights.size > n_comp:
-                component_weights = component_weights[:n_comp]
-            log.debug("Component weights after broadcast/trim: %s", component_weights)
+        log.debug("Component weights after normalization: %s", component_weights)
 
         # Prepare lightweight complex-spectrum accumulator if requested
         complex_accum = None
@@ -3251,14 +3398,12 @@ class TransmissionCompute:
             )
 
             # Skip the post-FFT processing section entirely
-            use_post_fft_processing = False
 
         else:  # "post_fft" - current fast implementation
             # 🚀 FAST PATH: Compute FFT once, then extract windows (current implementation)
             log.info(
                 "🚀 Spatial window mode: POST_FFT (computing FFT once, then extracting windows - FAST)"
             )
-            use_post_fft_processing = True
 
             # 🔑 Y-AXIS INTEGRATION: Handle different methods for summing across y-dimension
             if config.y_integration_mode == "sum_m":
@@ -3269,7 +3414,6 @@ class TransmissionCompute:
 
                 # Free windowed data - no longer needed
                 del windowed
-                gc.collect()
 
                 if use_scipy:
                     full_spectrum = scipy_fft.rfft(windowed_integrated, axis=0)
@@ -3278,7 +3422,6 @@ class TransmissionCompute:
 
                 # Free integrated data
                 del windowed_integrated
-                gc.collect()
 
                 log.debug(f"FFT complete: full_spectrum.shape = {full_spectrum.shape}")
 
@@ -3295,7 +3438,6 @@ class TransmissionCompute:
 
                 # Free windowed data immediately after FFT
                 del windowed
-                gc.collect()
 
                 log.debug(f"FFT complete (raw): shape = {full_spectrum_raw.shape}")
 
@@ -3305,7 +3447,6 @@ class TransmissionCompute:
 
                 # Free raw spectrum
                 del full_spectrum_raw
-                gc.collect()
 
                 log.debug(
                     f"SUM_FFT: summed complex FFT over y-axis → shape {full_spectrum.shape}"
@@ -3322,7 +3463,6 @@ class TransmissionCompute:
 
                 # Free windowed data
                 del windowed
-                gc.collect()
 
                 log.debug(f"FFT complete: full_spectrum.shape = {full_spectrum.shape}")
 
@@ -3366,7 +3506,7 @@ class TransmissionCompute:
                     x_positions=np.arange(n_x, dtype=float)
                     * (dx_nm if dx_nm else 1.0),  # All X positions
                     transmission=full_spectrum,  # Raw complex FFT
-                    power_map=np.abs(full_spectrum),  # FFT magnitude (not squared)
+                    power_map=np.abs(full_spectrum) ** 2,
                     reference_power=np.ones(n_freq, dtype=float),  # Dummy reference
                     config=config,
                     dx=dx_m,
@@ -3380,6 +3520,31 @@ class TransmissionCompute:
             # - sum_m or sum_fft: (freq, z, x, comp) - y already integrated
             # - none: (freq, z, y, x, comp) - full 5D
             y_already_integrated = config.y_integration_mode in ("sum_m", "sum_fft")
+
+            cpsd_reference_spectrum = None
+            if config.method == "cpsd":
+                reference_x_indices = sorted(
+                    {
+                        x_idx
+                        for win_idx, start in enumerate(window_starts)
+                        if reference_mask[win_idx]
+                        for x_idx in range(start, min(start + window_size, n_x))
+                    }
+                )
+                if not reference_x_indices:
+                    raise ValueError(
+                        "CPSD reference_window selected no spatial samples"
+                    )
+                x_axis = 2 if y_already_integrated else 3
+                cpsd_reference_spectrum = np.mean(
+                    np.take(full_spectrum, reference_x_indices, axis=x_axis),
+                    axis=x_axis,
+                )
+                log.debug(
+                    "CPSD fixed reference spectrum from x indices %s: shape=%s",
+                    reference_x_indices,
+                    cpsd_reference_spectrum.shape,
+                )
 
             # Decide on processing strategy
             use_parallel = (
@@ -3454,7 +3619,7 @@ class TransmissionCompute:
                         # Extract component: (n_freq, n_windows, window_size)
                         comp_fft_all = windowed_view[:, :, comp_idx, :]
                         power_all_windows += (
-                            np.abs(comp_fft_all) * component_weights[comp_idx]
+                            np.abs(comp_fft_all) ** 2 * component_weights[comp_idx]
                         )
 
                 # Mean over window_size dimension - NO LOOP!
@@ -3465,7 +3630,6 @@ class TransmissionCompute:
 
                 # Clean up intermediate arrays
                 del power_all_windows, windowed_view, relevant_spectrum
-                gc.collect()
 
                 # Report 100% progress for vectorized path (no loop)
                 _report_progress(
@@ -3542,7 +3706,7 @@ class TransmissionCompute:
                                 ..., comp_idx
                             ]  # (n_freq, window_len)
                             power_components += (
-                                np.abs(comp_fft) * component_weights[comp_idx]
+                                np.abs(comp_fft) ** 2 * component_weights[comp_idx]
                             )
 
                     # Fast aggregation: mean over window dimension
@@ -3587,6 +3751,7 @@ class TransmissionCompute:
                         component_weights=component_weights,
                         method=config.method,
                         window_axis=window_axis,
+                        reference_spectrum=cpsd_reference_spectrum,
                     )
 
                     aggregated = _aggregate_spatial(
@@ -3604,9 +3769,9 @@ class TransmissionCompute:
                     if transverse_map is not None:
                         transverse_metric = None
                         if mx_fft is not None:
-                            transverse_metric = np.abs(mx_fft)
+                            transverse_metric = np.abs(mx_fft) ** 2
                         if my_fft is not None:
-                            my_metric = np.abs(my_fft)
+                            my_metric = np.abs(my_fft) ** 2
                             if transverse_metric is None:
                                 transverse_metric = my_metric
                             else:
@@ -3621,7 +3786,7 @@ class TransmissionCompute:
 
                     if longitudinal_map is not None and mz_fft is not None:
                         results["longitudinal"] = _aggregate_spatial(
-                            np.abs(mz_fft),
+                            np.abs(mz_fft) ** 2,
                             config.average_mode,
                             config.edge_taper_power,
                         )
@@ -3631,12 +3796,12 @@ class TransmissionCompute:
                             m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
                             m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
                             results["power_plus"] = _aggregate_spatial(
-                                np.abs(m_plus),
+                                np.abs(m_plus) ** 2,
                                 config.average_mode,
                                 config.edge_taper_power,
                             )
                             results["power_minus"] = _aggregate_spatial(
-                                np.abs(m_minus),
+                                np.abs(m_minus) ** 2,
                                 config.average_mode,
                                 config.edge_taper_power,
                             )
@@ -3726,6 +3891,7 @@ class TransmissionCompute:
                         component_weights=component_weights,
                         method=config.method,
                         window_axis=window_axis,
+                        reference_spectrum=cpsd_reference_spectrum,
                     )
 
                     # Store longitudinal component map if requested
@@ -3736,7 +3902,7 @@ class TransmissionCompute:
                     ):
                         mz_fft = spectrum[..., 2]
                         longitudinal_map[:, win_idx] = _aggregate_spatial(
-                            np.abs(mz_fft),
+                            np.abs(mz_fft) ** 2,
                             config.average_mode,
                             config.edge_taper_power,
                         )
@@ -3764,10 +3930,10 @@ class TransmissionCompute:
                         transverse_power = None
                         if n_comp > 0 and component_weights[0] != 0:  # mx
                             mx_fft = spectrum[..., 0]
-                            transverse_power = np.abs(mx_fft)
+                            transverse_power = np.abs(mx_fft) ** 2
                         if n_comp > 1 and component_weights[1] != 0:  # my
                             my_fft = spectrum[..., 1]
-                            my_power = np.abs(my_fft)
+                            my_power = np.abs(my_fft) ** 2
                             if transverse_power is None:
                                 transverse_power = my_power
                             else:
@@ -3793,12 +3959,12 @@ class TransmissionCompute:
                             m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
                             m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
                             power_plus[:, win_idx] = _aggregate_spatial(
-                                np.abs(m_plus),
+                                np.abs(m_plus) ** 2,
                                 config.average_mode,
                                 config.edge_taper_power,
                             )
                             power_minus[:, win_idx] = _aggregate_spatial(
-                                np.abs(m_minus),
+                                np.abs(m_minus) ** 2,
                                 config.average_mode,
                                 config.edge_taper_power,
                             )
@@ -3811,30 +3977,24 @@ class TransmissionCompute:
                     n_windows,
                 )
 
-        reference_mask = self._select_reference_windows(
-            x_centers,
-            window_size,
-            config.reference_window,
-        )
-
-        if not np.any(reference_mask):
-            reference_mask[0] = True
-
         reference_values = self._compute_reference(
             power_map,
             reference_mask,
             config.reference_statistic,
         )
 
-        if config.normalize == "reference":
-            denom = np.where(reference_values <= 0, 1.0, reference_values)
-            transmission = power_map / denom[:, None]
-        elif config.normalize == "max":
-            denom = np.max(power_map, axis=1, keepdims=True)
-            denom = np.where(denom <= 0, 1.0, denom)
-            transmission = power_map / denom
-        else:
-            transmission = power_map.copy()
+        transmission, invalid_normalization_bins = _normalize_transmission_map(
+            power_map,
+            reference_values,
+            config.normalize,
+        )
+        if invalid_normalization_bins:
+            log.warning(
+                "Transmission normalization has %d frequency bin(s) without "
+                "positive finite reference power; reference-normalized values "
+                "are NaN in those bins.",
+                invalid_normalization_bins,
+            )
 
         metadata = {
             "dataset": dataset,
@@ -3844,6 +4004,7 @@ class TransmissionCompute:
             "time_step": dt,
             "n_time": int(n_time),
             "method": config.method,
+            "invalid_normalization_bins": invalid_normalization_bins,
         }
         metadata.update(config.metadata)
         if dx_m is not None:
@@ -3888,7 +4049,7 @@ class TransmissionCompute:
     def _select_reference_windows(
         x_centers: np.ndarray,
         window_size: int,
-        reference_window: Optional[Tuple[int, int]],
+        reference_window: tuple[int, int] | None,
     ) -> np.ndarray:
         mask = np.zeros_like(x_centers, dtype=bool)
         if reference_window is None:

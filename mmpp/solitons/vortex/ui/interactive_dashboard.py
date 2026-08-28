@@ -232,7 +232,11 @@ _PANEL_LAYOUT = {
 }
 _CTRL_STYLE = {"description_width": "110px"}
 _CTRL_LAYOUT = widgets.Layout(width="276px") if _HAS_WIDGETS else None
-_BTN_LAYOUT = widgets.Layout(width="276px", height="30px", margin="4px 0px") if _HAS_WIDGETS else None
+_BTN_LAYOUT = (
+    widgets.Layout(width="276px", height="30px", margin="4px 0px")
+    if _HAS_WIDGETS
+    else None
+)
 _OUTPUT_LAYOUT = {
     "min_width": "680px",
     "flex": "1",
@@ -389,6 +393,7 @@ class VortexInteractiveDashboard:
         *,
         trajectory_source: str = "magnetization",
         center_mode: str = "auto",
+        initial_module: str = "core",
     ):
         if not _HAS_WIDGETS:
             raise ImportError("ipywidgets is required: pip install ipywidgets")
@@ -414,6 +419,7 @@ class VortexInteractiveDashboard:
         self._built = False
         self._default_trajectory_source = trajectory_source
         self._default_center_mode = center_mode
+        self._initial_module = str(initial_module)
 
     # ------------------------------------------------------------------
     # Public API
@@ -468,26 +474,34 @@ class VortexInteractiveDashboard:
 
         # ---- Build all module control panels --------------------------------
         _module_defs = [
-            ("🎯 Core tracking",   self._build_tab_core),
-            ("🌀 Topology",        self._build_tab_topology),
-            ("📐 Trajectory",      self._build_tab_trajectory),
-            ("📊 Spectrum",        self._build_tab_spectrum),
-            ("🌈 Spectrogram",     self._build_tab_spectrogram),
-            ("🎭 Modes",           self._build_tab_modes),
-            ("⚡ Events",          self._build_tab_events),
-            ("📡 Signals",         self._build_tab_signals),
-            ("🔬 Thiele model",    self._build_tab_thiele),
-            ("📋 Table data",      self._build_tab_table),
+            ("🎯 Core tracking", self._build_tab_core),
+            ("🌀 Topology", self._build_tab_topology),
+            ("📐 Trajectory", self._build_tab_trajectory),
+            ("📊 Spectrum", self._build_tab_spectrum),
+            ("🌈 Spectrogram", self._build_tab_spectrogram),
+            ("🎭 Modes", self._build_tab_modes),
+            ("⚡ Events", self._build_tab_events),
+            ("📡 Signals", self._build_tab_signals),
+            ("🔬 Thiele model", self._build_tab_thiele),
+            ("📋 Table data", self._build_tab_table),
         ]
         self._module_panels: dict[str, Any] = {
             name: builder() for name, builder in _module_defs
         }
         _module_names = [name for name, _ in _module_defs]
 
+        requested_module = self._initial_module.strip().lower()
+        selected_module = _module_names[0]
+        for module_name in _module_names:
+            plain_name = module_name.split(" ", 1)[-1].lower()
+            if requested_module in {module_name.lower(), plain_name}:
+                selected_module = module_name
+                break
+
         # ---- Module selector (vertical listbox) -----------------------------
         self._module_selector = widgets.Select(
             options=_module_names,
-            value=_module_names[0],
+            value=selected_module,
             rows=len(_module_names),
             layout=widgets.Layout(width="296px"),
         )
@@ -505,9 +519,9 @@ class VortexInteractiveDashboard:
             overflow_y="auto",
             overflow_x="hidden",
         )
-        for i, (_name, panel) in enumerate(self._module_panels.items()):
+        for _name, panel in self._module_panels.items():
             panel.layout = widgets.Layout(
-                display="" if i == 0 else "none",
+                display="" if _name == selected_module else "none",
                 width="294px",
             )
         self._ctrl_area = widgets.VBox(
@@ -517,7 +531,7 @@ class VortexInteractiveDashboard:
         self._module_selector.observe(self._on_module_select, names="value")
 
         # ---- Run button area (always visible, outside scroll) ---------------
-        _first_btn = self._module_run_buttons.get(_module_names[0])
+        _first_btn = self._module_run_buttons.get(selected_module)
         _run_children = [_first_btn] if _first_btn is not None else []
         self._run_btn_area = widgets.VBox(
             _run_children,
@@ -676,9 +690,7 @@ class VortexInteractiveDashboard:
             end_max,
             description_tooltip="Last time step, exclusive (0 = all)",
         )
-        c["component"] = _dropdown(
-            "Core signal", [("|mz|", "z")]
-        )
+        c["component"] = _dropdown("Core signal", [("|mz|", "z")])
         c["smooth"] = _checkbox("Smooth trajectory", True)
         c["smooth_window"] = _int_slider("Smooth window", 5, 1, 51, 2)
         c["show_orbit"] = _checkbox("Show orbit", True)
@@ -836,7 +848,9 @@ class VortexInteractiveDashboard:
 
         btn = _btn("▶  Compute Spectrum", "success", "play")
         btn.on_click(lambda _: self._run_spectrum(c))
-        self._module_run_buttons["📊 Spectrum"] = btn
+        spatial_btn = _btn("▦  Open spatial spectrum & modes", "info", "image")
+        spatial_btn.on_click(lambda _: self._open_spatial_spectrum())
+        self._module_run_buttons["📊 Spectrum"] = widgets.VBox([btn, spatial_btn])
 
         self._controls["spectrum"] = c
         return widgets.VBox(
@@ -898,31 +912,23 @@ class VortexInteractiveDashboard:
     def _build_tab_modes(self):
         c = {}
         c["n_modes"] = _int_slider("Num. modes", 3, 1, 12)
-        c["component"] = _dropdown(
-            "Component", [("mz", "z"), ("mx", "x"), ("my", "y"), ("|m|", "amplitude")]
-        )
-        c["z_layer"] = _int_slider("Z layer", -1, -20, 20)
-        c["cmap_real"] = _dropdown("Cmap (real)", ["RdBu_r", "seismic", "coolwarm"])
-        c["cmap_amp"] = _dropdown("Cmap (amp)", ["viridis", "plasma", "hot", "inferno"])
-        c["normalize_modes"] = _checkbox("Normalize modes", True)
-        c["show_colorbar"] = _checkbox("Show colorbars", True)
 
-        btn = _btn("▶  Compute Modes", "success", "play")
-        btn.on_click(lambda _: self._run_modes(c))
-        self._module_run_buttons["🎭 Modes"] = btn
+        classify_btn = _btn("▶  Classify trajectory modes", "success", "play")
+        classify_btn.on_click(lambda _: self._run_modes(c))
+        spatial_btn = _btn("▦  Open spatial FFT modes", "info", "image")
+        spatial_btn.on_click(lambda _: self._open_spatial_modes())
+        self._module_run_buttons["🎭 Modes"] = widgets.VBox([classify_btn, spatial_btn])
 
         self._controls["modes"] = c
         return widgets.VBox(
             [
                 _section("🎭 Mode Parameters"),
                 c["n_modes"],
-                c["component"],
-                c["z_layer"],
-                _section("✨ Display"),
-                c["cmap_real"],
-                c["cmap_amp"],
-                c["normalize_modes"],
-                c["show_colorbar"],
+                widgets.HTML(
+                    "<small><b>Trajectory modes</b> classify gyration/breathing "
+                    "peaks. Use <b>spatial FFT modes</b> for complex "
+                    "m(x,y,f) maps.</small>"
+                ),
             ]
         )
 
@@ -1175,9 +1181,7 @@ class VortexInteractiveDashboard:
             "</div>"
         )
 
-    def _draw_disk_nm(
-        self, ax, center_nm: tuple[float, float] = (0.0, 0.0)
-    ) -> None:
+    def _draw_disk_nm(self, ax, center_nm: tuple[float, float] = (0.0, 0.0)) -> None:
         """Draw the nanodot boundary (gray dashed circle) on *ax* in nm units."""
         try:
             from matplotlib.patches import Circle
@@ -1240,7 +1244,9 @@ class VortexInteractiveDashboard:
         except Exception:
             return None
 
-    def _display_xy_nm(self, x_m, y_m) -> tuple[np.ndarray, np.ndarray, tuple[float, float]]:
+    def _display_xy_nm(
+        self, x_m, y_m
+    ) -> tuple[np.ndarray, np.ndarray, tuple[float, float]]:
         """Return trajectory coordinates in the displayed disk-centered frame."""
         x = np.asarray(x_m, dtype=float)
         y = np.asarray(y_m, dtype=float)
@@ -1260,9 +1266,15 @@ class VortexInteractiveDashboard:
             disk_radius = None
 
         raw_r_max = float(np.max(np.hypot(x, y))) if x.size else 0.0
-        centered_r_max = float(np.max(np.hypot(x_centered, y_centered))) if x.size else 0.0
+        centered_r_max = (
+            float(np.max(np.hypot(x_centered, y_centered))) if x.size else 0.0
+        )
         use_centered = centered_r_max < raw_r_max
-        if disk_radius is not None and np.isfinite(float(disk_radius)) and disk_radius > 0:
+        if (
+            disk_radius is not None
+            and np.isfinite(float(disk_radius))
+            and disk_radius > 0
+        ):
             use_centered = use_centered and (
                 raw_r_max > float(disk_radius) * 1.05
                 or centered_r_max <= float(disk_radius) * 1.25
@@ -1470,7 +1482,9 @@ class VortexInteractiveDashboard:
             geometry_r_m = np.hypot(x - disk_center_m[0], y - disk_center_m[1])
             stats["center_offset_nm"] = center_offset_m * 1e9
             stats["geometry_r_max_nm"] = (
-                float(np.nanmax(geometry_r_m) * 1e9) if geometry_r_m.size else float("nan")
+                float(np.nanmax(geometry_r_m) * 1e9)
+                if geometry_r_m.size
+                else float("nan")
             )
         else:
             stats["center_offset_nm"] = float("nan")
@@ -1600,9 +1614,7 @@ class VortexInteractiveDashboard:
         except Exception:
             pass
 
-    def _time_slice_from_controls(
-        self, c: dict, n_steps: int
-    ) -> tuple[slice, bool]:
+    def _time_slice_from_controls(self, c: dict, n_steps: int) -> tuple[slice, bool]:
         """Resolve a non-empty time slice from dashboard controls."""
         if n_steps <= 0:
             return slice(0, 0), False
@@ -2305,6 +2317,32 @@ class VortexInteractiveDashboard:
             self._set_status(f"Modes failed: {exc}", "error")
             log.exception("Modes error")
 
+    def _open_spatial_modes(self):
+        """Launch the generic FFT spatial-mode explorer for this dataset."""
+        self._set_status("Opening spatial FFT mode explorer…", "info")
+        try:
+            explorer = self._vx.interactive_modes()
+            self._state.mode_result = explorer
+            self._set_status("Spatial FFT mode explorer opened", "ok")
+            return explorer
+        except Exception as exc:
+            self._set_status(f"Spatial modes failed: {exc}", "error")
+            log.exception("Spatial FFT modes error")
+            raise
+
+    def _open_spatial_spectrum(self):
+        """Launch the combined FFT spectrum and spatial-mode explorer."""
+        self._set_status("Opening spatial spectrum and mode explorer…", "info")
+        try:
+            explorer = self._vx.interactive_spectrum()
+            self._state.mode_result = explorer
+            self._set_status("Spatial spectrum and mode explorer opened", "ok")
+            return explorer
+        except Exception as exc:
+            self._set_status(f"Spatial spectrum failed: {exc}", "error")
+            log.exception("Spatial FFT spectrum error")
+            raise
+
     # ---- EVENTS -----------------------------------------------------
 
     def _run_events(self, c: dict):
@@ -2363,7 +2401,7 @@ class VortexInteractiveDashboard:
             ax.grid(True, alpha=0.25)
             if events:
                 handles, labels = ax.get_legend_handles_labels()
-                by_label = dict(zip(labels, handles))
+                by_label = dict(zip(labels, handles, strict=False))
                 ax.legend(by_label.values(), by_label.keys(), fontsize=8)
 
             self._show_figure(fig, health=health)
@@ -2475,6 +2513,7 @@ class VortexInteractiveDashboard:
             J_func = current_dc(J_dc)
             B_func = field_dc(b_field)
 
+            model: Any = None
             if model_type == "CPP":
                 model = CPPThieleModel(
                     material=mat,
@@ -2586,8 +2625,8 @@ class VortexInteractiveDashboard:
                 return
             table = job["table"]
 
-            x = np.asarray(table[x_key][:], dtype=float).ravel()
-            y = np.asarray(table[y_key][:], dtype=float).ravel()
+            x: Any = np.asarray(table[x_key][:], dtype=float).ravel()
+            y: Any = np.asarray(table[y_key][:], dtype=float).ravel()
             # Align lengths
             n = min(len(x), len(y))
             x, y = x[:n], y[:n]
@@ -2600,12 +2639,12 @@ class VortexInteractiveDashboard:
                 except Exception:
                     y2 = None
 
-            if c["normalise_x"].value and x.ptp() > 0:
-                x = (x - x.min()) / x.ptp()
-            if c["normalise_y"].value and y.ptp() > 0:
-                y = (y - y.min()) / y.ptp()
-                if y2 is not None and y2.ptp() > 0:
-                    y2 = (y2 - y2.min()) / y2.ptp()
+            if c["normalise_x"].value and np.ptp(x) > 0:
+                x = (x - x.min()) / np.ptp(x)
+            if c["normalise_y"].value and np.ptp(y) > 0:
+                y = (y - y.min()) / np.ptp(y)
+                if y2 is not None and np.ptp(y2) > 0:
+                    y2 = (y2 - y2.min()) / np.ptp(y2)
 
             ls = c["line_style"].value
             n_panels = 2 if y2 is not None else 1
@@ -2638,9 +2677,7 @@ class VortexInteractiveDashboard:
 
             fig.suptitle("📋 Table Data", fontsize=12, color="#e94560")
             self._show_figure(fig)
-            self._set_status(
-                f"Plotted {n} points: {y_key} vs {x_key}", "ok"
-            )
+            self._set_status(f"Plotted {n} points: {y_key} vs {x_key}", "ok")
         except Exception as exc:
             self._set_status(f"Table plot failed: {exc}", "error")
             log.exception("Table plot error")

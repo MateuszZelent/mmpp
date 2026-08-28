@@ -3,4 +3,3 @@
 from .accessor import SpectrumPlotAccessor
 
 __all__ = ["SpectrumPlotAccessor"]
-

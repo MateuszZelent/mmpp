@@ -31,8 +31,8 @@ try:
 
     _HAS_WIDGETS = True
 except ImportError:
-    widgets = None
-    HTML = None
+    widgets = None  # type: ignore[misc, assignment]
+    HTML = None  # type: ignore[misc, assignment]
     _HAS_WIDGETS = False
 
 try:
@@ -42,7 +42,7 @@ try:
     # Wyciszamy irytujące ostrzeżenia o tight_layout podczas szybkiej interakcji
     warnings.filterwarnings("ignore", message="The figure layout has changed to tight")
 except ImportError:
-    plt = None
+    plt = None  # type: ignore[misc, assignment]
     _HAS_MATPLOTLIB = False
 
 
@@ -846,6 +846,7 @@ class ThieleInteractiveDashboard:
                 else:
                     b_func = field_dc(ext_field)
 
+                model: Any
                 if is_cpp:
                     oe_rad_per_Am2 = (self.w_oersted.value * 1e6 * 2.0 * math.pi) / 1e11
                     model = CPPThieleModel(
@@ -926,7 +927,7 @@ class ThieleInteractiveDashboard:
                             )
                     else:
                         # W modelu CIP symulujemy z dużą dokładnością omijając szum numeryczny punktu zerowego
-                        kwargs = {"atol": 1e-15, "rtol": 1e-10}
+                        kwargs: dict[str, Any] = {"atol": 1e-15, "rtol": 1e-10}
                         traj = model.simulate(
                             t_span=t_span,
                             r0=(1e-3 * radius_eq, 0.0),

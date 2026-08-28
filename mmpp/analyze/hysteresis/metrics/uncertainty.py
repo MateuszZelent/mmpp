@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -30,7 +31,9 @@ class ConfidenceIntervalResult:
     unit: str = "input"
 
 
-def _estimate_metric(result, metric_name: str, field: np.ndarray, mag: np.ndarray) -> tuple[float, str]:
+def _estimate_metric(
+    result, metric_name: str, field: np.ndarray, mag: np.ndarray
+) -> tuple[float, str]:
     name = str(metric_name).lower()
     branches = segment_branches(field)
     field_unit = str(result.metadata.get("field_unit", "input"))
@@ -41,6 +44,7 @@ def _estimate_metric(result, metric_name: str, field: np.ndarray, mag: np.ndarra
         window=result.config.saturation_window,
     )
 
+    metric: Any
     if name in {"coercive_field", "hc"}:
         metric = compute_coercive_field(field, mag, branches, unit=field_unit)
         return float(metric.mean), field_unit
@@ -93,7 +97,9 @@ def bootstrap_confidence_interval(
     if n_points < 20:
         raise ValueError("Need at least 20 points for bootstrap confidence intervals")
 
-    n_boot = int(n_samples if n_samples is not None else result.config.bootstrap_n_samples)
+    n_boot = int(
+        n_samples if n_samples is not None else result.config.bootstrap_n_samples
+    )
     level = float(ci if ci is not None else result.config.bootstrap_ci)
     if not (0.0 < level < 1.0):
         raise ValueError("ci must be in (0, 1)")

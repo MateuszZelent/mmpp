@@ -50,8 +50,9 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 import numpy as np
 
@@ -618,7 +619,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
     # ── plotting ───────────────────────────────────────────────
 
     @property
-    def plt(self) -> ThielePlotAccessor:
+    def plt(self) -> Any:
         """Access plotting methods via fluent API."""
         return ThielePlotAccessor(self)
 
@@ -765,7 +766,7 @@ class ThieleFJFitResult(AnalyticalResult):
         return np.asarray(self.f_fit_hz, dtype=float) * 1e-9
 
     @property
-    def plt(self) -> ThieleFJFitPlotAccessor:
+    def plt(self) -> Any:
         """Access plotting methods for ``f(J)`` fit."""
         return ThieleFJFitPlotAccessor(self)
 
@@ -913,7 +914,7 @@ def reduce_mumax_slonczewski_cpp(
     dashboard and collapse the polarizer dependence to its out-of-plane
     component ``p_z``.
     """
-    vec = np.asarray(polarizer, dtype=float).reshape(-1)
+    vec: Any = np.asarray(polarizer, dtype=float).reshape(-1)
     if vec.size == 2:
         vec = np.array([vec[0], vec[1], 0.0], dtype=float)
     if vec.size < 3:
@@ -921,7 +922,7 @@ def reduce_mumax_slonczewski_cpp(
     norm = float(np.linalg.norm(vec[:3]))
     if norm <= 0.0:
         raise ValueError("polarizer cannot be a zero vector")
-    p = tuple(float(v) for v in (vec[:3] / norm))
+    p = cast(tuple[float, float, float], tuple(float(v) for v in (vec[:3] / norm)))
 
     pos_token = str(fixed_layer_position).strip().lower()
     if pos_token in {"fixedlayer_top", "top", "+1", "1"}:
@@ -1310,7 +1311,7 @@ class CIPThieleModel:
         if J_func is None:
             J_func = current_dc(0.0)
 
-        t_eval = np.arange(t_span[0], t_span[1], dt)
+        t_eval: np.ndarray = np.arange(t_span[0], t_span[1], dt)
         # Guard against floating-point overshoot in np.arange
         if t_eval.size and t_eval[-1] > t_span[1]:
             t_eval = t_eval[:-1]
@@ -1815,13 +1816,13 @@ class CPPThieleModel:
         if edge_behavior_token not in {"freeze", "truncate"}:
             raise ValueError("edge_behavior must be one of {'freeze', 'truncate'}")
 
-        t_eval = np.arange(t_span[0], t_span[1] + 0.5 * dt, dt)
+        t_eval: np.ndarray = np.arange(t_span[0], t_span[1] + 0.5 * dt, dt)
         # Guard against floating-point overshoot in np.arange
         if t_eval.size and t_eval[-1] > t_span[1]:
             t_eval = t_eval[:-1]
 
         user_events = ivp_kwargs.pop("events", None)
-        event_registry: list[Callable] = []
+        event_registry: list[Any] = []
         event_kinds: list[str] = []
 
         if clamp_u_value is not None:
@@ -1832,8 +1833,8 @@ class CPPThieleModel:
                 s_rel = np.asarray(y, dtype=float) - s_eq
                 return float(np.hypot(s_rel[0], s_rel[1]) - clamp_u_value)
 
-            _edge_event.terminal = True
-            _edge_event.direction = 1.0
+            setattr(_edge_event, "terminal", True)  # noqa: B010
+            setattr(_edge_event, "direction", 1.0)  # noqa: B010
             event_registry.append(_edge_event)
             event_kinds.append("relative")
 
@@ -1841,8 +1842,8 @@ class CPPThieleModel:
             del t
             return float(1.0 - np.hypot(float(y[0]), float(y[1])))
 
-        _disk_edge_event.terminal = True
-        _disk_edge_event.direction = -1.0
+        setattr(_disk_edge_event, "terminal", True)  # noqa: B010
+        setattr(_disk_edge_event, "direction", -1.0)  # noqa: B010
         event_registry.append(_disk_edge_event)
         event_kinds.append("disk")
 
@@ -2007,7 +2008,7 @@ class CPPThieleModel:
         if dt <= 0.0:
             raise ValueError("dt must be positive")
 
-        t_eval = np.arange(t0, t1, dt, dtype=float)
+        t_eval: np.ndarray = np.arange(t0, t1, dt, dtype=float)
         if t_eval.size == 0 or t_eval[-1] < t1:
             t_eval = np.append(t_eval, t1)
 

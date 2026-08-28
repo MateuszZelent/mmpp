@@ -42,7 +42,9 @@ def register_metric(name: str, *, namespace: str | None = None):
     return decorator
 
 
-def get_registered_metric(name: str, *, namespace: str | None = None) -> Callable | None:
+def get_registered_metric(
+    name: str, *, namespace: str | None = None
+) -> Callable | None:
     """Return registered metric callable by name."""
     return get_registry(namespace).get(str(name))
 

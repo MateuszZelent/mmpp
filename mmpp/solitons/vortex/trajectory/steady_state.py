@@ -51,9 +51,13 @@ def extract_steady_state(
     if frequency_threshold is not None:
         omega = np.asarray(trajectory.instantaneous_frequency, dtype=float)
         omega_tail = omega[-min_samples:]
-        omega_ref = float(np.median(omega_tail)) if omega_tail.size else float(np.median(omega))
+        omega_ref = (
+            float(np.median(omega_tail)) if omega_tail.size else float(np.median(omega))
+        )
         omega_denom = max(abs(omega_ref), 1e-18)
-        cond_omega = np.abs(omega - omega_ref) / omega_denom <= float(frequency_threshold)
+        cond_omega = np.abs(omega - omega_ref) / omega_denom <= float(
+            frequency_threshold
+        )
         cond = cond & cond_omega
 
     start_idx = n - min_samples

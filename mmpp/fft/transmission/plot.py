@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Any, Literal
 
-import numpy as np
 import matplotlib as mpl
+import numpy as np
 
 from ...cli.logging_config import get_mmpp_logger, setup_mmpp_logging
-
 from .compute import TransmissionResult
-
 
 log = get_mmpp_logger("mmpp.fft.transmission.plot")
 
@@ -19,8 +17,8 @@ log = get_mmpp_logger("mmpp.fft.transmission.plot")
 try:  # pragma: no cover - optional dependency check
     import matplotlib.pyplot as plt
     from matplotlib.axes import Axes
-    from matplotlib.figure import Figure
     from matplotlib.colors import LogNorm
+    from matplotlib.figure import Figure
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
     MATPLOTLIB_AVAILABLE = True
@@ -47,10 +45,10 @@ def _make_inset_colorbar(
     decimal_places: int = None,
 ) -> None:
     """Create publication-quality inset colorbar inside plot.
-    
+
     Supports flexible positioning and sizing via arguments.
     Defaults allow for a bottom-centered, readable colorbar.
-    
+
     Parameters
     ----------
     ax : Axes
@@ -80,6 +78,7 @@ def _make_inset_colorbar(
     decimal_places : int, optional
         Number of decimal places for value formatting. If None, uses smart formatting.
     """
+
     # Format values smartly
     def format_val(v):
         if decimal_places is not None:
@@ -94,88 +93,109 @@ def _make_inset_colorbar(
             return f"{v:.1f}"
         else:
             return f"{v:.0f}"
-    
+
     min_str = format_val(vmin)
     max_str = format_val(vmax)
-    
+
     # Determine bbox_to_anchor based on position
     # For lower center with 100% width, anchor is simply the full axes
-    if position == 'lower center':
+    if position == "lower center":
         bbox_anchor = (0.0, 0.02, 1.0, 1.0)
-    elif position == 'upper center':
+    elif position == "upper center":
         bbox_anchor = (0.0, 0.0, 1.0, 0.98)
     else:
         bbox_anchor = (0, 0, 1, 1)
 
     # Create background box for colorbar - 100% width of subplot
     cbbox = inset_axes(
-        ax, width="80%", height=height, 
+        ax,
+        width="80%",
+        height=height,
         loc=position,
         bbox_to_anchor=bbox_anchor,
         bbox_transform=ax.transAxes,
         borderpad=0,
     )
-    
+
     # Style the background box
     for spine in cbbox.spines.values():
         spine.set_visible(False)
     cbbox.tick_params(
-        axis='both', left=False, top=False, right=False, bottom=False,
-        labelleft=False, labeltop=False, labelright=False, labelbottom=False
+        axis="both",
+        left=False,
+        top=False,
+        right=False,
+        bottom=False,
+        labelleft=False,
+        labeltop=False,
+        labelright=False,
+        labelbottom=False,
     )
     cbbox.set_facecolor([0, 0, 0, bg_alpha])
-    
+
     # Create the actual colorbar stripe - centered vertically and horizontally
     # Positioned between min/max labels (top) and title (bottom)
-    cbar_ax = inset_axes(cbbox, '40%', '10%', loc='center', borderpad=0)
-    
+    cbar_ax = inset_axes(cbbox, "40%", "10%", loc="center", borderpad=0)
+
     # Always create fresh ScalarMappable for colorbar
     # This ensures colorbar is always opaque, independent of any alpha in the image
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
-    
+
     # Get colormap from the passed object (works for both AxesImage and ScalarMappable)
     cmap = image.get_cmap()
-    
-    sm = ScalarMappable(
-        cmap=cmap,
-        norm=Normalize(vmin=vmin, vmax=vmax)
-    )
+
+    sm = ScalarMappable(cmap=cmap, norm=Normalize(vmin=vmin, vmax=vmax))
     sm.set_array([])
-    
-    cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
+
+    cbar: Any = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
     cbar.set_ticks([])
     cbar.ax.set_xticklabels([])
     cbar.outline.set_linewidth(0.8)
-    cbar.outline.set_edgecolor('white')
-    
+    cbar.outline.set_edgecolor("white")
+
     # Layout relative to cbbox (container):
     # - min value on left side (x=0.08)
     # - colorbar in center (55% stripe at upper center)
     # - max value on right side (x=0.92)
     # - title below colorbar
     # With 22% height, we have plenty of vertical room
-    
+
     label_y = 0.68  # Align with colorbar, moved up
     title_y = 0.22  # Below colorbar, more space
-    
+
     cbbox.text(
-        0.08, label_y, min_str,
-        fontsize=fontsize, ha='left', va='center',
-        color=text_color, fontweight='bold',
-        transform=cbbox.transAxes
+        0.08,
+        label_y,
+        min_str,
+        fontsize=fontsize,
+        ha="left",
+        va="center",
+        color=text_color,
+        fontweight="bold",
+        transform=cbbox.transAxes,
     )
     cbbox.text(
-        0.92, label_y, max_str,
-        fontsize=fontsize, ha='right', va='center',
-        color=text_color, fontweight='bold',
-        transform=cbbox.transAxes
+        0.92,
+        label_y,
+        max_str,
+        fontsize=fontsize,
+        ha="right",
+        va="center",
+        color=text_color,
+        fontweight="bold",
+        transform=cbbox.transAxes,
     )
     cbbox.text(
-        0.5, title_y, label,
-        fontsize=title_fontsize, ha='center', va='center',
-        color=text_color, fontweight='bold',
-        transform=cbbox.transAxes
+        0.5,
+        title_y,
+        label,
+        fontsize=title_fontsize,
+        ha="center",
+        va="center",
+        color=text_color,
+        fontweight="bold",
+        transform=cbbox.transAxes,
     )
 
 
@@ -193,27 +213,27 @@ FREQ_SCALE = {
 
 def tex_escape(s: str) -> str:
     """Escape special LaTeX characters when usetex=True.
-    
+
     Args:
         s: String to escape
-        
+
     Returns:
         Escaped string safe for LaTeX rendering
     """
     # Escapowanie potrzebne tylko gdy usetex=True
-    if not mpl.rcParams.get('text.usetex', False):
+    if not mpl.rcParams.get("text.usetex", False):
         return s
     for a, b in {
-        '\\': r'\textbackslash{}',
-        '_': r'\_',
-        '%': r'\%',
-        '&': r'\&',
-        '#': r'\#',
-        '{': r'\{',
-        '}': r'\}',
-        '$': r'\$',
-        '~': r'\textasciitilde{}',
-        '^': r'\textasciicircum{}',
+        "\\": r"\textbackslash{}",
+        "_": r"\_",
+        "%": r"\%",
+        "&": r"\&",
+        "#": r"\#",
+        "{": r"\{",
+        "}": r"\}",
+        "$": r"\$",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
     }.items():
         s = s.replace(a, b)
     return s
@@ -229,42 +249,50 @@ def _centers_to_edges(values: np.ndarray) -> np.ndarray:
     start_edge = values[0] - diffs[0] / 2.0
     end_edge = values[-1] + diffs[-1] / 2.0
     interior = values[:-1] + diffs / 2.0
-    edges = np.concatenate(([start_edge], interior, [end_edge]))
+    edges: Any = np.concatenate(
+        (np.atleast_1d(start_edge), interior, np.atleast_1d(end_edge))
+    )
     return edges
 
 
 @dataclass(slots=True)
 class TransmissionPlotConfig:
-    which: Literal["transmission", "power", "power_plus", "power_minus"] = "transmission"
+    which: Literal["transmission", "power", "power_plus", "power_minus"] = (
+        "transmission"
+    )
     freq_unit: FrequencyUnit = "GHz"
     x_unit: XUnit = "index"
     cmap: str = "viridis"
     log_scale: bool = False
     show_colorbar: bool = True
-    vmin: Optional[float] = None
-    vmax: Optional[float] = None
-    title: Optional[str] = None
-    trim_0f: Optional[int] = None  # Number of lowest frequency points to set to zero (suppress DC/low freq)
-    fmax: Optional[float] = None  # Maximum frequency to display (in freq_unit units)
-    
+    vmin: float | None = None
+    vmax: float | None = None
+    title: str | None = None
+    trim_0f: int | None = (
+        None  # Number of lowest frequency points to set to zero (suppress DC/low freq)
+    )
+    fmax: float | None = None  # Maximum frequency to display (in freq_unit units)
+
     # Inset colorbar options (publication-ready)
     colorbar_inset: bool = False  # Use inset colorbar instead of external
-    colorbar_position: str = "upper right"  # Position: 'upper right', 'upper left', etc.
+    colorbar_position: str = (
+        "upper right"  # Position: 'upper right', 'upper left', etc.
+    )
     colorbar_width: str = "45%"  # Width as percentage of plot
     colorbar_height: str = "4%"  # Height as percentage of plot
-    colorbar_label: Optional[str] = None  # Custom colorbar label
+    colorbar_label: str | None = None  # Custom colorbar label
     colorbar_bg_alpha: float = 0.5  # Background transparency
-    
+
     # Grid options
     show_grid: bool = False  # Show subtle grid lines
     grid_alpha: float = 0.3  # Grid transparency
     grid_color: str = "white"  # Grid color
     grid_linestyle: str = "--"  # Grid line style
     grid_axis: Literal["both", "x", "y"] = "y"  # Which axes to show grid
-    
+
     # Axis label options
-    ylabel: Optional[str] = None  # Custom Y-axis label. Use "" to hide ylabel.
-    xlabel: Optional[str] = None  # Custom X-axis label. Use "" to hide xlabel.
+    ylabel: str | None = None  # Custom Y-axis label. Use "" to hide ylabel.
+    xlabel: str | None = None  # Custom X-axis label. Use "" to hide xlabel.
 
 
 class TransmissionPlotter:
@@ -295,19 +323,23 @@ class TransmissionPlotter:
             return self.result.power_map, "Averaged Power"
         if which == "power_plus":
             if self.result.power_plus is None:
-                raise ValueError("Circular component power_plus not computed. Enable enable_circular_components in config.")
+                raise ValueError(
+                    "Circular component power_plus not computed. Enable enable_circular_components in config."
+                )
             return self.result.power_plus, "$P_+(f,x)$"
         if which == "power_minus":
             if self.result.power_minus is None:
-                raise ValueError("Circular component power_minus not computed. Enable enable_circular_components in config.")
+                raise ValueError(
+                    "Circular component power_minus not computed. Enable enable_circular_components in config."
+                )
             return self.result.power_minus, "$P_-(f,x)$"
         raise ValueError(f"Unsupported data selection: {which}")
 
     def plot(
         self,
         *,
-        config: Optional[TransmissionPlotConfig] = None,
-        ax: Optional[Axes] = None,
+        config: TransmissionPlotConfig | None = None,
+        ax: Axes | None = None,
         debug: bool = False,
         **kwargs,
     ) -> tuple[Figure, Axes, Any]:
@@ -315,9 +347,9 @@ class TransmissionPlotter:
             config = TransmissionPlotConfig()
 
         if debug:
-            print(f"\n{'='*60}")
-            print(f"🔍 DEBUG: TransmissionPlotter.plot()")
-            print(f"{'='*60}")
+            print(f"\n{'=' * 60}")
+            print("🔍 DEBUG: TransmissionPlotter.plot()")
+            print(f"{'=' * 60}")
             print(f"Config: {config}")
             if self.result.dx is not None:
                 print(
@@ -338,18 +370,20 @@ class TransmissionPlotter:
         if data.ndim > 2:
             if debug:
                 print(f"\n⚠️  Multi-dimensional data detected: {data.shape}")
-                print(f"   Reducing to 2D for plotting...")
-            
+                print("   Reducing to 2D for plotting...")
+
             # Strategy: sum over components, take z=0 (or sum over z if average_mode != "none")
             # Expected shapes:
             # - (freq, z, x, comp) for raw_fft_output with sum_m/sum_fft
             # - (freq, z, y, x, comp) for raw_fft_output with y_integration_mode="none"
-            
+
             if data.ndim == 5:  # (freq, z, y, x, comp)
                 # Sum over y and components, take z=0
                 data = data[:, 0, :, :, :].sum(axis=(1, 3))  # → (freq, x)
                 if debug:
-                    print(f"   5D → 2D: summed over (y, comp), extracted z=0 → {data.shape}")
+                    print(
+                        f"   5D → 2D: summed over (y, comp), extracted z=0 → {data.shape}"
+                    )
             elif data.ndim == 4:  # (freq, z, x, comp)
                 # Sum over components, take z=0
                 data = data[:, 0, :, :].sum(axis=2)  # → (freq, x)
@@ -366,10 +400,12 @@ class TransmissionPlotter:
                     data = data.sum(axis=2)  # → (freq, x)
                     if debug:
                         print(f"   3D → 2D: summed over comp → {data.shape}")
-            
+
             if data.ndim != 2:
-                raise ValueError(f"Could not reduce data to 2D for plotting. Final shape: {data.shape}")
-            
+                raise ValueError(
+                    f"Could not reduce data to 2D for plotting. Final shape: {data.shape}"
+                )
+
             if debug:
                 print(f"   Final 2D shape: {data.shape}")
                 print(f"   min={data.min():.3e}, max={data.max():.3e}")
@@ -382,9 +418,9 @@ class TransmissionPlotter:
             raise ValueError(f"Unsupported frequency unit: {freq_unit}")
         freq_scale = FREQ_SCALE[freq_unit]
         freqs = self.result.frequencies * freq_scale
-        
+
         if debug:
-            print(f"\nFrequency scaling:")
+            print("\nFrequency scaling:")
             print(f"  freq_unit = {freq_unit}")
             print(f"  freq_scale = {freq_scale}")
             print(f"  freqs[0:5] = {freqs[:5]}")
@@ -394,12 +430,14 @@ class TransmissionPlotter:
         if config.trim_0f is not None and config.trim_0f > 0:
             trim_idx = min(config.trim_0f, len(freqs) - 1)
             if debug:
-                print(f"\nApplying trim_0f:")
+                print("\nApplying trim_0f:")
                 print(f"  trim_0f = {config.trim_0f}")
                 print(f"  trim_idx = {trim_idx}")
                 print(f"  Setting data[0:{trim_idx}, :] to zero")
             data[:trim_idx, :] = 0  # Set to zero instead of removing
-            log.debug(f"Set {trim_idx} lowest frequency points to zero (trim_0f={config.trim_0f})")
+            log.debug(
+                f"Set {trim_idx} lowest frequency points to zero (trim_0f={config.trim_0f})"
+            )
         elif debug:
             print(f"\nNo trim_0f applied (trim_0f={config.trim_0f})")
 
@@ -410,16 +448,20 @@ class TransmissionPlotter:
             if np.any(fmax_mask):
                 freqs = freqs[fmax_mask]
                 data = data[fmax_mask, :]
-                log.debug(f"Trimmed {n_above} frequency points above fmax={config.fmax} {freq_unit}")
+                log.debug(
+                    f"Trimmed {n_above} frequency points above fmax={config.fmax} {freq_unit}"
+                )
             else:
-                log.warning(f"fmax={config.fmax} {freq_unit} is below all frequencies, ignoring")
+                log.warning(
+                    f"fmax={config.fmax} {freq_unit} is below all frequencies, ignoring"
+                )
 
         x_positions = self.result.x_positions
         x_edges = _centers_to_edges(x_positions)
         freq_edges = _centers_to_edges(freqs)
-        
+
         if debug:
-            print(f"\nX-axis setup:")
+            print("\nX-axis setup:")
             if self.result.dx is not None:
                 print(
                     f"  result.dx = {self.result.dx:.3e} m ({self.result.dx * 1e9:.3f} nm)"
@@ -431,11 +473,12 @@ class TransmissionPlotter:
             print(f"  x_edges[0:5] = {x_edges[:5]}")
             print(f"  x_unit = {config.x_unit}")
             if self.result.dx is not None:
-                print(f"  ✅ dx available → x should be in nm")
+                print("  ✅ dx available → x should be in nm")
             else:
-                print(f"  ⚠️  dx NOT available → x will be in indices")
+                print("  ⚠️  dx NOT available → x will be in indices")
 
         mesh_data = np.ma.masked_invalid(data)
+        fig: Any = None
 
         _dpi = kwargs.pop("dpi", 100)
         if ax is None:
@@ -450,7 +493,9 @@ class TransmissionPlotter:
         norm = None
         if config.log_scale:
             positive = mesh_data > 0
-            vmin = config.vmin or (mesh_data[positive].min() if np.any(positive) else 1e-12)
+            vmin = config.vmin or (
+                mesh_data[positive].min() if np.any(positive) else 1e-12
+            )
             vmax = config.vmax or mesh_data.max()
             if vmin <= 0:
                 vmin = 1e-12
@@ -485,22 +530,24 @@ class TransmissionPlotter:
             xlabel = "x (nm)"
         else:
             xlabel = "x (cell index)"
-        
+
         # Apply custom labels if provided (empty string "" hides the label)
         if config.ylabel is not None:
             ylabel = config.ylabel
         if config.xlabel is not None:
             xlabel = config.xlabel
-        
+
         if debug:
-            print(f"\nAxis labels:")
+            print("\nAxis labels:")
             print(f"  xlabel = '{xlabel}'")
             print(f"  ylabel = '{ylabel}'")
             print(f"  config.x_unit = '{config.x_unit}'")
             print(f"  config.ylabel = {config.ylabel!r}")
             print(f"  config.xlabel = {config.xlabel!r}")
-            print(f"  Logic: x_unit={config.x_unit}, dx={self.result.dx} → xlabel={xlabel}")
-        
+            print(
+                f"  Logic: x_unit={config.x_unit}, dx={self.result.dx} → xlabel={xlabel}"
+            )
+
         ax.set_ylabel(ylabel)
         ax.set_xlabel(xlabel)
 
@@ -512,7 +559,7 @@ class TransmissionPlotter:
             spatial_window = self.result.config.spatial_window
             # Equation showing: sum over y, then spatial window, then FFT
             # Use .format() to insert W value
-            title = r"Transmission: $\left|\operatorname{{FFT}}_{{t}}\!\left(\sum_{{x' \in W(x)}} \sum_{{y}} m_{{z}}(t, x', y)\right)\right|$, W={}".format(spatial_window)
+            title = rf"Transmission: $\left|\operatorname{{FFT}}_{{t}}\!\left(\sum_{{x' \in W(x)}} \sum_{{y}} m_{{z}}(t, x', y)\right)\right|$, W={spatial_window}"
         ax.set_title(title)
 
         # Add grid if requested
@@ -531,7 +578,7 @@ class TransmissionPlotter:
             # Determine actual vmin/vmax from data if not set
             actual_vmin = vmin if vmin is not None else float(mesh_data.min())
             actual_vmax = vmax if vmax is not None else float(mesh_data.max())
-            
+
             if config.colorbar_inset:
                 # Publication-ready inset colorbar
                 cbar_label = config.colorbar_label or default_label

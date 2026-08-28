@@ -29,7 +29,7 @@ class SpectrumResult:
         spectrum_kind: str = "complex",
         power_quantity: str = "raw_power",
     ):
-        self.frequencies = np.asarray(frequencies)
+        self.frequencies = np.asarray(frequencies, dtype=float)
         self.spectrum = np.asarray(spectrum)
         self.peaks_info = peaks_info
         self.component_label = component_label
@@ -37,13 +37,106 @@ class SpectrumResult:
         self._source_fft = source_fft
         self._mode_context = dict(mode_context or {})
         self._filter_config = filter_config
-        self._raw_spectrum = np.asarray(raw_spectrum) if raw_spectrum is not None else np.asarray(spectrum)
-        self._power_override = np.asarray(power_override) if power_override is not None else None
+        self._raw_spectrum = (
+            np.asarray(raw_spectrum)
+            if raw_spectrum is not None
+            else np.asarray(spectrum)
+        )
+        self._power_override = (
+            np.asarray(power_override) if power_override is not None else None
+        )
         self.scaling = str(scaling)
         self.spectrum_kind = str(spectrum_kind)
         self.power_quantity = str(power_quantity)
         self._single_component = False
         self._peaks_cache: list[dict[str, float]] | None = None
+        self._validate_integrity()
+
+    def _validate_integrity(self) -> None:
+        """Validate the frequency-first spectrum result contract."""
+        if self.frequencies.ndim != 1:
+            raise ValueError("frequencies must be a 1D array")
+        if not np.isfinite(self.frequencies).all() or np.any(
+            np.diff(self.frequencies) <= 0
+        ):
+            raise ValueError("frequencies must be finite and strictly increasing")
+        if self.spectrum.ndim == 0 or self.spectrum.shape[0] != self.frequencies.size:
+            raise ValueError("spectrum first axis must match frequencies")
+        if not np.isfinite(self.spectrum).all():
+            raise ValueError("spectrum must contain only finite values")
+        if (
+            self._raw_spectrum.ndim == 0
+            or self._raw_spectrum.shape[0] != self.frequencies.size
+        ):
+            raise ValueError("raw_spectrum first axis must match frequencies")
+        if not np.isfinite(self._raw_spectrum).all():
+            raise ValueError("raw_spectrum must contain only finite values")
+        if self._power_override is not None:
+            if self._power_override.shape != self.spectrum.shape:
+                raise ValueError("power_override must have the same shape as spectrum")
+            if not np.isfinite(self._power_override).all():
+                raise ValueError("power_override must contain only finite values")
+        if self.component_label is not None and not isinstance(
+            self.component_label, str
+        ):
+            raise TypeError("component_label must be a string or None")
+        if self._filter_config is not None and not isinstance(
+            self._filter_config, dict
+        ):
+            raise TypeError("filter_config must be a dictionary or None")
+        if self.scaling not in {"raw", "continuous_ft", "amplitude", "power", "psd"}:
+            raise ValueError("Unknown spectrum scaling")
+        if self.spectrum_kind not in {"complex", "magnitude"}:
+            raise ValueError("spectrum_kind must be 'complex' or 'magnitude'")
+        if self.power_quantity not in {
+            "raw_power",
+            "continuous_ft_power",
+            "amplitude_squared",
+            "power",
+            "psd",
+        }:
+            raise ValueError("Unknown spectrum power_quantity")
+        self._validate_peaks_info()
+
+    def _validate_peaks_info(self) -> None:
+        if self.peaks_info is None:
+            return
+        if not isinstance(self.peaks_info, dict):
+            raise TypeError("peaks_info must be a dictionary or None")
+        indices = np.asarray(self.peaks_info.get("indices", []))
+        peak_frequencies = np.asarray(
+            self.peaks_info.get("frequencies", []), dtype=float
+        )
+        amplitudes = np.asarray(self.peaks_info.get("amplitudes", []), dtype=float)
+        if indices.ndim != 1 or peak_frequencies.ndim != 1 or amplitudes.ndim != 1:
+            raise ValueError("peaks_info arrays must be one-dimensional")
+        if not (indices.size == peak_frequencies.size == amplitudes.size):
+            raise ValueError("peaks_info arrays must have equal lengths")
+        if indices.size:
+            if not np.issubdtype(indices.dtype, np.integer):
+                raise TypeError("peak indices must be integers")
+            if np.any(indices < 0) or np.any(indices >= self.frequencies.size):
+                raise IndexError("peak index outside the frequency axis")
+            if (
+                not np.isfinite(peak_frequencies).all()
+                or not np.isfinite(amplitudes).all()
+            ):
+                raise ValueError("peak frequencies and amplitudes must be finite")
+            if np.any(amplitudes < 0):
+                raise ValueError("peak amplitudes must be non-negative")
+            if not np.allclose(
+                peak_frequencies,
+                self.frequencies[indices.astype(int)],
+                rtol=1e-10,
+                atol=0.0,
+            ):
+                raise ValueError("peak frequencies must match their indices")
+            if "powers" in self.peaks_info:
+                powers = np.asarray(self.peaks_info["powers"], dtype=float)
+                if powers.ndim != 1 or powers.size != indices.size:
+                    raise ValueError("peak powers must align with peak indices")
+                if not np.isfinite(powers).all() or np.any(powers < 0):
+                    raise ValueError("peak powers must be finite and non-negative")
 
     @property
     def spectral_quantity(self) -> np.ndarray:
@@ -170,11 +263,20 @@ class SpectrumResult:
         indices = list(self.peaks_info.get("indices", []))
         freqs = np.asarray(self.peaks_info.get("frequencies", []), dtype=float)
         amps = np.asarray(self.peaks_info.get("amplitudes", []), dtype=float)
+        powers = np.asarray(self.peaks_info.get("powers", []), dtype=float)
         peaks: list[dict[str, float]] = []
         for i, idx in enumerate(indices):
             freq = float(freqs[i]) if i < freqs.size else float("nan")
             amp = float(amps[i]) if i < amps.size else float("nan")
-            peaks.append({"index": int(idx), "frequency_hz": freq, "frequency_ghz": freq * 1e-9, "amplitude": amp})
+            peak = {
+                "index": int(idx),
+                "frequency_hz": freq,
+                "frequency_ghz": freq * 1e-9,
+                "amplitude": amp,
+            }
+            if i < powers.size:
+                peak["power"] = float(powers[i])
+            peaks.append(peak)
         self._peaks_cache = peaks
         return peaks
 
@@ -204,17 +306,65 @@ class SpectrumResult:
         ``normalize``, ``log_scale``, ``gamma``, ``smooth``, ``smooth_window``,
         ``smooth_sigma``, ``baseline``, ``percentile_clip``, ``soft_threshold``.
         """
+        supported = {
+            "normalize",
+            "log_scale",
+            "log_transform",
+            "gamma",
+            "percentile_clip",
+            "clip_percentile_low",
+            "clip_percentile_high",
+            "soft_threshold",
+            "soft_threshold_percentile",
+            "baseline",
+            "baseline_mode",
+            "smooth",
+            "smooth_filter",
+            "smooth_window",
+            "smooth_sigma",
+        }
+        unknown = sorted(set(kwargs) - supported)
+        if unknown:
+            raise TypeError(
+                f"Unknown SpectrumResult.filtered option(s): {', '.join(unknown)}"
+            )
+
+        def strict_bool(name: str, default: bool = False) -> bool:
+            value = kwargs.get(name, default)
+            if not isinstance(value, (bool, np.bool_)):
+                raise TypeError(f"{name} must be boolean")
+            return bool(value)
+
         post: dict[str, Any] = {}
-
-        if kwargs.get("normalize"):
+        normalize = strict_bool("normalize")
+        if normalize:
             post["normalize"] = True
-        if kwargs.get("log_scale") or kwargs.get("log_transform"):
+        log_values = [
+            strict_bool(name)
+            for name in ("log_scale", "log_transform")
+            if name in kwargs
+        ]
+        if len(log_values) == 2 and log_values[0] != log_values[1]:
+            raise ValueError("log_scale and log_transform must not conflict")
+        if any(log_values):
             post["log_transform"] = True
-        if "gamma" in kwargs and float(kwargs.get("gamma", 1.0)) != 1.0:
-            post["gamma"] = {"gamma": float(kwargs["gamma"])}
+        gamma = float(kwargs.get("gamma", 1.0))
+        if not np.isfinite(gamma) or gamma <= 0:
+            raise ValueError("gamma must be finite and positive")
+        if gamma != 1.0:
+            post["gamma"] = {"gamma": gamma}
 
+        if "percentile_clip" in kwargs and any(
+            key in kwargs for key in ("clip_percentile_low", "clip_percentile_high")
+        ):
+            raise ValueError(
+                "Use percentile_clip or clip_percentile_low/high, not both"
+            )
         if "percentile_clip" in kwargs and kwargs["percentile_clip"] is not None:
-            low, high = kwargs["percentile_clip"]
+            try:
+                low, high = kwargs["percentile_clip"]
+            except (TypeError, ValueError) as exc:
+                raise ValueError("percentile_clip must contain (low, high)") from exc
             post["percentile_clip"] = {"low": float(low), "high": float(high)}
         else:
             low = kwargs.get("clip_percentile_low")
@@ -226,34 +376,86 @@ class SpectrumResult:
                 }
 
         soft_threshold = kwargs.get("soft_threshold")
+        if "soft_threshold" in kwargs and "soft_threshold_percentile" in kwargs:
+            first = kwargs["soft_threshold"]
+            second = kwargs["soft_threshold_percentile"]
+            if (
+                first is not None
+                and second is not None
+                and float(first) != float(second)
+            ):
+                raise ValueError("soft_threshold aliases must not conflict")
         if soft_threshold is None:
             soft_threshold = kwargs.get("soft_threshold_percentile")
         if soft_threshold is not None and float(soft_threshold) > 0:
             post["soft_threshold"] = {"percentile": float(soft_threshold)}
 
+        if "baseline" in kwargs and "baseline_mode" in kwargs:
+            first = kwargs["baseline"]
+            second = kwargs["baseline_mode"]
+            if (
+                first is not None
+                and second is not None
+                and str(first).strip().lower() != str(second).strip().lower()
+            ):
+                raise ValueError("baseline aliases must not conflict")
         baseline = kwargs.get("baseline")
         if baseline is None:
             baseline = kwargs.get("baseline_mode")
-        if baseline is not None and str(baseline).lower() not in {"none", ""}:
-            post["baseline_correction"] = {"mode": str(baseline).lower()}
+        if baseline is not None:
+            if not isinstance(baseline, str):
+                raise TypeError("baseline must be a string or None")
+            baseline_mode = baseline.strip().lower()
+            if baseline_mode not in {"none", "", "mean", "median", "linear"}:
+                raise ValueError("baseline must be none, mean, median, or linear")
+            if baseline_mode not in {"none", ""}:
+                post["baseline_correction"] = {"mode": baseline_mode}
 
         smooth = kwargs.get("smooth")
+        if "smooth" in kwargs and "smooth_filter" in kwargs:
+            first = kwargs["smooth"]
+            second = kwargs["smooth_filter"]
+            if (
+                first is not None
+                and second is not None
+                and str(first).strip().lower() != str(second).strip().lower()
+            ):
+                raise ValueError("smooth aliases must not conflict")
         if smooth is None:
             smooth = kwargs.get("smooth_filter")
-        if smooth is not None and str(smooth).lower() not in {"none", ""}:
-            smooth_mode = str(smooth).lower()
-            if smooth_mode == "gaussian":
+        if smooth is None and any(
+            key in kwargs for key in ("smooth_window", "smooth_sigma")
+        ):
+            raise ValueError("smooth_window/smooth_sigma require a smoothing mode")
+        if smooth is not None:
+            if not isinstance(smooth, str):
+                raise TypeError("smooth must be a string or None")
+            smooth_mode = smooth.strip().lower()
+            if smooth_mode in {"none", ""}:
+                smooth_mode = "none"
+            elif smooth_mode in {"gaussian", "gaussian_smooth"}:
                 filter_name = "gaussian_smooth"
-            elif smooth_mode == "savgol":
+            elif smooth_mode in {"savgol", "savgol_smooth"}:
                 filter_name = "savgol_smooth"
             elif smooth_mode in {"moving_average", "moving"}:
                 filter_name = "moving_average"
             else:
-                filter_name = "gaussian_smooth"
-            post[filter_name] = {
-                "smooth_window": int(kwargs.get("smooth_window", 7)),
-                "smooth_sigma": float(kwargs.get("smooth_sigma", 1.0)),
-            }
+                raise ValueError(f"Unknown smoothing mode: {smooth!r}")
+            if smooth_mode != "none":
+                smooth_window = kwargs.get("smooth_window", 7)
+                if isinstance(smooth_window, (bool, np.bool_)) or not isinstance(
+                    smooth_window, (int, np.integer)
+                ):
+                    raise TypeError("smooth_window must be a positive integer")
+                if smooth_window <= 0:
+                    raise ValueError("smooth_window must be a positive integer")
+                smooth_sigma = float(kwargs.get("smooth_sigma", 1.0))
+                if not np.isfinite(smooth_sigma) or smooth_sigma < 0:
+                    raise ValueError("smooth_sigma must be finite and non-negative")
+                post[filter_name] = {
+                    "smooth_window": int(smooth_window),
+                    "smooth_sigma": smooth_sigma,
+                }
 
         pipeline = FilterPipeline()
         filtered_power = pipeline.postprocess(
@@ -262,8 +464,10 @@ class SpectrumResult:
             filters={"post": post} if post else None,
             stage="post",
         )
-        filtered_spectrum = np.sqrt(np.clip(np.asarray(filtered_power, dtype=float), 0.0, None))
-        return SpectrumResult(
+        filtered_spectrum = np.sqrt(
+            np.clip(np.asarray(filtered_power, dtype=float), 0.0, None)
+        )
+        filtered_result = SpectrumResult(
             frequencies=self.frequencies,
             spectrum=filtered_spectrum,
             peaks_info=None,
@@ -278,6 +482,8 @@ class SpectrumResult:
             spectrum_kind="magnitude",
             power_quantity=self.power_quantity,
         )
+        filtered_result._single_component = self._single_component
+        return filtered_result
 
     # Backward-compatible tuple behavior.
     def __iter__(self):
@@ -287,7 +493,7 @@ class SpectrumResult:
             yield self.peaks_info
 
     def __getitem__(self, index: int):
-        items = [self.frequencies, self.spectrum]
+        items: list[Any] = [self.frequencies, self.spectrum]
         if self.peaks_info is not None:
             items.append(self.peaks_info)
         return items[index]
@@ -306,7 +512,11 @@ class SpectrumResult:
 
     def __repr__(self):
         label = f", label='{self.component_label}'" if self.component_label else ""
-        peaks = len(self.peaks_info.get("indices", [])) if isinstance(self.peaks_info, dict) else "None"
+        peaks = (
+            len(self.peaks_info.get("indices", []))
+            if isinstance(self.peaks_info, dict)
+            else "None"
+        )
         filtered = ", filtered=True" if self._filter_config else ""
         return (
             f"SpectrumResult(frequencies={len(self.frequencies)}, "
@@ -318,7 +528,9 @@ class SpectrumResult:
         from html import escape as _esc
 
         fmin = float(self.frequencies_ghz[0]) if self.frequencies.size else float("nan")
-        fmax = float(self.frequencies_ghz[-1]) if self.frequencies.size else float("nan")
+        fmax = (
+            float(self.frequencies_ghz[-1]) if self.frequencies.size else float("nan")
+        )
         n_points = int(self.frequencies.size)
         n_peaks = len(self.peaks)
         filtered_badge = (
@@ -375,7 +587,7 @@ class SpectrumResult:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             f"<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             f"SpectrumResult {filtered_badge}</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"

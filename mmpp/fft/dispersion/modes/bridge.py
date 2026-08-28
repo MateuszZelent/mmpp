@@ -11,7 +11,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -40,7 +40,7 @@ class DispersionModesBridge:
         Static plotting accessor for mode images.
     """
 
-    def __init__(self, result: "DispersionResult1D") -> None:
+    def __init__(self, result: DispersionResult1D) -> None:
         self._result = result
 
     # ------------------------------------------------------------------
@@ -54,9 +54,9 @@ class DispersionModesBridge:
         figsize: tuple[float, float] = (16, 9),
         kscale: str = "rad_um",
         f_units: str = "GHz",
-        fmax: Optional[float] = None,
+        fmax: float | None = None,
         lognorm: bool = True,
-        component: Optional[str] = None,
+        component: str | None = None,
         avg_over_orthogonal: bool = False,
         orthogonal_avg_mode: str = "fft_power",
         save: bool = False,
@@ -166,8 +166,8 @@ class DispersionModesBridge:
         f_ghz: float,
         *,
         z_layer: int = 0,
-        component: Optional[str] = None,
-    ) -> "DispersionModeResult":
+        component: str | None = None,
+    ) -> DispersionModeResult:
         """Extract mode image at a specific (k, f) point.
 
         Parameters
@@ -227,7 +227,7 @@ class DispersionModesBridge:
     # ------------------------------------------------------------------
 
     @property
-    def plot(self) -> "DispersionModesPlotAccessor":
+    def plot(self) -> DispersionModesPlotAccessor:
         """Static plotting for extracted modes."""
         return DispersionModesPlotAccessor(self)
 
@@ -245,9 +245,9 @@ class DispersionModesBridge:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
+        from html import escape as _esc
 
         from mmpp._repr_helpers import api_help_html, html_tabs
-        from html import escape as _esc
 
         HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
 
@@ -311,7 +311,7 @@ class DispersionModesBridge:
             chrome=False,
         )
         return (
-            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
             'color:#e2e8f0;">'
@@ -347,12 +347,12 @@ class DispersionModeResult:
 
     def __init__(
         self,
-        mode_data: "Any",
+        mode_data: Any,
         k_rad_um: float,
         f_ghz: float,
         z_layer: int,
         component: str,
-        result: "DispersionResult1D",
+        result: DispersionResult1D,
     ) -> None:
         self.mode_data = mode_data
         self.k_rad_um = k_rad_um
@@ -362,7 +362,7 @@ class DispersionModeResult:
         self.result = result
 
     @property
-    def plot(self) -> "DispersionModePlotAccessor":
+    def plot(self) -> DispersionModePlotAccessor:
         """Plotting namespace (.imshow, .phase, .interactive)."""
         return DispersionModePlotAccessor(self)
 
@@ -440,12 +440,12 @@ class DispersionModePlotAccessor:
 
     def imshow(
         self,
-        ax: "Optional[Any]" = None,
+        ax: Any | None = None,
         *,
         figsize: tuple[float, float] = (6, 5),
         mode_type: str = "abs",
         cmap: str = "RdBu_r",
-        title: Optional[str] = None,
+        title: str | None = None,
     ) -> tuple:
         """Plot mode spatial profile.
 
@@ -501,7 +501,7 @@ class DispersionModePlotAccessor:
         show: bool = True,
         mode_type: str = "abs",
         **kwargs: Any,
-    ) -> "DispersionSingleModeInteractiveViewer":
+    ) -> DispersionSingleModeInteractiveViewer:
         """Return a lightweight interactive controller for this single mode."""
         viewer = DispersionSingleModeInteractiveViewer(
             self._mode,
@@ -550,7 +550,7 @@ class DispersionModePlotAccessor:
             chrome=False,
         )
         return (
-            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
             'color:#e2e8f0;">'
@@ -571,7 +571,7 @@ class DispersionSingleModeInteractiveViewer:
         *,
         show_requested: bool = True,
         mode_type: str = "abs",
-        options: Optional[dict[str, Any]] = None,
+        options: dict[str, Any] | None = None,
     ) -> None:
         self.mode = mode
         self.show_requested = bool(show_requested)
@@ -579,7 +579,7 @@ class DispersionSingleModeInteractiveViewer:
         self.options = dict(options or {})
         self._display_handle: Any = None
 
-    def show(self) -> "DispersionSingleModeInteractiveViewer":
+    def show(self) -> DispersionSingleModeInteractiveViewer:
         """Display the lightweight notebook representation when IPython exists."""
         self.show_requested = True
         try:
@@ -651,9 +651,9 @@ class DispersionModesAnimationViewer:
         self,
         bridge: DispersionModesBridge,
         *,
-        peaks: Optional[list[Any]] = None,
+        peaks: list[Any] | None = None,
         show_requested: bool = True,
-        options: Optional[dict[str, Any]] = None,
+        options: dict[str, Any] | None = None,
     ) -> None:
         self.bridge = bridge
         self.result = bridge._result
@@ -662,7 +662,7 @@ class DispersionModesAnimationViewer:
         self.options = dict(options or {})
         self._display_handle: Any = None
 
-    def show(self) -> "DispersionModesAnimationViewer":
+    def show(self) -> DispersionModesAnimationViewer:
         """Display a lightweight notebook representation when IPython exists."""
         self.show_requested = True
         try:
@@ -737,7 +737,7 @@ class DispersionModesPlotAccessor:
 
     def animation(
         self,
-        peaks: Optional[list[Any]] = None,
+        peaks: list[Any] | None = None,
         *,
         show: bool = True,
         **kwargs: Any,
@@ -780,7 +780,7 @@ class DispersionModesPlotAccessor:
             chrome=False,
         )
         return (
-            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
             'color:#e2e8f0;">'

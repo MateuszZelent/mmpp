@@ -8,6 +8,7 @@ Reference for the currently supported public interfaces.
 core
 batch_operations
 plotting
+solitons
 fft/index
 analyze
 simulation
@@ -19,4 +20,5 @@ logging_config
 - `mmpp.open(...)` -> create `MMPP` scanner/indexer
 - `MMPP.find(...)` -> metadata-driven selection
 - `ZarrJobResult.fft` -> FFT/FMR/dispersion/transmission on one job
+- `ZarrJobResult.solitons.skyrmion` -> skyrmion topology and size analysis
 - `MMPP[:]` -> `BatchOperations` for multi-job execution

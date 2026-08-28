@@ -33,7 +33,10 @@ def test_dispersion_benchmark_reports_time_memory_and_result_metadata(tmp_path):
     assert report["s_local_raw_mb"] == 0.0
     assert report["s_local_display_mb"] == 0.0
     assert report["memory_preflight_mb"]["raw_data_mb"] > 0.0
-    assert report["memory_preflight_mb"]["estimated_peak_mb"] >= report["memory_preflight_mb"]["raw_data_mb"]
+    assert (
+        report["memory_preflight_mb"]["estimated_peak_mb"]
+        >= report["memory_preflight_mb"]["raw_data_mb"]
+    )
     assert report["scaling"] == "amplitude_squared"
     assert report["store_complex"] is False
     assert output_path.exists()
@@ -44,7 +47,10 @@ def test_dispersion_benchmark_reports_time_memory_and_result_metadata(tmp_path):
 
 
 def test_dispersion_benchmark_named_profiles_and_memory_preflight(tmp_path):
-    from scripts.analysis.benchmark_fft_dispersion import BENCHMARK_PROFILES, run_benchmark
+    from scripts.analysis.benchmark_fft_dispersion import (
+        BENCHMARK_PROFILES,
+        run_benchmark,
+    )
 
     report = run_benchmark(
         output_path=tmp_path / "profile-benchmark.json",
@@ -84,8 +90,13 @@ def test_dispersion_benchmark_named_profiles_and_memory_preflight(tmp_path):
     )
 
 
-def test_dispersion_benchmark_preflight_only_reports_large_profile_without_execution(tmp_path):
-    from scripts.analysis.benchmark_fft_dispersion import BENCHMARK_PROFILES, run_benchmark
+def test_dispersion_benchmark_preflight_only_reports_large_profile_without_execution(
+    tmp_path,
+):
+    from scripts.analysis.benchmark_fft_dispersion import (
+        BENCHMARK_PROFILES,
+        run_benchmark,
+    )
 
     report = run_benchmark(
         output_path=tmp_path / "research-preflight.json",
@@ -104,7 +115,9 @@ def test_dispersion_benchmark_preflight_only_reports_large_profile_without_execu
     assert report["backend"] == "pyfftw"
     assert report["peak_memory_kind"] == "estimated_preflight"
     assert report["elapsed_s"] == 0.0
-    assert report["peak_memory_mb"] == report["memory_preflight_mb"]["estimated_peak_mb"]
+    assert (
+        report["peak_memory_mb"] == report["memory_preflight_mb"]["estimated_peak_mb"]
+    )
     assert report["s_complex_mb"] > 0.0
     assert report["s_local_mb"] > 0.0
     assert report["s_local_raw_mb"] > 0.0

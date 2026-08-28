@@ -68,7 +68,9 @@ def on_spectrum_click(explorer: Any, event: Any) -> None:
     if event.xdata is None:
         return
 
-    clicked_freq_ghz = float(event.xdata) / explorer._get_freq_scale(explorer._freq_unit)
+    clicked_freq_ghz = float(event.xdata) / explorer._get_freq_scale(
+        explorer._freq_unit
+    )
     if explorer._filtered_frequencies_ghz.size:
         fmin = float(np.nanmin(explorer._filtered_frequencies_ghz))
         fmax = float(np.nanmax(explorer._filtered_frequencies_ghz))

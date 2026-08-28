@@ -5,7 +5,7 @@ This module provides an enhanced colorbar function that integrates with the exis
 MMPP infrastructure, supports dark themes, and includes system size indicators.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -39,10 +39,10 @@ def create_optimized_colorbar(
     colormap: str = "balance",
     label: str = "Magnetization",
     units: str = "arb. units",
-    system_size: Optional[tuple[float, float]] = None,
-    spatial_resolution: Optional[tuple[float, float]] = None,
+    system_size: tuple[float, float] | None = None,
+    spatial_resolution: tuple[float, float] | None = None,
     n_ticks: int = 7,
-    discrete_levels: Optional[int] = None,
+    discrete_levels: int | None = None,
     dark_theme: bool = False,
     show_scale_info: bool = True,
     fontsize: int = 10,
@@ -200,7 +200,7 @@ def _apply_dark_theme_styling(cbar, fontsize: int, tick_fontsize: int):
     cbar.ax.patch.set_facecolor("none")
 
 
-def _setup_colorbar_ticks(cbar, n_ticks: int, discrete_levels: Optional[int]):
+def _setup_colorbar_ticks(cbar, n_ticks: int, discrete_levels: int | None):
     """Set up colorbar ticks for optimal readability."""
 
     if discrete_levels is not None:
@@ -228,8 +228,8 @@ def _setup_colorbar_ticks(cbar, n_ticks: int, discrete_levels: Optional[int]):
 def _create_enhanced_label(
     label: str,
     units: str,
-    system_size: Optional[tuple[float, float]],
-    spatial_resolution: Optional[tuple[float, float]],
+    system_size: tuple[float, float] | None,
+    spatial_resolution: tuple[float, float] | None,
     show_scale_info: bool,
 ) -> str:
     """Create enhanced label with system information."""
@@ -283,7 +283,7 @@ def _enhance_colorbar_visibility(cbar, dark_theme: bool):
     cbar.ax.yaxis.label.set_color(label_color)
 
 
-def extract_system_size_from_zarr(zarr_result) -> Optional[dict[str, Any]]:
+def extract_system_size_from_zarr(zarr_result) -> dict[str, Any] | None:
     """
     Extract system size and spatial resolution from MMPP zarr result.
 
@@ -346,8 +346,8 @@ def create_mmpp_mode_colorbar(
     mappable,
     ax,
     data_type: str = "magnitude",
-    system_size: Optional[dict[str, Any]] = None,
-    frequency: Optional[float] = None,
+    system_size: dict[str, Any] | None = None,
+    frequency: float | None = None,
     colormap: str = "balance",
     discrete_levels: int = 10,
     dark_theme: bool = False,

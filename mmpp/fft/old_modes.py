@@ -5,16 +5,15 @@ Professional implementation for visualizing FMR modes with interactive spectrum.
 Provides both programmatic and interactive interfaces for mode analysis.
 """
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, Union
 
-import math
-
 import matplotlib.colors as mcolors
+import matplotlib.font_manager as fm
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import numpy as np
 
 # Import shared logging configuration
@@ -29,9 +28,9 @@ def _write_zarr_array(
     name: str,
     data: Any,
     *,
-    shape: Optional[tuple[int, ...]] = None,
+    shape: tuple[int, ...] | None = None,
     dtype: Any = None,
-    chunks: Optional[tuple[int, ...]] = None,
+    chunks: tuple[int, ...] | None = None,
     overwrite: bool = True,
 ) -> Any:
     """Write an array with a Zarr v2/v3 compatible group API."""
@@ -177,10 +176,6 @@ def _ensure_ffmpeg_available():
     """
     import shutil
     import subprocess
-    import platform
-    import urllib.request
-    import tarfile
-    import tempfile
     from pathlib import Path
 
     # Check if FFmpeg is already in PATH
@@ -234,15 +229,15 @@ def _install_ffmpeg_automatic():
     """
     import shutil
     import subprocess
-    import urllib.request
     import tarfile
     import tempfile
+    import urllib.request
     from pathlib import Path
 
     # Detect platform
     platform_id = _detect_platform()
     if not platform_id:
-        raise RuntimeError(f"Unsupported platform for automatic FFmpeg installation")
+        raise RuntimeError("Unsupported platform for automatic FFmpeg installation")
 
     # Get download info
     download_info = _get_ffmpeg_download_info(platform_id)
@@ -315,7 +310,7 @@ def _install_ffmpeg_automatic():
             raise RuntimeError(f"FFmpeg test failed: {result.stderr.decode()}")
 
 
-def install_ffmpeg(force: bool = False, verbose: bool = True) -> Optional[str]:
+def install_ffmpeg(force: bool = False, verbose: bool = True) -> str | None:
     """
     Install FFmpeg for animation support with comprehensive error handling.
 
@@ -345,7 +340,6 @@ def install_ffmpeg(force: bool = False, verbose: bool = True) -> Optional[str]:
     """
     import shutil
     import subprocess
-    import platform
     from pathlib import Path
 
     if verbose:
@@ -572,7 +566,6 @@ from .metrics import (
     format_width_value,
     normalize_peak_width_option,
 )
-
 from .mode_characterization import (
     ModeCharacterAnalyzer,
     ModeCharacteristicConfig,
@@ -702,10 +695,11 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
     FFMpegWriter
         Configured writer instance
     """
-    from matplotlib.animation import FFMpegWriter
-    import matplotlib
     import inspect
     import os
+
+    import matplotlib
+    from matplotlib.animation import FFMpegWriter
 
     # Ensure FFmpeg is available and executable
     if not os.path.exists(ffmpeg_path) or not os.access(ffmpeg_path, os.X_OK):
@@ -751,7 +745,6 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
             if hasattr(writer, "bin_path"):
                 if callable(writer.bin_path):
                     # Some versions expect a callable
-                    original_bin_path = writer.bin_path
                     writer.bin_path = lambda *args, **kwargs: ffmpeg_path
                 else:
                     # Some expect a direct assignment
@@ -906,7 +899,7 @@ def check_ffmpeg_available() -> bool:
 
 
 # Simple wrapper for the main install function
-def install_ffmpeg_simple() -> Optional[str]:
+def install_ffmpeg_simple() -> str | None:
     """
     Install FFmpeg if not available on the system.
 
@@ -960,7 +953,7 @@ class ModeVisualizationConfig:
 
     # Publication-style annotations
     show_scalebar: bool = True
-    scalebar_length_nm: Optional[float] = None  # Auto-computed when None
+    scalebar_length_nm: float | None = None  # Auto-computed when None
     scalebar_location: str = "lower right"
     scalebar_pad: float = 0.3
     scalebar_color: str = "white"
@@ -1081,8 +1074,8 @@ class FMRModeData:
         self,
         frequency: float,
         mode_array: np.ndarray,
-        extent: Optional[tuple[float, float, float, float]] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        extent: tuple[float, float, float, float] | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         """
         Initialize FMR mode data.
@@ -1124,7 +1117,7 @@ class FMRModeData:
         """Get total magnitude across all components."""
         return np.sqrt(np.sum(self.magnitude**2, axis=2))
 
-    def get_component(self, component: Union[int, str]) -> np.ndarray:
+    def get_component(self, component: int | str) -> np.ndarray:
         """
         Get specific magnetization component.
 
@@ -1164,9 +1157,9 @@ class FMRModeAnalyzer:
     def __init__(
         self,
         zarr_path: str,
-        dataset_name: Optional[str] = None,
-        config: Optional[ModeVisualizationConfig] = None,
-        mode_character_config: Optional[ModeCharacteristicConfig] = None,
+        dataset_name: str | None = None,
+        config: ModeVisualizationConfig | None = None,
+        mode_character_config: ModeCharacteristicConfig | None = None,
         debug: bool = False,
     ):
         """
@@ -1233,7 +1226,7 @@ class FMRModeAnalyzer:
         )
 
     @property
-    def last_fwhm(self) -> Optional[PeakWidth]:
+    def last_fwhm(self) -> PeakWidth | None:
         """Return the most recently computed half-width at half-maximum."""
 
         return getattr(self, "_last_fwhm", None)
@@ -1249,7 +1242,7 @@ class FMRModeAnalyzer:
             log.debug("Unable to list datasets in %s: %s", self.zarr_path, exc)
             return []
 
-    def _get_zarr_paths(self) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    def _get_zarr_paths(self) -> tuple[str | None, str | None, str | None]:
         """
         Unified path resolution for zarr datasets.
 
@@ -1553,9 +1546,9 @@ class FMRModeAnalyzer:
         frequency: float,
         z_layer: int = 0,
         *,
-        core_position: Optional[tuple[float, float]] = None,
-        analysis_radius: Optional[float] = None,
-        config: Optional[ModeCharacteristicConfig] = None,
+        core_position: tuple[float, float] | None = None,
+        analysis_radius: float | None = None,
+        config: ModeCharacteristicConfig | None = None,
     ) -> ModeCharacterizationResult:
         """Classify the mode at ``frequency`` into gyration/breathing/azimuthal families."""
 
@@ -1590,11 +1583,11 @@ class FMRModeAnalyzer:
 
     def find_peaks(
         self,
-        threshold: Optional[float] = None,
-        min_distance: Optional[int] = None,
+        threshold: float | None = None,
+        min_distance: int | None = None,
         component: int = 0,
-        spectrum: Optional[np.ndarray] = None,
-        frequencies: Optional[np.ndarray] = None,
+        spectrum: np.ndarray | None = None,
+        frequencies: np.ndarray | None = None,
     ) -> list[Peak]:
         """
         Find peaks in the spectrum.
@@ -1669,8 +1662,8 @@ class FMRModeAnalyzer:
         self,
         frequency: float,
         z_layer: int = 0,
-        components: Optional[list[Union[int, str]]] = None,
-        save_path: Optional[str] = None,
+        components: list[int | str] | None = None,
+        save_path: str | None = None,
     ) -> tuple[Figure, np.ndarray]:
         """
         Plot mode visualization for a specific frequency.
@@ -1798,13 +1791,13 @@ class FMRModeAnalyzer:
 
     def interactive_spectrum(
         self,
-        components: Optional[list[Union[int, str]]] = None,
+        components: list[int | str] | None = None,
         z_layer: int = 0,
         method: int = 1,
         show: bool = True,
         force: bool = False,
         use_fft_spectrum: bool = True,
-        saveanim: Union[bool, str, None] = None,
+        saveanim: bool | str | None = None,
         auto_animate: bool = False,
         auto_save: bool = False,
         **kwargs,
@@ -2490,9 +2483,7 @@ Interactive Spectrum Controls:
         else:
             return self._interactive_fig
 
-    def _update_mode_plots(
-        self, components: list[Union[int, str]], z_layer: int
-    ) -> None:
+    def _update_mode_plots(self, components: list[int | str], z_layer: int) -> None:
         """Update mode plots for current frequency."""
         if self._mode_axes is None or self._current_frequency is None:
             return
@@ -2514,7 +2505,7 @@ Interactive Spectrum Controls:
         if self.config.show_combined:
             vis_types.append("combined")
 
-        images_for_colorbar: list[Optional[Any]] = [None] * len(vis_types)
+        images_for_colorbar: list[Any | None] = [None] * len(vis_types)
 
         # Clear all axes
         for ax_row in self._mode_axes:
@@ -2631,7 +2622,9 @@ Interactive Spectrum Controls:
         )
 
         # Create shared colorbars per visualization type
-        for row_idx, (vis_type, img) in enumerate(zip(vis_types, images_for_colorbar)):
+        for row_idx, (vis_type, img) in enumerate(
+            zip(vis_types, images_for_colorbar, strict=False)
+        ):
             if img is None:
                 continue
             try:
@@ -2645,7 +2638,7 @@ Interactive Spectrum Controls:
                     divider = make_axes_locatable(rightmost_ax)
                     cax = divider.append_axes(
                         "right",
-                        size=f"{self.config.colorbar_fraction*100}%",
+                        size=f"{self.config.colorbar_fraction * 100}%",
                         pad=self.config.colorbar_pad,
                     )
                     cbar = self._interactive_fig.colorbar(img, cax=cax)
@@ -2671,7 +2664,7 @@ Interactive Spectrum Controls:
         ax: Any,
         row_idx: int,
         col_idx: int,
-        component: Union[str, int],
+        component: str | int,
         z_layer: int,
     ) -> None:
         """Toggle between static mode plot and in-place animation."""
@@ -2899,7 +2892,7 @@ Interactive Spectrum Controls:
         ax: Any,
         row_idx: int,
         col_idx: int,
-        component: Union[str, int],
+        component: str | int,
         z_layer: int,
     ) -> None:
         """Start in-place animation for specific mode axis."""
@@ -3058,7 +3051,7 @@ Interactive Spectrum Controls:
         ax: Any,
         row_idx: int,
         col_idx: int,
-        component: Union[str, int],
+        component: str | int,
         z_layer: int,
     ) -> None:
         """Update single mode plot (used when stopping animation)."""
@@ -3168,7 +3161,7 @@ Interactive Spectrum Controls:
 
         ax.add_artist(scalebar)
 
-    def _auto_scalebar_length(self, width_nm: float) -> Optional[float]:
+    def _auto_scalebar_length(self, width_nm: float) -> float | None:
         """Pick a nice scale bar length based on sample width."""
         if width_nm <= 0:
             return None
@@ -3256,8 +3249,8 @@ Interactive Spectrum Controls:
         dset = self.zarr_file[self.dataset_name]
 
         # Determine sampling interval dt
-        dt: Optional[float] = None
-        t_array: Optional[np.ndarray] = None
+        dt: float | None = None
+        t_array: np.ndarray | None = None
         try:
             raw_t = dset.attrs["t"][:]
             t_array = np.asarray(raw_t, dtype=float)
@@ -3281,7 +3274,7 @@ Interactive Spectrum Controls:
             t_array = None
             dt = None
 
-        def _extract_dt(candidate: Any) -> Optional[float]:
+        def _extract_dt(candidate: Any) -> float | None:
             if candidate is None:
                 return None
             try:
@@ -3451,7 +3444,7 @@ Interactive Spectrum Controls:
         save_path: str = "mode_animation.gif",
         fps: int = 15,
         z_layer: int = 0,
-        component: Union[str, int] = "z",
+        component: str | int = "z",
         animation_type: str = "temporal",
         colormap: str = None,
         use_midpoint_norm: bool = None,
@@ -3851,7 +3844,7 @@ Interactive Spectrum Controls:
             log.error(f"Failed to create animation: {e}")
             raise
 
-    def install_ffmpeg(self) -> Optional[str]:
+    def install_ffmpeg(self) -> str | None:
         """
         Install FFmpeg for MP4 animation support.
 
@@ -4153,7 +4146,7 @@ MMPP FFT Mode Analyzer:
         dset: str = None,
         fps: int = 15,
         z_layer: int = 0,
-        component: Union[str, int] = "z",
+        component: str | int = "z",
         animation_type: str = "temporal",
         **kwargs,
     ) -> None:

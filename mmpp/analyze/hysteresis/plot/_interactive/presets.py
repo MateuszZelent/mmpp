@@ -67,9 +67,9 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
     if "debug_clicks" in payload:
         explorer._debug_clicks = bool(payload.get("debug_clicks"))
     if "loop_panel_weight" in payload:
-        state.loop_panel_weight = float(payload.get("loop_panel_weight"))
+        state.loop_panel_weight = float(payload.get("loop_panel_weight") or 1.15)
     if "snapshot_panel_weight" in payload:
-        state.snapshot_panel_weight = float(payload.get("snapshot_panel_weight"))
+        state.snapshot_panel_weight = float(payload.get("snapshot_panel_weight") or 1.0)
 
 
 def save_preset(explorer: Any, name: str) -> Path:

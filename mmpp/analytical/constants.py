@@ -23,17 +23,17 @@ G_FACTOR_DEFAULT: float = 2.0
 def gamma(g_factor: float = G_FACTOR_DEFAULT) -> float:
     """
     Calculate gyromagnetic ratio from Landé g-factor.
-    
+
     Parameters
     ----------
     g_factor : float
         Landé g-factor (dimensionless), default 2.0
-        
+
     Returns
     -------
     float
         Gyromagnetic ratio in rad/s/T
-        
+
     Examples
     --------
     >>> gamma(2.0)  # Free electron
@@ -49,12 +49,12 @@ def gamma(g_factor: float = G_FACTOR_DEFAULT) -> float:
 def gamma_to_ghz_per_t(g_factor: float = G_FACTOR_DEFAULT) -> float:
     """
     Calculate gyromagnetic ratio in GHz/T.
-    
+
     Parameters
     ----------
     g_factor : float
         Landé g-factor (dimensionless)
-        
+
     Returns
     -------
     float

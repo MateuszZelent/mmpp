@@ -17,9 +17,9 @@ def thiele_to_trajectory_result(
     metadata: dict[str, Any] | None = None,
 ) -> TrajectoryResult:
     """Convert ``ThieleTrajectoryResult`` to canonical ``TrajectoryResult``."""
-    time = np.asarray(getattr(analytical_result, "t"), dtype=float)
-    x = np.asarray(getattr(analytical_result, "x"), dtype=float)
-    y = np.asarray(getattr(analytical_result, "y"), dtype=float)
+    time = np.asarray(analytical_result.t, dtype=float)
+    x = np.asarray(analytical_result.x, dtype=float)
+    y = np.asarray(analytical_result.y, dtype=float)
 
     n = int(time.size)
     polarity_series = np.full(n, 1 if int(polarity) >= 0 else -1, dtype=int)
