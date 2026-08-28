@@ -5,8 +5,10 @@ Defines result structures and configuration classes for dispersion calculations.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Any, Optional, List, Tuple
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
 
 if TYPE_CHECKING:
@@ -18,79 +20,164 @@ if TYPE_CHECKING:
 @dataclass
 class DispersionConfig:
     """Configuration parameters for dispersion analysis."""
-    
+
     # Time domain processing
     dt: float = 1e-12  # Time step [s] - default value
-    time_window: Optional[str] = "hann"  # Window function for time domain
+    time_window: str | None = "hann"  # Window function for time domain
     detrend: str = "mean"  # Detrending method: 'mean', 'initial', None
-    
-    # Spatial processing  
-    dx: Optional[float] = None  # Grid spacing in x [m]
-    dy: Optional[float] = None  # Grid spacing in y [m]
-    dz: Optional[float] = None  # Grid spacing in z [m] 
-    space_window: Optional[str] = None  # Window function for spatial domain
+
+    # Spatial processing
+    dx: float | None = None  # Grid spacing in x [m]
+    dy: float | None = None  # Grid spacing in y [m]
+    dz: float | None = None  # Grid spacing in z [m]
+    space_window: str | None = None  # Window function for spatial domain
     avg_over_orthogonal: bool = True  # Average over orthogonal directions
     orthogonal_avg_mode: str = "magnetization"  # How to collapse orthogonal axis
 
     # Component selection
     component: str = "perp"  # 'perp', 'mx', 'my', 'mz', 'sum'
-    
+
     # Brillouin zone folding
-    fold_period: Optional[float] = None  # Real-space period [m] for BZ folding
+    fold_period: float | None = None  # Real-space period [m] for BZ folding
     fold_agg: str = "sum"  # Aggregation method: 'sum' or 'max'
 
     # Spectral scaling
     scaling: str = "raw_power"  # 'raw_power', 'amplitude_squared', or 'psd'
-    
+
     # Branch tracking
     dk_max: float = 1e5  # Max k-deviation for sampling [rad/m]
-    df_max: Optional[float] = None  # Max f-deviation for branch tracking [Hz]
+    df_max: float | None = None  # Max f-deviation for branch tracking [Hz]
     min_prominence: float = 0.0  # Minimum peak prominence for detection
 
 
-@dataclass  
+@dataclass
 class DispersionResult1D:
     """Results from 1D dispersion analysis S(k,f)."""
-    
+
     # Core data
     S: np.ndarray  # Spectral power (Nk, Nf)
     k_axis: np.ndarray  # Wave vector axis [rad/m]
     f_axis: np.ndarray  # Frequency axis [Hz]
-    
+
     # Analysis parameters
     axis: str  # Propagation direction: 'x' or 'y'
     component: str  # Analyzed component
     config: DispersionConfig
-    
+
     # Optional folded data
-    S_folded: Optional[np.ndarray] = None  # Folded spectrum
-    k_folded: Optional[np.ndarray] = None  # Folded k-axis
-    fold_period: Optional[float] = None  # Folding period
+    S_folded: np.ndarray | None = None  # Folded spectrum
+    k_folded: np.ndarray | None = None  # Folded k-axis
+    fold_period: float | None = None  # Folding period
 
     # Optional local spectra when orthogonal averaging is disabled
     # ``S_local`` remains the backward-compatible display alias for local spectra.
-    S_local: Optional[np.ndarray] = None  # (N_orthogonal, Nk, Nf)
-    S_local_raw: Optional[np.ndarray] = None
-    S_local_display: Optional[np.ndarray] = None
-    orth_axis: Optional[np.ndarray] = None  # Coordinate values along orthogonal axis
-    orth_axis_label: Optional[str] = None  # Name of orthogonal axis ('x' or 'y')
-    
+    S_local: np.ndarray | None = None  # (N_orthogonal, Nk, Nf)
+    S_local_raw: np.ndarray | None = None
+    S_local_display: np.ndarray | None = None
+    orth_axis: np.ndarray | None = None  # Coordinate values along orthogonal axis
+    orth_axis_label: str | None = None  # Name of orthogonal axis ('x' or 'y')
+
     # Complex FFT data for mode reconstruction (avoids re-computing FFT)
-    S_complex: Optional[np.ndarray] = None  # Complex spectrum (Nk, Nf) or (N_orth, Nk, Nf)
+    S_complex: np.ndarray | None = None  # Complex spectrum (Nk, Nf) or (N_orth, Nk, Nf)
 
     # Raw/display separation. ``S`` remains the backward-compatible display alias.
-    S_raw: Optional[np.ndarray] = None
-    S_display: Optional[np.ndarray] = None
+    S_raw: np.ndarray | None = None
+    S_display: np.ndarray | None = None
     scaling: str = "raw_power"
-    scaling_factors: Optional[Dict[str, float]] = None
-    
+    scaling_factors: dict[str, float] | None = None
+
     # Metadata
     dt: float = 0.0
     dx: float = 0.0
     flipx: bool = True  # Whether k-axis was flipped to correct FFT convention
-    notes: Optional[List[str]] = None
-    
+    _interface: Any = field(default=None, repr=False, compare=False)
+    notes: list[str] | None = None
+
     def __post_init__(self):
+        self.S = np.asarray(self.S)
+        self.k_axis = np.asarray(self.k_axis, dtype=float)
+        self.f_axis = np.asarray(self.f_axis, dtype=float)
+        if self.S.ndim != 2:
+            raise ValueError("S must have shape (Nk, Nf)")
+        if self.k_axis.ndim != 1 or self.k_axis.size != self.S.shape[0]:
+            raise ValueError("k_axis length must match the first dimension of S")
+        if self.f_axis.ndim != 1 or self.f_axis.size != self.S.shape[1]:
+            raise ValueError("f_axis length must match the second dimension of S")
+        if not np.all(np.isfinite(self.k_axis)):
+            raise ValueError("k_axis must contain only finite values")
+        if not np.all(np.isfinite(self.f_axis)):
+            raise ValueError("f_axis must contain only finite values")
+
+        for name in ("S_raw", "S_display"):
+            value = getattr(self, name)
+            if value is not None:
+                value = np.asarray(value)
+                if value.shape != self.S.shape:
+                    raise ValueError(f"{name} shape must match S")
+                setattr(self, name, value)
+
+        local_shape = None
+        for name in ("S_local", "S_local_raw", "S_local_display"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            value = np.asarray(value)
+            if value.ndim != 3 or value.shape[1:] != self.S.shape:
+                raise ValueError(f"{name} must have shape (N_orth, Nk, Nf)")
+            if local_shape is not None and value.shape != local_shape:
+                raise ValueError(
+                    "All local dispersion arrays must have matching shapes"
+                )
+            local_shape = value.shape
+            setattr(self, name, value)
+
+        if self.S_complex is not None:
+            from .modes.extraction import canonicalize_s_complex
+
+            self.S_complex, _ = canonicalize_s_complex(
+                np.asarray(self.S_complex),
+                k_axis=self.k_axis,
+                f_axis=self.f_axis,
+            )
+            if (
+                local_shape is not None
+                and self.S_complex.ndim == 3
+                and self.S_complex.shape[0] != local_shape[0]
+            ):
+                raise ValueError(
+                    "S_complex and local spectra must use the same orthogonal size"
+                )
+
+        if self.orth_axis is not None:
+            self.orth_axis = np.asarray(self.orth_axis, dtype=float)
+            expected_orth = (
+                local_shape[0]
+                if local_shape is not None
+                else self.S_complex.shape[0]
+                if self.S_complex is not None and self.S_complex.ndim == 3
+                else None
+            )
+            if self.orth_axis.ndim != 1 or (
+                expected_orth is not None and self.orth_axis.size != expected_orth
+            ):
+                raise ValueError(
+                    "orth_axis length must match the orthogonal spectrum dimension"
+                )
+            if not np.all(np.isfinite(self.orth_axis)):
+                raise ValueError("orth_axis must contain only finite values")
+
+        if (self.S_folded is None) != (self.k_folded is None):
+            raise ValueError("S_folded and k_folded must be provided together")
+        if self.S_folded is not None:
+            self.S_folded = np.asarray(self.S_folded)
+            self.k_folded = np.asarray(self.k_folded, dtype=float)
+            if self.S_folded.ndim != 2:
+                raise ValueError("S_folded must have shape (Nk_folded, Nf)")
+            if self.k_folded.ndim != 1 or self.k_folded.size != self.S_folded.shape[0]:
+                raise ValueError("k_folded length must match S_folded")
+            if self.S_folded.shape[1] != self.f_axis.size:
+                raise ValueError("S_folded frequency dimension must match f_axis")
+
         if self.S_display is None:
             self.S_display = self.S
         else:
@@ -108,22 +195,22 @@ class DispersionResult1D:
             self.scaling_factors = {}
         if self.notes is None:
             self.notes = []
-    
+
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         """Shape of dispersion array (Nk, Nf)."""
         return self.S.shape
-    
-    @property 
-    def k_range(self) -> Tuple[float, float]:
+
+    @property
+    def k_range(self) -> tuple[float, float]:
         """Wave vector range [rad/m]."""
         return (self.k_axis.min(), self.k_axis.max())
-        
+
     @property
-    def f_range(self) -> Tuple[float, float]:
+    def f_range(self) -> tuple[float, float]:
         """Frequency range [Hz]."""
         return (self.f_axis.min(), self.f_axis.max())
-        
+
     @property
     def is_folded(self) -> bool:
         """Whether BZ folding was applied."""
@@ -137,11 +224,11 @@ class DispersionResult1D:
         if source_key == "raw":
             return self.S_raw if self.S_raw is not None else self.S
         raise ValueError("source must be 'raw' or 'display'")
-        
+
     def get_active_data(
         self,
         analysis_source: str = "display",
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Get currently active S, k, f data (folded if available)."""
         source_key = str(analysis_source or "display").lower()
         if (
@@ -158,7 +245,7 @@ class DispersionResult1D:
         *,
         positive_frequencies: bool = True,
         analysis_source: str = "display",
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return ``(S, k_axis, f_axis)`` with optional positive-frequency trim."""
         S, k_axis, f_axis = self.get_active_data(analysis_source=analysis_source)
         if not positive_frequencies:
@@ -167,37 +254,41 @@ class DispersionResult1D:
         if mask.sum() == f_axis.size:
             return S, k_axis, f_axis
         return S[:, mask], k_axis, f_axis[mask]
-    
+
     def sample_at_k(
         self,
         k_query: float,
-        dk_max: Optional[float] = None,
+        dk_max: float | None = None,
         *,
         analysis_source: str = "raw",
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """Sample dispersion at given k, return (k_eff, f_peak)."""
         if dk_max is None:
             dk_max = self.config.dk_max
-            
+
         S, k_axis, f_axis = self.get_active_data(analysis_source=analysis_source)
-        
+
         mask = np.abs(k_axis - k_query) <= dk_max
         if not np.any(mask):
             raise ValueError(f"No k within {dk_max} of {k_query}")
-            
+
         S_slice = S[mask, :].sum(axis=0)
         idx = np.argmax(S_slice)
         f_peak = f_axis[idx]
         k_eff = float(np.average(k_axis[mask], weights=S[mask, idx] + 1e-12))
-        
+
         return k_eff, float(f_peak)
 
-    def select_orthogonal_slice(self, index: int) -> "DispersionResult1D":
+    def select_orthogonal_slice(self, index: int) -> DispersionResult1D:
         """Create a new result containing a single orthogonal slice."""
         if self.S_local is None:
-            raise ValueError("No orthogonal slices stored; recompute with avg_over_orthogonal=False")
+            raise ValueError(
+                "No orthogonal slices stored; recompute with avg_over_orthogonal=False"
+            )
         if index < 0 or index >= self.S_local.shape[0]:
-            raise IndexError(f"Orthogonal index {index} out of bounds (0..{self.S_local.shape[0]-1})")
+            raise IndexError(
+                f"Orthogonal index {index} out of bounds (0..{self.S_local.shape[0] - 1})"
+            )
 
         slice_notes = list(self.notes or []) + [f"Orthogonal slice #{index}"]
 
@@ -207,9 +298,7 @@ class DispersionResult1D:
             slice_S_complex = self.S_complex[index]  # (Nk, Nf)
 
         local_display = (
-            self.S_local_display
-            if self.S_local_display is not None
-            else self.S_local
+            self.S_local_display if self.S_local_display is not None else self.S_local
         )
         local_raw = self.S_local_raw if self.S_local_raw is not None else local_display
 
@@ -220,9 +309,11 @@ class DispersionResult1D:
             axis=self.axis,
             component=self.component,
             config=self.config,
-            S_folded=self.S_folded,
-            k_folded=self.k_folded,
-            fold_period=self.fold_period,
+            # Folded spectra belong to the aggregate result.  There is no
+            # per-orthogonal-slice folded representation to propagate here.
+            S_folded=None,
+            k_folded=None,
+            fold_period=None,
             S_complex=slice_S_complex,
             S_raw=local_raw[index] if local_raw is not None else None,
             S_display=local_display[index] if local_display is not None else None,
@@ -241,24 +332,29 @@ class DispersionResult1D:
     # ------------------------------------------------------------------
 
     @property
-    def plot(self) -> "DispersionPlotAccessor":
+    def plot(self) -> DispersionPlotAccessor:
         """Plotting namespace: ``.plot.heatmap()``, ``.plot.branch(branch)``."""
         from ._plotting.accessor import DispersionPlotAccessor
+
         return DispersionPlotAccessor(self)
 
     @property
-    def analyze(self) -> "DispersionAnalyzeAccessor":
+    def analyze(self) -> DispersionAnalyzeAccessor:
         """Analysis namespace: ``.analyze.find_lowest_possible_frequency()``."""
         from .analyze import DispersionAnalyzeAccessor
+
         return DispersionAnalyzeAccessor(self)
 
     @property
-    def modes(self) -> "DispersionModesBridge":
+    def modes(self) -> DispersionModesBridge:
         """Modes bridge: ``.modes.interactive()``, ``.modes.at(k, f)``."""
         from .modes.bridge import DispersionModesBridge
+
         return DispersionModesBridge(self)
 
-    def filtered(self, live: Optional[Dict[str, Any]] = None, **kwargs) -> "DispersionResult1D":
+    def filtered(
+        self, live: dict[str, Any] | None = None, **kwargs
+    ) -> DispersionResult1D:
         """Return a new :class:`DispersionResult1D` with *live* post-filters applied.
 
         Non-destructive – original data is never modified.
@@ -283,19 +379,18 @@ class DispersionResult1D:
         S_base = self.S_display if self.S_display is not None else self.S
         S_new = S_base.copy()
 
-        if live:
-            try:
-                from .utils import apply_dispersion_post_filters
+        live_config = dict(live or {})
+        live_config.update(kwargs)
+        if live_config:
+            from .utils import apply_dispersion_post_filters
 
-                S_new = apply_dispersion_post_filters(
-                    S_new,
-                    k_axis=self.k_axis,
-                    f_axis=self.f_axis,
-                    filters={"live": live},
-                    include_live=True,
-                )
-            except Exception:
-                pass  # degrade gracefully
+            S_new = apply_dispersion_post_filters(
+                S_new,
+                k_axis=self.k_axis,
+                f_axis=self.f_axis,
+                filters={"live": live_config},
+                include_live=True,
+            )
 
         new_result = copy.copy(self)
         object.__setattr__(new_result, "S", S_new)
@@ -311,7 +406,11 @@ class DispersionResult1D:
         nk, nf = self.S.shape
         kmin = self.k_axis.min() / 1e6
         kmax = self.k_axis.max() / 1e6
-        fmin = self.f_axis[self.f_axis >= 0].min() / 1e9 if (self.f_axis >= 0).any() else 0.0
+        fmin = (
+            self.f_axis[self.f_axis >= 0].min() / 1e9
+            if (self.f_axis >= 0).any()
+            else 0.0
+        )
         fmax = self.f_axis.max() / 1e9
         return (
             f"DispersionResult1D(axis={self.axis!r}, component={self.component!r}, "
@@ -321,7 +420,6 @@ class DispersionResult1D:
 
     def _repr_html_(self) -> str:
         from html import escape as _esc
-        import numpy as _np
 
         nk, nf = self.S.shape
         kmin = float(self.k_axis.min()) / 1e6
@@ -337,7 +435,7 @@ class DispersionResult1D:
         HV = "onmouseover=\"this.style.background='#1e293b'\" onmouseout=\"this.style.background='transparent'\""
 
         def stat_row(k, v, tip=""):
-            t = f" title=\"{_esc(tip)}\"" if tip else ""
+            t = f' title="{_esc(tip)}"' if tip else ""
             return (
                 f"<tr {HV}{t}>"
                 f"<td style='padding:2px 10px;color:#94a3b8;font-size:.85em;'>{_esc(k)}</td>"
@@ -346,7 +444,7 @@ class DispersionResult1D:
             )
 
         def method_row(sig, desc, tip=""):
-            t = f" title=\"{_esc(tip)}\"" if tip else ""
+            t = f' title="{_esc(tip)}"' if tip else ""
             return (
                 f"<tr {HV}{t} style='cursor:pointer;'>"
                 f"<td style='padding:3px 10px;font-family:monospace;color:#93c5fd;font-size:.88em;'>{_esc(sig)}</td>"
@@ -356,25 +454,42 @@ class DispersionResult1D:
 
         flags = []
         if has_local:
+            assert self.S_local is not None
             n_orth = self.S_local.shape[0]
             flags.append(f"S_local ({n_orth} slices)")
         if has_complex:
             flags.append("S_complex")
         if has_folded:
             flags.append("S_folded")
-        flags_html = "".join(
-            f"<span style='background:#1e3a5f;color:#7dd3fc;border-radius:4px;"
-            f"padding:1px 6px;font-size:.75em;margin-right:4px;'>{_esc(f)}</span>"
-            for f in flags
-        ) if flags else "<span style='color:#475569;font-size:.8em;'>—</span>"
+        flags_html = (
+            "".join(
+                f"<span style='background:#1e3a5f;color:#7dd3fc;border-radius:4px;"
+                f"padding:1px 6px;font-size:.75em;margin-right:4px;'>{_esc(f)}</span>"
+                for f in flags
+            )
+            if flags
+            else "<span style='color:#475569;font-size:.8em;'>—</span>"
+        )
 
         stats_html = (
             "<table style='border-collapse:collapse;width:100%;margin-bottom:8px;'>"
-            + stat_row("axis", self.axis, "Propagation direction for k-space decomposition")
-            + stat_row("component", self.component, "Magnetization component used in FFT")
+            + stat_row(
+                "axis", self.axis, "Propagation direction for k-space decomposition"
+            )
+            + stat_row(
+                "component", self.component, "Magnetization component used in FFT"
+            )
             + stat_row("shape", f"({nk} k-bins, {nf} f-bins)", "Size of S(k,f) array")
-            + stat_row("k range", f"{kmin:.3f} … {kmax:.3f} rad/\u03bcm", "Wave-vector axis extent")
-            + stat_row("f range", f"{fmin:.3f} … {fmax_val:.3f} GHz", "Frequency axis extent (positive half shown)")
+            + stat_row(
+                "k range",
+                f"{kmin:.3f} … {kmax:.3f} rad/\u03bcm",
+                "Wave-vector axis extent",
+            )
+            + stat_row(
+                "f range",
+                f"{fmin:.3f} … {fmax_val:.3f} GHz",
+                "Frequency axis extent (positive half shown)",
+            )
             + stat_row("S_max", f"{smax:.4g}", "Maximum spectral density value")
             + "</table>"
         )
@@ -386,7 +501,7 @@ class DispersionResult1D:
                 f"<summary style='cursor:pointer;padding:4px 6px;border-radius:6px;"
                 f"background:#1e293b;color:{color};font-family:monospace;font-size:.88em;"
                 f"list-style:none;display:flex;align-items:center;gap:8px;'"
-                f" title=\"{_esc(tip)}\">"
+                f' title="{_esc(tip)}">'
                 f"<span style='color:#475569;'>&#9654;</span>"
                 f"<span>{_esc(label)}</span>"
                 f"<span style='background:{color}22;color:{color};border-radius:4px;"
@@ -399,42 +514,55 @@ class DispersionResult1D:
             )
 
         plot_rows = (
-            method_row(".plot.heatmap(fmax=10, lognorm=True)",
-                       "S(k,f) power heatmap",
-                       "Plot spin-wave dispersion as a 2D heatmap. fmax clips the frequency axis. lognorm uses logarithmic color scale.")
-            + method_row(".plot.heatmap(orth_index=0)",
-                         "Single orthogonal slice heatmap",
-                         "Show S(k,f) for one y-slice only (requires avg_over_orthogonal=False).")
-            + method_row(".plot.branch(branch)",
-                         "Dispersion branch + group velocity",
-                         "Plot a tracked DispersionBranch: frequency vs k on the left, group velocity dω/dk on the right.")
+            method_row(
+                ".plot.heatmap(fmax=10, lognorm=True)",
+                "S(k,f) power heatmap",
+                "Plot spin-wave dispersion as a 2D heatmap. fmax clips the frequency axis. lognorm uses logarithmic color scale.",
+            )
+            + method_row(
+                ".plot.heatmap(orth_index=0)",
+                "Single orthogonal slice heatmap",
+                "Show S(k,f) for one y-slice only (requires avg_over_orthogonal=False).",
+            )
+            + method_row(
+                ".plot.branch(branch)",
+                "Dispersion branch + group velocity",
+                "Plot a tracked DispersionBranch: frequency vs k on the left, group velocity dω/dk on the right.",
+            )
         )
 
-        analyze_rows = (
-            method_row(".analyze.find_lowest_possible_frequency()",
-                       "→ LowestFrequencyResult",
-                       "Find the true minimum frequency on the branch — for backward-volume SW it occurs at k>0, not at k=0.")
-            + method_row(".analyze.find_lowest_possible_frequency(side='both', smooth_sigma=2.0)",
-                         "search both k halves, with Gaussian smoothing",
-                         "side='both' searches full k-axis. smooth_sigma applies Gaussian smoothing to f_peak(k) before argmin.")
+        analyze_rows = method_row(
+            ".analyze.find_lowest_possible_frequency()",
+            "→ LowestFrequencyResult",
+            "Find the true minimum frequency on the branch — for backward-volume SW it occurs at k>0, not at k=0.",
+        ) + method_row(
+            ".analyze.find_lowest_possible_frequency(side='both', smooth_sigma=2.0)",
+            "search both k halves, with Gaussian smoothing",
+            "side='both' searches full k-axis. smooth_sigma applies Gaussian smoothing to f_peak(k) before argmin.",
         )
 
         modes_rows = (
-            method_row(".modes.interactive(lattice_constant_nm=470)",
-                       "Open interactive dispersion-mode widget",
-                       "Opens ipywidgets-based interactive explorer. Click on S(k,f) to see the spatial mode profile m(x,y).")
-            + method_row(".modes.at(k_rad_um=2.3, f_ghz=5.0)",
-                         "→ DispersionModeResult",
-                         "Extract mode image at a specific (k*, f*) point. Requires S_complex to be stored.")
-            + method_row(".modes.at(...).plot.imshow()",
-                         "Mode spatial profile |ψ(x,y)|",
-                         "Show the reconstructed spin-wave mode amplitude. mode_type: abs | real | imag | phase.")
+            method_row(
+                ".modes.interactive(lattice_constant_nm=470)",
+                "Open interactive dispersion-mode widget",
+                "Opens ipywidgets-based interactive explorer. Click on S(k,f) to see the spatial mode profile m(x,y).",
+            )
+            + method_row(
+                ".modes.at(k_rad_um=2.3, f_ghz=5.0)",
+                "→ DispersionModeResult",
+                "Extract mode image at a specific (k*, f*) point. Requires S_complex to be stored.",
+            )
+            + method_row(
+                ".modes.at(...).plot.imshow()",
+                "Mode spatial profile |ψ(x,y)|",
+                "Show the reconstructed spin-wave mode amplitude. mode_type: abs | real | imag | phase.",
+            )
         )
 
         filtered_rows = method_row(
             ".filtered(live={'gaussian_morph': {'enabled': True, 'sigma_f': 1.0}})",
             "→ new DispersionResult1D",
-            "Non-destructive: applies live post-filters to S(k,f) and returns a new result. Original data unchanged."
+            "Non-destructive: applies live post-filters to S(k,f) and returns a new result. Original data unchanged.",
         )
 
         breadcrumb = (
@@ -461,15 +589,35 @@ class DispersionResult1D:
             + "<div style='font-size:.78em;color:#64748b;margin:4px 0 6px 2px;'>Optional stored arrays: "
             + flags_html
             + "</div>"
-            + section(".plot", "#60a5fa", "DispersionPlotAccessor", plot_rows,
-                      "Plotting namespace: S(k,f) heatmap and dispersion branch visualization.",
-                      open_=True)
-            + section(".analyze", "#34d399", "DispersionAnalyzeAccessor", analyze_rows,
-                      "Analysis tools: find the true minimum frequency on the dispersion branch.")
-            + section(".modes", "#f59e0b", "DispersionModesBridge", modes_rows,
-                      "Mode extraction: interactive widget or single-point mode profile m(x,y).")
-            + section(".filtered(...)", "#a78bfa", "non-destructive", filtered_rows,
-                      "Apply live/post filters to S(k,f) without recomputing FFT. Returns new DispersionResult1D.")
+            + section(
+                ".plot",
+                "#60a5fa",
+                "DispersionPlotAccessor",
+                plot_rows,
+                "Plotting namespace: S(k,f) heatmap and dispersion branch visualization.",
+                open_=True,
+            )
+            + section(
+                ".analyze",
+                "#34d399",
+                "DispersionAnalyzeAccessor",
+                analyze_rows,
+                "Analysis tools: find the true minimum frequency on the dispersion branch.",
+            )
+            + section(
+                ".modes",
+                "#f59e0b",
+                "DispersionModesBridge",
+                modes_rows,
+                "Mode extraction: interactive widget or single-point mode profile m(x,y).",
+            )
+            + section(
+                ".filtered(...)",
+                "#a78bfa",
+                "non-destructive",
+                filtered_rows,
+                "Apply live/post filters to S(k,f) without recomputing FFT. Returns new DispersionResult1D.",
+            )
             + "</div>"
         )
 
@@ -477,74 +625,105 @@ class DispersionResult1D:
 @dataclass
 class DispersionResult2D:
     """Results from 2D dispersion analysis S(kx,ky,f)."""
-    
+
     # Core data
     S: np.ndarray  # Spectral power (Nkx, Nky, Nf)
     kx_axis: np.ndarray  # kx wave vector axis [rad/m]
-    ky_axis: np.ndarray  # ky wave vector axis [rad/m] 
+    ky_axis: np.ndarray  # ky wave vector axis [rad/m]
     f_axis: np.ndarray  # Frequency axis [Hz]
-    
+
     # Analysis parameters
     component: str  # Analyzed component
     config: DispersionConfig
-    
+
     # Metadata
     dt: float = 0.0
     dx: float = 0.0
     dy: float = 0.0
-    notes: Optional[List[str]] = None
-    
+    scaling: str = "raw_power"
+    scaling_factors: dict[str, float] | None = None
+    notes: list[str] | None = None
+
     def __post_init__(self):
+        self.S = np.asarray(self.S)
+        self.kx_axis = np.asarray(self.kx_axis, dtype=float)
+        self.ky_axis = np.asarray(self.ky_axis, dtype=float)
+        self.f_axis = np.asarray(self.f_axis, dtype=float)
+        if self.S.ndim != 3:
+            raise ValueError("S must have shape (Nkx, Nky, Nf)")
+        expected = (self.kx_axis.size, self.ky_axis.size, self.f_axis.size)
+        if any(axis.ndim != 1 for axis in (self.kx_axis, self.ky_axis, self.f_axis)):
+            raise ValueError("kx_axis, ky_axis and f_axis must be one-dimensional")
+        if self.S.shape != expected:
+            raise ValueError(
+                f"S shape {self.S.shape} does not match axis lengths {expected}"
+            )
+        if any(
+            not np.all(np.isfinite(axis))
+            for axis in (self.kx_axis, self.ky_axis, self.f_axis)
+        ):
+            raise ValueError("Dispersion axes must contain only finite values")
+        self.scaling = str(self.scaling or "raw_power")
+        if self.scaling_factors is None:
+            self.scaling_factors = {}
         if self.notes is None:
             self.notes = []
-            
+
     @property
-    def shape(self) -> Tuple[int, int, int]:
+    def shape(self) -> tuple[int, int, int]:
         """Shape of dispersion array (Nkx, Nky, Nf)."""
         return self.S.shape
-        
+
     @property
-    def kx_range(self) -> Tuple[float, float]:
+    def kx_range(self) -> tuple[float, float]:
         """kx range [rad/m]."""
         return (self.kx_axis.min(), self.kx_axis.max())
-        
-    @property  
-    def ky_range(self) -> Tuple[float, float]:
+
+    @property
+    def ky_range(self) -> tuple[float, float]:
         """ky range [rad/m]."""
         return (self.ky_axis.min(), self.ky_axis.max())
-        
+
     @property
-    def f_range(self) -> Tuple[float, float]:
+    def f_range(self) -> tuple[float, float]:
         """Frequency range [Hz]."""
         return (self.f_axis.min(), self.f_axis.max())
-        
-    def slice_1d(self, direction: str, k_value: float = 0.0, dk_max: Optional[float] = None) -> DispersionResult1D:
+
+    def slice_1d(
+        self, direction: str, k_value: float = 0.0, dk_max: float | None = None
+    ) -> DispersionResult1D:
         """Extract 1D slice along kx or ky direction."""
         if dk_max is None:
             dk_max = self.config.dk_max
-            
-        if direction == 'kx':
+        dk_value = float(dk_max)
+        target = float(k_value)
+        if not np.isfinite(dk_value) or dk_value < 0:
+            raise ValueError("dk_max must be finite and non-negative")
+        if not np.isfinite(target):
+            raise ValueError("k_value must be finite")
+
+        if direction == "kx":
             # Slice along kx at fixed ky
-            mask = np.abs(self.ky_axis - k_value) <= dk_max
+            mask = np.abs(self.ky_axis - target) <= dk_value
             if not np.any(mask):
-                raise ValueError(f"No ky within {dk_max} of {k_value}")
+                raise ValueError(f"No ky within {dk_value} of {target}")
             S_1d = self.S[:, mask, :].mean(axis=1)  # Average over ky slice
             k_axis = self.kx_axis
             dx = self.dx
-            axis = 'x'
-            
-        elif direction == 'ky':
-            # Slice along ky at fixed kx  
-            mask = np.abs(self.kx_axis - k_value) <= dk_max
+            axis = "x"
+
+        elif direction == "ky":
+            # Slice along ky at fixed kx
+            mask = np.abs(self.kx_axis - target) <= dk_value
             if not np.any(mask):
-                raise ValueError(f"No kx within {dk_max} of {k_value}")
+                raise ValueError(f"No kx within {dk_value} of {target}")
             S_1d = self.S[mask, :, :].mean(axis=0)  # Average over kx slice
-            k_axis = self.ky_axis  
+            k_axis = self.ky_axis
             dx = self.dy
-            axis = 'y'
+            axis = "y"
         else:
             raise ValueError("direction must be 'kx' or 'ky'")
-            
+
         return DispersionResult1D(
             S=S_1d,
             k_axis=k_axis,
@@ -556,76 +735,118 @@ class DispersionResult2D:
             dx=dx,
             scaling=getattr(self, "scaling", "raw_power"),
             scaling_factors=dict(getattr(self, "scaling_factors", {}) or {}),
-            notes=(self.notes or []) + [f"1D slice from 2D at {direction}={k_value}"]
+            notes=(self.notes or []) + [f"1D slice from 2D at {direction}={k_value}"],
         )
 
 
 @dataclass
 class DispersionBranch:
     """A tracked dispersion branch f(k)."""
-    
+
     # Branch data
     k_path: np.ndarray  # Wave vector path [rad/m]
-    f_values: np.ndarray  # Frequencies [Hz] 
+    f_values: np.ndarray  # Frequencies [Hz]
     amplitudes: np.ndarray  # Spectral amplitudes at (k,f) points
-    
-    # Branch properties  
+
+    # Branch properties
     branch_id: int = 0  # Branch identifier
-    mode_type: Optional[str] = None  # Mode classification
-    group_velocity: Optional[np.ndarray] = None  # dω/dk [Hz⋅m]
-    
+    mode_type: str | None = None  # Mode classification
+    group_velocity: np.ndarray | None = None  # dω/dk [m/s]
+
     # Analysis metadata
-    tracking_config: Optional[Dict[str, Any]] = None
-    notes: Optional[List[str]] = None
-    
+    tracking_config: dict[str, Any] | None = None
+    notes: list[str] | None = None
+
     def __post_init__(self):
+        self.k_path = np.asarray(self.k_path, dtype=float)
+        self.f_values = np.asarray(self.f_values, dtype=float)
+        self.amplitudes = np.asarray(self.amplitudes, dtype=float)
+        if any(
+            value.ndim != 1 for value in (self.k_path, self.f_values, self.amplitudes)
+        ):
+            raise ValueError("Branch arrays must be one-dimensional")
+        if not (self.k_path.size == self.f_values.size == self.amplitudes.size):
+            raise ValueError("Branch arrays must have matching lengths")
+        if self.k_path.size < 2:
+            raise ValueError("A dispersion branch requires at least two points")
+        if not np.all(np.isfinite(self.k_path)) or not np.all(
+            np.isfinite(self.f_values)
+        ):
+            raise ValueError("Branch coordinates must contain only finite values")
+        steps = np.diff(self.k_path)
+        if not (np.all(steps > 0) or np.all(steps < 0)):
+            raise ValueError("k_path must be strictly monotonic")
+        if self.group_velocity is not None:
+            self.group_velocity = np.asarray(self.group_velocity, dtype=float)
+            if self.group_velocity.shape != self.k_path.shape:
+                raise ValueError("group_velocity shape must match k_path")
         if self.tracking_config is None:
             self.tracking_config = {}
         if self.notes is None:
             self.notes = []
-            
+
     @property
     def length(self) -> int:
         """Number of points in branch."""
         return len(self.k_path)
-        
-    @property  
-    def k_range(self) -> Tuple[float, float]:
+
+    @property
+    def k_range(self) -> tuple[float, float]:
         """Wave vector range [rad/m]."""
         return (self.k_path.min(), self.k_path.max())
-        
+
     @property
-    def f_range(self) -> Tuple[float, float]:
+    def f_range(self) -> tuple[float, float]:
         """Frequency range [Hz]."""
         return (self.f_values.min(), self.f_values.max())
-        
+
     def compute_group_velocity(self, smooth: bool = True) -> np.ndarray:
         """Compute group velocity dω/dk = 2π⋅df/dk."""
-        if smooth:
-            # Use gradient with smoothing
-            vg = 2 * np.pi * np.gradient(self.f_values, self.k_path)
-        else:
-            # Simple finite differences with edge handling
-            vg = 2 * np.pi * np.gradient(self.f_values, self.k_path)
+        frequencies = self.f_values
+        if smooth and frequencies.size >= 5:
+            window = min(
+                7, frequencies.size if frequencies.size % 2 else frequencies.size - 1
+            )
+            half = window // 2
+            smoothed = np.empty_like(frequencies)
+            for index in range(frequencies.size):
+                start = max(0, min(index - half, frequencies.size - window))
+                stop = start + window
+                local_k = self.k_path[start:stop]
+                local_f = frequencies[start:stop]
+                # Center k before fitting to avoid poor conditioning for
+                # physical wave vectors of order 1e6--1e9 rad/m.
+                centered_k = local_k - self.k_path[index]
+                coefficients = np.polyfit(centered_k, local_f, deg=2)
+                estimate = float(np.polyval(coefficients, 0.0))
+                smoothed[index] = np.clip(
+                    estimate,
+                    float(np.min(local_f)),
+                    float(np.max(local_f)),
+                )
+            frequencies = smoothed
+        vg = 2 * np.pi * np.gradient(frequencies, self.k_path)
 
         self.group_velocity = vg
         return vg
-        
+
     def interpolate_at_k(self, k_query: np.ndarray) -> np.ndarray:
-        """Interpolate branch frequencies at query k values.""" 
+        """Interpolate branch frequencies at query k values."""
         return np.interp(k_query, self.k_path, self.f_values)
-        
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
-            'k_path': self.k_path.tolist(),
-            'f_values': self.f_values.tolist(), 
-            'amplitudes': self.amplitudes.tolist(),
-            'branch_id': self.branch_id,
-            'mode_type': self.mode_type,
-            'group_velocity': self.group_velocity.tolist() if self.group_velocity is not None else None,
-            'tracking_config': self.tracking_config or {},
-            'notes': self.notes or [],
-            'k_range': self.k_range,
-            'f_range': self.f_range
+            "k_path": self.k_path.tolist(),
+            "f_values": self.f_values.tolist(),
+            "amplitudes": self.amplitudes.tolist(),
+            "branch_id": self.branch_id,
+            "mode_type": self.mode_type,
+            "group_velocity": self.group_velocity.tolist()
+            if self.group_velocity is not None
+            else None,
+            "tracking_config": self.tracking_config or {},
+            "notes": self.notes or [],
+            "k_range": self.k_range,
+            "f_range": self.f_range,
         }

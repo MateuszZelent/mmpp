@@ -4,11 +4,37 @@ from __future__ import annotations
 
 from typing import Any
 
+from .._method_helpers import InteractiveNodeMixin
 from .config import VortexConfig
 
 
-class VortexInterface:
+class VortexInterface(InteractiveNodeMixin):
     """Vortex dynamics analysis namespace."""
+
+    _interactive_owner = "job[0].vortex"
+    _interactive_nodes = frozenset(
+        {
+            "check_health",
+            "track",
+            "detect",
+            "show_simulation_params",
+            "interactive",
+            "interactive_spectrum",
+            "interactive_modes",
+        }
+    )
+    _interactive_examples = {
+        "track": ["trajectory = job[0].vortex.track(method='gaussian')"],
+        "detect": ["topology = job[0].vortex.detect()"],
+        "check_health": ["health = job[0].vortex.check_health()"],
+        "show_simulation_params": ["job[0].vortex.show_simulation_params()"],
+        "interactive": [
+            "job[0].vortex.interactive(initial_module='spectrum')",
+            "job[0].vortex.interactive(initial_module='modes')",
+        ],
+        "interactive_spectrum": ["job[0].vortex.interactive_spectrum(dpi=140)"],
+        "interactive_modes": ["job[0].vortex.interactive_modes(dpi=140)"],
+    }
 
     def __init__(
         self,
@@ -17,26 +43,28 @@ class VortexInterface:
         mmpp_instance: Any | None = None,
         slice_info: Any | None = None,
         config: VortexConfig | None = None,
+        dataset_view: Any | None = None,
     ):
         self._job = job_result
         self._dataset = dataset_name
         self._mmpp = mmpp_instance
         self._slice_info = slice_info
+        self._dataset_view = dataset_view
         self._config = config or VortexConfig()
 
-        self._topology = None
-        self._core = None
-        self._trajectory = None
-        self._spectrum = None
-        self._modes = None
-        self._nonlinear = None
-        self._events = None
-        self._signals = None
-        self._energy = None
-        self._model = None
-        self._bridge = None
-        self._plot = None
-        self._autofit = None
+        self._topology: Any | None = None
+        self._core: Any | None = None
+        self._trajectory: Any | None = None
+        self._spectrum: Any | None = None
+        self._modes: Any | None = None
+        self._nonlinear: Any | None = None
+        self._events: Any | None = None
+        self._signals: Any | None = None
+        self._energy: Any | None = None
+        self._model: Any | None = None
+        self._bridge: Any | None = None
+        self._plot: Any | None = None
+        self._autofit: Any | None = None
         self._health_cache: Any | None = None  # CoreHealthStatus, cached
 
     @property
@@ -97,6 +125,7 @@ class VortexInterface:
                 slice_info=self._slice_info,
                 config=self._config,
                 core_interface=self.core,
+                vortex_interface=self,
             )
         return self._trajectory
 
@@ -373,8 +402,11 @@ class VortexInterface:
         """Render resolved parameters as an interactive HTML card."""
         from html import escape as _esc
 
+        HTML: Any
         try:
-            from IPython.display import HTML
+            from IPython.display import HTML as _HTML
+
+            HTML = _HTML
         except ImportError:
             HTML = None
 
@@ -535,14 +567,17 @@ class VortexInterface:
             html += "</table></div>"
 
         html += "</div>"
-        return HTML(html) if HTML else html
+        return HTML(html) if HTML is not None else html
 
     def _render_params_error_html(self, error):
         """Render a parameter resolution error in a styled card."""
         from html import escape as _esc
 
+        HTML: Any
         try:
-            from IPython.display import HTML
+            from IPython.display import HTML as _HTML
+
+            HTML = _HTML
         except ImportError:
             HTML = None
 
@@ -560,7 +595,7 @@ class VortexInterface:
             "<code style='color:#fca5a5;'>job[0].vortex.show_simulation_params("
             "params={'Ms': 8e5, 'R': 50e-9, ...})</code></div></div>"
         )
-        return HTML(html) if HTML else html
+        return HTML(html) if HTML is not None else html
 
     def _format_param_value(self, name: str, value) -> str:
         """Smart formatting for parameter values with SI-aware display."""
@@ -687,7 +722,9 @@ class VortexInterface:
                 "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>detect(**kwargs)</td><td style='padding:5px 8px;color:#f8f8f2;'>Top-level shortcut to <code>topology.detect()</code> for charge / winding analysis.</td></tr>",
                 "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>check_health(...)</td><td style='padding:5px 8px;color:#f8f8f2;'>Inspect orbit radius, annihilation risk and boundary/core thresholds. Key args: <code>trajectory=</code>, <code>disk_radius=</code>, <code>force=</code>.</td></tr>",
                 "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>show_simulation_params(...)</td><td style='padding:5px 8px;color:#f8f8f2;'>Resolve and render simulation parameters. Key args: <code>params=</code>, <code>model=</code>, <code>current=</code>.</td></tr>",
-                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>interactive(figsize=(10, 7), dpi=100)</td><td style='padding:5px 8px;color:#f8f8f2;'>Open the ipywidgets vortex dashboard that bundles tracking, topology, trajectory, spectrum and events.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>interactive(..., initial_module='core')</td><td style='padding:5px 8px;color:#f8f8f2;'>Open the ipywidgets vortex dashboard on core, spectrum, modes, or another named module.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>interactive_spectrum(...)</td><td style='padding:5px 8px;color:#f8f8f2;'>Open the combined magnetisation spectrum, peak selector and spatial-mode viewer.</td></tr>",
+                "<tr><td style='padding:5px 8px;font-family:monospace;color:#50fa7b;'>interactive_modes(...)</td><td style='padding:5px 8px;color:#f8f8f2;'>Open spatial FFT mode maps together with their source spectrum.</td></tr>",
             ]
         )
         method_table = (
@@ -714,6 +751,8 @@ class VortexInterface:
                     "spec = vortex.spectrum.gyration(method='welch', nperseg=1024)",
                     "spec.plt.power_spectrum()",
                     "vortex.modes.classify()",
+                    "vortex.spectrum.gyration.interactive()",
+                    "vortex.spectrum.gyration.interactive_modes()",
                     "",
                     "# Workflow 3: sanity / failure diagnostics",
                     "health = vortex.check_health(boundary_fraction=0.85, force=True)",
@@ -732,8 +771,10 @@ class VortexInterface:
             "topo = vortex.topology.detect()\n"
             "\n"
             "# Gyration spectrum\n"
-            "vortex.spectrum.compute()\n"
-            "vortex.spectrum.plot()"
+            "spec = vortex.spectrum.gyration()\n"
+            "spec.plt.power_spectrum()\n"
+            "vortex.spectrum.gyration.interactive()\n"
+            "vortex.spectrum.gyration.interactive_modes()"
         )
         api_card = api_help_html(
             self,
@@ -762,6 +803,8 @@ class VortexInterface:
                 "check_health",
                 "show_simulation_params",
                 "interactive",
+                "interactive_spectrum",
+                "interactive_modes",
             ],
             subtitle="Live signatures for top-level vortex shortcuts and namespace map.",
             chrome=False,
@@ -833,6 +876,7 @@ class VortexInterface:
         *,
         trajectory_source: str = "magnetization",
         center_mode: str = "auto",
+        initial_module: str = "core",
     ):
         """Open the interactive vortex dynamics dashboard.
 
@@ -852,6 +896,9 @@ class VortexInterface:
             while ``magnetization`` tracks saved magnetization frames.
         center_mode : {"auto", "orbit", "disk", "raw"}
             Default centering mode used by Core tracking and Trajectory plots.
+        initial_module : str
+            Dashboard module selected on opening, for example ``"spectrum"``
+            or ``"modes"``.
 
         Returns
         -------
@@ -866,6 +913,19 @@ class VortexInterface:
             dpi=dpi,
             trajectory_source=trajectory_source,
             center_mode=center_mode,
+            initial_module=initial_module,
         )
         dashboard.show()
         return dashboard
+
+    def interactive_spectrum(self, **kwargs: Any):
+        """Open the combined magnetisation spectrum and spatial-mode explorer."""
+        from .._spectral_ui import interactive_spectrum_modes
+
+        return interactive_spectrum_modes(self, **kwargs)
+
+    def interactive_modes(self, **kwargs: Any):
+        """Open the spatial FFT-mode explorer together with its source spectrum."""
+        from .._spectral_ui import interactive_spectrum_modes
+
+        return interactive_spectrum_modes(self, **kwargs)

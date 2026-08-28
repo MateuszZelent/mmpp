@@ -1,11 +1,11 @@
 import os
 import subprocess
-import os
+
 import numpy as np
 
 
 def replace_variables_in_template(file_path, variables):
-    with open(f"{main_path}{file_path}", "r") as file:
+    with open(f"{main_path}{file_path}") as file:
         content = file.read()
     for key, value in variables.items():
         content = content.replace(f"{{{key}}}", str(value))
@@ -18,7 +18,6 @@ def raw_code(*args, **kwargs):
     return modified_template
 
 
-import os
 import re
 
 
@@ -27,7 +26,7 @@ def znajdz_plik_mx3(numer_symulacji, katalog_glowny):
     Przeszukuje katalog_glowny i jego podkatalogi, aby znaleźć plik .mx3 z numerem symulacji.
     """
     wzor_pliku = f"sim_{numer_symulacji}.*\\.mx3"
-    for root, dirs, files in os.walk(katalog_glowny):
+    for root, _dirs, files in os.walk(katalog_glowny):
         for file in files:
             if re.search(wzor_pliku, file):
                 return os.path.join(root, file)
@@ -52,12 +51,9 @@ def parsuj_parametry(sciezka):
 
 def gen_sbatch_script(name, path, main_path=None, destination_path=None):
     mx3_file = f"{path}.mx3"
-    lock_file = f"{path}.mx3_status.lock"
     done_file = f"{path}.mx3_status.done"
     interrupted_file = f"{path}.mx3_status.interrupted"
-    origin_path = f"{path}.zarr"
-    file_name = "/".join(path.split(main_path)[:-1])
-    d_path = f"{destination_path}/{file_name}.zarr"
+    "/".join(path.split(main_path)[:-1])
 
     relative_path = path.replace(main_path, "")
     final_path = destination_path + relative_path + ".zarr"
@@ -140,10 +136,7 @@ cleanup
     return script
 
 
-import os
 import errno
-import os
-import numpy as np
 import itertools
 
 
@@ -169,17 +162,17 @@ def submit_python_code(
     *args,
     **kwargs,
 ):
-    if len(kwargs) > 0 and last_param_name == None:
+    if len(kwargs) > 0 and last_param_name is None:
         last_param_name = list(kwargs.keys())[-1]
 
-    sim_params = "_".join(
+    "_".join(
         [
             f"{key}_{format(val, '.5g') if isinstance(val, (int, float)) else val}"
             for key, val in kwargs.items()
             if key != last_param_name and key != "i" and key != "prefix"
         ]
     )
-    if main_path == None:
+    if main_path is None:
         main_path = f"{os.getcwd()}/"
 
     par_sep = ","
@@ -195,7 +188,7 @@ def submit_python_code(
         )
         + "/"
     )
-    if full_name == False:
+    if full_name is False:
         last_key, last_val = kwargs.popitem()
         sim_name = f"{last_key}{val_sep}{format(last_val, '.5g')}"
     else:
@@ -210,7 +203,7 @@ def submit_python_code(
 
     create_path_if_not_exists(path)
 
-    if os.path.isdir(f"{path}.zarr/end") and force != True:
+    if os.path.isdir(f"{path}.zarr/end") and force is not True:
         print("Simulation already performed")
         return
     else:
@@ -218,7 +211,7 @@ def submit_python_code(
         with open(f"{path}{sim_name}.mx3", "w") as f:
             f.write(code_to_execute)
 
-        if sbatch == True:
+        if sbatch is True:
             sim_sbatch = "_".join(
                 [f"{key}_{val}" for key, val in kwargs.items() if key == "i"]
             )
@@ -278,7 +271,7 @@ def submit_all_simulations(
         if i == maxsim:
             break
         kwargs = {"prefix": prefix, "i": i}
-        for name, value in zip(param_names, values):
+        for name, value in zip(param_names, values, strict=False):
             kwargs[name] = value
         submit_python_code(
             raw_code(**kwargs),

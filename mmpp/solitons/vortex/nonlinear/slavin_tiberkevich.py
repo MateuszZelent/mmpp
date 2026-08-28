@@ -10,7 +10,9 @@ from .amplitude_equation import compute_amplitude_equation
 from .models import STParametersResult
 
 
-def _interpolate_half_height(x1: float, y1: float, x2: float, y2: float, y_half: float) -> float:
+def _interpolate_half_height(
+    x1: float, y1: float, x2: float, y2: float, y_half: float
+) -> float:
     if abs(y2 - y1) < 1e-30:
         return float(0.5 * (x1 + x2))
     alpha = (y_half - y1) / (y2 - y1)
@@ -57,14 +59,20 @@ def _estimate_linewidth_fwhm(
     if left == peak_idx or right == peak_idx:
         linewidth = max(df, 0.0) if np.isfinite(df) else float("nan")
         resolution_limited = bool(np.isfinite(df))
-        return linewidth, resolution_limited, {
-            "status": "width_below_resolution",
-            "df": df,
-            "peak_frequency_hz": float(f[peak_idx]),
-        }
+        return (
+            linewidth,
+            resolution_limited,
+            {
+                "status": "width_below_resolution",
+                "df": df,
+                "peak_frequency_hz": float(f[peak_idx]),
+            },
+        )
 
     f_left = _interpolate_half_height(f[left], p[left], f[left + 1], p[left + 1], half)
-    f_right = _interpolate_half_height(f[right - 1], p[right - 1], f[right], p[right], half)
+    f_right = _interpolate_half_height(
+        f[right - 1], p[right - 1], f[right], p[right], half
+    )
 
     linewidth = max(float(f_right - f_left), 0.0)
     if np.isfinite(df):
@@ -72,16 +80,22 @@ def _estimate_linewidth_fwhm(
 
     resolution_limited = bool(np.isfinite(df) and linewidth <= 2.0 * df)
 
-    return linewidth, resolution_limited, {
-        "status": "ok",
-        "df": df,
-        "peak_frequency_hz": float(f[peak_idx]),
-        "f_left_hz": f_left,
-        "f_right_hz": f_right,
-    }
+    return (
+        linewidth,
+        resolution_limited,
+        {
+            "status": "ok",
+            "df": df,
+            "peak_frequency_hz": float(f[peak_idx]),
+            "f_left_hz": f_left,
+            "f_right_hz": f_right,
+        },
+    )
 
 
-def _fit_omega_vs_power(power: np.ndarray, omega: np.ndarray) -> tuple[float, float, dict[str, float | str]]:
+def _fit_omega_vs_power(
+    power: np.ndarray, omega: np.ndarray
+) -> tuple[float, float, dict[str, float | str]]:
     """Fit linear relation ``omega(p)=omega_0+N*p``."""
     p = np.asarray(power, dtype=float)
     w = np.asarray(omega, dtype=float)
@@ -99,10 +113,14 @@ def _fit_omega_vs_power(power: np.ndarray, omega: np.ndarray) -> tuple[float, fl
         return omega_0, 0.0, {"status": "constant_power", "n_points": int(p.size)}
 
     slope, intercept = np.polyfit(p, w, 1)
-    return float(intercept), float(slope), {
-        "status": "ok",
-        "n_points": int(p.size),
-    }
+    return (
+        float(intercept),
+        float(slope),
+        {
+            "status": "ok",
+            "n_points": int(p.size),
+        },
+    )
 
 
 def extract_st_parameters(
@@ -130,13 +148,19 @@ def extract_st_parameters(
         linewidth_resolution_limited = True
         linewidth_meta: dict[str, float | str] = {"status": "spectrum_empty"}
     else:
-        linewidth_hz, linewidth_resolution_limited, linewidth_meta = _estimate_linewidth_fwhm(
-            spectrum.frequencies,
-            spectrum.power,
+        linewidth_hz, linewidth_resolution_limited, linewidth_meta = (
+            _estimate_linewidth_fwhm(
+                spectrum.frequencies,
+                spectrum.power,
+            )
         )
-        f0_hz = float(linewidth_meta.get("peak_frequency_hz", spectrum.peak_frequency_hz))
+        f0_hz = float(
+            linewidth_meta.get("peak_frequency_hz", spectrum.peak_frequency_hz)
+        )
 
-    gamma_g = float(2.0 * np.pi * linewidth_hz) if np.isfinite(linewidth_hz) else float("nan")
+    gamma_g = (
+        float(2.0 * np.pi * linewidth_hz) if np.isfinite(linewidth_hz) else float("nan")
+    )
 
     n_points = amp.power.size
     fraction = float(np.clip(steady_state_fraction, 0.05, 1.0))

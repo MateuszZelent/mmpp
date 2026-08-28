@@ -3,7 +3,6 @@ Central logging configuration for MMPP using rich formatting optimized for dark 
 """
 
 import logging
-from typing import Optional
 
 try:
     from rich.console import Console
@@ -12,9 +11,9 @@ try:
 
     _RICH_AVAILABLE = True
 except ImportError:
-    Console = None  # type: ignore[assignment]
-    RichHandler = None  # type: ignore[assignment]
-    Theme = None  # type: ignore[assignment]
+    Console = None  # type: ignore[misc, assignment]
+    RichHandler = None  # type: ignore[misc, assignment]
+    Theme = None  # type: ignore[misc, assignment]
     _RICH_AVAILABLE = False
 
 # Create a custom theme optimized for dark backgrounds
@@ -37,11 +36,7 @@ dark_theme = (
 )
 
 # Create a shared console instance with dark theme
-console = (
-    Console(theme=dark_theme, force_terminal=True)
-    if _RICH_AVAILABLE
-    else None
-)
+console = Console(theme=dark_theme, force_terminal=True) if _RICH_AVAILABLE else None
 
 # Global flag to prevent multiple handler setups
 _logging_configured = False
@@ -50,7 +45,7 @@ _logging_configured = False
 def setup_mmpp_logging(
     debug: bool = False,
     logger_name: str = "mmpp",
-    level: Optional[int] = None,
+    level: int | None = None,
     use_dark_theme: bool = True,
 ) -> logging.Logger:
     """
@@ -71,7 +66,7 @@ def setup_mmpp_logging(
 
     # Configure root mmpp logger - allow reconfiguration if level/debug specified
     should_reconfigure = (level is not None or debug) and logger_name == "mmpp"
-    
+
     if should_reconfigure or (not _logging_configured and logger_name == "mmpp"):
         # Clear any existing handlers
         root_mmpp = logging.getLogger("mmpp")
@@ -103,7 +98,7 @@ def setup_mmpp_logging(
                 highlighter=None,  # Disable syntax highlighting
             )
         else:
-            rich_handler = logging.StreamHandler()
+            rich_handler = logging.StreamHandler()  # type: ignore[assignment]
 
         # Custom formatter that applies colors based on log level
         class DarkThemeFormatter(logging.Formatter):

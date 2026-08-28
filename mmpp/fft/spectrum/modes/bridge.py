@@ -32,6 +32,10 @@ class SpectrumModes:
                 "Use job[0].fft.modes or compute spectrum from job[0].fft.spectrum()."
             )
 
+        clone = getattr(interface, "_clone", None)
+        if callable(clone):
+            interface = clone()
+
         mode_ctx = getattr(self._spectrum, "_mode_context", {}) or {}
         dataset = mode_ctx.get("dset")
         slice_info = mode_ctx.get("slice_info")
@@ -39,6 +43,10 @@ class SpectrumModes:
             interface._dataset_context = dataset
         if slice_info is not None:
             interface._slice_context = slice_info
+        interface._preloaded_context = mode_ctx.get("preloaded_data")
+        interface._time_step_scale_context = float(mode_ctx.get("time_step_scale", 1.0))
+        interface._geometry_context = mode_ctx.get("view_geometry")
+        interface._index_plan_context = mode_ctx.get("index_plan")
 
         self._interface = interface
         return self._interface
@@ -147,6 +155,7 @@ class SpectrumModes:
             ("dpi", "None", "Figure resolution override"),
             ("save_path", "None", "Path for saving snapshots"),
         ]
+
         def _param_rows(params):
             return "".join(
                 f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
@@ -154,6 +163,7 @@ class SpectrumModes:
                 f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(desc)}</td></tr>"
                 for n, d, desc in params
             )
+
         example = (
             f"# Get mode at frequency\n"
             f"mode = spec.modes.at(f={example_freq})\n"
@@ -169,7 +179,7 @@ class SpectrumModes:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
             "FMR Mode Analysis</div>"
             "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"

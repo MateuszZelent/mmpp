@@ -16,7 +16,9 @@ from .filters import (
 def guess_layer_bounds(explorer: Any) -> tuple[int, int]:
     """Best-effort z-layer slider bounds."""
     try:
-        if explorer.analyzer is not None and getattr(explorer.analyzer, "modes_path", None):
+        if explorer.analyzer is not None and getattr(
+            explorer.analyzer, "modes_path", None
+        ):
             modes_path = explorer.analyzer.modes_path
             shape = explorer.analyzer.zarr_file[modes_path].shape
             n_layers = int(shape[1])
@@ -64,7 +66,9 @@ def read_controls(explorer: Any) -> None:
         log_scale=bool(explorer._controls["log_scale"].value),
     )
 
-    mode_key = "mode_components" if "mode_components" in explorer._controls else "components"
+    mode_key = (
+        "mode_components" if "mode_components" in explorer._controls else "components"
+    )
     selected_mode_components = list(explorer._controls[mode_key].value)
     explorer._mode_components = normalize_component_selection(
         selected_mode_components,
@@ -87,7 +91,9 @@ def read_controls(explorer: Any) -> None:
     explorer._show_peaks = bool(explorer._controls["show_peaks"].value)
     explorer._peak_prominence = float(explorer._controls["peak_prom"].value)
     explorer._peak_distance = int(explorer._controls["peak_dist"].value)
-    explorer._mode_row_types = resolve_mode_rows(str(explorer._controls["mode_view"].value))
+    explorer._mode_row_types = resolve_mode_rows(
+        str(explorer._controls["mode_view"].value)
+    )
 
     # Layout controls
     if "aspect" in explorer._controls:
@@ -123,7 +129,11 @@ def refresh_freq_slider_bounds(explorer: Any) -> None:
             slider.max = fmax
             default_step = max((fmax - fmin) / 2000.0, 1e-4)
             slider.step = default_step
-            current = float(explorer._current_frequency_ghz) if explorer._current_frequency_ghz is not None else fmin
+            current = (
+                float(explorer._current_frequency_ghz)
+                if explorer._current_frequency_ghz is not None
+                else fmin
+            )
             slider.value = float(np.clip(current, fmin, fmax))
         else:
             max_idx = max(int(freqs.size) - 1, 0)

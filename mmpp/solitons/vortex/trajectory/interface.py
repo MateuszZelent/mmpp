@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..._method_helpers import InteractiveNodeMixin
 from ..config import VortexConfig
 from .filtering import filter_trajectory
 from .orbit import OrbitInterface
@@ -11,8 +12,11 @@ from .phase import PhaseAnalyzer
 from .steady_state import extract_steady_state
 
 
-class TrajectoryInterface:
+class TrajectoryInterface(InteractiveNodeMixin):
     """Orbit and phase analysis namespace."""
+
+    _interactive_owner = "job[0].vortex.trajectory"
+    _interactive_nodes = frozenset({"filtered", "steady_state"})
 
     def __init__(
         self,
@@ -21,13 +25,14 @@ class TrajectoryInterface:
         slice_info: Any | None,
         config: VortexConfig,
         core_interface,
+        vortex_interface=None,
     ):
         self._job = job_result
         self._dataset_name = dataset_name
         self._slice_info = slice_info
         self._config = config
         self._core = core_interface
-        self._orbit = None
+        self._orbit: OrbitInterface | None = None
 
     @property
     def raw(self):
@@ -66,7 +71,6 @@ class TrajectoryInterface:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
-
         from html import escape as _esc
 
         from mmpp._repr_helpers import (

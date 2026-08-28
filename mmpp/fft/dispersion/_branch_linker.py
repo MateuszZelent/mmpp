@@ -22,13 +22,14 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
+
     from ..models import DispersionResult1D
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ def _find_peaks_column(
     min_distance_bins: int = 5,
     fmin_hz: float = 0.0,
     noise_floor: float = 0.0,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Find up to *n_peaks* spectral peaks in a single k‑bin.
 
     Works in **log₁₀(S)** space so that peaks at high |k| (where S is
@@ -93,22 +94,22 @@ def _find_peaks_column(
         for i in range(1, len(spec_log) - 1):
             if spec_log[i] > spec_log[i - 1] and spec_log[i] > spec_log[i + 1]:
                 # Rough prominence check: compare to min of neighbours
-                local_base = min(spec_log[max(0, i-3):i].min(),
-                                 spec_log[i+1:min(len(spec_log), i+4)].min())
+                local_base = min(
+                    spec_log[max(0, i - 3) : i].min(),
+                    spec_log[i + 1 : min(len(spec_log), i + 4)].min(),
+                )
                 if spec_log[i] - local_base >= min_prominence_log:
                     idx.append(i)
         idx = np.asarray(idx, dtype=int)
 
     if len(idx) == 0:
-        # Always return the dominant peak in the column (it exists since col_max > noise_floor)
-        idx = np.array([int(np.argmax(spec))])
+        return np.array([]), np.array([])
 
     # Sort by amplitude descending (in linear space), keep top n_peaks
     order = np.argsort(spec[idx])[::-1][:n_peaks]
     idx = idx[order]
 
     return f_sub[idx], spec[idx]
-
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -125,7 +126,7 @@ def _link_peaks(
     curr_amp: np.ndarray,
     max_df_hz: float,
     amp_weight: float = 0.3,
-) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
     """Link peaks between two adjacent k‑bins.
 
     Cost = |Δf| / max_df - amp_weight * (amp_curr / amp_max)
@@ -158,6 +159,7 @@ def _link_peaks(
 
     try:
         from scipy.optimize import linear_sum_assignment
+
         row_ind, col_ind = linear_sum_assignment(cost)
     except ImportError:
         row_ind, col_ind = _greedy_assign(cost)
@@ -166,7 +168,7 @@ def _link_peaks(
     matched_prev: set = set()
     matched_curr: set = set()
 
-    for r, c in zip(row_ind, col_ind):
+    for r, c in zip(row_ind, col_ind, strict=False):
         if cost[r, c] < _UNLINKED_COST:
             matches.append((int(r), int(c)))
             matched_prev.add(int(r))
@@ -178,7 +180,7 @@ def _link_peaks(
     return matches, unmatched_prev, unmatched_curr
 
 
-def _greedy_assign(cost: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def _greedy_assign(cost: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Simple greedy assignment fallback when scipy is unavailable."""
     rows, cols = [], []
     used_rows: set = set()
@@ -203,12 +205,13 @@ def _greedy_assign(cost: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 # Branch quality scoring
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _branch_quality_metrics(
     k_arr: np.ndarray,
     f_arr: np.ndarray,
     amp_arr: np.ndarray,
     *,
-    reference_k_axis: Optional[np.ndarray] = None,
+    reference_k_axis: np.ndarray | None = None,
     noise_floor: float = 0.0,
     gap_count: int = 0,
 ) -> dict[str, float]:
@@ -243,18 +246,24 @@ def _branch_quality_metrics(
         dk_total = dk_branch
     coverage = 1.0 if dk_total <= 0 else float(np.clip(dk_branch / dk_total, 0.0, 1.0))
 
-    # Smoothness: penalise strong jumps in f(k)
-    df = np.diff(f_arr)
-    f_range = float(f_arr.max() - f_arr.min()) + 1e-30
-    roughness = float(np.std(df)) / f_range
-    smoothness = 1.0 / (1.0 + 10.0 * roughness)
+    # Smoothness is based on the physical slope.  Using only diff(f) would
+    # penalise a smooth branch merely because some k-columns were skipped.
+    dk = np.diff(k_arr)
+    if np.any(dk == 0):
+        smoothness = 0.0
+    else:
+        slopes = np.diff(f_arr) / dk
+        slope_scale = float(np.mean(np.abs(slopes)))
+        span_scale = float(np.ptp(f_arr)) / max(float(np.ptp(k_arr)), 1e-30)
+        roughness = float(np.std(slopes)) / max(slope_scale, span_scale, 1e-30)
+        smoothness = 1.0 / (1.0 + 10.0 * roughness)
 
     # Amplitude: mean relative to max peak
     amp_max = float(amp_arr.max()) + 1e-30
     amp_score = float(amp_arr.mean()) / amp_max
 
     # Length bonus: log(n) to reward longer branches
-    length_score = math.log10(max(n, 1)) / 3.0  # log10(1000)/3 = 1.0
+    length_score = float(np.clip(math.log10(max(n, 1)) / 3.0, 0.0, 1.0))
 
     if noise_floor > 0:
         snr_linear = float(amp_arr.mean()) / float(noise_floor)
@@ -288,7 +297,7 @@ def _branch_quality(
     f_arr: np.ndarray,
     amp_arr: np.ndarray,
     *,
-    reference_k_axis: Optional[np.ndarray] = None,
+    reference_k_axis: np.ndarray | None = None,
 ) -> float:
     """Score a branch: higher = better. Used for final filtering."""
     return _branch_quality_metrics(
@@ -315,6 +324,26 @@ class TrackedBranch:
     quality: float = 0.0
     quality_metrics: dict[str, float] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self.k = np.asarray(self.k, dtype=float)
+        self.f_hz = np.asarray(self.f_hz, dtype=float)
+        self.amplitude = np.asarray(self.amplitude, dtype=float)
+        if any(value.ndim != 1 for value in (self.k, self.f_hz, self.amplitude)):
+            raise ValueError("Tracked branch arrays must be one-dimensional")
+        if not (self.k.size == self.f_hz.size == self.amplitude.size):
+            raise ValueError("Tracked branch arrays must have matching lengths")
+        if self.k.size == 0:
+            raise ValueError("Tracked branch must contain at least one point")
+        if not all(
+            np.all(np.isfinite(value)) for value in (self.k, self.f_hz, self.amplitude)
+        ):
+            raise ValueError("Tracked branch arrays must contain finite values")
+        if self.k.size > 1 and not np.all(np.diff(self.k) > 0):
+            raise ValueError("Tracked branch k coordinates must be strictly increasing")
+        self.quality = float(self.quality)
+        if not np.isfinite(self.quality) or not 0.0 <= self.quality <= 1.0:
+            raise ValueError("Tracked branch quality must be in [0, 1]")
+
     @property
     def f_ghz(self) -> np.ndarray:
         return self.f_hz / 1e9
@@ -339,9 +368,9 @@ class BranchesResult:
         Back-reference to the dispersion data.
     """
 
-    branches: List[TrackedBranch]
-    result: "DispersionResult1D"
-    rejected: List[dict[str, Any]] = field(default_factory=list)
+    branches: list[TrackedBranch]
+    result: DispersionResult1D
+    rejected: list[dict[str, Any]] = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.branches)
@@ -353,7 +382,7 @@ class BranchesResult:
         return iter(self.branches)
 
     @property
-    def plot(self) -> "BranchesPlotAccessor":
+    def plot(self) -> BranchesPlotAccessor:
         return BranchesPlotAccessor(self)
 
     def __repr__(self) -> str:
@@ -369,8 +398,6 @@ class BranchesResult:
         return "\n".join(lines)
 
     def _repr_html_(self) -> str:
-        from html import escape as _e
-
         rows = []
         for br in self.branches:
             f_min = float(br.f_hz.min()) / 1e9
@@ -416,7 +443,7 @@ class BranchesResult:
 
 
 def find_branches(
-    result: "DispersionResult1D",
+    result: DispersionResult1D,
     *,
     n_branches: int = 3,
     side: str = "both",
@@ -426,10 +453,10 @@ def find_branches(
     min_branch_length: int = 20,
     noise_floor_percentile: float = 5.0,
     min_quality: float = 0.10,
-    smooth_sigma: Optional[float] = 3.0,
-    fmin_hz: Union[float, str, None] = "auto",
+    smooth_sigma: float | None = 3.0,
+    fmin_hz: float | str | None = "auto",
     k_min_rad_um: float = 0.0,
-    k_max_rad_um: Optional[float] = None,
+    k_max_rad_um: float | None = None,
     analysis_source: str = "raw",
     positive_frequencies: bool = True,
 ) -> BranchesResult:
@@ -487,6 +514,53 @@ def find_branches(
     -------
     BranchesResult
     """
+    if (
+        isinstance(n_branches, (bool, np.bool_))
+        or int(n_branches) != n_branches
+        or int(n_branches) < 1
+    ):
+        raise ValueError("n_branches must be a positive integer")
+    if side not in {"positive", "negative", "both"}:
+        raise ValueError("side must be 'positive', 'negative', or 'both'")
+    prominence = float(min_prominence_log)
+    if not np.isfinite(prominence) or prominence < 0:
+        raise ValueError("min_prominence_log must be finite and non-negative")
+    if (
+        isinstance(min_peak_distance, (bool, np.bool_))
+        or int(min_peak_distance) != min_peak_distance
+        or int(min_peak_distance) < 1
+    ):
+        raise ValueError("min_peak_distance must be a positive integer")
+    max_df_value = float(max_df_ghz)
+    if not np.isfinite(max_df_value) or max_df_value <= 0:
+        raise ValueError("max_df_ghz must be finite and positive")
+    if (
+        isinstance(min_branch_length, (bool, np.bool_))
+        or int(min_branch_length) != min_branch_length
+        or int(min_branch_length) < 1
+    ):
+        raise ValueError("min_branch_length must be a positive integer")
+    noise_percentile = float(noise_floor_percentile)
+    if not np.isfinite(noise_percentile) or not 0 <= noise_percentile <= 100:
+        raise ValueError("noise_floor_percentile must be in [0, 100]")
+    quality_threshold = float(min_quality)
+    if not np.isfinite(quality_threshold) or not 0 <= quality_threshold <= 1:
+        raise ValueError("min_quality must be in [0, 1]")
+    smooth_value = 0.0 if smooth_sigma is None else float(smooth_sigma)
+    if not np.isfinite(smooth_value) or smooth_value < 0:
+        raise ValueError("smooth_sigma must be finite and non-negative")
+    k_min_value = float(k_min_rad_um)
+    if not np.isfinite(k_min_value) or k_min_value < 0:
+        raise ValueError("k_min_rad_um must be finite and non-negative")
+    if k_max_rad_um is None:
+        k_max_value = np.inf
+    else:
+        k_max_value = float(k_max_rad_um)
+        if not np.isfinite(k_max_value) or k_max_value < k_min_value:
+            raise ValueError(
+                "k_max_rad_um must be finite and not smaller than k_min_rad_um"
+            )
+
     if hasattr(result, "frequency_view"):
         S, k_axis, f_axis = result.frequency_view(
             positive_frequencies=positive_frequencies,
@@ -509,20 +583,46 @@ def find_branches(
             S = S[:, pos_f]
             f_axis = f_axis[pos_f]
 
-    f_search = f_axis
-    S_search = S
+    f_search = np.asarray(f_axis, dtype=float)
+    S_search = np.asarray(S, dtype=float)
+    if S_search.ndim != 2 or f_search.ndim != 1:
+        raise ValueError("Branch tracking expects S(Nk, Nf) and a 1D f-axis")
+    if f_search.size == 0 or S_search.shape[1] == 0:
+        raise ValueError("No frequencies available for branch tracking")
+    if S_search.shape != (len(k_axis), f_search.size):
+        raise ValueError("Spectrum shape must match k and frequency axes")
+    if not np.all(np.isfinite(S_search)) or not np.all(np.isfinite(f_search)):
+        raise ValueError("Branch tracking requires finite spectrum and frequencies")
+    if np.any(S_search < 0):
+        raise ValueError("Branch tracking requires non-negative spectral power")
+    frequency_order = np.argsort(f_search, kind="stable")
+    f_search = f_search[frequency_order]
+    S_search = S_search[:, frequency_order]
+    if f_search.size > 1 and np.any(np.diff(f_search) <= 0):
+        raise ValueError("Frequency axis must contain unique values")
 
     # fmin cutoff
     if fmin_hz == "auto":
-        fmin_cutoff = 0.05 * float(f_search.max()) if positive_frequencies else float(f_search.min())
-    elif fmin_hz is not None and fmin_hz > 0:
-        fmin_cutoff = float(fmin_hz)
-    else:
+        fmin_cutoff = (
+            0.05 * float(f_search.max())
+            if positive_frequencies
+            else float(f_search.min())
+        )
+    elif fmin_hz is None:
         fmin_cutoff = 0.0 if positive_frequencies else float(f_search.min())
+    else:
+        try:
+            fmin_cutoff = float(fmin_hz)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("fmin_hz must be 'auto', None, or a number") from exc
+        if not np.isfinite(fmin_cutoff):
+            raise ValueError("fmin_hz must be finite")
+        if positive_frequencies and fmin_cutoff < 0:
+            raise ValueError("fmin_hz cannot be negative for positive-frequency search")
 
     # k-side mask
-    k_min_rm = k_min_rad_um * 1e6
-    k_max_rm = (k_max_rad_um * 1e6) if k_max_rad_um is not None else np.inf
+    k_min_rm = k_min_value * 1e6
+    k_max_rm = k_max_value * 1e6
 
     if side == "positive":
         k_mask = (k_axis > k_min_rm) & (k_axis <= k_max_rm)
@@ -538,28 +638,35 @@ def find_branches(
     # Sort k indices by k value (left→right)
     k_idx = k_idx[np.argsort(k_axis[k_idx])]
 
-    max_df_hz = max_df_ghz * 1e9
+    max_df_hz = max_df_value * 1e9
 
     # ── Noise floor from percentile ──
     fmin_mask = f_search >= fmin_cutoff
+    if not np.any(fmin_mask):
+        raise ValueError("fmin_hz excludes every available frequency bin")
     S_for_snr = S_search[:, fmin_mask]
     positive_snr = S_for_snr[S_for_snr > 0]
     if positive_snr.size > 0:
-        noise_floor = float(np.percentile(positive_snr, noise_floor_percentile))
+        noise_floor = float(np.percentile(positive_snr, noise_percentile))
     else:
-        noise_floor = 0.0
+        raise ValueError("Dispersion spectrum has no positive spectral power")
 
     # Per-k noise gating
-    row_max = S_for_snr[k_idx].max(axis=1) if S_for_snr.shape[1] > 0 else np.zeros(len(k_idx))
+    row_max = (
+        S_for_snr[k_idx].max(axis=1) if S_for_snr.shape[1] > 0 else np.zeros(len(k_idx))
+    )
     snr_pass = row_max > noise_floor
 
     logger.info(
         "Branch search: %d k-bins, %d pass noise gate (floor=%.2e = P%.0f)",
-        len(k_idx), int(snr_pass.sum()), noise_floor, noise_floor_percentile,
+        len(k_idx),
+        int(snr_pass.sum()),
+        noise_floor,
+        noise_floor_percentile,
     )
 
     # ── Phase 1: per-column peak detection (log-scale) ──
-    peaks_per_col: List[Tuple[np.ndarray, np.ndarray]] = []
+    peaks_per_col: list[tuple[np.ndarray, np.ndarray]] = []
     for col_i, ik in enumerate(k_idx):
         if not snr_pass[col_i]:
             peaks_per_col.append((np.array([]), np.array([])))
@@ -567,9 +674,9 @@ def find_branches(
         fp, amp = _find_peaks_column(
             S_search[ik],
             f_search,
-            n_peaks=n_branches,
-            min_prominence_log=min_prominence_log,
-            min_distance_bins=min_peak_distance,
+            n_peaks=int(n_branches),
+            min_prominence_log=prominence,
+            min_distance_bins=int(min_peak_distance),
             fmin_hz=fmin_cutoff,
             noise_floor=noise_floor,
         )
@@ -657,17 +764,19 @@ def find_branches(
         finished.append(br)
 
     # ── Phase 3: build, score, filter ──
-    tracked: List[TrackedBranch] = []
-    rejected: List[dict[str, Any]] = []
+    tracked: list[TrackedBranch] = []
+    rejected: list[dict[str, Any]] = []
     for br_data in finished:
         n_pts = len(br_data["k"])
-        if n_pts < min_branch_length:
-            rejected.append({
-                "source_id": br_data.get("source_id"),
-                "reason": "min_branch_length",
-                "points": n_pts,
-                "threshold": min_branch_length,
-            })
+        if n_pts < int(min_branch_length):
+            rejected.append(
+                {
+                    "source_id": br_data.get("source_id"),
+                    "reason": "min_branch_length",
+                    "points": n_pts,
+                    "threshold": int(min_branch_length),
+                }
+            )
             continue
 
         k_arr = np.array(br_data["k"])
@@ -683,41 +792,59 @@ def find_branches(
             gap_count=int(br_data.get("gap_count", 0)),
         )
         quality = metrics["confidence"]
-        if quality < min_quality:
-            rejected.append({
-                "source_id": br_data.get("source_id"),
-                "reason": "min_quality",
-                "points": n_pts,
-                "quality": quality,
-                "threshold": min_quality,
-                "metrics": metrics,
-            })
+        if quality < quality_threshold:
+            rejected.append(
+                {
+                    "source_id": br_data.get("source_id"),
+                    "reason": "min_quality",
+                    "points": n_pts,
+                    "quality": quality,
+                    "threshold": quality_threshold,
+                    "metrics": metrics,
+                }
+            )
             continue
 
         # Optional smoothing
-        if smooth_sigma and smooth_sigma > 0 and len(f_arr) > 5:
-            try:
-                from scipy.ndimage import gaussian_filter1d
-                f_arr = gaussian_filter1d(f_arr, sigma=smooth_sigma)
-            except ImportError:
-                w = max(1, int(smooth_sigma * 2))
-                kernel = np.ones(w) / w
-                f_arr = np.convolve(f_arr, kernel, mode="same")
+        if smooth_value > 0 and len(f_arr) > 5:
+            window = min(7, len(f_arr) if len(f_arr) % 2 else len(f_arr) - 1)
+            half = window // 2
+            smoothed = np.empty_like(f_arr)
+            for index in range(len(f_arr)):
+                start = max(0, min(index - half, len(f_arr) - window))
+                stop = start + window
+                local_k = k_arr[start:stop] - k_arr[index]
+                coefficients = np.polyfit(local_k, f_arr[start:stop], deg=2)
+                estimate = float(np.polyval(coefficients, 0.0))
+                smoothed[index] = np.clip(
+                    estimate,
+                    float(np.min(f_arr[start:stop])),
+                    float(np.max(f_arr[start:stop])),
+                )
+            f_arr = smoothed
 
-        tracked.append(TrackedBranch(
-            k=k_arr, f_hz=f_arr, amplitude=amp_arr,
-            branch_id=len(tracked), quality=quality,
-            quality_metrics=metrics,
-        ))
+        tracked.append(
+            TrackedBranch(
+                k=k_arr,
+                f_hz=f_arr,
+                amplitude=amp_arr,
+                branch_id=len(tracked),
+                quality=quality,
+                quality_metrics=metrics,
+            )
+        )
 
     # Sort by quality (best first)
     tracked.sort(key=lambda b: b.quality, reverse=True)
-    for i, br in enumerate(tracked):
-        br.branch_id = i
+    for i, tracked_branch in enumerate(tracked):
+        tracked_branch.branch_id = i
 
     logger.info(
         "Found %d branches (from %d candidates, min_length=%d, min_quality=%.2f)",
-        len(tracked), len(finished), min_branch_length, min_quality,
+        len(tracked),
+        len(finished),
+        min_branch_length,
+        min_quality,
     )
 
     return BranchesResult(branches=tracked, result=result, rejected=rejected)
@@ -728,9 +855,50 @@ def find_branches(
 # ──────────────────────────────────────────────────────────────────────
 
 _BRANCH_COLORS = [
-    "#f43f5e", "#3b82f6", "#22c55e", "#eab308", "#a855f7",
-    "#06b6d4", "#f97316", "#ec4899", "#14b8a6", "#8b5cf6",
+    "#f43f5e",
+    "#3b82f6",
+    "#22c55e",
+    "#eab308",
+    "#a855f7",
+    "#06b6d4",
+    "#f97316",
+    "#ec4899",
+    "#14b8a6",
+    "#8b5cf6",
 ]
+
+
+def _branch_plot_values(
+    branch: TrackedBranch,
+    *,
+    kscale: str,
+    f_units: str,
+) -> tuple[np.ndarray, np.ndarray, str, str]:
+    """Convert one tracked branch to explicitly validated display units."""
+    if kscale not in {"rad_um", "rad_m", "rad", "cycles_m", "meter"}:
+        raise ValueError(
+            "kscale must be 'rad_um', 'rad_m'/'rad', or 'cycles_m'/'meter'"
+        )
+    if f_units not in {"GHz", "Hz"}:
+        raise ValueError("f_units must be 'GHz' or 'Hz'")
+
+    k_plot = branch.k.copy()
+    if kscale == "rad_um":
+        k_plot /= 1e6
+        k_label = r"$k$ [rad/μm]"
+    elif kscale in {"cycles_m", "meter"}:
+        k_plot /= 2 * np.pi
+        k_label = r"$k$ [m$^{-1}$]"
+    else:
+        k_label = r"$k$ [rad/m]"
+
+    f_plot = branch.f_hz.copy()
+    if f_units == "GHz":
+        f_plot /= 1e9
+        f_label = "f [GHz]"
+    else:
+        f_label = "f [Hz]"
+    return k_plot, f_plot, k_label, f_label
 
 
 class BranchesPlotAccessor:
@@ -739,75 +907,81 @@ class BranchesPlotAccessor:
     def __init__(self, branches_result: BranchesResult) -> None:
         self._br = branches_result
 
-    def __call__(self, **kwargs) -> Tuple["Figure", "Axes"]:
+    def __call__(self, **kwargs) -> tuple[Figure, Axes]:
         return self.heatmap(**kwargs)
 
     def heatmap(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
-        figsize: Tuple[float, float] = (12, 8),
-        dpi: Optional[int] = None,
+        figsize: tuple[float, float] = (12, 8),
+        dpi: int | None = None,
         cmap: str = "cmc.davos",
         kscale: str = "rad_um",
         f_units: str = "GHz",
-        fmax: Optional[float] = None,
+        fmax: float | None = None,
         lognorm: bool = True,
         linewidth: float = 2.0,
         show_legend: bool = True,
-        title: Optional[str] = None,
-        save: Union[str, Any, bool, None] = None,
-    ) -> Tuple["Figure", "Axes"]:
+        title: str | None = None,
+        save: str | Any | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """S(k,f) heatmap with all branches overlaid."""
         br = self._br
 
         fig, ax = br.result.plot.heatmap(
-            ax=ax, figsize=figsize, dpi=dpi, cmap=cmap,
-            kscale=kscale, f_units=f_units, fmax=fmax, lognorm=lognorm,
+            ax=ax,
+            figsize=figsize,
+            dpi=dpi,
+            cmap=cmap,
+            kscale=kscale,
+            f_units=f_units,
+            fmax=fmax,
+            lognorm=lognorm,
             title=title,
         )
 
         self.overlay(
-            ax, kscale=kscale, f_units=f_units,
-            linewidth=linewidth, show_legend=show_legend,
+            cast(Any, ax),
+            kscale=kscale,
+            f_units=f_units,
+            linewidth=linewidth,
+            show_legend=show_legend,
         )
 
         if save not in (None, False):
             br.result.plot._save_fig(fig, save, br.result)
 
-        return fig, ax
+        return fig, cast(Any, ax)
 
     def overlay(
         self,
-        ax: "Axes",
+        ax: Axes,
         *,
         kscale: str = "rad_um",
         f_units: str = "GHz",
         linewidth: float = 2.0,
-        colors: Optional[List[str]] = None,
+        colors: list[str] | None = None,
         show_legend: bool = True,
     ) -> None:
         """Overlay branch curves on existing axes."""
         colors = colors or _BRANCH_COLORS
+        width = float(linewidth)
+        if not np.isfinite(width) or width <= 0:
+            raise ValueError("linewidth must be finite and positive")
         br = self._br
 
         for branch in br.branches:
-            k_plot = branch.k.copy()
-            f_plot = branch.f_hz.copy()
-
-            if kscale == "rad_um":
-                k_plot = k_plot / 1e6
-            elif kscale == "meter":
-                k_plot = k_plot / (2 * np.pi)
-
-            if f_units == "GHz":
-                f_plot = f_plot / 1e9
+            k_plot, f_plot, _, _ = _branch_plot_values(
+                branch, kscale=kscale, f_units=f_units
+            )
 
             color = colors[branch.branch_id % len(colors)]
             ax.plot(
-                k_plot, f_plot,
+                k_plot,
+                f_plot,
                 color=color,
-                linewidth=linewidth,
+                linewidth=width,
                 alpha=0.9,
                 label=f"branch {branch.branch_id} (q={branch.quality:.2f})",
             )
@@ -817,14 +991,14 @@ class BranchesPlotAccessor:
 
     def branches(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
-        figsize: Tuple[float, float] = (10, 5),
-        dpi: Optional[int] = None,
+        figsize: tuple[float, float] = (10, 5),
+        dpi: int | None = None,
         kscale: str = "rad_um",
         f_units: str = "GHz",
-        title: Optional[str] = None,
-    ) -> Tuple["Figure", "Axes"]:
+        title: str | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plot only the extracted branches (no heatmap background)."""
         import matplotlib.pyplot as plt
 
@@ -832,33 +1006,39 @@ class BranchesPlotAccessor:
         colors = _BRANCH_COLORS
 
         if ax is None:
-            fig, ax = plt.subplots(
+            fig, ax = cast(Any, plt.subplots)(
                 figsize=figsize, **({} if dpi is None else {"dpi": dpi})
             )
         else:
             fig = ax.get_figure()
 
         for branch in br.branches:
-            k_plot = branch.k.copy()
-            f_plot = branch.f_hz.copy()
-
-            if kscale == "rad_um":
-                k_plot /= 1e6
-            if f_units == "GHz":
-                f_plot /= 1e9
+            k_plot, f_plot, k_label, f_label = _branch_plot_values(
+                branch, kscale=kscale, f_units=f_units
+            )
 
             color = colors[branch.branch_id % len(colors)]
             ax.plot(
-                k_plot, f_plot,
-                color=color, linewidth=2.0,
-                marker=".", markersize=3, alpha=0.8,
+                k_plot,
+                f_plot,
+                color=color,
+                linewidth=2.0,
+                marker=".",
+                markersize=3,
+                alpha=0.8,
                 label=f"branch {branch.branch_id} ({len(branch)} pts, q={branch.quality:.2f})",
             )
 
-        k_label = {"rad_um": r"$k$ [rad/μm]", "meter": r"$k$ [m$^{-1}$]"}.get(
-            kscale, r"$k$ [rad/m]"
-        )
-        f_label = "f [GHz]" if f_units == "GHz" else "f [Hz]"
+        if not br.branches:
+            # Validate units and establish labels even for an empty result.
+            placeholder = TrackedBranch(
+                k=np.array([0.0]),
+                f_hz=np.array([0.0]),
+                amplitude=np.array([0.0]),
+            )
+            _, _, k_label, f_label = _branch_plot_values(
+                placeholder, kscale=kscale, f_units=f_units
+            )
         ax.set_xlabel(k_label)
         ax.set_ylabel(f_label)
         ax.set_title(title or f"Tracked Branches ({len(br)} found)")
@@ -877,14 +1057,24 @@ class BranchesPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("BranchesPlotAccessor", [
-            (".heatmap(cmap='cmc.davos', lognorm=True)",
-             "S(k,f) heatmap with all branches overlaid",
-             "kscale, f_units, fmax, linewidth, show_legend, save."),
-            (".overlay(ax, kscale='rad_um')",
-             "Overlay branch curves on existing axes",
-             "f_units, linewidth, colors, show_legend."),
-            (".branches(kscale='rad_um')",
-             "Plot only extracted branches (no heatmap)",
-             "f_units, dpi, title."),
-        ])
+
+        return plot_accessor_html(
+            "BranchesPlotAccessor",
+            [
+                (
+                    ".heatmap(cmap='cmc.davos', lognorm=True)",
+                    "S(k,f) heatmap with all branches overlaid",
+                    "kscale, f_units, fmax, linewidth, show_legend, save.",
+                ),
+                (
+                    ".overlay(ax, kscale='rad_um')",
+                    "Overlay branch curves on existing axes",
+                    "f_units, linewidth, colors, show_legend.",
+                ),
+                (
+                    ".branches(kscale='rad_um')",
+                    "Plot only extracted branches (no heatmap)",
+                    "f_units, dpi, title.",
+                ),
+            ],
+        )

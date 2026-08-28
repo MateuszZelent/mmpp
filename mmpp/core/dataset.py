@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import zarr
-import numpy as np
 import inspect
 import warnings
 from html import escape as _html_escape
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
-from .constants import ArraySlice, FFT_AVAILABLE, RICH_AVAILABLE
+import numpy as np
+import zarr
+
+from .constants import FFT_AVAILABLE, RICH_AVAILABLE
 from .dataset_geometry import (
     IndexPlan,
     compose_index_keys,
@@ -19,12 +20,9 @@ from .dataset_geometry import (
 )
 
 if TYPE_CHECKING:
-    from .job import ZarrJobResult
-    from .mmpp import MMPP
-    from ..fft import FFT
+    pass
 
 if RICH_AVAILABLE:
-    from rich.columns import Columns
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -41,14 +39,18 @@ class DatasetSpecificFFT:
         dataset_name,
         mmpp_instance=None,
         slice_info=None,
-        materialized_data: Optional[np.ndarray] = None,
-        index_plan: Optional[IndexPlan] = None,
+        materialized_data: np.ndarray | None = None,
+        index_plan: IndexPlan | None = None,
+        time_step_scale: float = 1.0,
+        view_geometry=None,
     ):
         self.dataset_name = dataset_name
         self.slice_info = slice_info
         self._job_result = job_result  # Keep reference for path access
         self._materialized_data = materialized_data
         self._index_plan = index_plan
+        self._time_step_scale = float(time_step_scale)
+        self._view_geometry = view_geometry
         # Create regular FFT instance
         try:
             from ..fft import FFT
@@ -67,16 +69,31 @@ class DatasetSpecificFFT:
         attr = getattr(self._fft, name)
 
         if name == "dispersion" and attr is not None:
-            return attr.clone_for_dataset(self.dataset_name, slice_info=self.slice_info)
+            return attr.clone_for_dataset(
+                self.dataset_name,
+                slice_info=self.slice_info,
+                preloaded_data=self._materialized_data,
+                time_step_scale=self._time_step_scale,
+                view_geometry=self._view_geometry,
+            )
 
         if name == "transmission" and attr is not None:
-            return attr.clone_for_dataset(self.dataset_name, slice_info=self.slice_info)
+            return attr.clone_for_dataset(
+                self.dataset_name,
+                slice_info=self.slice_info,
+                preloaded_data=self._materialized_data,
+                time_step_scale=self._time_step_scale,
+                view_geometry=self._view_geometry,
+            )
 
         # For modes, we need to inject dataset context into the mode analyzer
         if name == "modes" and attr is not None:
             # Set dataset context on the modes interface
             attr._dataset_context = self.dataset_name
             attr._slice_context = self.slice_info
+            attr._preloaded_context = self._materialized_data
+            attr._time_step_scale_context = self._time_step_scale
+            attr._geometry_context = self._view_geometry
             return attr
 
         # Special handling for spectrum property (returns SpectrumHelper)
@@ -89,11 +106,17 @@ class DatasetSpecificFFT:
                     dataset_name,
                     slice_info,
                     materialized_data=None,
+                    time_step_scale=1.0,
+                    view_geometry=None,
+                    index_plan=None,
                 ):
                     self._spectrum_helper = spectrum_helper
                     self._dataset_name = dataset_name
                     self._slice_info = slice_info
                     self._materialized_data = materialized_data
+                    self._time_step_scale = float(time_step_scale)
+                    self._view_geometry = view_geometry
+                    self._index_plan = index_plan
 
                 def __call__(self, *args, **kwargs):
                     # Inject dataset and slice_info into kwargs
@@ -107,7 +130,20 @@ class DatasetSpecificFFT:
                         and "preloaded_data" not in kwargs
                     ):
                         kwargs["preloaded_data"] = self._materialized_data
-                    return self._spectrum_helper(*args, **kwargs)
+                    if (
+                        self._materialized_data is not None
+                        and self._time_step_scale != 1.0
+                        and "time_step_scale" not in kwargs
+                    ):
+                        kwargs["time_step_scale"] = self._time_step_scale
+                    result = self._spectrum_helper(*args, **kwargs)
+                    mode_context = getattr(result, "_mode_context", None)
+                    if isinstance(mode_context, dict):
+                        mode_context["preloaded_data"] = self._materialized_data
+                        mode_context["time_step_scale"] = self._time_step_scale
+                        mode_context["view_geometry"] = self._view_geometry
+                        mode_context["index_plan"] = self._index_plan
+                    return result
 
                 @property
                 def plot(self):
@@ -123,7 +159,13 @@ class DatasetSpecificFFT:
                     return getattr(self._spectrum_helper, "_repr_html_", lambda: None)()
 
             return SpectrumHelperWrapper(
-                attr, self.dataset_name, self.slice_info, self._materialized_data
+                attr,
+                self.dataset_name,
+                self.slice_info,
+                self._materialized_data,
+                self._time_step_scale,
+                self._view_geometry,
+                self._index_plan,
             )
 
         if callable(attr) and hasattr(attr, "__code__"):
@@ -249,7 +291,7 @@ class DatasetSpecificFFT:
             ]
 
             for name, desc, usage in module_info:
-                modules.append(f"  • ", style="dim")
+                modules.append("  • ", style="dim")
                 modules.append(f"{name:15}", style="bold green")
                 modules.append(f" {desc}\n", style="white")
                 modules.append(
@@ -473,9 +515,10 @@ class DatasetAwareWrapper:
         dataset_name,
         zarr_array,
         slice_info=None,
-        materialized_data: Optional[np.ndarray] = None,
+        materialized_data: np.ndarray | None = None,
         geometry_override=None,
-        index_plan: Optional[IndexPlan] = None,
+        index_plan: IndexPlan | None = None,
+        time_step_scale: float = 1.0,
     ):
         self.job_result = job_result
         self.dataset_name = dataset_name
@@ -483,11 +526,12 @@ class DatasetAwareWrapper:
         self.slice_info = slice_info  # Store slicing information
         self._materialized_data = materialized_data
         self._geometry_override = geometry_override
-        self._index_plan: Optional[IndexPlan] = index_plan
-        self._fft = None
-        self._solitons = None
-        self._analyze = None
-        self._plot = None
+        self._index_plan: IndexPlan | None = index_plan
+        self._time_step_scale = float(time_step_scale)
+        self._fft: Any | None = None
+        self._solitons: Any | None = None
+        self._analyze: Any | None = None
+        self._plot: Any | None = None
 
     # ------------------------------------------------------------------ #
     # Shape helpers                                                        #
@@ -507,6 +551,41 @@ class DatasetAwareWrapper:
         if shape is None:
             raise AttributeError("Cannot determine source shape for dataset wrapper")
         return tuple(int(v) for v in shape)
+
+    @staticmethod
+    def _materialized_time_step_scale(local_key: Any, fallback: float) -> float:
+        """Update source-time spacing from a local materialized-view selection.
+
+        ``nan`` marks reversed or irregular sampling. Such data remains usable
+        as an ndarray, but FFT entrypoints reject it because one scalar ``dt``
+        cannot describe its time axis.
+
+        The selection must be local to the current materialized view. Using a
+        composed :class:`IndexPlan` here loses the distinction between its
+        cumulative source stride and ``fallback`` and breaks chained slicing
+        after ``downsample()``.
+        """
+        if local_key is None:
+            return float(fallback)
+        key = local_key if isinstance(local_key, tuple) else (local_key,)
+        if not key:
+            return float(fallback)
+        token = key[0]
+        if isinstance(token, slice):
+            step = 1 if token.step is None else int(token.step)
+            return float(fallback) * step if step > 0 else float("nan")
+        if isinstance(token, (list, tuple, np.ndarray)):
+            indices = np.asarray(token)
+            if indices.dtype == bool:
+                indices = np.flatnonzero(indices)
+            indices = indices.astype(np.int64, copy=False).reshape(-1)
+            if indices.size < 2:
+                return float(fallback)
+            differences = np.diff(indices)
+            if np.all(differences == differences[0]) and differences[0] > 0:
+                return float(fallback) * float(differences[0])
+            return float("nan")
+        return float(fallback)
 
     def _current_shape(self) -> tuple[int, ...]:
         """Shape of the current view without forcing zarr materialization."""
@@ -571,7 +650,7 @@ class DatasetAwareWrapper:
         self,
         *,
         copy: bool = True,
-        dtype: Optional[Any] = None,
+        dtype: Any | None = None,
         keepdims: bool = False,
         squeeze: bool = False,
     ) -> np.ndarray:
@@ -593,13 +672,6 @@ class DatasetAwareWrapper:
         """
         # Warn on large materializations
         _LARGE_BYTES = 1 << 30  # 1 GiB
-        if self.is_lazy and self.estimated_nbytes > _LARGE_BYTES:
-            warnings.warn(
-                f"Materializing ~{self.estimated_nbytes / (1 << 30):.1f} GiB. "
-                "Consider using chunks, downsample, or .sel() first.",
-                stacklevel=2,
-            )
-
         if self.is_lazy and self.estimated_nbytes > _LARGE_BYTES:
             warnings.warn(
                 f"Materializing ~{self.estimated_nbytes / (1 << 30):.1f} GiB. "
@@ -648,7 +720,7 @@ class DatasetAwareWrapper:
         return self.numpy(copy=False)
 
     @property
-    def np(self) -> "WrapperNumpyGetter":
+    def np(self) -> WrapperNumpyGetter:
         """Eager NumPy getter — returns plain ``np.ndarray`` on indexing.
 
         This is a shorthand for chained slicing that immediately materializes
@@ -776,6 +848,9 @@ class DatasetAwareWrapper:
                 materialized_data=sliced,
                 geometry_override=geometry_override,
                 index_plan=new_plan,
+                time_step_scale=self._materialized_time_step_scale(
+                    local_normalized_key, self._time_step_scale
+                ),
             )
 
         if not has_only_simple_slices(local_normalized_key, ndim):
@@ -793,6 +868,9 @@ class DatasetAwareWrapper:
                 materialized_data=sliced,
                 geometry_override=geometry_override,
                 index_plan=new_plan,
+                time_step_scale=self._materialized_time_step_scale(
+                    local_normalized_key, self._time_step_scale
+                ),
             )
 
         base_shape = self._base_shape()
@@ -810,6 +888,7 @@ class DatasetAwareWrapper:
             materialized_data=None,
             geometry_override=self._geometry_override,
             index_plan=new_plan,
+            time_step_scale=self._time_step_scale,
         )
 
     @property
@@ -829,6 +908,7 @@ class DatasetAwareWrapper:
                 slice_info=self.slice_info,
                 materialized_data=self._materialized_data,
                 index_plan=self._index_plan,
+                time_step_scale=self._time_step_scale,
             )
         return self._fft
 
@@ -843,6 +923,7 @@ class DatasetAwareWrapper:
                 self.dataset_name,
                 getattr(self.job_result, "_mmpp_ref", None),
                 slice_info=self.slice_info,
+                dataset_view=self,
             )
         return self._solitons
 
@@ -881,7 +962,7 @@ class DatasetAwareWrapper:
 
     @property
     def skyrmion(self):
-        """Shortcut alias for self.solitons.skyrmion."""
+        """Shortcut alias for ``self.solitons.skyrmion``."""
         return self.solitons.skyrmion
 
     @property
@@ -1007,7 +1088,7 @@ class DatasetAwareWrapper:
         y: Any = None,
         x: Any = None,
         c: Any = None,
-    ) -> "DatasetAwareWrapper":
+    ) -> DatasetAwareWrapper:
         """Create an exact index-based analysis view without materialising the full dataset.
 
         This is intended for large simulation datasets such as ``m``, where plotting
@@ -1077,7 +1158,7 @@ class DatasetAwareWrapper:
     @staticmethod
     def _normalize_downsample_spec(
         spec: tuple[Any, ...], ndim: int
-    ) -> tuple[Optional[int], ...]:
+    ) -> tuple[int | None, ...]:
         if len(spec) == 1 and isinstance(spec[0], tuple):
             tokens = list(spec[0])
         elif len(spec) == 1 and isinstance(spec[0], list):
@@ -1108,7 +1189,7 @@ class DatasetAwareWrapper:
                 f"downsample spec must describe exactly {ndim} axes, got {len(tokens)}"
             )
 
-        normalized: list[Optional[int]] = []
+        normalized: list[int | None] = []
         for token in tokens:
             if token is None:
                 normalized.append(None)
@@ -1138,12 +1219,12 @@ class DatasetAwareWrapper:
 
     @staticmethod
     def _block_mean_downsample_axis(
-        array: np.ndarray,
+        array: Any,
         axis: int,
         target: int,
         *,
         strict: bool = False,
-    ) -> np.ndarray:
+    ) -> Any:
         source = int(array.shape[axis])
         if target <= 0:
             raise ValueError(f"Target size must be > 0 for axis {axis}, got {target}")
@@ -1184,7 +1265,7 @@ class DatasetAwareWrapper:
         reduced = array.reshape(new_shape).mean(axis=axis + 1, dtype=np.float32)
         return np.asarray(reduced, dtype=np.float32)
 
-    def downsample(self, *spec: Any, strict: bool = False) -> "DatasetAwareWrapper":
+    def downsample(self, *spec: Any, strict: bool = False) -> DatasetAwareWrapper:
         """Downsample current dataset view with block-mean aggregation.
 
         Parameters
@@ -1223,6 +1304,18 @@ class DatasetAwareWrapper:
         except Exception:
             geometry_override = None
 
+        effective_time_scale = self._time_step_scale
+        if self.slice_info is not None:
+            key = (
+                self.slice_info
+                if isinstance(self.slice_info, tuple)
+                else (self.slice_info,)
+            )
+            if key and isinstance(key[0], slice) and key[0].step is not None:
+                effective_time_scale *= abs(int(key[0].step))
+        if targets and targets[0] is not None and reduced.shape[0] > 0:
+            effective_time_scale *= max(int(array.shape[0] // reduced.shape[0]), 1)
+
         return DatasetAwareWrapper(
             self.job_result,
             self.dataset_name,
@@ -1230,9 +1323,10 @@ class DatasetAwareWrapper:
             slice_info=None,
             materialized_data=np.asarray(reduced, dtype=np.float32),
             geometry_override=geometry_override,
+            time_step_scale=effective_time_scale,
         )
 
-    def sel(self, *axes: str, **coords: Any) -> "DatasetAwareWrapper":
+    def sel(self, *axes: str, **coords: Any) -> DatasetAwareWrapper:
         """Select spatial region using physical coordinates, similar to discretisedfield.
 
         Examples
@@ -1265,6 +1359,10 @@ class DatasetAwareWrapper:
         key = [slice(None)] * len(self.shape)
         for axis, value in selections.items():
             axis_geom = geometry.axes[axis]
+            if axis_geom.index is None:
+                # Missing spatial dimensions are represented as one virtual
+                # cell. Selecting them must not slice the time/component axis.
+                continue
             if value == "__center__":
                 key[axis_geom.index] = axis_geom.center_slice()
                 continue
@@ -1306,6 +1404,7 @@ class DatasetAwareWrapper:
     def _repr_html_(self) -> str:
         """Rich HTML card for Jupyter notebooks."""
         import uuid as _uuid
+
         from mmpp._repr_helpers import (
             NODE_COLOR_ADVANCED,
             NODE_COLOR_ANALYSIS,
@@ -1473,7 +1572,7 @@ class WrapperNumpyGetter:
     >>> job[0].m[0, ...].np[..., 0]   # shape (ny, nx)
     """
 
-    def __init__(self, wrapper: "DatasetAwareWrapper") -> None:
+    def __init__(self, wrapper: DatasetAwareWrapper) -> None:
         self._wrapper = wrapper
 
     def __getitem__(self, key) -> np.ndarray:
@@ -1563,7 +1662,7 @@ class NumpyGetter:
         try:
             member = self._job_result._get_zarr_member(name)
         except NameError:
-            raise AttributeError(f"Dataset '{name}' not found in zarr file")
+            raise AttributeError(f"Dataset '{name}' not found in zarr file") from None
 
         if isinstance(member, zarr.Array):
             return NumpyDatasetWrapper(self._job_result, name, member)

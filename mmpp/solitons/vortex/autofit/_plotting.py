@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -89,7 +90,9 @@ _TABLE_SPECS: tuple[tuple[str, str, float, float, str], ...] = (
 )
 
 
-def _acceptance_label(numerical: float, analytical: float, *, atol: float, rtol: float) -> str:
+def _acceptance_label(
+    numerical: float, analytical: float, *, atol: float, rtol: float
+) -> str:
     if not np.isfinite(numerical) or not np.isfinite(analytical):
         return "N/A"
     delta = abs(float(analytical) - float(numerical))
@@ -111,15 +114,30 @@ def _build_comparison_table(
 
     for key, label, atol, rtol, fmt in _TABLE_SPECS:
         num_value = {
-            "freq_ghz": float(getattr(numerical_features, "dominant_freq_hz", np.nan)) * 1e-9,
-            "radius_nm": float(getattr(numerical_features, "mean_radius", np.nan)) * 1e9,
-            "core_distance_nm": float(getattr(numerical_features, "mean_core_distance", np.nan)) * 1e9,
-            "max_radius_nm": float(getattr(numerical_features, "max_radius", np.nan)) * 1e9,
-            "max_core_distance_nm": float(getattr(numerical_features, "max_core_distance", np.nan)) * 1e9,
-            "drift_ratio": float(getattr(numerical_features, "radius_drift_ratio", np.nan)),
+            "freq_ghz": float(getattr(numerical_features, "dominant_freq_hz", np.nan))
+            * 1e-9,
+            "radius_nm": float(getattr(numerical_features, "mean_radius", np.nan))
+            * 1e9,
+            "core_distance_nm": float(
+                getattr(numerical_features, "mean_core_distance", np.nan)
+            )
+            * 1e9,
+            "max_radius_nm": float(getattr(numerical_features, "max_radius", np.nan))
+            * 1e9,
+            "max_core_distance_nm": float(
+                getattr(numerical_features, "max_core_distance", np.nan)
+            )
+            * 1e9,
+            "drift_ratio": float(
+                getattr(numerical_features, "radius_drift_ratio", np.nan)
+            ),
         }[key]
         ana_value = float(record.get(key, np.nan))
-        delta = ana_value - num_value if np.isfinite(num_value) and np.isfinite(ana_value) else np.nan
+        delta = (
+            ana_value - num_value
+            if np.isfinite(num_value) and np.isfinite(ana_value)
+            else np.nan
+        )
         rows.append(
             [
                 fmt.format(num_value) if np.isfinite(num_value) else "N/A",
@@ -150,44 +168,140 @@ def _draw_dashboard(
     last_record = records[-1] if records else None
 
     if arrays["eval"].size:
-        ax_loss.plot(arrays["eval"], arrays["loss"], color="#94a3b8", linewidth=1.0, label="loss")
-        ax_loss.plot(arrays["eval"], arrays["best_loss"], color="#2563eb", linewidth=1.6, label="best")
+        ax_loss.plot(
+            arrays["eval"], arrays["loss"], color="#94a3b8", linewidth=1.0, label="loss"
+        )
+        ax_loss.plot(
+            arrays["eval"],
+            arrays["best_loss"],
+            color="#2563eb",
+            linewidth=1.6,
+            label="best",
+        )
         ax_loss.set_yscale("log")
         ax_loss.set_xlabel("Evaluation")
         ax_loss.set_ylabel("Loss")
         ax_loss.set_title("Convergence")
         ax_loss.legend(loc="best")
     else:
-        ax_loss.text(0.5, 0.5, "No evaluations yet", transform=ax_loss.transAxes, ha="center", va="center")
+        ax_loss.text(
+            0.5,
+            0.5,
+            "No evaluations yet",
+            transform=ax_loss.transAxes,
+            ha="center",
+            va="center",
+        )
 
     if arrays["eval"].size:
         target_freq = float(getattr(numerical_features, "dominant_freq_hz", 0.0)) * 1e-9
         target_r = float(getattr(numerical_features, "mean_radius", 0.0)) * 1e9
-        target_rmax = float(getattr(numerical_features, "max_radius", 0.0)) * 1e9
-        target_core = float(getattr(numerical_features, "mean_core_distance", 0.0)) * 1e9
-        target_core_max = float(getattr(numerical_features, "max_core_distance", 0.0)) * 1e9
+        float(getattr(numerical_features, "max_radius", 0.0)) * 1e9
+        target_core = (
+            float(getattr(numerical_features, "mean_core_distance", 0.0)) * 1e9
+        )
+        target_core_max = (
+            float(getattr(numerical_features, "max_core_distance", 0.0)) * 1e9
+        )
         target_drift = float(getattr(numerical_features, "radius_drift_ratio", 1.0))
 
-        ax_metrics.plot(arrays["eval"], arrays["freq_ghz"], "o-", color="#2563eb", markersize=3, label="f ana [GHz]")
-        ax_metrics.axhline(target_freq, color="#2563eb", linestyle="--", linewidth=1, alpha=0.6, label="f num")
+        ax_metrics.plot(
+            arrays["eval"],
+            arrays["freq_ghz"],
+            "o-",
+            color="#2563eb",
+            markersize=3,
+            label="f ana [GHz]",
+        )
+        ax_metrics.axhline(
+            target_freq,
+            color="#2563eb",
+            linestyle="--",
+            linewidth=1,
+            alpha=0.6,
+            label="f num",
+        )
 
-        ax_metrics.plot(arrays["eval"], arrays["radius_nm"], "o-", color="#dc2626", markersize=3, label="r ana [nm]")
-        ax_metrics.axhline(target_r, color="#dc2626", linestyle="--", linewidth=1, alpha=0.6, label="r num")
+        ax_metrics.plot(
+            arrays["eval"],
+            arrays["radius_nm"],
+            "o-",
+            color="#dc2626",
+            markersize=3,
+            label="r ana [nm]",
+        )
+        ax_metrics.axhline(
+            target_r,
+            color="#dc2626",
+            linestyle="--",
+            linewidth=1,
+            alpha=0.6,
+            label="r num",
+        )
 
-        ax_metrics.plot(arrays["eval"], arrays["core_distance_nm"], "o-", color="#16a34a", markersize=3, label="|r| ana [nm]")
-        ax_metrics.axhline(target_core, color="#16a34a", linestyle="--", linewidth=1, alpha=0.6, label="|r| num")
+        ax_metrics.plot(
+            arrays["eval"],
+            arrays["core_distance_nm"],
+            "o-",
+            color="#16a34a",
+            markersize=3,
+            label="|r| ana [nm]",
+        )
+        ax_metrics.axhline(
+            target_core,
+            color="#16a34a",
+            linestyle="--",
+            linewidth=1,
+            alpha=0.6,
+            label="|r| num",
+        )
 
-        ax_metrics.plot(arrays["eval"], arrays["max_core_distance_nm"], "o-", color="#ea580c", markersize=3, label="|r|max ana [nm]")
-        ax_metrics.axhline(target_core_max, color="#ea580c", linestyle="--", linewidth=1, alpha=0.4, label="|r|max num")
+        ax_metrics.plot(
+            arrays["eval"],
+            arrays["max_core_distance_nm"],
+            "o-",
+            color="#ea580c",
+            markersize=3,
+            label="|r|max ana [nm]",
+        )
+        ax_metrics.axhline(
+            target_core_max,
+            color="#ea580c",
+            linestyle="--",
+            linewidth=1,
+            alpha=0.4,
+            label="|r|max num",
+        )
 
-        ax_metrics.plot(arrays["eval"], arrays["drift_ratio"], "o-", color="#7c3aed", markersize=3, label="drift ana")
-        ax_metrics.axhline(target_drift, color="#7c3aed", linestyle="--", linewidth=1, alpha=0.6, label="drift num")
+        ax_metrics.plot(
+            arrays["eval"],
+            arrays["drift_ratio"],
+            "o-",
+            color="#7c3aed",
+            markersize=3,
+            label="drift ana",
+        )
+        ax_metrics.axhline(
+            target_drift,
+            color="#7c3aed",
+            linestyle="--",
+            linewidth=1,
+            alpha=0.6,
+            label="drift num",
+        )
 
         ax_metrics.set_xlabel("Evaluation")
         ax_metrics.set_title("Frequency / orbit / core distance / stability")
         ax_metrics.legend(loc="best", fontsize=8, ncol=2)
     else:
-        ax_metrics.text(0.5, 0.5, "No metric history", transform=ax_metrics.transAxes, ha="center", va="center")
+        ax_metrics.text(
+            0.5,
+            0.5,
+            "No metric history",
+            transform=ax_metrics.transAxes,
+            ha="center",
+            va="center",
+        )
 
     def _centered_xy(traj):
         if traj is None:
@@ -208,7 +322,11 @@ def _draw_dashboard(
 
     from matplotlib.patches import Circle
 
-    if disk_radius is not None and np.isfinite(float(disk_radius)) and float(disk_radius) > 0.0:
+    if (
+        disk_radius is not None
+        and np.isfinite(float(disk_radius))
+        and float(disk_radius) > 0.0
+    ):
         ax_orbit.add_patch(
             Circle(
                 (0.0, 0.0),
@@ -234,7 +352,14 @@ def _draw_dashboard(
             )
     if analytical_trajectory is not None:
         x_ana, y_ana = _centered_xy(analytical_trajectory)
-        ax_orbit.plot(x_ana, y_ana, color="#dc2626", linestyle="--", linewidth=1.5, label="analytical")
+        ax_orbit.plot(
+            x_ana,
+            y_ana,
+            color="#dc2626",
+            linestyle="--",
+            linewidth=1.5,
+            label="analytical",
+        )
         if np.asarray(x_ana).size:
             ax_orbit.scatter(
                 [float(np.asarray(x_ana)[0])],
@@ -259,11 +384,14 @@ def _draw_dashboard(
         numerical_features=numerical_features,
         record=last_record,
     )
-    if rows:
+    if rows and last_record is not None:
         eval_id = int(last_record.get("eval", 0))
         loss = float(last_record.get("loss", np.nan))
         best = float(last_record.get("best_loss", np.nan))
-        ax_text.set_title(f"Latest comparison  eval={eval_id}  loss={loss:.4g}  best={best:.4g}", fontsize=10)
+        ax_text.set_title(
+            f"Latest comparison  eval={eval_id}  loss={loss:.4g}  best={best:.4g}",
+            fontsize=10,
+        )
         table = ax_text.table(
             cellText=rows,
             rowLabels=row_labels,
@@ -377,6 +505,9 @@ class AutofitLiveMonitor:
         if not force and (int(record.get("eval", 0)) % self.update_every != 0):
             return
 
+        assert self.axes is not None
+        assert self.fig is not None
+        assert self._display_handle is not None
         _draw_dashboard(
             self.axes,
             records=self._records,
@@ -406,13 +537,19 @@ class AutofitLiveMonitor:
             title="Autofit live dashboard",
         )
         try:
+            assert self._display_handle is not None
             self._display_handle.update(self.fig)
         except Exception:
             pass
 
 
-class AutofitPlotAccessor:
+class AutofitPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`VortexAutofitResult`."""
+
+    _interactive_owner = "result.plt"
+    _interactive_nodes = frozenset(
+        {"convergence", "parameter_comparison", "loss_breakdown", "dashboard"}
+    )
 
     def __init__(self, result: VortexAutofitResult):
         self._result = result
@@ -426,8 +563,14 @@ class AutofitPlotAccessor:
 
         history = self._result.diagnostics.loss_history
         if not history:
-            ax.text(0.5, 0.5, "No loss history", transform=ax.transAxes,
-                    ha="center", va="center")
+            ax.text(
+                0.5,
+                0.5,
+                "No loss history",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+            )
             return ax
 
         ax.plot(range(len(history)), history, **plot_kwargs)
@@ -458,8 +601,14 @@ class AutofitPlotAccessor:
 
         names = list(self._result.fitted_params)
         if not names:
-            ax.text(0.5, 0.5, "No fitted params", transform=ax.transAxes,
-                    ha="center", va="center")
+            ax.text(
+                0.5,
+                0.5,
+                "No fitted params",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+            )
             return ax
 
         initial_vals = [self._result.initial_params.get(n, 0) for n in names]
@@ -504,7 +653,9 @@ class AutofitPlotAccessor:
         records = list(self._result.diagnostics.evaluation_records)
         numerical_features = extract_features(
             self._result.comparison.numerical,
-            reference_radius=float(self._result.comparison.resolved_params.get("R", np.nan)),
+            reference_radius=float(
+                self._result.comparison.resolved_params.get("R", np.nan)
+            ),
         )
         if axes is None:
             if fig is None:
@@ -525,14 +676,23 @@ class AutofitPlotAccessor:
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
 
-        return plot_accessor_html("AutofitPlotAccessor", [
-            (".convergence()", "Loss vs evaluation number (log scale)",
-             "Shows baseline as dashed line."),
-            (".parameter_comparison()", "Bar chart: initial vs fitted values",
-             ""),
-            (".loss_breakdown()", "Horizontal bars of loss components",
-             ""),
-            (".dashboard()", "2x2 dashboard with convergence, metrics and orbit",
-             "Uses recorded evaluation history."),
-        ])
+        return plot_accessor_html(
+            "AutofitPlotAccessor",
+            [
+                (
+                    ".convergence()",
+                    "Loss vs evaluation number (log scale)",
+                    "Shows baseline as dashed line.",
+                ),
+                (".parameter_comparison()", "Bar chart: initial vs fitted values", ""),
+                (".loss_breakdown()", "Horizontal bars of loss components", ""),
+                (
+                    ".dashboard()",
+                    "2x2 dashboard with convergence, metrics and orbit",
+                    "Uses recorded evaluation history.",
+                ),
+            ],
+        )
+
+
 __all__ = ["AutofitPlotAccessor", "AutofitLiveMonitor"]

@@ -267,6 +267,60 @@ Keep explicit calls to `detect`, `measure_size`, and `size.fit` in
 reproducible scripts and record frame, layer, mask, method, `Q`, fit
 diagnostics, and quality flags alongside plots or exported tables.
 
+### Interactive inspection
+
+For a single simulation, open the combined snapshot/topology/profile viewer:
+
+```python
+dashboard = job[0].skyrmion.interactive(
+    initial_frame=0,
+    z_layer=0,
+    initial_module="analysis",
+    topology_method="berg_luscher",
+    size_method="auto",
+)
+```
+
+Switch the same dashboard to the spectrum or spatial-mode view, or open the
+combined FFT viewer directly:
+
+```python
+job[0].skyrmion.interactive(initial_module="spectrum")
+job[0].skyrmion.interactive(initial_module="modes")
+job[0].skyrmion.interactive_spectrum(dpi=140)
+job[0].vortex.interactive_modes(dpi=140)
+```
+
+For a folder, select one job for visual inspection while retaining the generic
+batch tables for the complete sweep:
+
+```python
+jobs[:].skyrmion.interactive(index=0, sort_by="Dind")
+curve = jobs[:].skyrmion.analyze("size", parameter="Dind")
+```
+
+Vortex core-gyration spectra have a callable notebook helper.  Evaluating it
+without parentheses displays usage; calling it computes the spectrum:
+
+```python
+job[0].vortex.spectrum.gyration
+spec = job[0].vortex.spectrum.gyration(method="welch")
+job[0].vortex.spectrum.gyration.interactive()
+```
+
+To inspect spatial magnetisation modes at the detected gyration frequency,
+use the linked FFT workflow:
+
+```python
+job[0].vortex.spectrum.gyration.interactive_modes()
+mode = job[0].vortex.spectrum.gyration.mode()
+mode.plot.imshow(component="z", value="magnitude")
+```
+
+This is distinct from `job[0].vortex.modes`, which classifies peaks using the
+core trajectory and therefore returns labels/frequencies rather than complex
+spatial mode maps.
+
 For background on skyrmion topological charge and size conventions, see Wang
 et al., *Communications Physics* (2018),
 [doi:10.1038/s42005-018-0029-0](https://doi.org/10.1038/s42005-018-0029-0),

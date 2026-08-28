@@ -1,8 +1,18 @@
 """Standalone function to overlay experimental transmission measurements."""
 
-import pandas as pd
+from __future__ import annotations
+
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+
+    class _MissingPandas:
+        def __getattr__(self, _name: str):
+            raise ImportError("Experimental transmission table loading requires pandas")
+
+    pd = _MissingPandas()  # type: ignore[assignment]
 from pathlib import Path
-from typing import Optional, Union, Any
+from typing import Any
 
 try:  # pragma: no cover - matplotlib is an optional dependency at runtime
     from matplotlib.axes import Axes
@@ -15,19 +25,19 @@ except ImportError:  # pragma: no cover
 def overlay_experimental_transmission(
     ax: Axes,
     *,
-    d: Union[int, str],
-    p: Union[int, str],
-    base_path: Union[str, Path] = "experiment",
+    d: int | str,
+    p: int | str,
+    base_path: str | Path = "experiment",
     width_tag: str = "w5",
     freq_filename: str = "freq.txt",
     freq_file_unit: str = "GHz",
-    target_freq_unit: Optional[str] = None,
-    bias_index: Optional[float] = None,
-    column: Union[int, str, None] = None,
+    target_freq_unit: str | None = None,
+    bias_index: float | None = None,
+    column: int | str | None = None,
     reverse_frequency: bool = True,
     color: str = "tab:red",
     linewidth: float = 0.8,
-    label: Optional[str] = None,
+    label: str | None = None,
     **plot_kwargs,
 ) -> Line2D:
     """Overlay experimental transmission trace on a transmission cross-section.
@@ -101,20 +111,30 @@ def overlay_experimental_transmission(
             try:
                 selected_column = spectrum_df.columns[column]
             except IndexError as exc:
-                raise ValueError(f"Column index {column} is out of range for experimental data.") from exc
+                raise ValueError(
+                    f"Column index {column} is out of range for experimental data."
+                ) from exc
         else:
             if column not in spectrum_df.columns:
-                raise ValueError(f"Column '{column}' not found in experimental data. Available columns: {list(spectrum_df.columns)!r}")
+                raise ValueError(
+                    f"Column '{column}' not found in experimental data. Available columns: {list(spectrum_df.columns)!r}"
+                )
             selected_column = column
     elif bias_index is not None:
         label = f"{int(2 * bias_index) - 1}"
         if label in spectrum_df.columns:
             selected_column = label
         else:
-            raise ValueError(f"Could not resolve column for bias_index={bias_index}. Available labels: {list(spectrum_df.columns)!r}")
+            raise ValueError(
+                f"Could not resolve column for bias_index={bias_index}. Available labels: {list(spectrum_df.columns)!r}"
+            )
     else:
         # Default to first numeric column
-        numeric_columns = [col for col in spectrum_df.columns if pd.api.types.is_numeric_dtype(spectrum_df[col])]
+        numeric_columns = [
+            col
+            for col in spectrum_df.columns
+            if pd.api.types.is_numeric_dtype(spectrum_df[col])
+        ]
         if numeric_columns:
             selected_column = numeric_columns[0]
         else:
@@ -141,7 +161,7 @@ def overlay_experimental_transmission(
     if label is None:
         label = f"exp d={d} p={p}"
 
-    line, = ax.plot(
+    (line,) = ax.plot(
         amplitudes,
         frequencies,
         color=color,

@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import colorsys
-import warnings
-from typing import Any, Optional, Union
+from typing import Any
 
 import numpy as np
 
-from .dataset_geometry import _dataset_attrs, resolve_dataset_geometry
+from .dataset_geometry import (
+    _dataset_attrs,
+    resolve_dataset_geometry,
+    source_spatial_axes,
+)
+from .dataset_plotting_core import DatasetPlotCoreMixin
 
-class DatasetPlotK3DMixin:
+
+class DatasetPlotK3DMixin(DatasetPlotCoreMixin):
     @staticmethod
     def _k3d_dataset_attrs(dataset_obj) -> Any:
         return _dataset_attrs(dataset_obj)
 
     @staticmethod
-    def _k3d_source_shape(dataset_obj) -> Optional[tuple[int, ...]]:
+    def _k3d_source_shape(dataset_obj) -> tuple[int, ...] | None:
         source = getattr(dataset_obj, "zarr_array", None)
         shape = getattr(source, "shape", None)
         if shape is None:
@@ -27,35 +32,32 @@ class DatasetPlotK3DMixin:
 
     @staticmethod
     def _k3d_source_spatial_axes(
-        source_shape: Optional[tuple[int, ...]],
-    ) -> Optional[dict[str, int]]:
-        if source_shape is None:
-            return None
-
-        ndim = len(source_shape)
-        if ndim == 5:
-            return {"x": 3, "y": 2, "z": 1}
-        if ndim == 4:
-            if int(source_shape[-1]) <= 4:
-                return {"x": 2, "y": 1, "z": 0}
-            return {"x": 3, "y": 2, "z": 1}
-        if ndim == 3:
-            return {"x": 2, "y": 1, "z": 0}
-        return None
+        source_shape: tuple[int, ...] | None,
+        attrs: Any = None,
+    ) -> dict[str, int | None] | None:
+        return source_spatial_axes(source_shape, attrs)
 
     def _k3d_source_spatial_shape(
         self,
         dataset_obj=None,
-    ) -> Optional[tuple[int, int, int]]:
+    ) -> tuple[int, int, int] | None:
         obj = self._dataset if dataset_obj is None else dataset_obj
         source_shape = self._k3d_source_shape(obj)
-        spatial_axes = self._k3d_source_spatial_axes(source_shape)
+        spatial_axes = self._k3d_source_spatial_axes(
+            source_shape, self._k3d_dataset_attrs(obj)
+        )
         if source_shape is None or spatial_axes is None:
             return None
         return (
-            int(source_shape[spatial_axes["z"]]),
-            int(source_shape[spatial_axes["y"]]),
-            int(source_shape[spatial_axes["x"]]),
+            int(source_shape[spatial_axes["z"]])
+            if spatial_axes["z"] is not None
+            else 1,
+            int(source_shape[spatial_axes["y"]])
+            if spatial_axes["y"] is not None
+            else 1,
+            int(source_shape[spatial_axes["x"]])
+            if spatial_axes["x"] is not None
+            else 1,
         )
 
     @staticmethod
@@ -63,7 +65,7 @@ class DatasetPlotK3DMixin:
         attrs: Any,
         *,
         key: str,
-    ) -> Optional[tuple[float, float, float]]:
+    ) -> tuple[float, float, float] | None:
         if not hasattr(attrs, "get"):
             return None
         raw = attrs.get(key, None)
@@ -174,17 +176,25 @@ class DatasetPlotK3DMixin:
 
     def _k3d_resolve_geometry(
         self,
-        shape_zyx: tuple[int, int, int],
+        shape_zyx: tuple[int, ...],
         *,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         dataset_obj=None,
         include_slice: bool = True,
-    ) -> tuple[list[float], list[str], float, tuple[float, float, float], tuple[float, float, float]]:
+    ) -> tuple[
+        list[float],
+        list[str],
+        float,
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ]:
         """Resolve k3d bounds/labels for a volume with shape (z, y, x)."""
         obj = self._dataset if dataset_obj is None else dataset_obj
         geometry = resolve_dataset_geometry(obj, include_slice=include_slice)
         if geometry.axes:
-            x_min_m, x_max_m, y_min_m, y_max_m, z_min_m, z_max_m = geometry.bounds_xyz_m()
+            x_min_m, x_max_m, y_min_m, y_max_m, z_min_m, z_max_m = (
+                geometry.bounds_xyz_m()
+            )
             dx_eff_m, dy_eff_m, dz_eff_m = geometry.cell_xyz_m()
             x_name, y_name, z_name = geometry.axis_names_xyz()
         else:
@@ -293,7 +303,7 @@ class DatasetPlotK3DMixin:
     def _k3d_expand_singleton_bounds_to_source(
         self,
         bounds: list[float],
-        shape_zyx: tuple[int, int, int],
+        shape_zyx: tuple[int, ...],
         *,
         multiplier: float,
         dataset_obj=None,
@@ -361,28 +371,32 @@ class DatasetPlotK3DMixin:
         the scene bounding box to clean grid boundaries.
         """
         import math
+
         try:
             import k3d
         except ImportError:
             return
 
         snapped = [
-            math.floor(bounds[0]),   # x_min
-            math.ceil(bounds[1]),    # x_max
-            math.floor(bounds[2]),   # y_min
-            math.ceil(bounds[3]),    # y_max
-            math.floor(bounds[4]),   # z_min
-            math.ceil(bounds[5]),    # z_max
+            math.floor(bounds[0]),  # x_min
+            math.ceil(bounds[1]),  # x_max
+            math.floor(bounds[2]),  # y_min
+            math.ceil(bounds[3]),  # y_max
+            math.floor(bounds[4]),  # z_min
+            math.ceil(bounds[5]),  # z_max
         ]
 
         # Only add anchors if snapping actually changed any bound
         if snapped == [float(b) for b in bounds]:
             return
 
-        anchor = np.array([
-            [snapped[0], snapped[2], snapped[4]],
-            [snapped[1], snapped[3], snapped[5]],
-        ], dtype=np.float32)
+        anchor = np.array(
+            [
+                [snapped[0], snapped[2], snapped[4]],
+                [snapped[1], snapped[3], snapped[5]],
+            ],
+            dtype=np.float32,
+        )
         try:
             plot_obj += k3d.points(
                 anchor,
@@ -397,7 +411,7 @@ class DatasetPlotK3DMixin:
     def _k3d_apply_thin_slice_scene_defaults(
         plot_obj,
         bounds: list[float],
-        shape_zyx: tuple[int, int, int] = (1, 1, 1),
+        shape_zyx: tuple[int, ...] = (1, 1, 1),
         *,
         expand_fraction: float = 0.1,
     ) -> None:
@@ -436,13 +450,13 @@ class DatasetPlotK3DMixin:
     @staticmethod
     def _k3d_center_grid_bounds(
         bounds: list[float],
-        shape_zyx: tuple[int, int, int],
+        shape_zyx: tuple[int, ...],
         cell_xyz: tuple[float, float, float],
     ) -> list[float]:
         """Inset the display grid to voxel centres without changing voxel bounds."""
         nz, ny, nx = (max(int(v), 1) for v in shape_zyx)
         dx_u, dy_u, dz_u = (float(v) for v in cell_xyz)
-        grid = list(float(v) for v in bounds)
+        grid = [float(v) for v in bounds]
         if nx > 1:
             grid[0] += 0.5 * dx_u
             grid[1] -= 0.5 * dx_u
@@ -492,9 +506,9 @@ class DatasetPlotK3DMixin:
             )
 
         size = int(axis_geom.size)
-        centers = float(axis_geom.min_m) + (
-            np.arange(size, dtype=float) + 0.5
-        ) * float(axis_geom.cell_m)
+        centers = float(axis_geom.min_m) + (np.arange(size, dtype=float) + 0.5) * float(
+            axis_geom.cell_m
+        )
 
         limit = max(int(max_slices), 1)
         if size > limit:
@@ -503,8 +517,6 @@ class DatasetPlotK3DMixin:
             centers = centers[sample_idx]
 
         return [float(v) for v in centers]
-
-
 
     @staticmethod
     def _k3d_hls_palette(
@@ -548,8 +560,8 @@ class DatasetPlotK3DMixin:
         self,
         volume: np.ndarray,
         *,
-        visible_mask: Optional[np.ndarray] = None,
-        vdim_mapping: Optional[dict[Any, Any]] = None,
+        visible_mask: np.ndarray | None = None,
+        vdim_mapping: dict[Any, Any] | None = None,
         hue_bins: int = 24,
         lightness_bins: int = 5,
         saturation_bins: int = 2,
@@ -563,8 +575,12 @@ class DatasetPlotK3DMixin:
 
         src_n_comp = int(vec.shape[-1])
         comp_mapping = self._resolve_vdim_mapping(src_n_comp, vdim_mapping)
-        mx_idx = self._resolve_component_index("x", src_n_comp, mapping=comp_mapping, allow_none=False)
-        my_idx = self._resolve_component_index("y", src_n_comp, mapping=comp_mapping, allow_none=False)
+        mx_idx = self._resolve_component_index(
+            "x", src_n_comp, mapping=comp_mapping, allow_none=False
+        )
+        my_idx = self._resolve_component_index(
+            "y", src_n_comp, mapping=comp_mapping, allow_none=False
+        )
         mz_idx = comp_mapping.get("z", None)
 
         mx = np.asarray(vec[..., mx_idx], dtype=np.float32)
@@ -599,12 +615,12 @@ class DatasetPlotK3DMixin:
             )
 
         hue_q = np.floor(np.clip(hue, 0.0, 1.0 - 1e-7) * float(h_bins)).astype(np.int32)
-        light_q = np.floor(
-            np.clip(lightness, 0.0, 1.0 - 1e-7) * float(l_bins)
-        ).astype(np.int32)
-        sat_q = np.floor(
-            np.clip(saturation, 0.0, 1.0 - 1e-7) * float(s_bins)
-        ).astype(np.int32)
+        light_q = np.floor(np.clip(lightness, 0.0, 1.0 - 1e-7) * float(l_bins)).astype(
+            np.int32
+        )
+        sat_q = np.floor(np.clip(saturation, 0.0, 1.0 - 1e-7) * float(s_bins)).astype(
+            np.int32
+        )
 
         voxels = np.zeros(vec.shape[:-1], dtype=np.uint8)
         encoded = 1 + hue_q + h_bins * (light_q + l_bins * sat_q)
@@ -620,7 +636,7 @@ class DatasetPlotK3DMixin:
         self,
         plot_obj,
         *,
-        multiplier: Optional[float],
+        multiplier: float | None,
         interactive_field: Any,
     ) -> None:
         self._k3d_clear_plot(plot_obj)
@@ -673,20 +689,20 @@ class DatasetPlotK3DMixin:
         *,
         plot=None,
         t: int = -1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         filter_field: Any = None,
         cmap: str = "viridis",
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        multiplier: Optional[float] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        multiplier: float | None = None,
         interactive_field: Any = None,
         interactive: bool = False,
         hide_zeros: bool = False,
         grid_from_centers: bool = False,
-        xlim: Optional[tuple] = None,
-        ylim: Optional[tuple] = None,
-        zlim: Optional[tuple] = None,
+        xlim: tuple | None = None,
+        ylim: tuple | None = None,
+        zlim: tuple | None = None,
         **kwargs,
     ):
         try:
@@ -700,13 +716,14 @@ class DatasetPlotK3DMixin:
         scalar = self._component_volume(volume, component, default="norm")
         if scalar.ndim != 3:
             raise ValueError(
-                "k3d.scalar expects a 3d scalar volume. "
-                f"Got shape {scalar.shape}."
+                f"k3d.scalar expects a 3d scalar volume. Got shape {scalar.shape}."
             )
 
         visible = self._coerce_mask(filter_field, scalar.shape, t=t, z=0, zero=zero)
         if bool(hide_zeros):
-            visible = np.asarray(visible, dtype=bool) & np.isfinite(scalar) & (scalar != 0)
+            visible = (
+                np.asarray(visible, dtype=bool) & np.isfinite(scalar) & (scalar != 0)
+            )
         voxels = self._normalise_to_uint8(
             scalar,
             vmin=vmin,
@@ -736,8 +753,11 @@ class DatasetPlotK3DMixin:
         if zlim is not None:
             bounds[4], bounds[5] = float(zlim[0]) / m, float(zlim[1]) / m
 
-
-        plot_obj = plot if plot is not None else k3d.plot(name=f"{self._dataset.dataset_name} scalar")
+        plot_obj = (
+            plot
+            if plot is not None
+            else k3d.plot(name=f"{self._dataset.dataset_name} scalar")
+        )
         if interactive or interactive_field is not None:
             self._k3d_prepare_interactive_plot(
                 plot_obj,
@@ -757,7 +777,9 @@ class DatasetPlotK3DMixin:
                 **voxel_kwargs,
             )
         except Exception:
-            plot_obj += k3d.voxels(voxels, color_map=cmap_int, bounds=bounds, **voxel_kwargs)
+            plot_obj += k3d.voxels(
+                voxels, color_map=cmap_int, bounds=bounds, **voxel_kwargs
+            )
 
         self._k3d_set_axes(plot_obj, axes)
         if thin_scene:
@@ -778,11 +800,11 @@ class DatasetPlotK3DMixin:
         *,
         plot=None,
         t: int = -1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         threshold: float = 0.0,
         color: int = 0x4C72B0,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         interactive_field: Any = None,
         interactive: bool = False,
         **kwargs,
@@ -798,8 +820,7 @@ class DatasetPlotK3DMixin:
         scalar = self._component_volume(volume, component, default="norm")
         if scalar.ndim != 3:
             raise ValueError(
-                "k3d.nonzero expects a 3d scalar volume. "
-                f"Got shape {scalar.shape}."
+                f"k3d.nonzero expects a 3d scalar volume. Got shape {scalar.shape}."
             )
 
         voxels = self._k3d_nonzero_voxels(scalar, threshold=threshold)
@@ -816,8 +837,10 @@ class DatasetPlotK3DMixin:
                 multiplier=m,
             )
             thin_scene = bool(thin_scene or expanded)
-        plot_obj = plot if plot is not None else k3d.plot(
-            name=f"{self._dataset.dataset_name} nonzero"
+        plot_obj = (
+            plot
+            if plot is not None
+            else k3d.plot(name=f"{self._dataset.dataset_name} nonzero")
         )
         if interactive or interactive_field is not None:
             self._k3d_prepare_interactive_plot(
@@ -837,12 +860,16 @@ class DatasetPlotK3DMixin:
                 **voxel_kwargs,
             )
         except Exception:
-            plot_obj += k3d.voxels(voxels, color_map=int(color), bounds=bounds, **voxel_kwargs)
+            plot_obj += k3d.voxels(
+                voxels, color_map=int(color), bounds=bounds, **voxel_kwargs
+            )
 
         self._k3d_set_axes(plot_obj, axes)
         if thin_scene:
             self._k3d_apply_thin_slice_scene_defaults(
-                plot_obj, bounds, tuple(int(v) for v in scalar.shape),
+                plot_obj,
+                bounds,
+                tuple(int(v) for v in scalar.shape),
             )
         elif _created_internally:
             self._k3d_snap_scene_bounds(plot_obj, bounds)
@@ -856,24 +883,19 @@ class DatasetPlotK3DMixin:
         *,
         plot=None,
         t: int = -1,
-        zero: Optional[int] = None,
-        vdims: Optional[
-            tuple[
-                Optional[Union[int, str]],
-                Optional[Union[int, str]],
-                Optional[Union[int, str]],
-            ]
-        ] = None,
-        vdim_mapping: Optional[dict[Any, Any]] = None,
+        zero: int | None = None,
+        vdims: tuple[int | str | None, int | str | None, int | str | None]
+        | None = None,
+        vdim_mapping: dict[Any, Any] | None = None,
         color_field: Any = None,
         cmap: str = "viridis",
         head_size: float = 1.0,
         points: bool = True,
-        point_size: Optional[float] = None,
-        vector_multiplier: Optional[float] = None,
+        point_size: float | None = None,
+        vector_multiplier: float | None = None,
         vector_scale: float = 1.0,
-        multiplier: Optional[float] = None,
-        quiver_density: Optional[int] = None,
+        multiplier: float | None = None,
+        quiver_density: int | None = None,
         min_magnitude: float = 0.0,
         color: int = 0xDD8452,
         interactive_field: Any = None,
@@ -968,7 +990,7 @@ class DatasetPlotK3DMixin:
 
         zz, yy, xx = np.meshgrid(z_idx, y_idx, x_idx, indexing="ij")
 
-        origins = np.stack(
+        origins: Any = np.stack(
             [
                 float(bounds[0]) + (xx + 0.5) * float(dx_u),
                 float(bounds[2]) + (yy + 0.5) * float(dy_u),
@@ -976,7 +998,7 @@ class DatasetPlotK3DMixin:
             ],
             axis=-1,
         ).reshape(-1, 3)
-        vectors = np.stack([u, v, w], axis=-1).reshape(-1, 3)
+        vectors: Any = np.stack([u, v, w], axis=-1).reshape(-1, 3)
         visible_flat = visible.reshape(-1)
 
         if vector_multiplier is None:
@@ -997,8 +1019,10 @@ class DatasetPlotK3DMixin:
             raise ValueError("No vectors left after filtering/downsampling.")
 
         _created_internally = plot is None
-        plot_obj = plot if plot is not None else k3d.plot(
-            name=f"{self._dataset.dataset_name} vector"
+        plot_obj = (
+            plot
+            if plot is not None
+            else k3d.plot(name=f"{self._dataset.dataset_name} vector")
         )
         if interactive or interactive_field is not None:
             self._k3d_prepare_interactive_plot(
@@ -1020,7 +1044,9 @@ class DatasetPlotK3DMixin:
                     )
                     color_volume = np.asarray(volume[..., idx], dtype=np.float32)
                 else:
-                    color_volume = self._component_volume(volume, color_field, default="norm")
+                    color_volume = self._component_volume(
+                        volume, color_field, default="norm"
+                    )
             else:
                 color_volume = self._coerce_scalar_field(
                     color_field,
@@ -1086,32 +1112,27 @@ class DatasetPlotK3DMixin:
         *,
         plot=None,
         t: int = -1,
-        zero: Optional[int] = None,
-        style: Optional[Union[int, str]] = "hsl",
+        zero: int | None = None,
+        style: int | str | None = "hsl",
         show_vectors: bool = True,
         filter_field: Any = None,
-        vdims: Optional[
-            tuple[
-                Optional[Union[int, str]],
-                Optional[Union[int, str]],
-                Optional[Union[int, str]],
-            ]
-        ] = None,
-        vdim_mapping: Optional[dict[Any, Any]] = None,
+        vdims: tuple[int | str | None, int | str | None, int | str | None]
+        | None = None,
+        vdim_mapping: dict[Any, Any] | None = None,
         color_field: Any = None,
         cmap: str = "viridis",
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
         hue_bins: int = 24,
         lightness_bins: int = 5,
         saturation_bins: int = 2,
         head_size: float = 1.8,
         points: bool = False,
-        point_size: Optional[float] = None,
-        vector_multiplier: Optional[float] = None,
+        point_size: float | None = None,
+        vector_multiplier: float | None = None,
         vector_scale: float = 1.0,
-        multiplier: Optional[float] = None,
-        quiver_density: Optional[int] = None,
+        multiplier: float | None = None,
+        quiver_density: int | None = None,
         min_magnitude: float = 1e-12,
         vector_color: int = 0xFFFFFF,
         voxel_opacity: float = 0.35,
@@ -1156,8 +1177,10 @@ class DatasetPlotK3DMixin:
             )
 
             _created_internally = plot is None
-            plot_obj = plot if plot is not None else k3d.plot(
-                name=f"{self._dataset.dataset_name} magnetization"
+            plot_obj = (
+                plot
+                if plot is not None
+                else k3d.plot(name=f"{self._dataset.dataset_name} magnetization")
             )
             if interactive or interactive_field is not None:
                 self._k3d_prepare_interactive_plot(
@@ -1219,22 +1242,30 @@ class DatasetPlotK3DMixin:
                         vdims[2], src_n_comp, mapping=comp_mapping, allow_none=True
                     )
                     if ix is None and iy is None and iz is None:
-                        raise ValueError(f"At least one entry in {vdims=} must be not None")
+                        raise ValueError(
+                            f"At least one entry in {vdims=} must be not None"
+                        )
 
                 u = (
                     np.asarray(vec[::stepz, ::stepy, ::stepx, ix], dtype=np.float32)
                     if ix is not None
-                    else np.zeros((len(z_idx), len(y_idx), len(x_idx)), dtype=np.float32)
+                    else np.zeros(
+                        (len(z_idx), len(y_idx), len(x_idx)), dtype=np.float32
+                    )
                 )
                 v = (
                     np.asarray(vec[::stepz, ::stepy, ::stepx, iy], dtype=np.float32)
                     if iy is not None
-                    else np.zeros((len(z_idx), len(y_idx), len(x_idx)), dtype=np.float32)
+                    else np.zeros(
+                        (len(z_idx), len(y_idx), len(x_idx)), dtype=np.float32
+                    )
                 )
                 w = (
                     np.asarray(vec[::stepz, ::stepy, ::stepx, iz], dtype=np.float32)
                     if iz is not None
-                    else np.zeros((len(z_idx), len(y_idx), len(x_idx)), dtype=np.float32)
+                    else np.zeros(
+                        (len(z_idx), len(y_idx), len(x_idx)), dtype=np.float32
+                    )
                 )
 
                 magnitude = np.sqrt(u**2 + v**2 + w**2)
@@ -1246,7 +1277,7 @@ class DatasetPlotK3DMixin:
                 )
 
                 zz, yy, xx = np.meshgrid(z_idx, y_idx, x_idx, indexing="ij")
-                origins = np.stack(
+                origins: Any = np.stack(
                     [
                         float(bounds[0]) + (xx + 0.5) * float(dx_u),
                         float(bounds[2]) + (yy + 0.5) * float(dy_u),
@@ -1254,7 +1285,7 @@ class DatasetPlotK3DMixin:
                     ],
                     axis=-1,
                 ).reshape(-1, 3)
-                vectors = np.stack([u, v, w], axis=-1).reshape(-1, 3)
+                vectors: Any = np.stack([u, v, w], axis=-1).reshape(-1, 3)
                 visible_flat = visible.reshape(-1)
 
                 if vector_multiplier is None:
@@ -1389,13 +1420,13 @@ class DatasetPlotK3DMixin:
     def _k3d_stack_impl(
         self,
         *,
-        axis: Optional[str] = None,
+        axis: str | None = None,
         positions: Any = None,
         mode: str = "magnetization",
         plot=None,
-        slice_thickness: Optional[float] = None,
-        slice_kwargs: Optional[list[dict[str, Any]]] = None,
-        display: Optional[bool] = None,
+        slice_thickness: float | None = None,
+        slice_kwargs: list[dict[str, Any]] | None = None,
+        display: bool | None = None,
         **kwargs,
     ):
         try:
@@ -1414,7 +1445,9 @@ class DatasetPlotK3DMixin:
             axis_key = str(axis).strip().lower()
 
         if positions is None:
-            positions = self._k3d_default_stack_positions(axis_key, dataset_obj=self._dataset)
+            positions = self._k3d_default_stack_positions(
+                axis_key, dataset_obj=self._dataset
+            )
 
         if not isinstance(positions, (list, tuple, np.ndarray)):
             positions = [positions]
@@ -1435,8 +1468,10 @@ class DatasetPlotK3DMixin:
             )
 
         created_internally = plot is None
-        plot_obj = plot if plot is not None else k3d.plot(
-            name=f"{self._dataset.dataset_name} {mode_key} stack"
+        plot_obj = (
+            plot
+            if plot is not None
+            else k3d.plot(name=f"{self._dataset.dataset_name} {mode_key} stack")
         )
 
         for index, position in enumerate(positions):
@@ -1480,11 +1515,11 @@ class DatasetPlotK3DMixin:
         z: int = 0,
         t: int = -1,
         repeat: int = 1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         cmap: str = "viridis",
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
         show_vectors: bool = False,
         quiver_density: int = 20,
         vector_scale: float = 1.0,
@@ -1547,7 +1582,11 @@ class DatasetPlotK3DMixin:
                 np.arange(0, u.shape[0], stepy, dtype=np.float32),
             )
             origins = np.stack(
-                [grid_x.ravel(), grid_y.ravel(), np.zeros(grid_x.size, dtype=np.float32)],
+                [
+                    grid_x.ravel(),
+                    grid_y.ravel(),
+                    np.zeros(grid_x.size, dtype=np.float32),
+                ],
                 axis=1,
             ).astype(np.float32)
             vectors = np.stack(
@@ -1586,32 +1625,27 @@ class DatasetPlotK3DMixin:
         *,
         plot=None,
         t: int = -1,
-        zero: Optional[int] = None,
-        scalar_component: Optional[Union[int, str]] = None,
-        vdims: Optional[
-            tuple[
-                Optional[Union[int, str]],
-                Optional[Union[int, str]],
-                Optional[Union[int, str]],
-            ]
-        ] = None,
-        vdim_mapping: Optional[dict[Any, Any]] = None,
+        zero: int | None = None,
+        scalar_component: int | str | None = None,
+        vdims: tuple[int | str | None, int | str | None, int | str | None]
+        | None = None,
+        vdim_mapping: dict[Any, Any] | None = None,
         color_field: Any = None,
         cmap: str = "cividis",
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
         filter_field: Any = None,
         head_size: float = 2.0,
         points: bool = False,
-        point_size: Optional[float] = None,
-        vector_multiplier: Optional[float] = None,
+        point_size: float | None = None,
+        vector_multiplier: float | None = None,
         vector_scale: float = 1.0,
-        quiver_density: Optional[int] = None,
+        quiver_density: int | None = None,
         min_magnitude: float = 0.0,
         vector_color: int = 0xFFFFFF,
         color_vectors_by_scalar: bool = True,
         voxel_opacity: float = 0.6,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         **kwargs,
     ):
         """Combined voxel + vector k3d plot.
@@ -1682,8 +1716,7 @@ class DatasetPlotK3DMixin:
         scalar = self._component_volume(volume, scalar_component, default="norm")
         if scalar.ndim != 3:
             raise ValueError(
-                "voxels_vectors expects a 3-d scalar volume; "
-                f"got shape {scalar.shape}."
+                f"voxels_vectors expects a 3-d scalar volume; got shape {scalar.shape}."
             )
 
         visible_mask = self._coerce_mask(
@@ -1789,7 +1822,9 @@ class DatasetPlotK3DMixin:
         # ── auto-scale arrows: max |component| / min cell (matches discretisedfield) ──
         if vector_multiplier is None:
             cell_min = max(min(abs(dx_u), abs(dy_u), abs(dz_u)), 1e-12)
-            vm_val = float(np.nanmax(np.abs(vectors_all))) if vectors_all.size > 0 else 1.0
+            vm_val = (
+                float(np.nanmax(np.abs(vectors_all))) if vectors_all.size > 0 else 1.0
+            )
             vector_multiplier = vm_val / max(cell_min, 1e-12)
             if not np.isfinite(vector_multiplier) or vector_multiplier <= 0:
                 vector_multiplier = 1.0
@@ -1807,8 +1842,10 @@ class DatasetPlotK3DMixin:
 
         # ── build plot ───────────────────────────────────────────────────────
         _created_internally = plot is None
-        plot_obj = plot if plot is not None else k3d.plot(
-            name=f"{self._dataset.dataset_name} voxels+vectors"
+        plot_obj = (
+            plot
+            if plot is not None
+            else k3d.plot(name=f"{self._dataset.dataset_name} voxels+vectors")
         )
 
         cmap_int = self._k3d_colormap_int(cmap)
@@ -1835,8 +1872,7 @@ class DatasetPlotK3DMixin:
                 vmax=vmax,
             )
             colors = [
-                2 * (cmap_int[int(np.clip(c, 0, len(cmap_int) - 1))],)
-                for c in c_flat
+                2 * (cmap_int[int(np.clip(c, 0, len(cmap_int) - 1))],) for c in c_flat
             ]
             arrow_kw["colors"] = colors
 
@@ -1860,8 +1896,7 @@ class DatasetPlotK3DMixin:
                 cf_vol[::stepz, ::stepy, ::stepx].reshape(-1)[visible_flat]
             )
             colors = [
-                2 * (cmap_int[int(np.clip(c, 0, len(cmap_int) - 1))],)
-                for c in c_flat
+                2 * (cmap_int[int(np.clip(c, 0, len(cmap_int) - 1))],) for c in c_flat
             ]
             arrow_kw["colors"] = colors
         else:

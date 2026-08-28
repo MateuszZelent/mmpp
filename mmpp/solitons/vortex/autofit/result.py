@@ -78,10 +78,7 @@ class AutofitDiagnostics:
             ("Local", self.n_local_evaluations),
             ("Optimizer iterations", self.optimizer_nit),
         ]:
-            html += (
-                f"<tr><td style='{lbl}'>{label}</td>"
-                f"<td style='{val}'>{n}</td></tr>"
-            )
+            html += f"<tr><td style='{lbl}'>{label}</td><td style='{val}'>{n}</td></tr>"
         if self.optimizer_message:
             html += (
                 f"<tr><td style='{lbl}'>Message</td>"
@@ -201,7 +198,9 @@ class VortexAutofitResult:
 
         warnings_html = ""
         if self.warnings:
-            items = "".join(f"<li style='color:#fbbf24;'>{_esc(w)}</li>" for w in self.warnings)
+            items = "".join(
+                f"<li style='color:#fbbf24;'>{_esc(w)}</li>" for w in self.warnings
+            )
             warnings_html = (
                 "<div style='margin-top:8px;background:rgba(251,191,36,0.1);"
                 "padding:8px;border-radius:6px;border:1px solid rgba(251,191,36,0.3);'>"
@@ -212,7 +211,7 @@ class VortexAutofitResult:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);\">"
+            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
             # Title
             "<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px;'>"
             "<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;'>"
@@ -243,9 +242,7 @@ class VortexAutofitResult:
             "margin-bottom:8px;border:1px solid rgba(148,163,184,0.2);'>"
             "<div style='font-weight:600;color:#e2e8f0;margin-bottom:4px;'>Loss breakdown</div>"
             "<table style='width:100%;border-collapse:collapse;font-size:0.85em;'>"
-            f"<tbody>{loss_rows}</tbody></table></div>"
-            + warnings_html
-            + "</div>"
+            f"<tbody>{loss_rows}</tbody></table></div>" + warnings_html + "</div>"
         )
 
 

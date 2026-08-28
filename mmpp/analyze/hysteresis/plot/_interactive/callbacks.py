@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -32,7 +33,9 @@ def on_loop_click(explorer, event) -> None:
 
     if event.inaxes != explorer._ax_loop:
         if debug:
-            set_status(explorer, "click ignored: outside hysteresis axis", color="#7c3aed")
+            set_status(
+                explorer, "click ignored: outside hysteresis axis", color="#7c3aed"
+            )
         return
     if event.xdata is None or event.ydata is None:
         if debug:
@@ -64,7 +67,9 @@ def on_index_changed(explorer, idx: int) -> None:
     explorer._set_index(int(idx))
 
 
-def nearest_field_index(field: np.ndarray, value: float, *, prefer_idx: int | None = None) -> int:
+def nearest_field_index(
+    field: np.ndarray, value: float, *, prefer_idx: int | None = None
+) -> int:
     """Return nearest index for selected field value.
 
     For duplicated field values (ascending/descending branches), prefer the
@@ -172,16 +177,36 @@ def _resolve_animation_target(path_text: str, fmt: str) -> Path:
 
 def on_save_animation_clicked(explorer) -> None:
     """Save exported animation (MP4/GIF) from current explorer state."""
-    controls = getattr(explorer, "_controls", {})
+    controls: dict[str, Any] = getattr(explorer, "_controls", {})
     button = controls.get("save_animation")
     if button is None:
         return
 
-    fps = int(controls.get("anim_fps").value) if controls.get("anim_fps") is not None else int(explorer.result.config.animation_fps)
-    trail = int(controls.get("anim_trail").value) if controls.get("anim_trail") is not None else int(explorer.result.config.trail_length)
-    fmt = str(controls.get("anim_format").value) if controls.get("anim_format") is not None else "gif"
-    path_text = str(controls.get("anim_path").value) if controls.get("anim_path") is not None else ""
-    use_snapshot = bool(controls.get("anim_snapshot").value) if controls.get("anim_snapshot") is not None else True
+    fps = (
+        int(cast(Any, controls.get("anim_fps")).value)
+        if controls.get("anim_fps") is not None
+        else int(explorer.result.config.animation_fps)
+    )
+    trail = (
+        int(cast(Any, controls.get("anim_trail")).value)
+        if controls.get("anim_trail") is not None
+        else int(explorer.result.config.trail_length)
+    )
+    fmt = (
+        str(cast(Any, controls.get("anim_format")).value)
+        if controls.get("anim_format") is not None
+        else "gif"
+    )
+    path_text = (
+        str(cast(Any, controls.get("anim_path")).value)
+        if controls.get("anim_path") is not None
+        else ""
+    )
+    use_snapshot = (
+        bool(cast(Any, controls.get("anim_snapshot")).value)
+        if controls.get("anim_snapshot") is not None
+        else True
+    )
 
     target = _resolve_animation_target(path_text, fmt)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +234,9 @@ def on_save_animation_clicked(explorer) -> None:
             show_hc=bool(explorer.state.show_flags.get("hc", True)),
             show_mr=bool(explorer.state.show_flags.get("mr", True)),
             show_ms=bool(explorer.state.show_flags.get("ms", False)),
-            show_branch_colors=bool(explorer.state.show_flags.get("branch_colors", True)),
+            show_branch_colors=bool(
+                explorer.state.show_flags.get("branch_colors", True)
+            ),
             bitrate="auto",
             dpi=explorer.result.config.dpi,
         )

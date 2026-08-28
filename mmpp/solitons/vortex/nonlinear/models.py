@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -247,8 +248,22 @@ class STBatchResult:
         )
 
 
-class AmplitudePlotAccessor:
+class AmplitudePlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`AmplitudeEquationResult`."""
+
+    _interactive_owner = "job[0].vortex.nonlinear.amplitude_equation().plt"
+    _interactive_nodes = frozenset({"power_vs_time", "phase_vs_time", "complex_plane"})
+    _interactive_examples = {
+        "power_vs_time": [
+            "job[0].vortex.nonlinear.amplitude_equation().plt.power_vs_time()"
+        ],
+        "phase_vs_time": [
+            "job[0].vortex.nonlinear.amplitude_equation().plt.phase_vs_time()"
+        ],
+        "complex_plane": [
+            "job[0].vortex.nonlinear.amplitude_equation().plt.complex_plane()"
+        ],
+    }
 
     def __init__(self, result: AmplitudeEquationResult):
         self._result = result
@@ -329,8 +344,16 @@ class AmplitudePlotAccessor:
         )
 
 
-class STPlotAccessor:
+class STPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`STParametersResult`."""
+
+    _interactive_owner = "job[0].vortex.nonlinear.slavin_tiberkevich().plt"
+    _interactive_nodes = frozenset({"power_vs_current"})
+    _interactive_examples = {
+        "power_vs_current": [
+            "job[0].vortex.nonlinear.slavin_tiberkevich().plt.power_vs_current()"
+        ]
+    }
 
     def __init__(self, result: STParametersResult):
         self._result = result
@@ -368,8 +391,24 @@ class STPlotAccessor:
         )
 
 
-class STBatchPlotAccessor:
+class STBatchPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`STBatchResult`."""
+
+    _interactive_owner = "job[0].vortex.nonlinear.slavin_tiberkevich_batch(...).plt"
+    _interactive_nodes = frozenset(
+        {"power_vs_current", "linewidth_vs_current", "frequency_vs_current"}
+    )
+    _interactive_examples = {
+        "power_vs_current": [
+            "job[0].vortex.nonlinear.slavin_tiberkevich_batch(...).plt.power_vs_current()"
+        ],
+        "linewidth_vs_current": [
+            "job[0].vortex.nonlinear.slavin_tiberkevich_batch(...).plt.linewidth_vs_current()"
+        ],
+        "frequency_vs_current": [
+            "job[0].vortex.nonlinear.slavin_tiberkevich_batch(...).plt.frequency_vs_current()"
+        ],
+    }
 
     def __init__(self, result: STBatchResult):
         self._result = result
@@ -554,8 +593,14 @@ class ThieleForceBalanceResult:
         )
 
 
-class ThieleForcePlotAccessor:
+class ThieleForcePlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`ThieleForceBalanceResult`."""
+
+    _interactive_owner = "job[0].vortex.nonlinear.force_balance().plt"
+    _interactive_nodes = frozenset({"force_balance"})
+    _interactive_examples = {
+        "force_balance": ["job[0].vortex.nonlinear.force_balance().plt.force_balance()"]
+    }
 
     def __init__(self, result: ThieleForceBalanceResult):
         self._result = result

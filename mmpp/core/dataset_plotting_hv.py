@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, Optional, Union
+from typing import Any
 
 import numpy as np
 
-class DatasetPlotHVMixin:
+from .dataset_plotting_core import DatasetPlotCoreMixin
+
+
+class DatasetPlotHVMixin(DatasetPlotCoreMixin):
     @staticmethod
     def _hv_apply_opts(obj, **kwargs):
         opts_fn = getattr(obj, "opts", None)
@@ -37,7 +40,9 @@ class DatasetPlotHVMixin:
                     hv.extension("bokeh")
         return hv
 
-    def _hv_dynamic_axes(self, arr: np.ndarray) -> tuple[Optional[list[int]], Optional[list[int]]]:
+    def _hv_dynamic_axes(
+        self, arr: np.ndarray
+    ) -> tuple[list[int] | None, list[int] | None]:
         if arr.ndim == 5:
             return list(range(int(arr.shape[0]))), list(range(int(arr.shape[1])))
         if arr.ndim == 4:
@@ -53,23 +58,25 @@ class DatasetPlotHVMixin:
         *,
         z: int = 0,
         t: int = -1,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         filter_field: Any = None,
         cmap: str = "viridis",
         colorbar: bool = True,
-        clim: Optional[tuple[float, float]] = None,
+        clim: tuple[float, float] | None = None,
         dynamic: bool = True,
     ):
         hv = self._hv_import()
-        arr = np.asarray(self._dataset.numpy(copy=False, squeeze=False), dtype=np.float32)
+        arr = np.asarray(
+            self._dataset.numpy(copy=False, squeeze=False), dtype=np.float32
+        )
         frame_values, z_values = self._hv_dynamic_axes(arr)
 
         x_name, y_name = self._resolve_axis_names()
 
-        def _build(frame_index: Optional[int] = None, z_index: Optional[int] = None):
+        def _build(frame_index: int | None = None, z_index: int | None = None):
             t_local = t if frame_index is None else int(frame_index)
             z_local = z if z_index is None else int(z_index)
             frame = self._extract_frame(z=z_local, t=t_local, zero=zero)
@@ -133,13 +140,13 @@ class DatasetPlotHVMixin:
         *,
         z: int = 0,
         t: int = -1,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         repeat: int = 1,
-        zero: Optional[int] = None,
+        zero: int | None = None,
         filter_field: Any = None,
-        vdims: Optional[tuple[Optional[Union[int, str]], Optional[Union[int, str]]]] = None,
-        vdim_mapping: Optional[dict[Any, Any]] = None,
-        color_field: Optional[Union[int, str, np.ndarray]] = None,
+        vdims: tuple[int | str | None, int | str | None] | None = None,
+        vdim_mapping: dict[Any, Any] | None = None,
+        color_field: int | str | np.ndarray | None = None,
         cmap: str = "viridis",
         use_color: bool = True,
         colorbar: bool = True,
@@ -147,11 +154,13 @@ class DatasetPlotHVMixin:
         dynamic: bool = True,
     ):
         hv = self._hv_import()
-        arr = np.asarray(self._dataset.numpy(copy=False, squeeze=False), dtype=np.float32)
+        arr = np.asarray(
+            self._dataset.numpy(copy=False, squeeze=False), dtype=np.float32
+        )
         frame_values, z_values = self._hv_dynamic_axes(arr)
         x_name, y_name = self._resolve_axis_names()
 
-        def _build(frame_index: Optional[int] = None, z_index: Optional[int] = None):
+        def _build(frame_index: int | None = None, z_index: int | None = None):
             t_local = t if frame_index is None else int(frame_index)
             z_local = z if z_index is None else int(z_index)
             frame = self._extract_frame(z=z_local, t=t_local, zero=zero)
@@ -186,7 +195,9 @@ class DatasetPlotHVMixin:
                     allow_none=True,
                 )
                 if ix is None and iy is None:
-                    raise ValueError(f"At least one element in {vdims=} must not be None")
+                    raise ValueError(
+                        f"At least one element in {vdims=} must not be None"
+                    )
 
             u = (
                 np.asarray(vec[:, :, ix], dtype=np.float32)
@@ -244,7 +255,7 @@ class DatasetPlotHVMixin:
                 vdims=["magnitude"],
             )
 
-            opts = {"magnitude": "magnitude"}
+            opts: dict[str, Any] = {"magnitude": "magnitude"}
             if use_color:
                 opts["color"] = "magnitude"
                 opts["cmap"] = cmap

@@ -85,4 +85,3 @@ def apply_window(data: np.ndarray, window_type: str) -> np.ndarray:
     window_shape = [1] * arr.ndim
     window_shape[0] = arr.shape[0]
     return arr * window.reshape(window_shape)
-

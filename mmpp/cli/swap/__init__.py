@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 try:
-    import yaml
+    import yaml  # type: ignore[import-untyped]
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore[misc, assignment]
 
 from .simulation import SimulationManager, SimulationSwapper, TemplateParser
 
@@ -284,4 +284,9 @@ def validate_config_file(config_file: str) -> None:
         sys.exit(1)
 
 
-__all__ = ["SimulationManager", "SimulationSwapper", "TemplateParser", "handle_swap_command"]
+__all__ = [
+    "SimulationManager",
+    "SimulationSwapper",
+    "TemplateParser",
+    "handle_swap_command",
+]

@@ -1,6 +1,6 @@
 """Numerical vortex analysis namespace (compatibility layer)."""
 
-from .core import CoreInterface, TrajectoryResult, TrackingMethod, track_core
+from .core import CoreInterface, TrackingMethod, TrajectoryResult, track_core
 from .energy import EnergyInterface
 from .events import EventsInterface
 from .modes import VortexModeResult, VortexModesInterface

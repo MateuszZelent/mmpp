@@ -42,8 +42,12 @@ def apply_spectrum_filters(
     if stage == "pre":
         return pipeline.preprocess(np.asarray(spectrum), filters=filters)
     if stage == "live":
-        return pipeline.live(np.asarray(spectrum), np.asarray(frequencies), filters=filters)
-    return pipeline.postprocess(np.asarray(spectrum), np.asarray(frequencies), filters=filters, stage="post")
+        return pipeline.live(
+            np.asarray(spectrum), np.asarray(frequencies), filters=filters
+        )
+    return pipeline.postprocess(
+        np.asarray(spectrum), np.asarray(frequencies), filters=filters, stage="post"
+    )
 
 
 __all__ = [

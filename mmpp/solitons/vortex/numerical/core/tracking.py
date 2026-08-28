@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
-from ..._utils import XYConvention
 from ..._shared.models import TrajectoryResult
+from ..._utils import XYConvention
 from .methods import TRACKING_METHODS
 
 try:
@@ -35,7 +36,9 @@ def _normalize_tracking_input(data: np.ndarray, z_layer: int = -1) -> np.ndarray
         if z_layer < 0:
             z_layer += nz
         if z_layer < 0 or z_layer >= nz:
-            raise IndexError(f"z_layer index {z_layer} out of bounds for shape {arr.shape}")
+            raise IndexError(
+                f"z_layer index {z_layer} out of bounds for shape {arr.shape}"
+            )
         return arr[:, z_layer, ...]
 
     raise ValueError(
@@ -50,7 +53,9 @@ def _resolve_convention(convention: XYConvention | None) -> XYConvention:
     return convention
 
 
-def _down_to_physical_y(y_down: float, ny: int, dy: float, convention: XYConvention) -> float:
+def _down_to_physical_y(
+    y_down: float, ny: int, dy: float, convention: XYConvention
+) -> float:
     if convention.y_axis == "up":
         return (float(ny - 1) * float(dy)) - float(y_down)
     return float(y_down)
@@ -161,9 +166,9 @@ def _track_gaussian(
     yi0, xi0 = np.unravel_index(int(np.argmax(abs_mz)), abs_mz.shape)
 
     half = max(int(gaussian_roi) // 2, 1)
-    y_start = max(0, yi0 - half)
+    y_start = max(0, int(yi0) - half)
     y_end = min(mz.shape[0], yi0 + half + 1)
-    x_start = max(0, xi0 - half)
+    x_start = max(0, int(xi0) - half)
     x_end = min(mz.shape[1], xi0 + half + 1)
 
     roi = abs_mz[y_start:y_end, x_start:x_end]
@@ -218,7 +223,9 @@ def _track_gaussian(
     sigma_min_y = 0.3 * dy
     sigma_max_x = max(float(half) * dx, dx)
     sigma_max_y = max(float(half) * dy, dy)
-    if not (sigma_min_x <= sigma_x <= sigma_max_x and sigma_min_y <= sigma_y <= sigma_max_y):
+    if not (
+        sigma_min_x <= sigma_x <= sigma_max_x and sigma_min_y <= sigma_y <= sigma_max_y
+    ):
         return _fallback_scaled()
 
     fit_values = _gaussian_2d(coords, *params)
@@ -449,7 +456,9 @@ def track_core(
         fallback_from = "gaussian"
 
     if effective_method not in TRACKING_METHODS:
-        raise ValueError("Unknown tracking method. Use 'maximum', 'centroid', or 'gaussian'.")
+        raise ValueError(
+            "Unknown tracking method. Use 'maximum', 'centroid', or 'gaussian'."
+        )
 
     return _run_tracking(
         nt=int(series.shape[0]),
@@ -528,7 +537,9 @@ def track_core_lazy(
         fallback_from = "gaussian"
 
     if effective_method not in TRACKING_METHODS:
-        raise ValueError("Unknown tracking method. Use 'maximum', 'centroid', or 'gaussian'.")
+        raise ValueError(
+            "Unknown tracking method. Use 'maximum', 'centroid', or 'gaussian'."
+        )
 
     return _run_tracking(
         nt=int(nt),

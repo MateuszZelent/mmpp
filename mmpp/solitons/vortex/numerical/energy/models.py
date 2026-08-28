@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from ...._method_helpers import InteractiveNodeMixin
 from ..._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -240,8 +241,11 @@ class PinningResult:
         )
 
 
-class EnergyPlotAccessor:
+class EnergyPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`EnergyTimeSeriesResult`."""
+
+    _interactive_owner = "result.plt"
+    _interactive_nodes = frozenset({"time_resolved"})
 
     def __init__(self, result: EnergyTimeSeriesResult):
         self._result = result
@@ -302,8 +306,11 @@ class EnergyPlotAccessor:
         )
 
 
-class EffectivePotentialPlotAccessor:
+class EffectivePotentialPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`EffectivePotentialResult`."""
+
+    _interactive_owner = "result.plt"
+    _interactive_nodes = frozenset({"potential", "probability"})
 
     def __init__(self, result: EffectivePotentialResult):
         self._result = result
@@ -365,8 +372,11 @@ class EffectivePotentialPlotAccessor:
         )
 
 
-class PinningPlotAccessor:
+class PinningPlotAccessor(InteractiveNodeMixin):
     """Plot helpers for :class:`PinningResult`."""
+
+    _interactive_owner = "result.plt"
+    _interactive_nodes = frozenset({"potential_with_sites"})
 
     def __init__(self, result: PinningResult):
         self._result = result

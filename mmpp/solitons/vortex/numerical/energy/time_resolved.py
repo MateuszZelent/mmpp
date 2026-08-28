@@ -26,7 +26,9 @@ def _read_table_columns(job_result) -> dict[str, np.ndarray]:
     return out
 
 
-def _resolve_time_array(columns: dict[str, np.ndarray], attrs: Any, n_samples: int) -> np.ndarray:
+def _resolve_time_array(
+    columns: dict[str, np.ndarray], attrs: Any, n_samples: int
+) -> np.ndarray:
     for name in ("t", "time", "Time"):
         if name in columns and int(columns[name].size) == int(n_samples):
             return np.asarray(columns[name], dtype=float)
@@ -73,7 +75,9 @@ def extract_energy_time_series(
         )
 
     n = int(min(table_columns[name].size for name in selected_names))
-    time = _resolve_time_array(table_columns, getattr(job_result, "attrs", {}), n_samples=n)[:n]
+    time = _resolve_time_array(
+        table_columns, getattr(job_result, "attrs", {}), n_samples=n
+    )[:n]
 
     channels = {
         name: np.asarray(table_columns[name][:n], dtype=float)

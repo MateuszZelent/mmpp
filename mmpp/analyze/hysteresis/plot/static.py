@@ -37,7 +37,9 @@ def plot_loop(
     show_mr = cfg.show_mr if show_mr is None else bool(show_mr)
     show_ms = cfg.show_ms if show_ms is None else bool(show_ms)
     show_branch_colors = (
-        cfg.show_branch_colors if show_branch_colors is None else bool(show_branch_colors)
+        cfg.show_branch_colors
+        if show_branch_colors is None
+        else bool(show_branch_colors)
     )
 
     if ax is None:
@@ -73,7 +75,12 @@ def plot_loop(
         y = mag[branch.slice]
         if x.size == 0:
             continue
-        label = branch.name if branch is result.branches[0] or branch.name not in {"ascending", "descending"} else None
+        label = (
+            branch.name
+            if branch is result.branches[0]
+            or branch.name not in {"ascending", "descending"}
+            else None
+        )
         ax.plot(x, y, color=color, lw=1.8, alpha=0.9, label=label)
 
     # ── single scatter with per-point colors ─────────────────────────────────
@@ -145,7 +152,7 @@ def plot_loop(
         seen = set()
         uniq_h = []
         uniq_l = []
-        for handle, label in zip(handles, labels):
+        for handle, label in zip(handles, labels, strict=False):
             if label in seen:
                 continue
             seen.add(label)

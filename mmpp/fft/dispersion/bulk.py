@@ -39,27 +39,107 @@ from __future__ import annotations
 import gc
 import threading
 import warnings
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 if TYPE_CHECKING:
-    import matplotlib.pyplot as plt
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
+
     from .models import DispersionResult1D
-    from .analyze import LowestFrequencyResult, FindLowestKwargs
 
 
 # ---------------------------------------------------------------------------
 # Low-level extractor (memory-efficient)
 # ---------------------------------------------------------------------------
 
+
+def _align_crosssection_to_k_grid(
+    source_k: np.ndarray,
+    crosssection: np.ndarray,
+    target_k: np.ndarray,
+) -> np.ndarray:
+    """Align one S(k) trace without fabricating values outside its support."""
+    source: Any = np.asarray(source_k, dtype=float).reshape(-1)
+    values: Any = np.asarray(crosssection, dtype=float).reshape(-1)
+    target = np.asarray(target_k, dtype=float).reshape(-1)
+    if source.size != values.size:
+        raise ValueError(
+            f"k/cross-section length mismatch: {source.size} vs {values.size}"
+        )
+    if source.size < 2 or target.size < 1:
+        raise ValueError("k grids must contain enough samples for interpolation")
+    if not np.all(np.isfinite(source)) or not np.all(np.isfinite(target)):
+        raise ValueError("k grids must contain only finite values")
+
+    source_steps = np.diff(source)
+    if np.all(source_steps < 0):
+        source = source[::-1]
+        values = values[::-1]
+    elif not np.all(source_steps > 0):
+        raise ValueError("Source k grid must be strictly monotonic")
+
+    target_descending = target.size > 1 and np.all(np.diff(target) < 0)
+    if target.size > 1 and not (target_descending or np.all(np.diff(target) > 0)):
+        raise ValueError("Target k grid must be strictly monotonic")
+    interpolation_target = target[::-1] if target_descending else target
+    aligned = np.interp(
+        interpolation_target,
+        source,
+        values,
+        left=np.nan,
+        right=np.nan,
+    )
+    return aligned[::-1] if target_descending else aligned
+
+
+def _prepare_bulk_heatmap_matrix(
+    param_values: np.ndarray,
+    k_axes: Sequence[np.ndarray],
+    crosssections: Sequence[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Sort sweep rows and align all cross-sections to one k grid."""
+    params = np.asarray(param_values, dtype=float).reshape(-1)
+    if params.size == 0:
+        raise ValueError("Bulk heatmap requires at least one scan point")
+    if len(k_axes) != params.size or len(crosssections) != params.size:
+        raise ValueError(
+            "Bulk heatmap parameter, k-axis and cross-section counts must match"
+        )
+    if not np.all(np.isfinite(params)):
+        raise ValueError("Bulk heatmap parameters must be finite")
+
+    order = np.argsort(params, kind="stable")
+    sorted_params = params[order]
+    if sorted_params.size > 1 and np.any(np.diff(sorted_params) <= 0):
+        raise ValueError(
+            "Bulk heatmap parameters must be unique and strictly increasing "
+            "after sorting"
+        )
+    reference_index = int(order[0])
+    k_ref = np.asarray(k_axes[reference_index], dtype=float).reshape(-1)
+    rows: list[np.ndarray] = []
+    for index in order:
+        ka = np.asarray(k_axes[int(index)], dtype=float).reshape(-1)
+        cs = np.asarray(crosssections[int(index)], dtype=float).reshape(-1)
+        if ka.shape == k_ref.shape and np.allclose(ka, k_ref, rtol=1e-9, atol=0.0):
+            if cs.shape != ka.shape:
+                raise ValueError(
+                    f"k/cross-section length mismatch: {ka.size} vs {cs.size}"
+                )
+            rows.append(cs)
+        else:
+            rows.append(_align_crosssection_to_k_grid(ka, cs, k_ref))
+    return np.asarray(rows), k_ref, sorted_params, order
+
+
 def _extract_compact(
-    result: "DispersionResult1D",
+    result: DispersionResult1D,
     find_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     """Compute LowestFrequencyResult and extract compact data from it.
@@ -74,15 +154,20 @@ def _extract_compact(
     """
     from .analyze import DispersionAnalyzeAccessor
 
-    lowest = DispersionAnalyzeAccessor(result).find_lowest_possible_frequency(**find_kwargs)
+    lowest = DispersionAnalyzeAccessor(result).find_lowest_possible_frequency(
+        **find_kwargs
+    )
 
-    S = result.S          # (Nk, Nf)
+    analysis_source = str(find_kwargs.get("analysis_source", "raw"))
+    S = result.spectrum_for(analysis_source)  # (Nk, Nf)
     f_axis = result.f_axis
     k_axis = result.k_axis
 
     # Prefer slice-based frequency selection to avoid duplicating S[:, pos_f].
     if np.all(np.diff(f_axis) >= 0):
-        f_selector: slice | np.ndarray = slice(int(np.searchsorted(f_axis, 0.0, side="left")), None)
+        f_selector: slice | np.ndarray = slice(
+            int(np.searchsorted(f_axis, 0.0, side="left")), None
+        )
         f_pos = f_axis[f_selector]
     else:
         pos_idx = np.flatnonzero(f_axis >= 0)
@@ -119,7 +204,9 @@ def _extract_compact(
             f_pos = f_pos[start_idx:]
             if isinstance(f_selector, slice):
                 base_start = int(f_selector.start or 0)
-                f_selector = slice(base_start + start_idx, f_selector.stop, f_selector.step)
+                f_selector = slice(
+                    base_start + start_idx, f_selector.stop, f_selector.step
+                )
             else:
                 f_selector = f_selector[start_idx:]
         else:
@@ -148,22 +235,23 @@ def _extract_compact(
     cs_at_fk0 = S[:, idx_fk0_abs].copy()
 
     return {
-        "f_min_hz":              lowest.f_min_hz,
-        "k_star_rad_m":          lowest.k_at_f_min,
-        "vg_at_min_m_s":         lowest.group_velocity_at_min,
-        "f_at_k0_hz":            lowest.f_at_k0_hz,
-        "crosssection_at_fmin":  cs_at_fmin,
-        "crosssection_at_fk0":   cs_at_fk0,
-        "branch_f":              lowest.branch_f.copy(),
-        "branch_k":              lowest.branch_k.copy(),
-        "k_axis":                k_axis.copy(),
-        "f_axis_pos":            f_pos.copy(),
+        "f_min_hz": lowest.f_min_hz,
+        "k_star_rad_m": lowest.k_at_f_min,
+        "vg_at_min_m_s": lowest.group_velocity_at_min,
+        "f_at_k0_hz": lowest.f_at_k0_hz,
+        "crosssection_at_fmin": cs_at_fmin,
+        "crosssection_at_fk0": cs_at_fk0,
+        "branch_f": lowest.branch_f.copy(),
+        "branch_k": lowest.branch_k.copy(),
+        "k_axis": k_axis.copy(),
+        "f_axis_pos": f_pos.copy(),
     }
 
 
 # ---------------------------------------------------------------------------
 # Result container
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class BulkMinimumFrequencyResult:
@@ -225,6 +313,116 @@ class BulkMinimumFrequencyResult:
     #   label, f_min_hz, k_star_rad_m, f_k0_hz, model, params
     analytical_overlays: list[dict[str, Any]] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        """Normalize arrays and reject internally inconsistent sweep results."""
+        scalar_names = (
+            "param_values",
+            "f_min_hz",
+            "k_star_rad_m",
+            "vg_at_min",
+            "f_at_k0_hz",
+        )
+        for name in scalar_names:
+            value = np.asarray(getattr(self, name), dtype=float)
+            if value.ndim != 1:
+                raise ValueError(f"{name} must be a one-dimensional array")
+            setattr(self, name, value)
+
+        n = self.param_values.size
+        if n == 0:
+            raise ValueError("Bulk result must contain at least one scan point")
+        if not np.all(np.isfinite(self.param_values)):
+            raise ValueError("param_values must contain only finite values")
+        for name in scalar_names[1:]:
+            if getattr(self, name).size != n:
+                raise ValueError(
+                    f"{name} must contain one value per scan point "
+                    f"({getattr(self, name).size} != {n})"
+                )
+
+        sequence_names = (
+            "crosssections_at_fmin",
+            "crosssections_at_fk0",
+            "branches_f",
+            "branches_k",
+            "k_axes",
+        )
+        for name in sequence_names:
+            values = list(getattr(self, name))
+            if len(values) != n:
+                raise ValueError(
+                    f"{name} must contain one array per scan point "
+                    f"({len(values)} != {n})"
+                )
+            setattr(self, name, [np.asarray(value) for value in values])
+
+        for i in range(n):
+            k_axis = self.k_axes[i].reshape(-1)
+            cs_fmin = self.crosssections_at_fmin[i].reshape(-1)
+            cs_fk0 = self.crosssections_at_fk0[i].reshape(-1)
+            branch_f = self.branches_f[i].reshape(-1)
+            branch_k = self.branches_k[i].reshape(-1)
+            if cs_fmin.size != k_axis.size or cs_fk0.size != k_axis.size:
+                raise ValueError(
+                    f"Scan point {i} has cross-section/k-axis length mismatch"
+                )
+            if branch_f.size != branch_k.size:
+                raise ValueError(
+                    f"Scan point {i} has branch frequency/k length mismatch"
+                )
+            self.k_axes[i] = k_axis
+            self.crosssections_at_fmin[i] = cs_fmin
+            self.crosssections_at_fk0[i] = cs_fk0
+            self.branches_f[i] = branch_f
+            self.branches_k[i] = branch_k
+
+        invalid_error_indices = [
+            index
+            for index in self.errors
+            if not isinstance(index, (int, np.integer))
+            or int(index) < 0
+            or int(index) >= n
+        ]
+        if invalid_error_indices:
+            raise ValueError(
+                f"errors contains invalid scan indices: {invalid_error_indices}"
+            )
+
+        analytical_names = (
+            "analytical_f_min_hz",
+            "analytical_k_star_rad_m",
+            "analytical_f_k0_hz",
+        )
+        for name in analytical_names:
+            value = getattr(self, name)
+            if value is None:
+                continue
+            array: Any = np.asarray(value, dtype=float)
+            if array.ndim != 1 or array.size != n:
+                raise ValueError(f"{name} must contain one value per scan point")
+            setattr(self, name, array)
+
+        normalized_overlays: list[dict[str, Any]] = []
+        for overlay_index, overlay in enumerate(self.analytical_overlays):
+            normalized = dict(overlay)
+            for key in ("f_min_hz", "k_star_rad_m", "f_k0_hz"):
+                overlay_value = normalized.get(key)
+                if overlay_value is None:
+                    if key != "f_k0_hz":
+                        raise ValueError(
+                            f"Analytical overlay {overlay_index} is missing {key}"
+                        )
+                    continue
+                array = np.asarray(overlay_value, dtype=float)
+                if array.ndim != 1 or array.size != n:
+                    raise ValueError(
+                        f"Analytical overlay {overlay_index} field {key} must "
+                        "contain one value per scan point"
+                    )
+                normalized[key] = array
+            normalized_overlays.append(normalized)
+        self.analytical_overlays = normalized_overlays
+
     # ------------------------------------------------------------------
     # Convenience properties
     # ------------------------------------------------------------------
@@ -258,15 +456,27 @@ class BulkMinimumFrequencyResult:
 
     @property
     def analytical_f_min_ghz(self) -> np.ndarray | None:
-        return self.analytical_f_min_hz / 1e9 if self.analytical_f_min_hz is not None else None
+        return (
+            self.analytical_f_min_hz / 1e9
+            if self.analytical_f_min_hz is not None
+            else None
+        )
 
     @property
     def analytical_f_k0_ghz(self) -> np.ndarray | None:
-        return self.analytical_f_k0_hz / 1e9 if self.analytical_f_k0_hz is not None else None
+        return (
+            self.analytical_f_k0_hz / 1e9
+            if self.analytical_f_k0_hz is not None
+            else None
+        )
 
     @property
     def analytical_k_star_rad_um(self) -> np.ndarray | None:
-        return self.analytical_k_star_rad_m / 1e6 if self.analytical_k_star_rad_m is not None else None
+        return (
+            self.analytical_k_star_rad_m / 1e6
+            if self.analytical_k_star_rad_m is not None
+            else None
+        )
 
     @property
     def analytical_delta_f_mhz(self) -> np.ndarray | None:
@@ -297,7 +507,7 @@ class BulkMinimumFrequencyResult:
         k_range: tuple[float, float] | None = None,
         n_k: int = 500,
         side: str = "positive",
-    ) -> "BulkMinimumFrequencyResult":
+    ) -> BulkMinimumFrequencyResult:
         """Compute analytical dispersion overlay on existing results.
 
         Can be called **multiple times** to stack several overlays on the
@@ -347,8 +557,17 @@ class BulkMinimumFrequencyResult:
             k_lo, k_hi = 0.0, 10e6
 
         k_an = np.linspace(k_lo, k_hi, n_k)
-        mat = dict(Ms=Ms, d=d, Aex=Aex, Ku=Ku, Kc1=Kc1, Kc2=Kc2,
-                   phi=phi, phi_ani=phi_ani, g=g)
+        mat = {
+            "Ms": Ms,
+            "d": d,
+            "Aex": Aex,
+            "Ku": Ku,
+            "Kc1": Kc1,
+            "Kc2": Kc2,
+            "phi": phi,
+            "phi_ani": phi_ani,
+            "g": g,
+        }
 
         an_f_min = np.full(self.n, np.nan)
         an_k_star = np.full(self.n, np.nan)
@@ -393,18 +612,18 @@ class BulkMinimumFrequencyResult:
         self.analytical_k_star_rad_m = an_k_star
         self.analytical_f_k0_hz = an_f_k0
         self.analytical_model = overlay_label
-        self.analytical_params = overlay["params"]
+        self.analytical_params = cast(dict[str, Any], overlay["params"])
         return self
 
     @property
-    def plot(self) -> "BulkMinimumPlotAccessor":
+    def plot(self) -> BulkMinimumPlotAccessor:
         return BulkMinimumPlotAccessor(self)
 
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 
-    def save(self, path: Union[str, Path]) -> Path:
+    def save(self, path: str | Path) -> Path:
         """Save to a compressed numpy archive (``.npz``).
 
         Parameters
@@ -423,12 +642,14 @@ class BulkMinimumFrequencyResult:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         arrays: dict[str, Any] = {
-            "param_values":   self.param_values,
-            "f_min_hz":       self.f_min_hz,
-            "k_star_rad_m":   self.k_star_rad_m,
-            "vg_at_min":      self.vg_at_min,
-            "f_at_k0_hz":     self.f_at_k0_hz,
-            "param_label":    np.array([self.param_label]),
+            "format_version": np.array([2], dtype=int),
+            "param_values": self.param_values,
+            "f_min_hz": self.f_min_hz,
+            "k_star_rad_m": self.k_star_rad_m,
+            "vg_at_min": self.vg_at_min,
+            "f_at_k0_hz": self.f_at_k0_hz,
+            "param_label": np.array([self.param_label]),
+            "meta": np.array([self.meta], dtype=object),
         }
         for i, (cs_fmin, cs_fk0, bf, bk, ka) in enumerate(
             zip(
@@ -437,33 +658,47 @@ class BulkMinimumFrequencyResult:
                 self.branches_f,
                 self.branches_k,
                 self.k_axes,
+                strict=False,
             )
         ):
-            arrays[f"cs_fmin_{i}"]   = cs_fmin
-            arrays[f"cs_fk0_{i}"]    = cs_fk0
-            arrays[f"branch_f_{i}"]  = bf
-            arrays[f"branch_k_{i}"]  = bk
-            arrays[f"k_axis_{i}"]    = ka
+            arrays[f"cs_fmin_{i}"] = cs_fmin
+            arrays[f"cs_fk0_{i}"] = cs_fk0
+            arrays[f"branch_f_{i}"] = bf
+            arrays[f"branch_k_{i}"] = bk
+            arrays[f"k_axis_{i}"] = ka
 
-        arrays["errors_keys"]   = np.array(list(self.errors.keys()), dtype=int)
+        arrays["errors_keys"] = np.array(list(self.errors.keys()), dtype=int)
         arrays["errors_values"] = np.array(list(self.errors.values()), dtype=object)
 
         # Analytical overlay
         if self.analytical_f_min_hz is not None:
-            arrays["an_f_min_hz"]      = self.analytical_f_min_hz
-            arrays["an_k_star_rad_m"]  = self.analytical_k_star_rad_m
-            arrays["an_f_k0_hz"]       = self.analytical_f_k0_hz
+            arrays["an_f_min_hz"] = self.analytical_f_min_hz
+            arrays["an_k_star_rad_m"] = self.analytical_k_star_rad_m
+            arrays["an_f_k0_hz"] = self.analytical_f_k0_hz
         if self.analytical_model is not None:
             arrays["an_model"] = np.array([self.analytical_model])
         if self.analytical_params is not None:
-            import json
-            arrays["an_params_json"] = np.array([json.dumps(self.analytical_params)])
+            arrays["an_params"] = np.array([self.analytical_params], dtype=object)
+
+        arrays["overlay_count"] = np.array([len(self.analytical_overlays)], dtype=int)
+        for i, overlay in enumerate(self.analytical_overlays):
+            arrays[f"overlay_{i}_label"] = np.array(
+                [str(overlay.get("label", overlay.get("model", f"overlay {i}")))]
+            )
+            arrays[f"overlay_{i}_model"] = np.array([str(overlay.get("model", ""))])
+            arrays[f"overlay_{i}_f_min_hz"] = overlay["f_min_hz"]
+            arrays[f"overlay_{i}_k_star_rad_m"] = overlay["k_star_rad_m"]
+            if overlay.get("f_k0_hz") is not None:
+                arrays[f"overlay_{i}_f_k0_hz"] = overlay["f_k0_hz"]
+            arrays[f"overlay_{i}_params"] = np.array(
+                [overlay.get("params")], dtype=object
+            )
 
         np.savez_compressed(str(path), **arrays)
         return path.resolve()
 
     @classmethod
-    def load(cls, path: Union[str, Path]) -> "BulkMinimumFrequencyResult":
+    def load(cls, path: str | Path) -> BulkMinimumFrequencyResult:
         """Load from a ``.npz`` file saved by :meth:`save`.
 
         Parameters
@@ -474,23 +709,27 @@ class BulkMinimumFrequencyResult:
         path = Path(path)
         data = np.load(str(path), allow_pickle=True)
 
-        param_values  = data["param_values"]
-        n             = len(param_values)
-        param_label   = str(data["param_label"][0])
-        f_min_hz      = data["f_min_hz"]
-        k_star_rad_m  = data["k_star_rad_m"]
-        vg_at_min     = data["vg_at_min"]
-        f_at_k0_hz    = data["f_at_k0_hz"]
+        param_values = data["param_values"]
+        n = len(param_values)
+        param_label = str(data["param_label"][0])
+        f_min_hz = data["f_min_hz"]
+        k_star_rad_m = data["k_star_rad_m"]
+        vg_at_min = data["vg_at_min"]
+        f_at_k0_hz = data["f_at_k0_hz"]
 
-        cs_fmin   = [data[f"cs_fmin_{i}"]  for i in range(n) if f"cs_fmin_{i}"  in data]
-        cs_fk0    = [data[f"cs_fk0_{i}"]   for i in range(n) if f"cs_fk0_{i}"   in data]
-        branches_f = [data[f"branch_f_{i}"] for i in range(n) if f"branch_f_{i}" in data]
-        branches_k = [data[f"branch_k_{i}"] for i in range(n) if f"branch_k_{i}" in data]
-        k_axes     = [data[f"k_axis_{i}"]   for i in range(n) if f"k_axis_{i}"   in data]
+        cs_fmin = [data[f"cs_fmin_{i}"] for i in range(n) if f"cs_fmin_{i}" in data]
+        cs_fk0 = [data[f"cs_fk0_{i}"] for i in range(n) if f"cs_fk0_{i}" in data]
+        branches_f = [
+            data[f"branch_f_{i}"] for i in range(n) if f"branch_f_{i}" in data
+        ]
+        branches_k = [
+            data[f"branch_k_{i}"] for i in range(n) if f"branch_k_{i}" in data
+        ]
+        k_axes = [data[f"k_axis_{i}"] for i in range(n) if f"k_axis_{i}" in data]
 
-        keys   = list(data.get("errors_keys",   np.array([], dtype=int)))
+        keys = list(data.get("errors_keys", np.array([], dtype=int)))
         values = list(data.get("errors_values", np.array([], dtype=object)))
-        errors = {int(k): str(v) for k, v in zip(keys, values)}
+        errors = {int(k): str(v) for k, v in zip(keys, values, strict=False)}
 
         # Analytical overlay (may be absent in older files)
         an_f_min = data["an_f_min_hz"] if "an_f_min_hz" in data else None
@@ -498,13 +737,43 @@ class BulkMinimumFrequencyResult:
         an_f_k0 = data["an_f_k0_hz"] if "an_f_k0_hz" in data else None
         an_model = str(data["an_model"][0]) if "an_model" in data else None
         an_params = None
-        if "an_params_json" in data:
+        if "an_params" in data:
+            an_params = data["an_params"][0]
+            if not isinstance(an_params, dict):
+                raise ValueError(
+                    "Serialized analytical parameters must be a dictionary"
+                )
+        elif "an_params_json" in data:
             import json
+
             try:
                 an_params = json.loads(str(data["an_params_json"][0]))
-            except Exception:
-                pass
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Invalid analytical parameter JSON in bulk archive"
+                ) from exc
 
+        overlays: list[dict[str, Any]] = []
+        overlay_count = int(data["overlay_count"][0]) if "overlay_count" in data else 0
+        for i in range(overlay_count):
+            overlays.append(
+                {
+                    "label": str(data[f"overlay_{i}_label"][0]),
+                    "model": str(data[f"overlay_{i}_model"][0]),
+                    "f_min_hz": data[f"overlay_{i}_f_min_hz"],
+                    "k_star_rad_m": data[f"overlay_{i}_k_star_rad_m"],
+                    "f_k0_hz": (
+                        data[f"overlay_{i}_f_k0_hz"]
+                        if f"overlay_{i}_f_k0_hz" in data
+                        else None
+                    ),
+                    "params": data[f"overlay_{i}_params"][0],
+                }
+            )
+
+        meta = data["meta"][0] if "meta" in data else {}
+        if not isinstance(meta, dict):
+            raise ValueError("Serialized bulk metadata must be a dictionary")
         return cls(
             param_values=param_values,
             param_label=param_label,
@@ -518,11 +787,13 @@ class BulkMinimumFrequencyResult:
             branches_k=branches_k,
             k_axes=k_axes,
             errors=errors,
+            meta=dict(meta),
             analytical_f_min_hz=an_f_min,
             analytical_k_star_rad_m=an_k_star,
             analytical_f_k0_hz=an_f_k0,
             analytical_model=an_model,
             analytical_params=an_params,
+            analytical_overlays=overlays,
         )
 
     # ------------------------------------------------------------------
@@ -538,15 +809,15 @@ class BulkMinimumFrequencyResult:
         try:
             import pandas as pd
         except ImportError:
-            raise ImportError("pandas is required for to_dataframe().")
+            raise ImportError("pandas is required for to_dataframe().") from None
         return pd.DataFrame(
             {
-                "param":            self.param_values,
-                "f_min_ghz":        self.f_min_ghz,
-                "k_star_rad_um":    self.k_star_rad_um,
-                "vg_at_min_km_s":   self.vg_at_min / 1e3,
-                "f_at_k0_ghz":      self.f_at_k0_ghz,
-                "delta_f_mhz":      self.delta_f_mhz,
+                "param": self.param_values,
+                "f_min_ghz": self.f_min_ghz,
+                "k_star_rad_um": self.k_star_rad_um,
+                "vg_at_min_km_s": self.vg_at_min / 1e3,
+                "f_at_k0_ghz": self.f_at_k0_ghz,
+                "delta_f_mhz": self.delta_f_mhz,
             }
         )
 
@@ -570,18 +841,36 @@ class BulkMinimumFrequencyResult:
         ok = self.n - len(self.errors)
 
         stat_rows = [
-            ("scan points",   f"{self.n}  ({ok} OK, {len(self.errors)} errors)",
-             "Total jobs in scan; errors shows jobs that raised exceptions."),
-            ("parameter",     _esc(self.param_label),
-             "Scan parameter label as provided to scan_minimum_frequency()."),
-            ("f_min range",   f"{self.f_min_ghz.min():.4f} … {self.f_min_ghz.max():.4f} GHz",
-             "Range of minimum branch frequency across all scan points."),
-            ("k* range",      f"{self.k_star_rad_um.min():.3f} … {self.k_star_rad_um.max():.3f} rad/μm",
-             "Range of wave-vector at f_min across scan points."),
-            ("Δf range",      f"{self.delta_f_mhz.min():.2f} … {self.delta_f_mhz.max():.2f} MHz",
-             "Range of Δf = f(k=0) − f_min. Positive = backward-volume character."),
-            ("stored per pt", "S(k)|f_min  +  S(k)|f(k=0)  +  f_peak(k)",
-             "Compact 1-D arrays only — full S(k,f) is NOT stored."),
+            (
+                "scan points",
+                f"{self.n}  ({ok} OK, {len(self.errors)} errors)",
+                "Total jobs in scan; errors shows jobs that raised exceptions.",
+            ),
+            (
+                "parameter",
+                _esc(self.param_label),
+                "Scan parameter label as provided to scan_minimum_frequency().",
+            ),
+            (
+                "f_min range",
+                f"{self.f_min_ghz.min():.4f} … {self.f_min_ghz.max():.4f} GHz",
+                "Range of minimum branch frequency across all scan points.",
+            ),
+            (
+                "k* range",
+                f"{self.k_star_rad_um.min():.3f} … {self.k_star_rad_um.max():.3f} rad/μm",
+                "Range of wave-vector at f_min across scan points.",
+            ),
+            (
+                "Δf range",
+                f"{self.delta_f_mhz.min():.2f} … {self.delta_f_mhz.max():.2f} MHz",
+                "Range of Δf = f(k=0) − f_min. Positive = backward-volume character.",
+            ),
+            (
+                "stored per pt",
+                "S(k)|f_min  +  S(k)|f(k=0)  +  f_peak(k)",
+                "Compact 1-D arrays only — full S(k,f) is NOT stored.",
+            ),
         ]
         stat_html = "".join(
             f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:help;'>"
@@ -592,26 +881,38 @@ class BulkMinimumFrequencyResult:
         )
 
         plot_methods = [
-            (".plot.heatmap()",
-             "2-D heatmap: S(k)|f_min vs param",
-             "Color = spectral density at f_min, x = k [rad/μm], y = param. "
-             "Shows how the k-profile at f_min changes with the scan parameter."),
-            (".plot.f_min_vs_param()",
-             "f_min(param) line plot",
-             "Scatter/line of the minimum branch frequency vs scan parameter. "
-             "Optionally overlays f(k=0)."),
-            (".plot.k_star_vs_param()",
-             "k*(param) line plot",
-             "Wave-vector at f_min as a function of the scan parameter."),
-            (".plot.delta_f_vs_param()",
-             "Δf(param) = f(k=0) − f_min",
-             "Shows how the frequency gap between k=0 and f_min varies with parameter."),
-            (".plot.branches()",
-             "f_peak(k) for all scan points",
-             "Stacked line plot of all extracted f_peak(k) branches, coloured by param."),
-            (".plot.vg_vs_param()",
-             "v_g(k*) vs param",
-             "Group velocity at k* as a function of the scan parameter [km/s]."),
+            (
+                ".plot.heatmap()",
+                "2-D heatmap: S(k)|f_min vs param",
+                "Color = spectral density at f_min, x = k [rad/μm], y = param. "
+                "Shows how the k-profile at f_min changes with the scan parameter.",
+            ),
+            (
+                ".plot.f_min_vs_param()",
+                "f_min(param) line plot",
+                "Scatter/line of the minimum branch frequency vs scan parameter. "
+                "Optionally overlays f(k=0).",
+            ),
+            (
+                ".plot.k_star_vs_param()",
+                "k*(param) line plot",
+                "Wave-vector at f_min as a function of the scan parameter.",
+            ),
+            (
+                ".plot.delta_f_vs_param()",
+                "Δf(param) = f(k=0) − f_min",
+                "Shows how the frequency gap between k=0 and f_min varies with parameter.",
+            ),
+            (
+                ".plot.branches()",
+                "f_peak(k) for all scan points",
+                "Stacked line plot of all extracted f_peak(k) branches, coloured by param.",
+            ),
+            (
+                ".plot.vg_vs_param()",
+                "v_g(k*) vs param",
+                "Group velocity at k* as a function of the scan parameter [km/s].",
+            ),
         ]
         plot_html = "".join(
             f"<tr {HV} title=\"{_esc(tip)}\" style='cursor:pointer;'>"
@@ -669,6 +970,7 @@ class BulkMinimumFrequencyResult:
 # Plot accessor
 # ---------------------------------------------------------------------------
 
+
 class BulkMinimumPlotAccessor:
     """Plotting namespace for :class:`BulkMinimumFrequencyResult`.
 
@@ -699,21 +1001,21 @@ class BulkMinimumPlotAccessor:
 
     def heatmap(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (12, 7),
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         which: str = "fmin",
         cmap: str = "cmc.davos",
         kscale: str = "rad_um",
         lognorm: bool = False,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        k_xlim: Optional[tuple[float, float]] = None,
-        title: Optional[str] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        k_xlim: tuple[float, float] | None = None,
+        title: str | None = None,
         annotate_fmin: bool = True,
-        save: Union[str, Path, bool, None] = None,
-    ) -> tuple["Figure", "Axes"]:
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """2-D heatmap of S(k) cross-sections stacked vs scan parameter.
 
         This is the key bulk plot: each row is S(k) at f≈f_min (or f≈f(k=0))
@@ -742,63 +1044,62 @@ class BulkMinimumPlotAccessor:
         bulk = self._bulk
 
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
-            fig = ax.get_figure()
+            fig = cast(Figure, ax.get_figure())
 
-        # Build matrix: (N_params, Nk) — interpolate to a common k-grid
-        n = bulk.n
-        # Use the k-axis of the first valid job as reference
-        k_ref = bulk.k_axes[0]
+        if which not in {"fmin", "fk0"}:
+            raise ValueError("which must be 'fmin' or 'fk0'")
+        if kscale not in {"rad_um", "meter"}:
+            raise ValueError("kscale must be 'rad_um' or 'meter'")
+
         cs_list = (
-            bulk.crosssections_at_fmin if which == "fmin"
-            else bulk.crosssections_at_fk0
+            bulk.crosssections_at_fmin if which == "fmin" else bulk.crosssections_at_fk0
         )
-
-        rows = []
-        for i, (cs, ka) in enumerate(zip(cs_list, bulk.k_axes)):
-            if ka.size == k_ref.size:
-                rows.append(cs)
-            else:
-                # Interpolate to reference k-axis
-                rows.append(np.interp(k_ref, ka, cs, left=0.0, right=0.0))
-        matrix = np.array(rows)   # (N, Nk)
+        matrix, k_ref, params, order = _prepare_bulk_heatmap_matrix(
+            bulk.param_values, bulk.k_axes, cs_list
+        )
 
         k_plot = k_ref / 1e6 if kscale == "rad_um" else k_ref
         k_label = r"$k$ [rad/μm]" if kscale == "rad_um" else r"$k$ [rad/m]"
-        params = bulk.param_values
-
-        extent = [
-            float(k_plot[0]), float(k_plot[-1]),
-            float(params[0]),  float(params[-1]),
-        ]
-
-        norm = None
+        norm: Any = None
         if lognorm:
-            s_min = matrix[matrix > 0].min() if np.any(matrix > 0) else 1e-12
+            positive = matrix[np.isfinite(matrix) & (matrix > 0)]
+            if positive.size == 0:
+                raise ValueError(
+                    "Log-normalized bulk heatmap requires at least one finite "
+                    "positive spectral value"
+                )
+            s_min = float(np.min(positive))
             norm = LogNorm(
                 vmin=vmin if vmin is not None else s_min,
-                vmax=vmax if vmax is not None else matrix.max(),
+                vmax=vmax if vmax is not None else float(np.max(positive)),
             )
         elif vmin is not None or vmax is not None:
             from matplotlib.colors import Normalize
+
             norm = Normalize(vmin=vmin, vmax=vmax)
 
-        im = ax.imshow(
+        im = ax.pcolormesh(
+            k_plot,
+            params,
             matrix,
             cmap=cmap,
             norm=norm,
-            aspect="auto",
-            origin="lower",
-            extent=extent,
+            shading="auto",
         )
+        ax.set_aspect("auto")
         fig.colorbar(im, ax=ax, label="S(k)|f_min  [arb. units]")
 
         if annotate_fmin and which == "fmin":
             ks = bulk.k_star_rad_um if kscale == "rad_um" else bulk.k_star_rad_m
             ax.scatter(
-                ks, params,
-                s=50, color="red", marker="*", zorder=10,
+                np.asarray(ks)[order],
+                params,
+                s=50,
+                color="red",
+                marker="*",
+                zorder=10,
                 label="k* (f_min)",
             )
             ax.legend(fontsize=8)
@@ -823,16 +1124,16 @@ class BulkMinimumPlotAccessor:
 
     def f_min_vs_param(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (8, 5),
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         show_fk0: bool = True,
         show_delta_f: bool = False,
         f_units: str = "GHz",
-        title: Optional[str] = None,
-        save: Union[str, Path, bool, None] = None,
-    ) -> tuple["Figure", "Axes"]:
+        title: str | None = None,
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plot f_min (and optionally f(k=0)) vs scan parameter.
 
         Parameters
@@ -845,19 +1146,37 @@ class BulkMinimumPlotAccessor:
         import matplotlib.pyplot as plt
 
         bulk = self._bulk
+        if f_units not in {"GHz", "Hz"}:
+            raise ValueError("f_units must be 'GHz' or 'Hz'")
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
-            fig = ax.get_figure()
+            fig = cast(Figure, ax.get_figure())
 
         p = bulk.param_values[self._idx]
-        f_min  = (bulk.f_min_ghz  if f_units == "GHz" else bulk.f_min_hz)[self._idx]
-        f_k0   = (bulk.f_at_k0_ghz if f_units == "GHz" else bulk.f_at_k0_hz)[self._idx]
-        f_label = "f [GHz]"      if f_units == "GHz" else "f [Hz]"
+        f_min = (bulk.f_min_ghz if f_units == "GHz" else bulk.f_min_hz)[self._idx]
+        f_k0 = (bulk.f_at_k0_ghz if f_units == "GHz" else bulk.f_at_k0_hz)[self._idx]
+        f_label = "f [GHz]" if f_units == "GHz" else "f [Hz]"
 
-        ax.plot(p, f_min, "o-", color="#f97316", linewidth=2, markersize=6, label="f_min (sim)")
+        ax.plot(
+            p,
+            f_min,
+            "o-",
+            color="#f97316",
+            linewidth=2,
+            markersize=6,
+            label="f_min (sim)",
+        )
         if show_fk0:
-            ax.plot(p, f_k0, "s--", color="#22d3ee", linewidth=1.5, markersize=5, label="f(k=0) (sim)")
+            ax.plot(
+                p,
+                f_k0,
+                "s--",
+                color="#22d3ee",
+                linewidth=1.5,
+                markersize=5,
+                label="f(k=0) (sim)",
+            )
 
         # Analytical overlays (multiple)
         _an_colors = ["#a3e635", "#f472b6", "#38bdf8", "#fbbf24", "#c084fc", "#34d399"]
@@ -868,13 +1187,31 @@ class BulkMinimumPlotAccessor:
             mf = _an_markers_f[oi % len(_an_markers_f)]
             mk = _an_markers_k0[oi % len(_an_markers_k0)]
             lbl = ov["label"]
-            an_f = (ov["f_min_hz"] / 1e9 if f_units == "GHz" else ov["f_min_hz"])[self._idx]
-            ax.plot(p, an_f, f"{mf}--", color=c, linewidth=2, markersize=7,
-                    label=f"f_min ({lbl})")
+            an_f = (ov["f_min_hz"] / 1e9 if f_units == "GHz" else ov["f_min_hz"])[
+                self._idx
+            ]
+            ax.plot(
+                p,
+                an_f,
+                f"{mf}--",
+                color=c,
+                linewidth=2,
+                markersize=7,
+                label=f"f_min ({lbl})",
+            )
             if show_fk0 and ov["f_k0_hz"] is not None:
-                an_fk = (ov["f_k0_hz"] / 1e9 if f_units == "GHz" else ov["f_k0_hz"])[self._idx]
-                ax.plot(p, an_fk, f"{mk}:", color=c, linewidth=1.5, markersize=6,
-                        label=f"f(k=0) ({lbl})")
+                an_fk = (ov["f_k0_hz"] / 1e9 if f_units == "GHz" else ov["f_k0_hz"])[
+                    self._idx
+                ]
+                ax.plot(
+                    p,
+                    an_fk,
+                    f"{mk}:",
+                    color=c,
+                    linewidth=1.5,
+                    markersize=6,
+                    label=f"f(k=0) ({lbl})",
+                )
 
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel(f_label)
@@ -884,13 +1221,28 @@ class BulkMinimumPlotAccessor:
         if show_delta_f:
             ax2 = ax.twinx()
             df = bulk.delta_f_mhz[self._idx]
-            ax2.plot(p, df, "^:", color="#a78bfa", linewidth=1.5, markersize=4, label="Δf (sim) [MHz]")
+            ax2.plot(
+                p,
+                df,
+                "^:",
+                color="#a78bfa",
+                linewidth=1.5,
+                markersize=4,
+                label="Δf (sim) [MHz]",
+            )
             for oi, ov in enumerate(bulk.analytical_overlays):
                 c = _an_colors[oi % len(_an_colors)]
                 lbl = ov["label"]
                 an_df = (ov["f_k0_hz"] - ov["f_min_hz"]) / 1e6
-                ax2.plot(p, an_df[self._idx], "v:", color=c,
-                         linewidth=1.5, markersize=4, label=f"Δf ({lbl}) [MHz]")
+                ax2.plot(
+                    p,
+                    an_df[self._idx],
+                    "v:",
+                    color=c,
+                    linewidth=1.5,
+                    markersize=4,
+                    label=f"Δf ({lbl}) [MHz]",
+                )
             ax2.set_ylabel("Δf = f(k=0) − f_min  [MHz]", color="#a78bfa")
             ax2.tick_params(axis="y", labelcolor="#a78bfa")
 
@@ -913,28 +1265,40 @@ class BulkMinimumPlotAccessor:
 
     def k_star_vs_param(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (8, 5),
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         kscale: str = "rad_um",
-        title: Optional[str] = None,
-        save: Union[str, Path, bool, None] = None,
-    ) -> tuple["Figure", "Axes"]:
+        title: str | None = None,
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plot k* (wave-vector at f_min) vs scan parameter."""
         import matplotlib.pyplot as plt
 
         bulk = self._bulk
+        if kscale not in {"rad_um", "meter"}:
+            raise ValueError("kscale must be 'rad_um' or 'meter'")
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
-            fig = ax.get_figure()
+            fig = cast(Figure, ax.get_figure())
 
         p = bulk.param_values[self._idx]
-        k_data  = (bulk.k_star_rad_um if kscale == "rad_um" else bulk.k_star_rad_m)[self._idx]
+        k_data = (bulk.k_star_rad_um if kscale == "rad_um" else bulk.k_star_rad_m)[
+            self._idx
+        ]
         k_label = r"$k^*$ [rad/μm]" if kscale == "rad_um" else r"$k^*$ [rad/m]"
 
-        ax.plot(p, k_data, "D-", color="#4ade80", linewidth=2, markersize=6, label="k* (sim)")
+        ax.plot(
+            p,
+            k_data,
+            "D-",
+            color="#4ade80",
+            linewidth=2,
+            markersize=6,
+            label="k* (sim)",
+        )
         _an_colors = ["#a3e635", "#f472b6", "#38bdf8", "#fbbf24", "#c084fc", "#34d399"]
         _an_markers = ["x", "v", "^", "d", "p", "h"]
         for oi, ov in enumerate(bulk.analytical_overlays):
@@ -943,8 +1307,15 @@ class BulkMinimumPlotAccessor:
             an_k_data = ov["k_star_rad_m"]
             if kscale == "rad_um":
                 an_k_data = an_k_data / 1e6
-            ax.plot(p, an_k_data[self._idx], f"{m}--", color=c, linewidth=2, markersize=7,
-                    label=f"k* ({ov['label']})")
+            ax.plot(
+                p,
+                an_k_data[self._idx],
+                f"{m}--",
+                color=c,
+                linewidth=2,
+                markersize=7,
+                label=f"k* ({ov['label']})",
+            )
         ax.legend(fontsize=9)
         ax.set_xlabel(bulk.param_label)
         ax.set_ylabel(k_label)
@@ -963,32 +1334,47 @@ class BulkMinimumPlotAccessor:
 
     def delta_f_vs_param(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (8, 5),
-        dpi: Optional[int] = None,
-        title: Optional[str] = None,
-        save: Union[str, Path, bool, None] = None,
-    ) -> tuple["Figure", "Axes"]:
+        dpi: int | None = None,
+        title: str | None = None,
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plot Δf = f(k=0) − f_min  vs scan parameter [MHz]."""
         import matplotlib.pyplot as plt
 
         bulk = self._bulk
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
-            fig = ax.get_figure()
+            fig = cast(Figure, ax.get_figure())
 
         p = bulk.param_values[self._idx]
-        ax.plot(p, bulk.delta_f_mhz[self._idx], "o-", color="#a78bfa", linewidth=2, markersize=6, label="Δf (sim)")
+        ax.plot(
+            p,
+            bulk.delta_f_mhz[self._idx],
+            "o-",
+            color="#a78bfa",
+            linewidth=2,
+            markersize=6,
+            label="Δf (sim)",
+        )
         _an_colors = ["#a3e635", "#f472b6", "#38bdf8", "#fbbf24", "#c084fc", "#34d399"]
         _an_markers = ["x", "v", "^", "d", "p", "h"]
         for oi, ov in enumerate(bulk.analytical_overlays):
             c = _an_colors[oi % len(_an_colors)]
             m = _an_markers[oi % len(_an_markers)]
             an_df = (ov["f_k0_hz"] - ov["f_min_hz"]) / 1e6
-            ax.plot(p, an_df[self._idx], f"{m}--", color=c,
-                    linewidth=2, markersize=7, label=f"Δf ({ov['label']})")
+            ax.plot(
+                p,
+                an_df[self._idx],
+                f"{m}--",
+                color=c,
+                linewidth=2,
+                markersize=7,
+                label=f"Δf ({ov['label']})",
+            )
         ax.legend(fontsize=9)
         ax.axhline(0, color="#475569", linestyle="--", linewidth=1.0, alpha=0.6)
         ax.set_xlabel(bulk.param_label)
@@ -1008,21 +1394,21 @@ class BulkMinimumPlotAccessor:
 
     def vg_vs_param(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (8, 5),
-        dpi: Optional[int] = None,
-        title: Optional[str] = None,
-        save: Union[str, Path, bool, None] = None,
-    ) -> tuple["Figure", "Axes"]:
+        dpi: int | None = None,
+        title: str | None = None,
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plot group velocity at k* vs scan parameter [km/s]."""
         import matplotlib.pyplot as plt
 
         bulk = self._bulk
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
-            fig = ax.get_figure()
+            fig = cast(Figure, ax.get_figure())
 
         vg_km_s = self._bulk.vg_at_min[self._idx] / 1e3
         p = bulk.param_values[self._idx]
@@ -1046,19 +1432,19 @@ class BulkMinimumPlotAccessor:
 
     def branches(
         self,
-        ax: Optional["Axes"] = None,
+        ax: Axes | None = None,
         *,
         figsize: tuple[float, float] = (10, 6),
-        dpi: Optional[int] = None,
+        dpi: int | None = None,
         kscale: str = "rad_um",
         f_units: str = "GHz",
         cmap: str = "viridis",
         alpha: float = 0.7,
         linewidth: float = 1.5,
-        title: Optional[str] = None,
+        title: str | None = None,
         colorbar: bool = True,
-        save: Union[str, Path, bool, None] = None,
-    ) -> tuple["Figure", "Axes"]:
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plot all extracted f_peak(k) branches, coloured by scan parameter.
 
         Parameters
@@ -1068,29 +1454,36 @@ class BulkMinimumPlotAccessor:
         colorbar : bool
             Add a colorbar encoding the parameter value.
         """
-        import matplotlib.pyplot as plt
         import matplotlib.cm as cm
         import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
 
         bulk = self._bulk
+        if kscale not in {"rad_um", "meter"}:
+            raise ValueError("kscale must be 'rad_um' or 'meter'")
+        if f_units not in {"GHz", "Hz"}:
+            raise ValueError("f_units must be 'GHz' or 'Hz'")
         if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+            fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
-            fig = ax.get_figure()
+            fig = cast(Figure, ax.get_figure())
 
         params = bulk.param_values
         p_min, p_max = float(params.min()), float(params.max())
         cmap_obj = cm.get_cmap(cmap)
         norm = mcolors.Normalize(vmin=p_min, vmax=p_max)
 
-        for i, (bk, bf, p) in enumerate(zip(bulk.branches_k, bulk.branches_f, params)):
+        for i in self._idx:
+            bk = bulk.branches_k[int(i)]
+            bf = bulk.branches_f[int(i)]
+            p = params[int(i)]
             k_plot = bk / 1e6 if kscale == "rad_um" else bk
             f_plot = bf / 1e9 if f_units == "GHz" else bf
             color = cmap_obj(norm(float(p)))
             ax.plot(k_plot, f_plot, color=color, linewidth=linewidth, alpha=alpha)
 
         k_label = r"$k$ [rad/μm]" if kscale == "rad_um" else r"$k$ [rad/m]"
-        f_label = "f [GHz]"      if f_units == "GHz"     else "f [Hz]"
+        f_label = "f [GHz]" if f_units == "GHz" else "f [Hz]"
         ax.set_xlabel(k_label)
         ax.set_ylabel(f_label)
         ax.set_title(title or f"f_peak(k) branches  —  {bulk.param_label}")
@@ -1114,13 +1507,13 @@ class BulkMinimumPlotAccessor:
     def summary(
         self,
         figsize: tuple[float, float] = (14, 10),
-        dpi: Optional[int] = None,
-        save: Union[str, Path, bool, None] = None,
-    ) -> tuple["Figure", Any]:
+        dpi: int | None = None,
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Any]:
         """4-panel summary figure: heatmap, f_min, k*, Δf."""
         import matplotlib.pyplot as plt
 
-        fig, axes = plt.subplots(2, 2, figsize=figsize, **({"dpi": dpi} if dpi else {}))
+        fig, axes = plt.subplots(2, 2, figsize=figsize, dpi=dpi)
         ax_hm, ax_fmin, ax_kstar, ax_df = axes.ravel()
 
         self.heatmap(ax=ax_hm)
@@ -1138,8 +1531,9 @@ class BulkMinimumPlotAccessor:
 
     # ------------------------------------------------------------------
 
-    def _save(self, fig: "Figure", save: Any) -> None:
+    def _save(self, fig: Figure, save: Any) -> None:
         from datetime import datetime, timezone
+
         if isinstance(save, bool):
             ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             path = Path(f"bulk_dispersion_{ts}.png")
@@ -1153,34 +1547,53 @@ class BulkMinimumPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("BulkMinimumPlotAccessor", [
-            (".heatmap(which='fmin', lognorm=True)",
-             "S(k) cross-section heatmap vs scan parameter",
-             "which: 'fmin' or 'fk0'. lognorm, cmap, vmin/vmax, k_xlim, annotate_fmin, save."),
-            (".f_min_vs_param(show_fk0=True, show_delta_f=False)",
-             "f_min (and f(k=0)) vs scan parameter",
-             "show_fk0: overlay f(k=0). show_delta_f: second y-axis with Δf. f_units: 'GHz'|'Hz'. Supports multiple analytical overlays."),
-            (".k_star_vs_param(kscale='rad_um')",
-             "k* (wave-vector at f_min) vs scan parameter",
-             "kscale: 'rad_um' or 'rad_m'. Includes analytical overlays if present."),
-            (".delta_f_vs_param()",
-             "Δf = f(k=0) − f_min [MHz] vs scan parameter",
-             "Shows sim and all analytical overlay Δf curves."),
-            (".vg_vs_param()",
-             "Group velocity at k* [km/s] vs scan parameter",
-             "Estimated vg = dω/dk at the frequency minimum."),
-            (".branches(cmap='viridis')",
-             "All f_peak(k) branches coloured by parameter",
-             "cmap, alpha, linewidth, colorbar, f_units. Overlays all branches."),
-            (".summary()",
-             "4-panel summary: heatmap + f_min + k* + Δf",
-             "Creates a (14×10) figure with four sub-plots."),
-        ])
+
+        return plot_accessor_html(
+            "BulkMinimumPlotAccessor",
+            [
+                (
+                    ".heatmap(which='fmin', lognorm=True)",
+                    "S(k) cross-section heatmap vs scan parameter",
+                    "which: 'fmin' or 'fk0'. lognorm, cmap, vmin/vmax, k_xlim, annotate_fmin, save.",
+                ),
+                (
+                    ".f_min_vs_param(show_fk0=True, show_delta_f=False)",
+                    "f_min (and f(k=0)) vs scan parameter",
+                    "show_fk0: overlay f(k=0). show_delta_f: second y-axis with Δf. f_units: 'GHz'|'Hz'. Supports multiple analytical overlays.",
+                ),
+                (
+                    ".k_star_vs_param(kscale='rad_um')",
+                    "k* (wave-vector at f_min) vs scan parameter",
+                    "kscale: 'rad_um' or 'rad_m'. Includes analytical overlays if present.",
+                ),
+                (
+                    ".delta_f_vs_param()",
+                    "Δf = f(k=0) − f_min [MHz] vs scan parameter",
+                    "Shows sim and all analytical overlay Δf curves.",
+                ),
+                (
+                    ".vg_vs_param()",
+                    "Group velocity at k* [km/s] vs scan parameter",
+                    "Estimated vg = dω/dk at the frequency minimum.",
+                ),
+                (
+                    ".branches(cmap='viridis')",
+                    "All f_peak(k) branches coloured by parameter",
+                    "cmap, alpha, linewidth, colorbar, f_units. Overlays all branches.",
+                ),
+                (
+                    ".summary()",
+                    "4-panel summary: heatmap + f_min + k* + Δf",
+                    "Creates a (14×10) figure with four sub-plots.",
+                ),
+            ],
+        )
 
 
 # ---------------------------------------------------------------------------
 # Main entry-point: scan_minimum_frequency
 # ---------------------------------------------------------------------------
+
 
 def scan_minimum_frequency(
     sources: Iterable[Any],
@@ -1376,23 +1789,23 @@ def scan_minimum_frequency(
             f"Use job_indices to select a subset of the {len(all_sources)}-job container."
         )
 
-    filters        = filters        or {}
+    filters = filters or {}
     compute_kwargs = compute_kwargs or {}
-    find_kwargs    = find_kwargs    or {}
+    find_kwargs = find_kwargs or {}
 
     if z_slice is not None and slice_spec is None:
         slice_spec = z_slice
     # Note: slice_spec=None means no slicing (dataset passed as-is)
 
-    f_min_arr      = np.full(len(sources), np.nan)
-    k_star_arr     = np.full(len(sources), np.nan)
-    vg_arr_out     = np.full(len(sources), np.nan)
-    f_k0_arr       = np.full(len(sources), np.nan)
-    cs_fmin_list:  list[np.ndarray] = []
-    cs_fk0_list:   list[np.ndarray] = []
-    branches_f:    list[np.ndarray] = []
-    branches_k:    list[np.ndarray] = []
-    k_axes:        list[np.ndarray] = []
+    f_min_arr = np.full(len(sources), np.nan)
+    k_star_arr = np.full(len(sources), np.nan)
+    vg_arr_out = np.full(len(sources), np.nan)
+    f_k0_arr = np.full(len(sources), np.nan)
+    cs_fmin_list: list[np.ndarray] = []
+    cs_fk0_list: list[np.ndarray] = []
+    branches_f: list[np.ndarray] = []
+    branches_k: list[np.ndarray] = []
+    k_axes: list[np.ndarray] = []
     errors: dict[int, str] = {}
 
     # ── Helper : process a single job (may run in a worker thread) ─────
@@ -1458,7 +1871,12 @@ def scan_minimum_frequency(
             return out
 
         except Exception as exc:
-            return {"ok": False, "i": i, "error": f"{type(exc).__name__}: {exc}", "exc": exc}
+            return {
+                "ok": False,
+                "i": i,
+                "error": f"{type(exc).__name__}: {exc}",
+                "exc": exc,
+            }
 
         finally:
             if iface is not None:
@@ -1467,8 +1885,6 @@ def scan_minimum_frequency(
                 except Exception:
                     pass
                 iface = None
-            result = None
-            compact = None
             gc.collect()
 
     # ── Run jobs (sequential or parallel) ─────────────────────────────
@@ -1479,7 +1895,10 @@ def scan_minimum_frequency(
         # Sequential path — keep the simple progress output
         for i, src in enumerate(sources):
             if verbose:
-                print(f"[{i+1}/{n_total}]  {param_label}={param_values_arr[i]}", end="  ")
+                print(
+                    f"[{i + 1}/{n_total}]  {param_label}={param_values_arr[i]}",
+                    end="  ",
+                )
             out = _process_one_job(i, src)
             if out["ok"]:
                 f_min_arr[i] = out["f_min_hz"]
@@ -1492,7 +1911,9 @@ def scan_minimum_frequency(
                 branches_k.append(out["branch_k"])
                 k_axes.append(out["k_axis"])
                 if verbose:
-                    print(f"  f_min={out['f_min_hz']/1e9:.4f} GHz  k*={out['k_star_rad_m']/1e6:.3f} rad/μm")
+                    print(
+                        f"  f_min={out['f_min_hz'] / 1e9:.4f} GHz  k*={out['k_star_rad_m'] / 1e6:.3f} rad/μm"
+                    )
             else:
                 errors[i] = out["error"]
                 cs_fmin_list.append(np.array([]))
@@ -1503,7 +1924,10 @@ def scan_minimum_frequency(
                 if on_error == "raise":
                     raise out["exc"]
                 elif on_error == "warn":
-                    warnings.warn(f"Job {i} ({param_label}={param_values_arr[i]}) failed: {out['error']}", stacklevel=2)
+                    warnings.warn(
+                        f"Job {i} ({param_label}={param_values_arr[i]}) failed: {out['error']}",
+                        stacklevel=2,
+                    )
                 if verbose:
                     print(f"  ERROR: {out['error']}")
     else:
@@ -1526,12 +1950,16 @@ def scan_minimum_frequency(
                     pv = param_values_arr[i]
                     extra = ""
                     if out["ok"]:
-                        extra = f"  f_min={out['f_min_hz']/1e9:.4f} GHz"
-                    print(f"  [{_done_count[0]}/{n_total}] {param_label}={pv}  {status}{extra}")
+                        extra = f"  f_min={out['f_min_hz'] / 1e9:.4f} GHz"
+                    print(
+                        f"  [{_done_count[0]}/{n_total}] {param_label}={pv}  {status}{extra}"
+                    )
             return out
 
         with ThreadPoolExecutor(max_workers=n_workers_eff) as pool:
-            futures = {pool.submit(_worker, (i, src)): i for i, src in enumerate(sources)}
+            futures = {
+                pool.submit(_worker, (i, src)): i for i, src in enumerate(sources)
+            }
             for future in as_completed(futures):
                 out = future.result()
                 results_by_idx[out["i"]] = out
@@ -1559,12 +1987,14 @@ def scan_minimum_frequency(
                 if on_error == "raise":
                     raise out.get("exc", RuntimeError(out["error"]))
                 elif on_error == "warn":
-                    warnings.warn(f"Job {i} ({param_label}={param_values_arr[i]}) failed: {out['error']}", stacklevel=2)
+                    warnings.warn(
+                        f"Job {i} ({param_label}={param_values_arr[i]}) failed: {out['error']}",
+                        stacklevel=2,
+                    )
 
         if verbose:
             n_ok = n_total - len(errors)
             print(f"Done: {n_ok}/{n_total} succeeded, {len(errors)} errors")
-
 
     # ── Analytical dispersion overlay ─────────────────────────────────
     an_f_min_arr: np.ndarray | None = None
@@ -1598,6 +2028,7 @@ def scan_minimum_frequency(
 
         # Import the requested model
         from mmpp.analytical import dispersion as _an_disp
+
         model_func = getattr(_an_disp, an_model_name, None)
         if model_func is None:
             raise ValueError(
@@ -1643,7 +2074,9 @@ def scan_minimum_frequency(
 
         if verbose:
             n_ok = int(np.isfinite(an_f_min_arr).sum())
-            print(f"\nAnalytical ({an_model_name}): {n_ok}/{len(param_values_arr)} points computed")
+            print(
+                f"\nAnalytical ({an_model_name}): {n_ok}/{len(param_values_arr)} points computed"
+            )
 
     return BulkMinimumFrequencyResult(
         param_values=param_values_arr,
@@ -1659,9 +2092,9 @@ def scan_minimum_frequency(
         k_axes=k_axes,
         errors=errors,
         meta={
-            "filters":         filters,
-            "compute_kwargs":  compute_kwargs,
-            "find_kwargs":     find_kwargs,
+            "filters": filters,
+            "compute_kwargs": compute_kwargs,
+            "find_kwargs": find_kwargs,
         },
         analytical_f_min_hz=an_f_min_arr,
         analytical_k_star_rad_m=an_k_star_arr,

@@ -5,29 +5,28 @@ Provides functions for calculating optimal scale bar lengths
 and formatting labels with appropriate units.
 """
 
-import math
-from typing import Optional
 import logging
+import math
 
 log = logging.getLogger("mmpp.fft.modes")
 
 
-def calculate_optimal_length(width_nm: float) -> Optional[float]:
+def calculate_optimal_length(width_nm: float) -> float | None:
     """Calculate nice round number for scale bar.
-    
+
     Picks a sensible scale bar length (1, 2, or 5 × 10^n)
     that is approximately 1/4 of the sample width.
-    
+
     Parameters
     ----------
     width_nm : float
         Sample width in nanometers
-        
+
     Returns
     -------
     Optional[float]
         Optimal scale bar length in nm, or None if invalid width
-        
+
     Examples
     --------
     >>> calculate_optimal_length(1000)  # 1 µm sample
@@ -45,7 +44,7 @@ def calculate_optimal_length(width_nm: float) -> Optional[float]:
 
     # Find order of magnitude
     exponent = math.floor(math.log10(target)) if target > 0 else 0
-    
+
     # Try nice round numbers: 1, 2, 5 × 10^n
     best = None
     for multiplier in (1, 2, 5):
@@ -63,21 +62,21 @@ def calculate_optimal_length(width_nm: float) -> Optional[float]:
 
 def format_scalebar_label(length_nm: float, units: str = "nm") -> str:
     """Format scale bar label with appropriate units.
-    
+
     Automatically converts to µm if length >= 1000 nm.
-    
+
     Parameters
     ----------
     length_nm : float
         Scale bar length in nanometers
     units : str
         Preferred units (default: "nm")
-        
+
     Returns
     -------
     str
         Formatted label with value and units
-        
+
     Examples
     --------
     >>> format_scalebar_label(500)
@@ -88,12 +87,12 @@ def format_scalebar_label(length_nm: float, units: str = "nm") -> str:
     '1.5 µm'
     """
     units_lower = units.lower()
-    
+
     # Auto-convert to µm for large values
     if units_lower == "nm" and length_nm >= 1000:
         value_um = length_nm / 1000.0
         return f"{value_um:g} µm"
-    
+
     return f"{length_nm:g} {units}"
 
 

@@ -18,18 +18,18 @@ Layout on disk::
 
 from __future__ import annotations
 
-import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import h5py
 import numpy as np
 from numpy.typing import NDArray
 
-
 # ---------------------------------------------------------------------------
 # H5Array — wraps a single HDF5 dataset
 # ---------------------------------------------------------------------------
+
 
 class H5Array:
     """Thin wrapper around an ``h5py.Dataset`` that exposes the subset of
@@ -75,6 +75,7 @@ class H5Array:
 # ---------------------------------------------------------------------------
 # H5StackedArray — virtual view over step datasets /0, /1, …
 # ---------------------------------------------------------------------------
+
 
 class H5StackedArray:
     """Presents the numeric step datasets of a quantity HDF5 file as a single
@@ -127,9 +128,10 @@ class H5StackedArray:
                 data = data[rest]
             return data
 
+        indices: list[Any]
         if isinstance(time_key, slice):
-            indices = range(*time_key.indices(len(self._step_keys)))
-        elif hasattr(time_key, '__iter__'):
+            indices = list(range(*time_key.indices(len(self._step_keys))))
+        elif hasattr(time_key, "__iter__"):
             indices = list(time_key)
         else:
             # Fallback: try reading directly
@@ -158,6 +160,7 @@ class H5StackedArray:
 # ---------------------------------------------------------------------------
 # H5QuantityGroup — wraps a quantity's .h5 file (m.h5, B_eff.h5, …)
 # ---------------------------------------------------------------------------
+
 
 class H5QuantityGroup:
     """Wraps a per-quantity HDF5 file and exposes it as a zarr-Group-like
@@ -271,6 +274,7 @@ class H5QuantityGroup:
 # H5TableGroup — wraps table/table.h5
 # ---------------------------------------------------------------------------
 
+
 class H5TableGroup:
     """Wraps ``table/table.h5`` to expose each column as a child dataset,
     matching the zarr table group interface."""
@@ -330,7 +334,10 @@ class H5TableGroup:
 # Detection helper
 # ---------------------------------------------------------------------------
 
-def detect_h5_quantities(zarr_path: str | Path) -> dict[str, H5QuantityGroup | H5TableGroup]:
+
+def detect_h5_quantities(
+    zarr_path: str | Path,
+) -> dict[str, H5QuantityGroup | H5TableGroup]:
     """Scan a .zarr directory for per-quantity HDF5 files.
 
     Returns a dict mapping quantity names to their H5 adapter objects.

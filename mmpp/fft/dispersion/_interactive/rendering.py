@@ -15,18 +15,9 @@ def _scaled_k_axis(k_axis: Any, kscale: str) -> tuple[Any, str]:
         return k_axis / 1e6, "k [rad/um]"
     if kscale in {"cycles_m", "meter"}:
         return k_axis / (2 * np.pi), "k [1/m]"
-    return k_axis, "k [rad/m]"
-
-
-def _default_k_window_for_scale(kscale: str) -> tuple[float, float] | None:
-    """Return a notebook-friendly default k-window in display units."""
-    if kscale == "rad_um":
-        return -10.0, 10.0
-    if kscale == "rad":
-        return -10.0e6, 10.0e6
-    if kscale in {"cycles_m", "meter"}:
-        return -10.0e6 / (2 * np.pi), 10.0e6 / (2 * np.pi)
-    return None
+    if kscale in {"rad_m", "rad"}:
+        return k_axis, "k [rad/m]"
+    raise ValueError("kscale must be 'rad_um', 'rad_m'/'rad', or 'cycles_m'/'meter'")
 
 
 def _display_k_xlim(explorer: Any, k_plot: Any) -> tuple[float, float] | None:
@@ -35,28 +26,21 @@ def _display_k_xlim(explorer: Any, k_plot: Any) -> tuple[float, float] | None:
     if explicit is not None:
         try:
             lo, hi = explicit
-            return float(lo), float(hi)
-        except (TypeError, ValueError):
-            logger.debug("Ignoring invalid k_xlim=%r", explicit)
+            lo_value = float(lo)
+            hi_value = float(hi)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("k_xlim must contain exactly two numbers") from exc
+        if (
+            not np.isfinite(lo_value)
+            or not np.isfinite(hi_value)
+            or lo_value >= hi_value
+        ):
+            raise ValueError("k_xlim must be finite and strictly increasing")
+        return lo_value, hi_value
 
-    default_window = _default_k_window_for_scale(str(explorer.state.kscale))
-    if default_window is None:
-        return None
-
-    try:
-        data_lo = float(np.nanmin(k_plot))
-        data_hi = float(np.nanmax(k_plot))
-    except (TypeError, ValueError):
-        return None
-    if not np.isfinite(data_lo) or not np.isfinite(data_hi) or data_lo >= data_hi:
-        return None
-
-    default_lo, default_hi = default_window
-    lo = max(data_lo, default_lo)
-    hi = min(data_hi, default_hi)
-    if lo >= hi:
-        return None
-    return lo, hi
+    # Never crop physical data implicitly. Users can request a focused range
+    # explicitly through options['k_xlim'].
+    return None
 
 
 def _norm(explorer: Any, spectrum: Any) -> Any:
@@ -65,13 +49,18 @@ def _norm(explorer: Any, spectrum: Any) -> Any:
     try:
         from matplotlib.colors import LogNorm
 
-        positive_values = spectrum[spectrum > 0]
+        values = np.asarray(spectrum, dtype=float)
+        positive_values = values[np.isfinite(values) & (values > 0)]
         if positive_values.size:
+            vmin = float(np.min(positive_values))
+            vmax = float(np.max(positive_values))
+            if vmin >= vmax:
+                return None
             return LogNorm(
-                vmin=float(np.min(positive_values)),
-                vmax=float(np.max(positive_values)),
+                vmin=vmin,
+                vmax=vmax,
             )
-    except Exception:
+    except ImportError:
         return None
     return None
 
@@ -370,7 +359,9 @@ def refresh_output_widget(explorer: Any) -> None:
     output = explorer.controls.get("output") if explorer.controls else None
     if output is None:
         return
-    if not hasattr(output, "clear_output") or not hasattr(output, "append_display_data"):
+    if not hasattr(output, "clear_output") or not hasattr(
+        output, "append_display_data"
+    ):
         return
     output.clear_output(wait=False)
     if explorer.figure is None:

@@ -13,7 +13,7 @@ def _coerce_current_array(
     n_samples: int,
 ) -> np.ndarray:
     if np.isscalar(current_a):
-        return np.full(int(n_samples), float(current_a), dtype=float)
+        return np.full(int(n_samples), float(np.asarray(current_a).item()), dtype=float)
 
     values = np.asarray(current_a, dtype=float).reshape(-1)
     if values.size != int(n_samples):

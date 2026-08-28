@@ -35,8 +35,9 @@ full micromagnetic validation is required.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, TypeAlias
+from typing import Any, TypeAlias
 
 import numpy as np
 
@@ -45,7 +46,7 @@ try:  # pragma: no cover
     from .base import AnalyticalResult
 except Exception:  # pragma: no cover
 
-    class AnalyticalResult:  # minimal fallback
+    class AnalyticalResult:  # type: ignore[no-redef]  # minimal fallback
         model_name: str = ""
         params: dict[str, Any] = {}
         metadata: dict[str, Any] = {}
@@ -86,7 +87,9 @@ class MaterialParams:
 
     @property
     def beta(self) -> float:
-        return self.beta_nonadiabatic if self.beta_nonadiabatic is not None else self.alpha
+        return (
+            self.beta_nonadiabatic if self.beta_nonadiabatic is not None else self.alpha
+        )
 
 
 @dataclass
@@ -116,7 +119,7 @@ class ExternalField:
     Bz: float = 0.0
 
     @staticmethod
-    def from_any(value: object) -> "ExternalField":
+    def from_any(value: object) -> ExternalField:
         """Coerce float/tuple/list/ndarray/ExternalField → ExternalField.
 
         Rules:
@@ -136,7 +139,9 @@ class ExternalField:
         raise TypeError("B_ext must be float (Bz) or a length-3 (Bx,By,Bz)")
 
 
-ExternalFieldLike: TypeAlias = float | tuple[float, float, float] | ExternalField | np.ndarray
+ExternalFieldLike: TypeAlias = (
+    float | tuple[float, float, float] | ExternalField | np.ndarray
+)
 FieldFunc: TypeAlias = Callable[[float], ExternalFieldLike]
 
 
@@ -310,7 +315,9 @@ class CIPThieleModel:
 
         # external field
         B = self._field_at(t, B_func)
-        w0 = self._omega0_base + self.field_coupling.omega0_shift(field=B, polarity=self._p)
+        w0 = self._omega0_base + self.field_coupling.omega0_shift(
+            field=B, polarity=self._p
+        )
         sx_eq, sy_eq = self.field_coupling.s_eq(field=B)
         X_eq = sx_eq * self.geom.R
         Y_eq = sy_eq * self.geom.R
@@ -464,7 +471,9 @@ class CPPThieleModel:
             return float("nan")
         return float(self._d0 * w0 / self._chi_prefactor)
 
-    def steady_state_u(self, J: float, *, allow_edge: bool = False, u_stop: float = 0.98) -> float | None:
+    def steady_state_u(
+        self, J: float, *, allow_edge: bool = False, u_stop: float = 0.98
+    ) -> float | None:
         J = float(J)
         field = self.field
         chi_val = float(self.chi(J))
@@ -511,14 +520,22 @@ class CPPThieleModel:
             return float(u_stop) if allow_edge else None
         return u0
 
-    def predict_frequency_dc(self, J_dc: float, *, allow_edge: bool = False) -> float | None:
+    def predict_frequency_dc(
+        self, J_dc: float, *, allow_edge: bool = False
+    ) -> float | None:
         u0 = self.steady_state_u(float(J_dc), allow_edge=allow_edge)
         if u0 is None:
             return None
         w = self.omega(u0, float(J_dc), self.field)
         return float(w / (2.0 * math.pi))
 
-    def _rhs(self, t: float, state: np.ndarray, J_func: Callable[[float], float], B_func: FieldFunc | None) -> np.ndarray:
+    def _rhs(
+        self,
+        t: float,
+        state: np.ndarray,
+        J_func: Callable[[float], float],
+        B_func: FieldFunc | None,
+    ) -> np.ndarray:
         sx, sy = float(state[0]), float(state[1])
 
         B = self._field_at(t, B_func)

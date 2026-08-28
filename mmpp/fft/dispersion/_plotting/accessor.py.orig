@@ -1,0 +1,633 @@
+"""DispersionPlotAccessor – plotting namespace on DispersionResult1D.
+
+Usage::
+
+    result = job[0].fft.dispersion.filters(...).compute_1d(axis='x')
+    result.plot.heatmap(fmax=10, lognorm=True)
+    result.plot.branch(branch)
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+    from ..models import DispersionBranch, DispersionResult1D
+
+
+class DispersionPlotAccessor:
+    """Plotting namespace for :class:`~mmpp.fft.dispersion.models.DispersionResult1D`.
+
+    Accessed via ``result.plot``.
+
+    Methods
+    -------
+    heatmap(...)
+        S(k, f) heatmap (the main dispersion image).
+    branch(branch, ...)
+        Dispersion branch + group velocity panel.
+    """
+
+    def __init__(self, result: DispersionResult1D) -> None:
+        self._result = result
+
+    def interactive(self, *, show: bool = True, **kwargs: Any) -> Any:
+        """Return an interactive dispersion viewer controller.
+
+        ``show=False`` is intentionally headless and does not import notebook UI
+        dependencies. The returned object is stable enough for tests, presets,
+        and future richer widget rendering.
+        """
+        from .._interactive_viewer import DispersionInteractiveViewer
+
+        return DispersionInteractiveViewer.from_result(
+            self._result,
+            show=show,
+            **kwargs,
+        )
+
+    # ------------------------------------------------------------------
+    # primary plot: S(k,f) heatmap
+    # ------------------------------------------------------------------
+
+    def heatmap(
+        self,
+        ax: Axes | None = None,
+        *,
+        figsize: tuple[float, float] = (12, 8),
+        dpi: int | None = None,
+        cmap: str = "cmc.davos",
+        kscale: str = "rad_um",
+        f_units: str = "GHz",
+        fmax: float | None = None,
+        lognorm: bool = False,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        k_xlim: tuple[float, float] | None = None,
+        orth_index: int | None = None,
+        title: str | None = None,
+        live_filters: dict[str, Any] | None = None,
+        trim_0f: int | None = None,
+        positive_frequencies: bool = True,
+        save: str | Path | bool | None = None,
+        overlay_points: dict[str, Any] | None = None,
+    ) -> tuple[Figure, Axes]:
+        """Plot S(k, f) dispersion heatmap.
+
+        Parameters
+        ----------
+        ax : Axes, optional
+            Target axes; creates a new figure when *None*.
+        figsize, dpi
+            Figure geometry (only used when *ax* is *None*).
+        cmap : str
+            Colormap; defaults to ``"cmc.davos"`` (crameri package required).
+        kscale : ``"rad_um"`` | ``"rad"`` | ``"meter"``
+            Wave-vector units.
+        f_units : ``"GHz"`` | ``"Hz"``
+            Frequency axis units.
+        fmax : float, optional
+            Clip display to this frequency (same units as *f_units*).
+        lognorm : bool
+            Use :class:`~matplotlib.colors.LogNorm` color scale.
+        vmin, vmax : float, optional
+            Manual color-scale limits.
+        k_xlim : (float, float), optional
+            Manual k-axis limits (in display units).
+        orth_index : int, optional
+            Select a single orthogonal slice from ``S_local``.
+        title : str, optional
+            Custom plot title.
+        live_filters : dict, optional
+            Post-processing filter dict applied at plot time to the cached S.
+        trim_0f : int, optional
+            Drop this many lowest-frequency bins (useful to hide DC artefacts).
+        positive_frequencies : bool
+            Keep only f >= 0 by default. Set False to display signed-frequency
+            spectra.
+        save : path-like or bool, optional
+            Save figure to path or auto-generate filename.
+        overlay_points : dict, optional
+            ``{"k": array, "f": array, "style": dict}`` for arbitrary overlaid scatter.
+
+        Returns
+        -------
+        fig, ax
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LogNorm
+
+        try:
+            import cmcrameri  # noqa: F401
+        except ImportError:
+            cmap = "viridis"
+
+        result = self._result
+        valid_kscales = {"rad_um", "rad_m", "rad", "cycles_m", "meter"}
+        if kscale not in valid_kscales:
+            raise ValueError(
+                "kscale must be 'rad_um', 'rad_m'/'rad', or 'cycles_m'/'meter'"
+            )
+        if f_units not in {"GHz", "Hz"}:
+            raise ValueError("f_units must be 'GHz' or 'Hz'")
+
+        # --- Build figure/axes -----------------------------------------------
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize, **({"dpi": dpi} if dpi else {}))
+        else:
+            fig = ax.get_figure()
+
+        k_axis = result.k_axis.copy()
+        f_axis = result.f_axis.copy()
+        spectrum = result.spectrum_for("display").copy()
+
+        # Orthogonal slice selection
+        if orth_index is not None:
+            if result.S_local is None:
+                raise ValueError(
+                    "Result has no orthogonal slices; recompute with avg_over_orthogonal=False."
+                )
+            if not (0 <= orth_index < result.S_local.shape[0]):
+                raise IndexError(
+                    f"orth_index {orth_index} out of range "
+                    f"(0..{result.S_local.shape[0] - 1})"
+                )
+            spectrum = result.S_local[orth_index]
+
+        # Live filters
+        if live_filters:
+            from ..utils import apply_dispersion_post_filters
+
+            spectrum = apply_dispersion_post_filters(
+                spectrum,
+                k_axis=result.k_axis,
+                f_axis=result.f_axis,
+                filters=live_filters,
+                include_live=True,
+            )
+
+        if positive_frequencies:
+            pos_mask = f_axis >= 0
+            if pos_mask.sum() < f_axis.size:
+                spectrum = spectrum[:, pos_mask]
+                f_axis = f_axis[pos_mask]
+
+        # Trim lowest bins
+        if trim_0f is not None:
+            if (
+                isinstance(trim_0f, (bool, np.bool_))
+                or int(trim_0f) != trim_0f
+                or int(trim_0f) < 0
+            ):
+                raise ValueError("trim_0f must be a non-negative integer")
+            trim_count = int(trim_0f)
+            if trim_count >= f_axis.size:
+                raise ValueError("trim_0f removes every available frequency bin")
+            spectrum = spectrum[:, trim_count:]
+            f_axis = f_axis[trim_count:]
+
+        # fmax clip (in Hz, then convert if needed)
+        if fmax is not None:
+            fmax_value = float(fmax)
+            if not np.isfinite(fmax_value) or fmax_value <= 0:
+                raise ValueError("fmax must be finite and positive")
+            fmax_hz = fmax_value * 1e9 if f_units == "GHz" else fmax_value
+            mask_f = f_axis <= fmax_hz
+            if not np.any(mask_f):
+                raise ValueError("fmax does not include any available frequency bin")
+            spectrum = spectrum[:, mask_f]
+            f_axis = f_axis[mask_f]
+
+        # Unit conversion
+        if kscale == "rad_um":
+            k_plot = k_axis / 1e6
+            k_label = r"$k$ [rad/μm]"
+            default_xlim: tuple[float, float] | None = None
+        elif kscale in {"meter", "cycles_m"}:
+            k_plot = k_axis / (2 * np.pi)
+            k_label = r"$k$ [m$^{-1}$]"
+            default_xlim = None
+        else:
+            k_plot = k_axis
+            k_label = r"$k$ [rad/m]"
+            default_xlim = None
+
+        if f_units == "GHz":
+            f_plot = f_axis / 1e9
+            f_label = "Frequency [GHz]"
+        else:
+            f_plot = f_axis
+            f_label = "Frequency [Hz]"
+
+        # Color normalisation
+        norm = None
+        if lognorm:
+            s_min = spectrum[spectrum > 0].min() if np.any(spectrum > 0) else 1e-10
+            norm = LogNorm(
+                vmin=vmin if vmin is not None else s_min,
+                vmax=vmax if vmax is not None else spectrum.max(),
+            )
+        elif vmin is not None or vmax is not None:
+            from matplotlib.colors import Normalize
+
+            norm = Normalize(vmin=vmin, vmax=vmax)
+
+        extent = (
+            float(k_plot[0]),
+            float(k_plot[-1]),
+            float(f_plot[0]),
+            float(f_plot[-1]),
+        )
+
+        im = ax.imshow(
+            spectrum.T,
+            cmap=cmap,
+            norm=norm,
+            aspect="auto",
+            origin="lower",
+            extent=extent,
+        )
+
+        ax.set_xlabel(k_label)
+        ax.set_ylabel(f_label)
+
+        if k_xlim is not None:
+            ax.set_xlim(*k_xlim)
+        elif default_xlim is not None:
+            ax.set_xlim(*default_xlim)
+
+        if fmax is not None:
+            ax.set_ylim(float(f_plot[0]), float(f_plot[-1]))
+
+        if title is None:
+            comp = getattr(result, "component", "")
+            title = f"Spin-Wave Dispersion S(k{result.axis}, f)" + (
+                f" - {comp} component" if comp else ""
+            )
+        ax.set_title(title)
+
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label("Power Spectral Density [arb. units]")
+
+        # Optional scatter overlay
+        if overlay_points is not None:
+            ok = np.array(overlay_points.get("k", []), dtype=float)
+            of = np.array(overlay_points.get("f", []), dtype=float)
+            if ok.size and of.size:
+                if kscale == "rad_um":
+                    ok = ok / 1e6
+                elif kscale in {"meter", "cycles_m"}:
+                    ok = ok / (2 * np.pi)
+                if f_units == "GHz":
+                    of = of / 1e9
+                style = dict(overlay_points.get("style", {}))
+                style.setdefault("s", 40)
+                style.setdefault("facecolors", "none")
+                style.setdefault("edgecolors", "white")
+                style.setdefault("linewidths", 1.5)
+                ax.scatter(ok, of, **style)
+
+        try:
+            fig.tight_layout()
+        except Exception:
+            pass
+
+        if save not in (None, False):
+            self._save_fig(fig, save, result)
+
+        return fig, ax
+
+    # ------------------------------------------------------------------
+    # branch + group velocity
+    # ------------------------------------------------------------------
+
+    def branch(
+        self,
+        branch: DispersionBranch,
+        ax: Axes | None = None,
+        *,
+        figsize: tuple[float, float] = (10, 6),
+        kscale: str = "rad_um",
+        f_units: str = "GHz",
+        title: str | None = None,
+        save: str | Path | bool | None = None,
+    ) -> tuple[Figure, Any]:
+        """Plot tracked dispersion branch and group velocity.
+
+        Parameters
+        ----------
+        branch : DispersionBranch
+            Pre-tracked branch from ``FFTDispersionInterface.track_branch()``.
+        """
+        import matplotlib.pyplot as plt
+
+        if kscale not in {"rad_um", "rad_m", "rad", "cycles_m", "meter"}:
+            raise ValueError(
+                "kscale must be 'rad_um', 'rad_m'/'rad', or 'cycles_m'/'meter'"
+            )
+        if f_units not in {"GHz", "Hz"}:
+            raise ValueError("f_units must be 'GHz' or 'Hz'")
+
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+        ax_disp, ax_vg = axes
+
+        k_data = branch.k_path.copy()
+        f_data = branch.f_values.copy()
+
+        if branch.group_velocity is None:
+            branch.compute_group_velocity()
+        vg_data = branch.group_velocity.copy()
+
+        if kscale == "rad_um":
+            k_data = k_data / 1e6
+            k_label = r"$k$ [rad/μm]"
+        elif kscale in {"meter", "cycles_m"}:
+            k_data = k_data / (2 * np.pi)
+            k_label = r"$k$ [m$^{-1}$]"
+        else:
+            k_label = r"$k$ [rad/m]"
+
+        if f_units == "GHz":
+            f_data = f_data / 1e9
+            f_label = "f [GHz]"
+        else:
+            f_label = "f [Hz]"
+
+        ax_disp.plot(k_data, f_data, "o-", linewidth=2, markersize=4)
+        ax_disp.set_xlabel(k_label)
+        ax_disp.set_ylabel(f_label)
+        ax_disp.set_title(title or "Dispersion Branch")
+        ax_disp.grid(True, alpha=0.3)
+
+        ax_vg.plot(k_data, vg_data / 1e3, "s-", color="red", linewidth=2, markersize=4)
+        ax_vg.set_xlabel(k_label)
+        ax_vg.set_ylabel("Group Velocity [km/s]")
+        ax_vg.axhline(0, color="gray", linestyle="--", alpha=0.5)
+        ax_vg.grid(True, alpha=0.3)
+
+        try:
+            fig.tight_layout()
+        except Exception:
+            pass
+
+        if save not in (None, False):
+            self._save_fig(fig, save, self._result)
+
+        return fig, axes
+
+    # ------------------------------------------------------------------
+    # Analytical overlay
+    # ------------------------------------------------------------------
+
+    def add_analytics(
+        self,
+        ax: Axes,
+        *,
+        model: str = "kalinikos",
+        sw_config: str = "DE",
+        n_modes: int = 1,
+        color: str = "white",
+        linestyle: str = "--",
+        linewidth: float = 1.5,
+        alpha: float = 0.8,
+        label: str | None = None,
+        # Material parameter overrides (auto-detected from zarr if None):
+        B: float | None = None,
+        Ms: float | None = None,
+        Aex: float | None = None,
+        d: float | None = None,
+        Ku: float | None = None,
+        Kc1: float | None = None,
+        Kc2: float | None = None,
+        phi_ani: float | None = None,
+        g: float = 2.0,
+        phi: float | None = None,
+        D: float | None = None,
+        k_points: int = 500,
+        kscale: str = "rad_um",
+        f_units: str = "GHz",
+    ) -> tuple[Figure, Axes]:
+        """Overlay analytical dispersion curve(s) on an existing axes.
+
+        Material parameters are auto-extracted from zarr simulation attributes.
+        Any parameter explicitly passed overrides the auto-detected value.
+
+        Parameters
+        ----------
+        ax : Axes
+            Matplotlib axes (from a previous ``.heatmap()`` call).
+        model : str
+            Analytical model: ``"kalinikos"`` (default), ``"damon_eshbach"``,
+            ``"backward_volume"``, ``"forward_volume"``, ``"bottcher"``,
+            ``"kim"``, ``"cortes_ortuno"``.
+        sw_config : str
+            Spin-wave geometry preset:
+            ``"DE"`` (k⊥M, φ=π/2), ``"BV"`` (k∥M, φ=0), ``"FV"`` (M⊥film).
+        n_modes : int
+            Number of PSSW modes to overlay (n=0, 1, …, n_modes-1).
+        color, linestyle, linewidth, alpha
+            Line styling for the overlay curves.
+        label : str, optional
+            Legend label. Auto-generated from model+sw_config if *None*.
+        B, Ms, Aex, d, Ku, g, phi, D
+            Material/geometry overrides. ``None`` = auto-detect from zarr.
+        k_points : int
+            Number of k-points for the analytical curve.
+        kscale : str
+            Must match the kscale used in heatmap (``"rad_um"`` | ``"rad"``).
+        f_units : str
+            Must match f_units used in heatmap (``"GHz"`` | ``"Hz"``).
+
+        Returns
+        -------
+        fig, ax
+
+        Examples
+        --------
+        >>> fig, ax = disp.plot.heatmap(fmax=10, lognorm=True)
+        >>> disp.plot.add_analytics(ax, sw_config="DE")
+        >>> disp.plot.add_analytics(ax, sw_config="BV", color="red")
+        >>> disp.plot.add_analytics(ax, model="kalinikos", n_modes=3, sw_config="DE")
+        """
+        from ._analytics_overlay import (
+            compute_analytical_dispersion,
+            extract_material_params,
+        )
+
+        result = self._result
+        fig = ax.get_figure()
+
+        # Auto-extract params from zarr, then apply user overrides
+        auto_params = extract_material_params(result)
+        effective = {
+            "B": B if B is not None else auto_params.get("B"),
+            "Ms": Ms if Ms is not None else auto_params.get("Ms"),
+            "Aex": Aex if Aex is not None else auto_params.get("Aex"),
+            "d": d if d is not None else auto_params.get("d"),
+            "Ku": Ku if Ku is not None else (auto_params.get("Ku") or 0.0),
+            "Kc1": Kc1 if Kc1 is not None else (auto_params.get("Kc1") or 0.0),
+            "Kc2": Kc2 if Kc2 is not None else (auto_params.get("Kc2") or 0.0),
+            "phi_ani": phi_ani
+            if phi_ani is not None
+            else (auto_params.get("phi_ani") or 0.0),
+            "g": g,
+        }
+
+        # Validate required params
+        missing = [k for k in ("B", "Ms", "Aex", "d") if effective[k] is None]
+        if missing:
+            raise ValueError(
+                f"Cannot auto-detect material parameter(s): {missing}. "
+                f"Please provide them explicitly, e.g.: "
+                f"add_analytics(ax, B=0.1, Ms=8e5, Aex=13e-12, d=100e-9)"
+            )
+
+        # Get k-range from axes limits (in display units → back to rad/m)
+        k_lo, k_hi = ax.get_xlim()
+        if kscale == "rad_um":
+            k_range = (k_lo * 1e6, k_hi * 1e6)  # rad/μm → rad/m
+        elif kscale == "meter":
+            k_range = (k_lo * 2 * np.pi, k_hi * 2 * np.pi)
+        else:
+            k_range = (k_lo, k_hi)
+
+        # Compute analytical curves
+        curves = compute_analytical_dispersion(
+            k_range=k_range,
+            model=model,
+            sw_config=sw_config,
+            n_modes=n_modes,
+            k_points=k_points,
+            phi=phi if phi is not None else auto_params.get("phi"),
+            D=D,
+            B=effective["B"],
+            Ms=effective["Ms"],
+            d=effective["d"],
+            Aex=effective["Aex"],
+            Ku=effective["Ku"],
+            Kc1=effective["Kc1"],
+            Kc2=effective["Kc2"],
+            phi_ani=effective["phi_ani"],
+            g=effective["g"],
+        )
+
+        # Plot each mode
+        for i, (k_arr, f_ghz, mode_label) in enumerate(curves):
+            # Convert to display units
+            if kscale == "rad_um":
+                k_plot = k_arr / 1e6
+            elif kscale == "meter":
+                k_plot = k_arr / (2 * np.pi)
+            else:
+                k_plot = k_arr
+
+            if f_units == "GHz":
+                f_plot = f_ghz  # already in GHz
+            else:
+                f_plot = f_ghz * 1e9  # → Hz
+
+            curve_label = label if label is not None else mode_label
+            if n_modes > 1 and label is not None and i > 0:
+                curve_label = f"{label} (n={i})"
+
+            ax.plot(
+                k_plot,
+                f_plot,
+                color=color,
+                linestyle=linestyle,
+                linewidth=linewidth,
+                alpha=alpha - 0.15 * i,  # lighter for higher modes
+                label=curve_label,
+            )
+
+        ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
+        return fig, ax
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    def _save_fig(self, fig: Figure, save: Any, result: DispersionResult1D) -> None:
+        from datetime import datetime, timezone
+
+        if isinstance(save, bool):
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            path = Path(f"dispersion_{result.axis}_{result.component}_{ts}.png")
+        else:
+            path = Path(save)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+
+    def __repr__(self) -> str:
+        return "<DispersionPlotAccessor: .heatmap(...), .branch(branch, ...), .add_analytics(ax, ...)>"
+
+    def _repr_html_(self) -> str:
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
+        )
+
+        api_card = api_help_html(
+            self,
+            title="Dispersion plot API help",
+            prefix="disp.plot",
+            methods=["interactive", "heatmap", "branch", "add_analytics"],
+            subtitle="Live signatures for the plotting namespace returned by DispersionResult1D.plot.",
+            chrome=False,
+        )
+        return node_card_html(
+            "Dispersion Plot Accessor",
+            icon="📊",
+            subtitle="Heatmap, branch and analytical-overlay helpers for DispersionResult1D.plot.",
+            sections=[
+                metrics_section_html(
+                    [
+                        ("owner", "DispersionResult1D.plot", NODE_COLOR_COMPUTE),
+                        ("return", "(fig, ax)", NODE_COLOR_ANALYSIS),
+                        ("save", "all methods accept save=", NODE_COLOR_UTIL),
+                    ]
+                ),
+                accessors_section_html(
+                    [
+                        (
+                            "Plot:",
+                            [
+                                (".interactive(show=False)", NODE_COLOR_COMPUTE),
+                                (".heatmap(fmax=10, lognorm=True)", NODE_COLOR_COMPUTE),
+                                (
+                                    ".heatmap(orth_index=0, lognorm=True)",
+                                    NODE_COLOR_ANALYSIS,
+                                ),
+                                (".branch(branch, kscale='rad_um')", NODE_COLOR_PLOT),
+                                (".add_analytics(ax, sw_config='DE')", NODE_COLOR_UTIL),
+                            ],
+                        )
+                    ]
+                ),
+                examples_section_html(
+                    "\n".join(
+                        [
+                            "viewer = disp.plot.interactive(show=False)",
+                            "disp.plot.heatmap(fmax=10, lognorm=True)",
+                            "disp.plot.add_analytics(ax, sw_config='DE')",
+                            "disp.plot.branch(branch, kscale='rad_um')",
+                        ]
+                    )
+                ),
+            ],
+            api=api_card,
+            uid="dispersion-plot",
+        )

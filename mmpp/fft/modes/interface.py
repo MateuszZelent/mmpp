@@ -6,12 +6,11 @@ Integrates with DatasetAwareWrapper for slice propagation.
 """
 
 import copy
-import hashlib
-import json
+import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Optional, Union
-import logging
+from typing import Any, Literal
+
 import numpy as np
 
 from ..method_helpers import CallableMethodHelper
@@ -22,9 +21,21 @@ log = logging.getLogger("mmpp.fft.modes")
 SPECTRUM_CACHE_SCHEMA_VERSION = 1
 
 
+def _validate_interactive_bool(name: str, value: Any) -> bool:
+    if not isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be boolean")
+    return bool(value)
+
+
+def _validate_interactive_integer(name: str, value: Any) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer")
+    return int(value)
+
+
 # Lazy imports to avoid circular dependencies
 def _get_data_loader():
-    from .data_loader import ModeDataLoader, ModeDataContext
+    from .data_loader import ModeDataContext, ModeDataLoader
 
     return ModeDataLoader, ModeDataContext
 
@@ -58,7 +69,7 @@ class ModeResult:
     @property
     def data(self) -> np.ndarray:
         """Raw complex mode array."""
-        return np.asarray(getattr(self.mode_data, "mode_array"))
+        return np.asarray(self.mode_data.mode_array)
 
     @property
     def extent(self) -> tuple[float, float, float, float]:
@@ -68,6 +79,12 @@ class ModeResult:
             arr = self.data
             return (0.0, float(arr.shape[1]), 0.0, float(arr.shape[0]))
         return tuple(ext)
+
+    @property
+    def material_mask(self) -> np.ndarray | None:
+        """Boolean ``(y,x)`` mask; ``True`` denotes magnetic material."""
+        mask = getattr(self.mode_data, "material_mask", None)
+        return None if mask is None else np.asarray(mask, dtype=bool)
 
     @property
     def plot(self) -> "ModePlotAccessor":
@@ -81,7 +98,7 @@ class ModeResult:
 
     def get_component(
         self,
-        component: Union[str, int] = "z",
+        component: str | int = "z",
         value: str = "complex",
     ) -> np.ndarray:
         """Return selected mode component transformed to requested representation."""
@@ -119,9 +136,9 @@ class ModeResult:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
+        from html import escape as _esc
 
         from mmpp._repr_helpers import api_help_html, html_tabs
-        from html import escape as _esc
 
         freq = self.frequency
         z = self.z_layer
@@ -135,6 +152,10 @@ class ModeResult:
             (".frequency", f"{freq:.3f} GHz"),
             (".z_layer", str(z)),
             (".data", f"np.ndarray ({shape_str})"),
+            (
+                ".material_mask",
+                "Boolean magnetic-material mask (outside cells are excluded)",
+            ),
             (".extent", "Spatial extent (x_min, x_max, y_min, y_max)"),
         ]
         prop_rows = "".join(
@@ -170,17 +191,17 @@ class ModeResult:
             for n, d, desc in imshow_params
         )
         example = (
-            f"# Plot magnitude of mz\n"
-            f"mode.plot.imshow(component='z')\n"
-            f"\n"
-            f"# Plot phase with colorbar\n"
-            f"mode.plot.imshow(component='z', value='phase', colorbar=True)\n"
-            f"\n"
-            f"# Plot combined (magnitude × cos(phase))\n"
-            f"mode.plot.imshow(component='z', value='combined')\n"
-            f"\n"
-            f"# Get raw data as numpy array\n"
-            f"arr = mode.get_component('z', value='magnitude')"
+            "# Plot magnitude of mz\n"
+            "mode.plot.imshow(component='z')\n"
+            "\n"
+            "# Plot phase with colorbar\n"
+            "mode.plot.imshow(component='z', value='phase', colorbar=True)\n"
+            "\n"
+            "# Plot combined (magnitude × cos(phase))\n"
+            "mode.plot.imshow(component='z', value='combined')\n"
+            "\n"
+            "# Get raw data as numpy array\n"
+            "arr = mode.get_component('z', value='magnitude')"
         )
         html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
@@ -238,7 +259,7 @@ class ModeResult:
             chrome=False,
         )
         return (
-            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
             'color:#e2e8f0;">'
@@ -258,13 +279,13 @@ class ModePlotAccessor:
 
     def imshow(
         self,
-        component: Union[str, int] = "z",
+        component: str | int = "z",
         value: str = "magnitude",
         ax: Any = None,
-        cmap: Optional[str] = None,
-        origin: str = "lower",
+        cmap: str | None = None,
+        origin: Literal["upper", "lower"] = "lower",
         interpolation: str = "nearest",
-        aspect: str = "equal",
+        aspect: Literal["equal", "auto"] = "equal",
         colorbar: bool = False,
         **kwargs,
     ):
@@ -324,9 +345,9 @@ class ModePlotAccessor:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
+        from html import escape as _esc
 
         from mmpp._repr_helpers import api_help_html, html_tabs
-        from html import escape as _esc
 
         freq = self._mode.frequency
         z = self._mode.z_layer
@@ -364,20 +385,20 @@ class ModePlotAccessor:
             for n, d, desc in imshow_params
         )
         example = (
-            f"# Plot mz magnitude (default)\n"
-            f"mode.plot.imshow()\n"
-            f"\n"
-            f"# Plot phase with colorbar\n"
-            f"mode.plot.imshow(component='z', value='phase', colorbar=True)\n"
-            f"\n"
-            f"# Plot all components\n"
-            f"import matplotlib.pyplot as plt\n"
-            f"fig, axes = plt.subplots(1, 3, figsize=(15, 4))\n"
-            f"for ax, c in zip(axes, ['x', 'y', 'z']):\n"
-            f"    mode.plot.imshow(component=c, ax=ax)\n"
-            f"\n"
-            f"# Open interactive explorer\n"
-            f"mode.plot.interactive()"
+            "# Plot mz magnitude (default)\n"
+            "mode.plot.imshow()\n"
+            "\n"
+            "# Plot phase with colorbar\n"
+            "mode.plot.imshow(component='z', value='phase', colorbar=True)\n"
+            "\n"
+            "# Plot all components\n"
+            "import matplotlib.pyplot as plt\n"
+            "fig, axes = plt.subplots(1, 3, figsize=(15, 4))\n"
+            "for ax, c in zip(axes, ['x', 'y', 'z']):\n"
+            "    mode.plot.imshow(component=c, ax=ax)\n"
+            "\n"
+            "# Open interactive explorer\n"
+            "mode.plot.interactive()"
         )
         html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
@@ -423,7 +444,7 @@ class ModePlotAccessor:
             chrome=False,
         )
         return (
-            f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
             'color:#e2e8f0;">'
@@ -456,12 +477,13 @@ class InteractiveSpectrumHelper:
     def _rich_display(self) -> str:
         """Generate rich help display for interactive_spectrum."""
         try:
+            from io import StringIO
+
             from rich.console import Console
             from rich.panel import Panel
+            from rich.syntax import Syntax
             from rich.table import Table
             from rich.text import Text
-            from rich.syntax import Syntax
-            from io import StringIO
 
             capture = StringIO()
             console = Console(file=capture, force_terminal=True, width=100)
@@ -489,7 +511,7 @@ class InteractiveSpectrumHelper:
                 ("Presets", "Save/load/delete toolbar configuration"),
             ]
             for key, desc in feature_list:
-                features.append(f"  • ", style="dim")
+                features.append("  • ", style="dim")
                 features.append(f"{key:15}", style="bold green")
                 features.append(f" {desc}\n", style="white")
 
@@ -714,21 +736,24 @@ class FFTModeInterfaceNew:
         self.parent_fft = parent_fft
 
         # Context from DatasetSpecificFFT (set externally)
-        self._dataset_context: Optional[str] = None
-        self._slice_context: Optional[tuple] = None
+        self._dataset_context: str | None = None
+        self._preloaded_context: Any = None
+        self._time_step_scale_context: float = 1.0
+        self._geometry_context: Any = None
+        self._slice_context: tuple | None = None
 
         # Lazy-loaded instances
         self._data_loader = None
-        self._mode_analyzer = None
+        self._mode_analyzer: Any | None = None
         self._interactive_filters: dict[str, Any] = {}
         self._auto_compute_checked = False
 
         # Configuration (like dispersion module)
-        self._tmax: Optional[int] = None
-        self._filters_config: Optional[dict[str, Any]] = None
-        self._cache_dir: Optional[str] = None
+        self._tmax: int | None = None
+        self._filters_config: dict[str, Any] | None = None
+        self._cache_dir: str | None = None
         self._memory_cache: dict[str, Any] = {}
-        self._last_result: Optional[Any] = None
+        self._last_result: Any | None = None
 
     @property
     def zarr_path(self) -> str:
@@ -749,7 +774,7 @@ class FFTModeInterfaceNew:
             return "m"  # Fallback
 
     @property
-    def component_index(self) -> Optional[int]:
+    def component_index(self) -> int | None:
         """Extract component index from slice_context."""
         if self._slice_context and isinstance(self._slice_context, tuple):
             last = self._slice_context[-1]
@@ -771,7 +796,7 @@ class FFTModeInterfaceNew:
         return None
 
     @property
-    def component_label(self) -> Optional[str]:
+    def component_label(self) -> str | None:
         """Get label for selected component."""
         labels = [r"$m_x$", r"$m_y$", r"$m_z$"]
         idx = self.component_index
@@ -780,7 +805,7 @@ class FFTModeInterfaceNew:
         return None
 
     @property
-    def last_result(self) -> Optional[Any]:
+    def last_result(self) -> Any | None:
         """Get the result from the most recent computation."""
         return self._last_result
 
@@ -797,9 +822,9 @@ class FFTModeInterfaceNew:
     def configure(
         self,
         *,
-        tmax: Optional[int] = None,
-        filters: Optional[dict[str, Any]] = None,
-        cache_dir: Optional[str] = None,
+        tmax: int | None = None,
+        filters: dict[str, Any] | None = None,
+        cache_dir: str | None = None,
     ) -> "FFTModeInterfaceNew":
         """
         Configure interface settings (fluent API).
@@ -843,6 +868,9 @@ class FFTModeInterfaceNew:
         clone = FFTModeInterfaceNew(self.fft_result_index, self.parent_fft)
         clone._dataset_context = self._dataset_context
         clone._slice_context = self._slice_context
+        clone._preloaded_context = getattr(self, "_preloaded_context", None)
+        clone._time_step_scale_context = getattr(self, "_time_step_scale_context", 1.0)
+        clone._geometry_context = getattr(self, "_geometry_context", None)
         clone._tmax = self._tmax
         clone._filters_config = (
             copy.deepcopy(self._filters_config) if self._filters_config else None
@@ -856,7 +884,7 @@ class FFTModeInterfaceNew:
         clone._auto_compute_checked = self._auto_compute_checked
         return clone
 
-    def _determine_tmax(self, default: int = 100) -> Optional[int]:
+    def _determine_tmax(self, default: int = 100) -> int | None:
         """
         Determine number of time steps to load (dispersion-style priority).
 
@@ -894,7 +922,7 @@ class FFTModeInterfaceNew:
         log.debug("No slice or config - using default tmax: %d timesteps", default)
         return default
 
-    def _infer_time_length_from_slice(self) -> Optional[int]:
+    def _infer_time_length_from_slice(self) -> int | None:
         """
         Infer desired time window length from dataset slice info.
 
@@ -949,12 +977,17 @@ class FFTModeInterfaceNew:
         return self.parent_fft._spectrum_impl(
             dset=self.dataset_name,
             slice_info=self._slice_context,
+            preloaded_data=getattr(self, "_preloaded_context", None),
+            time_step_scale=getattr(self, "_time_step_scale_context", 1.0),
         )
 
     @property
     def frequencies(self):
         """Get frequencies from spectrum result (in GHz)."""
-        return self.spectrum_result.frequencies
+        result = self.spectrum_result
+        if hasattr(result, "frequencies_ghz"):
+            return np.asarray(result.frequencies_ghz, dtype=float)
+        return np.asarray(result.frequencies, dtype=float) * 1e-9
 
     @property
     def power_spectrum(self):
@@ -972,6 +1005,8 @@ class FFTModeInterfaceNew:
                 dataset_name=self.dataset_name,
                 slice_info=self._slice_context,
                 component_index=self.component_index,
+                mode_group=getattr(self._legacy_analyzer, "mode_group", None),
+                time_step_scale=getattr(self, "_time_step_scale_context", 1.0),
             )
             self._data_loader = ModeDataLoader(context)
             log.debug(
@@ -983,25 +1018,25 @@ class FFTModeInterfaceNew:
     def filters(
         self,
         *,
-        freq_min: Optional[float] = None,
-        freq_max: Optional[float] = None,
-        fmin: Optional[float] = None,
-        fmax: Optional[float] = None,
-        smooth_filter: Optional[str] = None,
-        smooth_window: Optional[int] = None,
-        smooth_sigma: Optional[float] = None,
-        baseline_mode: Optional[str] = None,
-        clip_percentile_low: Optional[float] = None,
-        clip_percentile_high: Optional[float] = None,
-        clip_low: Optional[float] = None,
-        clip_high: Optional[float] = None,
-        soft_threshold_percentile: Optional[float] = None,
-        soft_threshold: Optional[float] = None,
-        normalize: Optional[bool] = None,
-        log_scale: Optional[bool] = None,
-        show_peaks: Optional[bool] = None,
-        peak_prominence: Optional[float] = None,
-        peak_distance: Optional[int] = None,
+        freq_min: float | None = None,
+        freq_max: float | None = None,
+        fmin: float | None = None,
+        fmax: float | None = None,
+        smooth_filter: str | None = None,
+        smooth_window: int | None = None,
+        smooth_sigma: float | None = None,
+        baseline_mode: str | None = None,
+        clip_percentile_low: float | None = None,
+        clip_percentile_high: float | None = None,
+        clip_low: float | None = None,
+        clip_high: float | None = None,
+        soft_threshold_percentile: float | None = None,
+        soft_threshold: float | None = None,
+        normalize: bool | None = None,
+        log_scale: bool | None = None,
+        show_peaks: bool | None = None,
+        peak_prominence: float | None = None,
+        peak_distance: int | None = None,
     ) -> "FFTModeInterfaceNew":
         """Return cloned interface with configured interactive spectrum filters.
 
@@ -1072,23 +1107,23 @@ class FFTModeInterfaceNew:
         figsize: tuple = (16, 10),
         toolbar: bool = True,
         show: bool = True,
-        log_scale: Optional[bool] = None,
-        normalize: Optional[bool] = None,
-        freq_unit: Optional[str] = None,
-        show_peaks: Optional[bool] = None,
-        title: Optional[str] = None,
-        initial_frequency: Optional[float] = None,
-        freq_min: Optional[float] = None,
-        freq_max: Optional[float] = None,
-        smooth_filter: Optional[str] = None,
-        smooth_window: Optional[int] = None,
-        smooth_sigma: Optional[float] = None,
-        baseline_mode: Optional[str] = None,
-        clip_percentile_low: Optional[float] = None,
-        clip_percentile_high: Optional[float] = None,
-        soft_threshold_percentile: Optional[float] = None,
-        peak_prominence: Optional[float] = None,
-        peak_distance: Optional[int] = None,
+        log_scale: bool | None = None,
+        normalize: bool | None = None,
+        freq_unit: str | None = None,
+        show_peaks: bool | None = None,
+        title: str | None = None,
+        initial_frequency: float | None = None,
+        freq_min: float | None = None,
+        freq_max: float | None = None,
+        smooth_filter: str | None = None,
+        smooth_window: int | None = None,
+        smooth_sigma: float | None = None,
+        baseline_mode: str | None = None,
+        clip_percentile_low: float | None = None,
+        clip_percentile_high: float | None = None,
+        soft_threshold_percentile: float | None = None,
+        peak_prominence: float | None = None,
+        peak_distance: int | None = None,
         use_holography: bool = False,
         **kwargs,
     ):
@@ -1144,6 +1179,21 @@ class FFTModeInterfaceNew:
         >>> # Start at specific frequency
         >>> job[0].fft.modes.interactive_spectrum(initial_frequency=9.5)
         """
+        method = _validate_interactive_integer("method", method)
+        if method not in {1, 2}:
+            raise ValueError("method must be 1 or 2")
+        z_layer = _validate_interactive_integer("z_layer", z_layer)
+        toolbar = _validate_interactive_bool("toolbar", toolbar)
+        show = _validate_interactive_bool("show", show)
+        use_holography = _validate_interactive_bool("use_holography", use_holography)
+        for option_name, option_value in (
+            ("log_scale", log_scale),
+            ("normalize", normalize),
+            ("show_peaks", show_peaks),
+        ):
+            if option_value is not None:
+                _validate_interactive_bool(option_name, option_value)
+
         # Reuse an already computed spectrum when provided (e.g. SpectrumResult.plot.interactive()).
         # Fallback to parent FFT computation to preserve legacy behavior.
         spectrum_result = kwargs.pop("spectrum_result", None)
@@ -1160,6 +1210,8 @@ class FFTModeInterfaceNew:
                 dset=self.dataset_name,
                 method=method,
                 slice_info=self._slice_context,
+                preloaded_data=getattr(self, "_preloaded_context", None),
+                time_step_scale=getattr(self, "_time_step_scale_context", 1.0),
                 find_peaks=find_peaks_params,
             )
             log.info(
@@ -1207,16 +1259,34 @@ class FFTModeInterfaceNew:
             if value is not None:
                 viewer_kwargs[key] = value
 
+        for bool_key in (
+            "log_scale",
+            "normalize",
+            "show_peaks",
+            "auto_animate",
+            "auto_save",
+            "force",
+            "use_fft_spectrum",
+        ):
+            if bool_key in viewer_kwargs:
+                viewer_kwargs[bool_key] = _validate_interactive_bool(
+                    bool_key, viewer_kwargs[bool_key]
+                )
+        if "saveanim" in viewer_kwargs:
+            saveanim = viewer_kwargs["saveanim"]
+            if saveanim is not None and not isinstance(saveanim, (bool, str)):
+                raise TypeError("saveanim must be None, boolean, or a path string")
+
         # Arguments still implemented only by the legacy analyzer view.
         legacy_only_keys = {"saveanim", "auto_save", "force", "use_fft_spectrum"}
         use_legacy_view = any(key in viewer_kwargs for key in legacy_only_keys)
         if use_legacy_view:
             log.info("Legacy interactive mode selected due to legacy-only arguments")
         else:
-            resolved_log_scale = bool(viewer_kwargs.pop("log_scale", False))
-            resolved_normalize = bool(viewer_kwargs.pop("normalize", True))
+            resolved_log_scale = viewer_kwargs.pop("log_scale", False)
+            resolved_normalize = viewer_kwargs.pop("normalize", True)
             resolved_freq_unit = str(viewer_kwargs.pop("freq_unit", "GHz"))
-            resolved_show_peaks = bool(viewer_kwargs.pop("show_peaks", True))
+            resolved_show_peaks = viewer_kwargs.pop("show_peaks", True)
             resolved_title = viewer_kwargs.pop("title", title)
             resolved_initial_frequency = viewer_kwargs.pop(
                 "initial_frequency",
@@ -1241,7 +1311,7 @@ class FFTModeInterfaceNew:
                 show_peaks=resolved_show_peaks,
                 title=resolved_title,
                 initial_frequency=resolved_initial_frequency,
-                toolbar=bool(toolbar),
+                toolbar=toolbar,
                 use_holography=use_holography,
                 show=show,
                 **viewer_kwargs,
@@ -1270,8 +1340,8 @@ class FFTModeInterfaceNew:
             spectrum_result=spectrum_result,  # Inject FFT spectrum!
             figsize=figsize,
             dpi=dpi,
-            log_scale=bool(viewer_kwargs.pop("log_scale", False)),
-            normalize=bool(viewer_kwargs.pop("normalize", True)),
+            log_scale=viewer_kwargs.pop("log_scale", False),
+            normalize=viewer_kwargs.pop("normalize", True),
             show=show,
             use_holography=use_holography,
             **viewer_kwargs,
@@ -1307,6 +1377,11 @@ class FFTModeInterfaceNew:
             self._mode_analyzer = FMRModeAnalyzer(
                 zarr_path=self.zarr_path,
                 dataset_name=dataset,
+                view_slice=self._slice_context,
+                preloaded_data=getattr(self, "_preloaded_context", None),
+                component_index=self.component_index,
+                time_step_scale=getattr(self, "_time_step_scale_context", 1.0),
+                view_geometry=getattr(self, "_geometry_context", None),
             )
         self._ensure_modes_ready()
         return self._mode_analyzer
@@ -1325,19 +1400,13 @@ class FFTModeInterfaceNew:
             return
 
         dataset = self._dataset_context or self.dataset_name
-        t_slice = self._extract_time_slice_from_context()
         log.info(
             "No precomputed FMR modes for dataset '%s' at '%s'. Running compute_modes() automatically.",
             dataset,
             self.zarr_path,
         )
-        if t_slice is not None:
-            log.info("Auto mode computation will use time slice: %s", t_slice)
         try:
-            compute_kwargs: dict[str, Any] = {"save": True, "force": False}
-            if t_slice is not None:
-                compute_kwargs["t_slice"] = t_slice
-            analyzer.compute_modes(**compute_kwargs)
+            analyzer.compute_modes(save=True, force=False)
             # Ensure analyzer refreshes its internal pointers if compute modified zarr.
             if hasattr(analyzer, "_load_data"):
                 analyzer._load_data()
@@ -1352,7 +1421,7 @@ class FFTModeInterfaceNew:
                 "Run `job[0].fft.modes.compute_modes()` manually and retry."
             ) from exc
 
-    def _extract_time_slice_from_context(self) -> Optional[slice]:
+    def _extract_time_slice_from_context(self) -> slice | None:
         """Extract time slice from dataset wrapper context."""
         if not isinstance(self._slice_context, tuple) or not self._slice_context:
             return None
@@ -1366,46 +1435,26 @@ class FFTModeInterfaceNew:
     def _default_mode_frequency(self) -> float:
         """Resolve default mode frequency from peaks or maximum spectrum power."""
         spectrum_result = self.spectrum_result
-        peaks_info = getattr(spectrum_result, "peaks_info", None)
+        peaks = getattr(spectrum_result, "peaks", [])
+        if peaks:
+            strongest = max(peaks, key=lambda peak: float(peak["amplitude"]))
+            return float(strongest["frequency_ghz"])
+        if hasattr(spectrum_result, "peak_frequency_ghz"):
+            return float(spectrum_result.peak_frequency_ghz)
 
-        if peaks_info:
-            try:
-                first = peaks_info[0]
-                if hasattr(first, "freq"):
-                    return float(first.freq)
-                if isinstance(first, dict):
-                    return float(first.get("frequency", first.get("freq")))
-                if isinstance(first, (list, tuple)) and first:
-                    return float(first[0])
-            except Exception:
-                pass
-
-        frequencies = np.asarray(
-            getattr(spectrum_result, "frequencies", []), dtype=float
-        )
-        power = np.asarray(getattr(spectrum_result, "power", []))
-        if frequencies.size == 0:
-            raise ValueError(
-                "Cannot determine default frequency: no spectrum frequencies"
-            )
-
+        frequencies_ghz = np.asarray(self.frequencies, dtype=float)
+        power = np.asarray(getattr(spectrum_result, "power", []), dtype=float)
+        if frequencies_ghz.size == 0 or power.size == 0:
+            raise ValueError("Cannot determine default frequency from empty spectrum")
         if power.ndim > 1:
-            if power.shape[-1] <= 3:
-                avg_power = np.mean(power, axis=-1)
-            else:
-                avg_power = np.mean(power, axis=tuple(range(1, power.ndim)))
-        else:
-            avg_power = power
-
-        idx = int(np.argmax(np.asarray(avg_power, dtype=float)))
-        idx = max(0, min(idx, frequencies.size - 1))
-        return float(frequencies[idx])
+            power = np.sum(power, axis=tuple(range(1, power.ndim)))
+        return float(frequencies_ghz[int(np.argmax(power))])
 
     def mode(
         self,
-        f: Optional[float] = None,
+        f: float | None = None,
         *,
-        frequency: Optional[float] = None,
+        frequency: float | None = None,
         z_layer: int = -1,
     ) -> ModeResult:
         """Return direct mode data wrapper for fluent plotting.
@@ -1590,12 +1639,13 @@ class FFTModeInterfaceNew:
     def _rich_display(self) -> str:
         """Generate rich help display."""
         try:
+            from io import StringIO
+
             from rich.console import Console
             from rich.panel import Panel
+            from rich.syntax import Syntax
             from rich.table import Table
             from rich.text import Text
-            from rich.syntax import Syntax
-            from io import StringIO
 
             capture = StringIO()
             console = Console(file=capture, force_terminal=True, width=100)

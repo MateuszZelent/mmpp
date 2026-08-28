@@ -8,7 +8,9 @@ import numpy as np
 import zarr
 
 from mmpp.core.job import ZarrJobResult
+from mmpp.solitons._method_helpers import CallableNodeHelper
 from mmpp.solitons.vortex.spectrum.gyration import compute_gyration_spectrum
+from mmpp.solitons.vortex.spectrum.helpers import GyrationSpectrumHelper
 
 
 def _make_vortex_snapshot(
@@ -26,7 +28,7 @@ def _make_vortex_snapshot(
     radius = np.hypot(x_grid, y_grid)
     phi = np.arctan2(y_grid, x_grid)
 
-    mz = np.exp(-(radius / core_radius_px) ** 2)
+    mz = np.exp(-((radius / core_radius_px) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
 
     mx = -m_perp * np.sin(phi)
@@ -98,6 +100,91 @@ def test_gyration_spectrum_peak_and_plot(tmp_path):
     )
     assert hasattr(ax, "plot")
     assert ax.get_title() == "Gyration PSD"
+
+
+def test_gyration_is_callable_interactive_helper(tmp_path):
+    data, _, dx, dy, dt = _make_orbit_data(nt=160)
+    job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+
+    helper = job.m.solitons.vortex.spectrum.gyration
+
+    assert isinstance(helper, GyrationSpectrumHelper)
+    assert callable(helper)
+    assert "method" in str(helper.__signature__)
+
+    html = helper._repr_html_()
+    assert "Vortex Gyration Spectrum" in html
+    assert ">Overview</button>" in html
+    assert ">API</button>" in html
+    assert "interactive_modes" in html
+    assert "mode(f=None)" in html
+    assert "box-shadow" in html
+    assert "<h3" not in html
+
+    for nested in [helper.interactive, helper.interactive_modes, helper.mode]:
+        assert isinstance(nested, CallableNodeHelper)
+        assert callable(nested)
+        nested_html = nested._repr_html_()
+        assert ">Overview</button>" in nested_html
+        assert ">API</button>" in nested_html
+        assert "box-shadow" in nested_html
+        assert "<h3" not in nested_html
+
+    result = helper(method="periodogram")
+    assert result.component == "gyration"
+    assert result.frequencies.size > 0
+
+
+def test_vortex_public_callable_nodes_render_helpers(tmp_path):
+    data, _, dx, dy, dt = _make_orbit_data(nt=32, nx=32, ny=32)
+    job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    vortex = job.m.solitons.vortex
+
+    nodes = [
+        vortex.check_health,
+        vortex.track,
+        vortex.detect,
+        vortex.show_simulation_params,
+        vortex.interactive,
+        vortex.interactive_spectrum,
+        vortex.interactive_modes,
+        vortex.spectrum.breathing,
+        vortex.spectrum.spectrogram,
+        vortex.spectrum.plt.power_spectrum,
+        vortex.spectrum.plt.spectrogram,
+        vortex.modes.classify,
+        vortex.modes.classify_all,
+        vortex.modes.plt.mode_map,
+        vortex.modes.plt.mode_table,
+    ]
+
+    for node in nodes:
+        assert isinstance(node, CallableNodeHelper)
+        assert callable(node)
+        html = node._repr_html_()
+        assert ">Overview</button>" in html
+        assert ">API</button>" in html
+        assert "box-shadow" in html
+        assert "<h3" not in html
+
+
+def test_gyration_helper_opens_spectrum_module():
+    calls = []
+
+    class _Parent:
+        def interactive(self, **kwargs):
+            calls.append(kwargs)
+            return "dashboard"
+
+    class _Spectrum:
+        _vortex_interface = _Parent()
+        _dataset_name = "m"
+        _job = object()
+
+    helper = GyrationSpectrumHelper(_Spectrum(), lambda **_: object())
+
+    assert helper.interactive(figsize=(8, 5)) == "dashboard"
+    assert calls == [{"figsize": (8, 5), "initial_module": "spectrum"}]
 
 
 def test_interface_spectrogram_and_direct_compute(tmp_path):

@@ -2,22 +2,32 @@
 
 from __future__ import annotations
 
+from ..._method_helpers import InteractiveNodeMixin
 from .compare import compare_trajectories
 from .extract import extract_model_defaults
 from .fit import fit_thiele_from_trajectory
 
 
-class _BridgeCompareAccessor:
+class _BridgeCompareAccessor(InteractiveNodeMixin):
+    _interactive_owner = "job[0].vortex.bridge.compare"
+    _interactive_nodes = frozenset({"with_"})
+
     def with_(self, lhs, rhs, *, label=("numerical", "analytical")):
         return compare_trajectories(lhs, rhs, label=label)
 
 
-class _BridgeFitAccessor:
+class _BridgeFitAccessor(InteractiveNodeMixin):
+    _interactive_owner = "job[0].vortex.bridge.fit"
+    _interactive_nodes = frozenset({"thiele_from_trajectory"})
+
     def thiele_from_trajectory(self, trajectory, **kwargs):
         return fit_thiele_from_trajectory(trajectory, **kwargs)
 
 
-class _BridgeExtractAccessor:
+class _BridgeExtractAccessor(InteractiveNodeMixin):
+    _interactive_owner = "job[0].vortex.bridge.extract"
+    _interactive_nodes = frozenset({"model_defaults"})
+
     def __init__(self, bridge):
         self._bridge = bridge
 
@@ -52,7 +62,6 @@ class BridgeInterface:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
-
         from html import escape as _esc
 
         from mmpp._repr_helpers import (

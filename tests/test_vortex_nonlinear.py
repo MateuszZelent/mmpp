@@ -714,3 +714,78 @@ def test_thiele_proxy_signal_psd_and_dashboard_entrypoint(tmp_path):
                 figsize=(11.0, 3.8),
                 dpi=90,
             )
+
+
+def test_event_and_nonlinear_callable_helper_nodes():
+    """Every public event/Thiele/plot method exposes the notebook helper card."""
+    from mmpp.solitons._method_helpers import CallableNodeHelper
+    from mmpp.solitons.vortex.events.interface import (
+        EventsInterface,
+        EventsPlotAccessor,
+    )
+    from mmpp.solitons.vortex.nonlinear.interface import (
+        NonlinearInterface,
+        NonlinearInterfacePlotAccessor,
+    )
+    from mmpp.solitons.vortex.nonlinear.models import (
+        AmplitudePlotAccessor,
+        STBatchPlotAccessor,
+        STPlotAccessor,
+        ThieleForcePlotAccessor,
+    )
+    from mmpp.solitons.vortex.nonlinear.nonliniearthiele import ThieleAnalyzer
+
+    expected = {
+        EventsInterface: {
+            "polarity_switches",
+            "state_switches",
+            "core_expulsions",
+            "dwell_times",
+        },
+        EventsPlotAccessor: {"event_timeline", "dwell_histogram"},
+        NonlinearInterface: {
+            "amplitude_equation",
+            "slavin_tiberkevich",
+            "slavin_tiberkevich_batch",
+            "force_balance",
+            "interactive_dashboard",
+        },
+        NonlinearInterfacePlotAccessor: {
+            "power_vs_current",
+            "linewidth_vs_current",
+            "force_balance",
+        },
+        ThieleAnalyzer: {
+            "force_balance",
+            "simulate_cpp",
+            "simulate_cpp_sde",
+            "threshold_current_dc",
+            "predict_frequency_dc",
+            "fit_omega0_N_to_fJ",
+            "optimize_current_for_target_frequency",
+            "proxy_signal",
+            "proxy_psd",
+            "interactive_dashboard",
+            "simulate_cip",
+        },
+        AmplitudePlotAccessor: {"power_vs_time", "phase_vs_time", "complex_plane"},
+        STPlotAccessor: {"power_vs_current"},
+        STBatchPlotAccessor: {
+            "power_vs_current",
+            "linewidth_vs_current",
+            "frequency_vs_current",
+        },
+        ThieleForcePlotAccessor: {"force_balance"},
+    }
+
+    for cls, names in expected.items():
+        instance = object.__new__(cls)
+        for name in names:
+            node = getattr(instance, name)
+            assert isinstance(node, CallableNodeHelper)
+            assert callable(node)
+            html = node._repr_html_()
+            assert ">Overview</button>" in html
+            assert ">API</button>" in html
+            assert "box-shadow" in html
+            assert "<h3" not in html

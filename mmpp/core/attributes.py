@@ -8,6 +8,7 @@ if RICH_AVAILABLE:
     from rich.console import Console
     from rich.table import Table
 
+
 class AttributesView(MutableMapping):
     """Wrapper for zarr attrs with rich/Jupyter-friendly display."""
 
@@ -72,8 +73,11 @@ class AttributesView(MutableMapping):
         if RICH_AVAILABLE:
             try:
                 from io import StringIO
+
                 buf = StringIO()
-                console = Console(file=buf, width=120, force_terminal=False, color_system=None)
+                console = Console(
+                    file=buf, width=120, force_terminal=False, color_system=None
+                )
                 table = self._rich_table()
                 if table is not None:
                     console.print(table)
@@ -94,6 +98,7 @@ class AttributesView(MutableMapping):
         """Rich HTML representation for Jupyter notebooks (app-consistent dark theme)."""
         try:
             from uuid import uuid4
+
             uid = uuid4().hex[:8]
             attr_count = len(self._attrs)
             rows = []
@@ -151,4 +156,3 @@ class AttributesView(MutableMapping):
             </div>"""
         except Exception:
             return None
-

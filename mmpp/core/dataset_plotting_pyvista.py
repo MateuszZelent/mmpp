@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import warnings
-from typing import Any, Optional, Union
+from typing import Any
 
 import numpy as np
 
 from .dataset_geometry import _dataset_attrs
+from .dataset_plotting_core import DatasetPlotCoreMixin
 
-class DatasetPlotPyVistaMixin:
+
+class DatasetPlotPyVistaMixin(DatasetPlotCoreMixin):
     @staticmethod
     def _pyvista_import():
         try:
@@ -25,11 +26,11 @@ class DatasetPlotPyVistaMixin:
         *,
         plotter=None,
         t: int = -1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
-        multiplier: Optional[float] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
+        multiplier: float | None = None,
         cmap: str = "viridis",
-        opacity: Union[str, float, list[float]] = "linear",
+        opacity: str | float | list[float] = "linear",
         show: bool = False,
         name: str = "value",
         **kwargs,
@@ -39,8 +40,7 @@ class DatasetPlotPyVistaMixin:
         scalar = self._component_volume(volume, component, default="norm")
         if scalar.ndim != 3:
             raise ValueError(
-                "pyvista.scalar expects a 3d scalar volume. "
-                f"Got shape {scalar.shape}."
+                f"pyvista.scalar expects a 3d scalar volume. Got shape {scalar.shape}."
             )
 
         nz, ny, nx = scalar.shape
@@ -61,7 +61,7 @@ class DatasetPlotPyVistaMixin:
         try:
             grid.cell_data[name] = values
         except Exception:
-            setattr(grid, "cell_data", {name: values})
+            grid.cell_data = {name: values}
 
         p = plotter if plotter is not None else pv.Plotter()
         add_kwargs = dict(kwargs)
@@ -77,10 +77,10 @@ class DatasetPlotPyVistaMixin:
         *,
         plotter=None,
         t: int = -1,
-        zero: Optional[int] = None,
-        component: Optional[Union[int, str]] = None,
+        zero: int | None = None,
+        component: int | str | None = None,
         threshold: float = 0.0,
-        multiplier: Optional[float] = None,
+        multiplier: float | None = None,
         show: bool = False,
         **kwargs,
     ):
@@ -89,8 +89,7 @@ class DatasetPlotPyVistaMixin:
         scalar = self._component_volume(volume, component, default="norm")
         if scalar.ndim != 3:
             raise ValueError(
-                "pyvista.nonzero expects a 3d scalar volume. "
-                f"Got shape {scalar.shape}."
+                f"pyvista.nonzero expects a 3d scalar volume. Got shape {scalar.shape}."
             )
 
         mask = (np.abs(scalar) > float(threshold)).astype(np.float32)
@@ -111,7 +110,7 @@ class DatasetPlotPyVistaMixin:
         try:
             grid.cell_data["nonzero"] = values
         except Exception:
-            setattr(grid, "cell_data", {"nonzero": values})
+            grid.cell_data = {"nonzero": values}
 
         p = plotter if plotter is not None else pv.Plotter()
         add_kwargs = dict(kwargs)
@@ -127,16 +126,11 @@ class DatasetPlotPyVistaMixin:
         *,
         plotter=None,
         t: int = -1,
-        zero: Optional[int] = None,
-        vdims: Optional[
-            tuple[
-                Optional[Union[int, str]],
-                Optional[Union[int, str]],
-                Optional[Union[int, str]],
-            ]
-        ] = None,
-        vdim_mapping: Optional[dict[Any, Any]] = None,
-        multiplier: Optional[float] = None,
+        zero: int | None = None,
+        vdims: tuple[int | str | None, int | str | None, int | str | None]
+        | None = None,
+        vdim_mapping: dict[Any, Any] | None = None,
+        multiplier: float | None = None,
         quiver_density: int = 8,
         vector_scale: float = 1.0,
         min_magnitude: float = 0.0,
@@ -226,12 +220,12 @@ class DatasetPlotPyVistaMixin:
             dx = dy = dz = 1e-9
         m = 1.0 if multiplier is None else float(multiplier)
 
-        points_arr = np.stack(
+        points_arr: Any = np.stack(
             [xx * (dx / m), yy * (dy / m), zz * (dz / m)],
             axis=-1,
         ).reshape(-1, 3)
-        vectors_arr = np.stack([u, v, w], axis=-1).reshape(-1, 3)
-        magnitude = np.linalg.norm(vectors_arr, axis=1)
+        vectors_arr: Any = np.stack([u, v, w], axis=-1).reshape(-1, 3)
+        magnitude: Any = np.linalg.norm(vectors_arr, axis=1)
         valid = np.isfinite(magnitude) & (magnitude >= float(min_magnitude))
         points_arr = np.asarray(points_arr[valid], dtype=np.float32)
         vectors_arr = np.asarray(vectors_arr[valid], dtype=np.float32)

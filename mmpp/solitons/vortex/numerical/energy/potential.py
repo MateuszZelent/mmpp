@@ -94,7 +94,9 @@ def potential_from_energy_channel(
             metadata={"status": "insufficient_samples"},
         )
 
-    edges = np.linspace(float(np.min(radius)), float(np.max(radius)), max(int(bins), 8) + 1)
+    edges = np.linspace(
+        float(np.min(radius)), float(np.max(radius)), max(int(bins), 8) + 1
+    )
     idx = np.clip(np.digitize(radius, edges) - 1, 0, edges.size - 2)
     centers = 0.5 * (edges[:-1] + edges[1:])
 

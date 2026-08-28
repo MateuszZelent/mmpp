@@ -6,6 +6,7 @@ from typing import Any
 
 from mmpp.analytical import CIPThieleModel
 
+from ...._method_helpers import InteractiveNodeMixin
 from ..adapters import thiele_to_trajectory_result
 from .models import (
     infer_disk_geometry,
@@ -16,8 +17,11 @@ from .models import (
 )
 
 
-class CIPModelAdapter:
+class CIPModelAdapter(InteractiveNodeMixin):
     """Thin adapter exposing ``simulate`` -> ``TrajectoryResult`` contract."""
+
+    _interactive_owner = "model"
+    _interactive_nodes = frozenset({"simulate"})
 
     def __init__(
         self,

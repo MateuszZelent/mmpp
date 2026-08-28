@@ -6,11 +6,11 @@ Handles authentication with containers_admin2 server.
 import getpass
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urljoin
 
 import requests
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from .cli.logging_config import get_mmpp_logger
 
@@ -25,7 +25,7 @@ class AuthManager:
         self.token_file = self.config_dir / "auth.yaml"
         self.config_dir.mkdir(exist_ok=True)
 
-    def load_credentials(self) -> Optional[dict[str, Any]]:
+    def load_credentials(self) -> dict[str, Any] | None:
         """Load stored authentication credentials."""
         if not self.token_file.exists():
             return None
@@ -38,21 +38,21 @@ class AuthManager:
             return None
 
     def save_credentials(
-        self, server_url: str, token: str, user_info: Optional[dict] = None
+        self, server_url: str, token: str, user_info: dict | None = None
     ) -> None:
         """Save authentication credentials to file."""
         # Normalize server URL to base URL only
         if not server_url.startswith(("http://", "https://")):
             server_url = f"https://{server_url}"
-        
+
         # Remove /login suffix if present
         if server_url.endswith("/login"):
             server_url = server_url[:-6]
-            
+
         # Remove any API endpoint paths to get base URL
         if "/api/v1/" in server_url:
             server_url = server_url.split("/api/v1/")[0]
-        
+
         credentials = {
             "server_url": server_url.rstrip("/"),
             "token": token,
@@ -88,7 +88,7 @@ class AuthManager:
                 return False
         return True
 
-    def cli_login(self, server_url: str, cli_token: str) -> tuple[bool, Optional[dict]]:
+    def cli_login(self, server_url: str, cli_token: str) -> tuple[bool, dict | None]:
         """Login using CLI token to get JWT access token."""
         try:
             # Normalize server URL
@@ -163,9 +163,7 @@ class AuthManager:
             log.debug("General exception: %s", e)
             return False, {"error": str(e)}
 
-    def test_connection(
-        self, server_url: str, token: str
-    ) -> tuple[bool, Optional[dict]]:
+    def test_connection(self, server_url: str, token: str) -> tuple[bool, dict | None]:
         """Test connection to containers_admin2 server using proper API endpoints."""
         try:
             # Normalize server URL
@@ -254,23 +252,25 @@ class AuthManager:
             return {
                 "authenticated": False,
                 "server_url": server_url,
-                "error": info.get("error", "Unknown error") if info else "Unknown error",
+                "error": info.get("error", "Unknown error")
+                if info
+                else "Unknown error",
                 "message": "Authentication failed",
             }
 
-    def get_token(self) -> Optional[str]:
+    def get_token(self) -> str | None:
         """Get stored authentication token."""
         credentials = self.load_credentials()
         return credentials.get("token") if credentials else None
 
-    def get_base_url(self) -> Optional[str]:
+    def get_base_url(self) -> str | None:
         """Get stored server base URL."""
         credentials = self.load_credentials()
         return credentials.get("server_url") if credentials else None
 
     def login_via_api(
         self, server_url: str, username: str, password: str
-    ) -> tuple[bool, Optional[dict]]:
+    ) -> tuple[bool, dict | None]:
         """
         Login via API using username/password (optional feature for future).
         Currently just provides framework - most users will use token directly.
@@ -351,7 +351,7 @@ class AuthManager:
         return results
 
 
-def login_to_server(server_url: str, token: Optional[str] = None) -> bool:
+def login_to_server(server_url: str, token: str | None = None) -> bool:
     """Login to containers_admin2 server using CLI token."""
     auth_manager = AuthManager()
 

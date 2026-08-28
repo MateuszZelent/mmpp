@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
+from .._method_helpers import InteractiveNodeMixin
 from ._analysis import analysis_catalog_rows, get_analysis_spec
 from .config import SkyrmionConfig
 from .models import SkyrmionAnalysisResult, SkyrmionSizeResult, SkyrmionTopologyResult
@@ -15,8 +16,34 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
-class SkyrmionInterface:
+class SkyrmionInterface(InteractiveNodeMixin):
     """Topology and size analysis for isolated skyrmions."""
+
+    _interactive_owner = "job[0].skyrmion"
+    _interactive_nodes = frozenset(
+        {
+            "detect",
+            "measure_size",
+            "fit_size",
+            "available_analyses",
+            "analyze",
+            "interactive",
+            "interactive_spectrum",
+            "interactive_modes",
+        }
+    )
+    _interactive_examples = {
+        "detect": ["topology = job[0].skyrmion.detect(frame=0, z_layer=0)"],
+        "measure_size": ["size = job[0].skyrmion.measure_size(method='threshold')"],
+        "fit_size": ["size = job[0].skyrmion.fit_size(method='auto')"],
+        "analyze": [
+            "size = job[0].skyrmion.analyze('size', method='auto')",
+            "charge = job[0].skyrmion.analyze('charge')",
+        ],
+        "interactive": ["job[0].skyrmion.interactive(initial_frame=0, z_layer=0)"],
+        "interactive_spectrum": ["job[0].skyrmion.interactive_spectrum(dpi=140)"],
+        "interactive_modes": ["job[0].skyrmion.interactive_modes(dpi=140)"],
+    }
 
     def __init__(
         self,
@@ -25,14 +52,16 @@ class SkyrmionInterface:
         mmpp_instance: Any = None,
         slice_info: Any = None,
         config: Optional[SkyrmionConfig] = None,
+        dataset_view: Any = None,
     ):
         self._job = job_result
         self._dataset_name = dataset_name
         self._mmpp = mmpp_instance
         self._slice_info = slice_info
+        self._dataset_view = dataset_view
         self._config = config or SkyrmionConfig()
-        self._topology = None
-        self._size = None
+        self._topology: Any | None = None
+        self._size: Any | None = None
         self._result_cache: dict[tuple[Any, ...], Any] = {}
 
     @property
@@ -177,6 +206,45 @@ class SkyrmionInterface:
             metadata={"dataset_name": self.dataset_name},
         )
 
+    def interactive(
+        self,
+        *,
+        initial_frame: int = 0,
+        z_layer: int = -1,
+        topology_method: Optional[str] = None,
+        size_method: Optional[str] = None,
+        initial_module: str = "analysis",
+        figsize: tuple[float, float] = (13, 4),
+        dpi: int = 110,
+        show: bool = True,
+    ):
+        """Open analysis, FFT spectrum, and spatial-mode interactive views."""
+        from .ui import SkyrmionInteractiveDashboard
+
+        dashboard = SkyrmionInteractiveDashboard(
+            self,
+            initial_frame=initial_frame,
+            z_layer=z_layer,
+            topology_method=topology_method,
+            size_method=size_method,
+            initial_module=initial_module,
+            figsize=figsize,
+            dpi=dpi,
+        )
+        return dashboard.show() if show else dashboard
+
+    def interactive_spectrum(self, **kwargs: Any):
+        """Open the combined magnetisation spectrum and spatial-mode explorer."""
+        from .._spectral_ui import interactive_spectrum_modes
+
+        return interactive_spectrum_modes(self, **kwargs)
+
+    def interactive_modes(self, **kwargs: Any):
+        """Open the spatial FFT-mode explorer together with its source spectrum."""
+        from .._spectral_ui import interactive_spectrum_modes
+
+        return interactive_spectrum_modes(self, **kwargs)
+
     def __repr__(self) -> str:
         return (
             f"SkyrmionInterface(dataset={self.dataset_name!r}, "
@@ -211,6 +279,9 @@ class SkyrmionInterface:
                 "fit_size",
                 "analyze",
                 "available_analyses",
+                "interactive",
+                "interactive_spectrum",
+                "interactive_modes",
             ],
             chrome=False,
         )
@@ -240,6 +311,9 @@ class SkyrmionInterface:
                                 (".analyze('size')", NODE_COLOR_COMPUTE),
                                 (".analyze('charge')", NODE_COLOR_ANALYSIS),
                                 (".analyze()", NODE_COLOR_COMPUTE),
+                                (".interactive()", NODE_COLOR_ANALYSIS),
+                                (".interactive_spectrum()", NODE_COLOR_ANALYSIS),
+                                (".interactive_modes()", NODE_COLOR_ANALYSIS),
                             ],
                         ),
                     ]
@@ -247,7 +321,9 @@ class SkyrmionInterface:
                 examples_section_html(
                     "size = job.m.skyrmion.analyze('size', method='auto')\n"
                     "charge = job.m.skyrmion.analyze('charge')\n"
-                    "print(charge.Q, size.radius_nm, size.model)"
+                    "print(charge.Q, size.radius_nm, size.model)\n"
+                    "job.m.skyrmion.interactive(initial_module='spectrum')\n"
+                    "job.m.skyrmion.interactive_modes()"
                 ),
             ],
             api=api,

@@ -1,16 +1,21 @@
 """
 Utility functions for spin-wave dispersion analysis.
 
-Contains low-level functions for FFT, k-space operations, windowing, 
+Contains low-level functions for FFT, k-space operations, windowing,
 and mathematical operations used in dispersion calculations.
 """
 
 from __future__ import annotations
-from typing import Tuple, List, Optional, Sequence, Any
+
 import logging
+from collections.abc import Sequence
+from typing import Any
+
 import numpy as np
 
-from ._fft_backend import fft as _fft, fftfreq as _fftfreq, fftshift as _fftshift
+from ._fft_backend import fft as _fft
+from ._fft_backend import fftfreq as _fftfreq
+from ._fft_backend import fftshift as _fftshift
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,13 @@ LEGACY_PREPROCESS_FILTER_KEYS = {
 }
 
 PREPROCESS_FILTER_KEYS = {
+    "remove_mean",
+    "detrend_linear",
+    "savgol_smooth",
+    "baseline_correction",
+    "high_pass",
+    "band_pass",
+    "spectral_derivative",
     "envelope_extraction",
     "wavelet_denoise",
     "wiener_time",
@@ -46,6 +58,14 @@ POSTPROCESS_FILTER_KEYS = {
     "gaussian_morph",
     "wiener2d",
     "wavelet2d",
+    "soft_threshold",
+    "percentile_autoscale",
+    "log_transform",
+    "gamma",
+    "local_contrast",
+    "clahe",
+    "unsharp_mask",
+    "normalize",
 }
 
 # Filters that can be recomputed "live" from already computed S(k,f)
@@ -84,11 +104,7 @@ def _coerce_options(option: Any) -> dict[str, Any]:
 def _merge_nested_dict(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in extra.items():
-        if (
-            key in merged
-            and isinstance(merged[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = _merge_nested_dict(merged[key], value)
         else:
             merged[key] = value
@@ -96,8 +112,8 @@ def _merge_nested_dict(base: dict[str, Any], extra: dict[str, Any]) -> dict[str,
 
 
 def normalize_filter_config(
-    filters: Optional[dict[str, Any]],
-) -> Optional[dict[str, Any]]:
+    filters: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     """
     Normalize user-provided filter config into a stable dict.
 
@@ -128,7 +144,9 @@ def normalize_filter_config(
     # Optional combined block
     advanced_cfg = filters.get("advanced")
     if isinstance(advanced_cfg, dict):
-        normalized = _merge_nested_dict(normalized, {str(k): v for k, v in advanced_cfg.items()})
+        normalized = _merge_nested_dict(
+            normalized, {str(k): v for k, v in advanced_cfg.items()}
+        )
 
     # Root-level advanced keys for convenience
     skip_keys = {
@@ -152,14 +170,30 @@ def normalize_filter_config(
         elif key in LIVE_POSTPROCESS_FILTER_KEYS:
             normalized.setdefault("live", {})[key] = value
         else:
-            # Preserve unknown keys for cache signature reproducibility
-            normalized[key] = value
+            raise ValueError(f"Unknown dispersion filter: {key!r}")
+
+    allowed_by_stage = {
+        "pre": PREPROCESS_FILTER_KEYS | LEGACY_PREPROCESS_FILTER_KEYS,
+        "post": POSTPROCESS_FILTER_KEYS,
+        "live": LIVE_POSTPROCESS_FILTER_KEYS,
+    }
+    for stage_name, allowed in allowed_by_stage.items():
+        stage_cfg = normalized.get(stage_name)
+        if stage_cfg is None:
+            continue
+        if not isinstance(stage_cfg, dict):
+            raise TypeError(f"{stage_name} filter stage must be a dictionary")
+        unknown = sorted(set(stage_cfg) - allowed)
+        if unknown:
+            raise ValueError(
+                f"Unknown {stage_name} dispersion filter(s): {', '.join(unknown)}"
+            )
 
     return normalized or None
 
 
 def split_filter_stages(
-    filters: Optional[dict[str, Any]],
+    filters: dict[str, Any] | None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """
     Split filter config into preprocess, postprocess and live-stage blocks.
@@ -199,7 +233,7 @@ def split_filter_stages(
 
 
 def classify_filter_execution(
-    filters: Optional[dict[str, Any]],
+    filters: dict[str, Any] | None,
 ) -> dict[str, list[str]]:
     """
     Classify active filters by execution stage.
@@ -214,7 +248,8 @@ def classify_filter_execution(
     compute_stage = sorted(pre.keys())
     post_stage = sorted(post.keys())
     live_capable = sorted(
-        name for name in set(list(post.keys()) + list(live.keys()))
+        name
+        for name in set(list(post.keys()) + list(live.keys()))
         if name in LIVE_POSTPROCESS_FILTER_KEYS
     )
 
@@ -225,12 +260,16 @@ def classify_filter_execution(
     }
 
 
-def _flatten_time_axis(x: np.ndarray, time_axis: int) -> tuple[np.ndarray, tuple[int, ...]]:
+def _flatten_time_axis(
+    x: np.ndarray, time_axis: int
+) -> tuple[np.ndarray, tuple[int, ...]]:
     moved = np.moveaxis(np.asarray(x), time_axis, 0)
     return moved.reshape(moved.shape[0], -1), moved.shape
 
 
-def _restore_time_axis(flat: np.ndarray, moved_shape: tuple[int, ...], time_axis: int) -> np.ndarray:
+def _restore_time_axis(
+    flat: np.ndarray, moved_shape: tuple[int, ...], time_axis: int
+) -> np.ndarray:
     moved = flat.reshape(moved_shape)
     return np.moveaxis(moved, 0, time_axis)
 
@@ -253,10 +292,10 @@ def _analytic_envelope_1d(series: np.ndarray) -> np.ndarray:
         if n % 2 == 0:
             h[0] = 1.0
             h[n // 2] = 1.0
-            h[1:n // 2] = 2.0
+            h[1 : n // 2] = 2.0
         else:
             h[0] = 1.0
-            h[1:(n + 1) // 2] = 2.0
+            h[1 : (n + 1) // 2] = 2.0
         analytic = np.fft.ifft(spectrum * h)
         return np.abs(analytic)
 
@@ -305,10 +344,10 @@ def adaptive_envelope_extraction(
         if transition > 0:
             left_len = min(transition, end - start)
             if left_len > 1:
-                weights[start:start + left_len] = np.linspace(0.0, 1.0, left_len)
+                weights[start : start + left_len] = np.linspace(0.0, 1.0, left_len)
             right_len = min(transition, end - start)
             if right_len > 1:
-                weights[end - right_len:end] = np.linspace(1.0, 0.0, right_len)
+                weights[end - right_len : end] = np.linspace(1.0, 0.0, right_len)
 
         result[:, idx] = series * weights
 
@@ -330,7 +369,9 @@ def wavelet_denoise_time(
     try:
         import pywt  # type: ignore
     except Exception:
-        logger.warning("wavelet_denoise requested but PyWavelets is unavailable; skipping")
+        logger.warning(
+            "wavelet_denoise requested but PyWavelets is unavailable; skipping"
+        )
         return x
 
     flat, moved_shape = _flatten_time_axis(x, time_axis=time_axis)
@@ -383,7 +424,7 @@ def wiener_time_filter(
     *,
     time_axis: int = 0,
     window_size: int = 11,
-    noise_variance: Optional[float] = None,
+    noise_variance: float | None = None,
 ) -> np.ndarray:
     """
     A3: Adaptive Wiener filtering along the time axis.
@@ -391,7 +432,9 @@ def wiener_time_filter(
     try:
         from scipy.signal import wiener  # type: ignore
     except Exception:
-        logger.warning("wiener_time requested but scipy.signal.wiener is unavailable; skipping")
+        logger.warning(
+            "wiener_time requested but scipy.signal.wiener is unavailable; skipping"
+        )
         return x
 
     flat, moved_shape = _flatten_time_axis(x, time_axis=time_axis)
@@ -437,9 +480,15 @@ def median_morphological_filter(
     A4: Median filtering plus morphological mask cleanup.
     """
     try:
-        from scipy.ndimage import median_filter, binary_opening, binary_closing  # type: ignore
+        from scipy.ndimage import (  # type: ignore
+            binary_closing,
+            binary_opening,
+            median_filter,
+        )
     except Exception:
-        logger.warning("median_morph requested but scipy.ndimage is unavailable; skipping")
+        logger.warning(
+            "median_morph requested but scipy.ndimage is unavailable; skipping"
+        )
         return x
 
     size = [1] * x.ndim
@@ -472,7 +521,7 @@ def amplitude_equalization(
     *,
     time_axis: int = 0,
     smoothing_fraction: float = 0.05,
-    smoothing_samples: Optional[int] = None,
+    smoothing_samples: int | None = None,
     epsilon_rel: float = 1e-6,
     max_gain: float = 10.0,
     target: str = "mean",
@@ -611,7 +660,7 @@ def ica_denoise_time(
     x: np.ndarray,
     *,
     time_axis: int = 0,
-    n_components: Optional[int] = None,
+    n_components: int | None = None,
     keep_components: int = 1,
     random_state: int = 42,
 ) -> np.ndarray:
@@ -619,13 +668,17 @@ def ica_denoise_time(
     F1: ICA-based denoising for multi-channel real signals.
     """
     if np.iscomplexobj(x):
-        logger.warning("ica_denoise requires real-valued input; skipping complex signal")
+        logger.warning(
+            "ica_denoise requires real-valued input; skipping complex signal"
+        )
         return x
 
     try:
         from sklearn.decomposition import FastICA  # type: ignore
     except Exception:
-        logger.warning("ica_denoise requested but scikit-learn is unavailable; skipping")
+        logger.warning(
+            "ica_denoise requested but scikit-learn is unavailable; skipping"
+        )
         return x
 
     flat, moved_shape = _flatten_time_axis(x, time_axis=time_axis)
@@ -641,14 +694,18 @@ def ica_denoise_time(
     keep_n = max(1, min(_safe_int(keep_components, 1), n_comp))
 
     try:
-        ica = FastICA(n_components=n_comp, random_state=random_state, max_iter=1000, tol=1e-4)
+        ica = FastICA(
+            n_components=n_comp, random_state=random_state, max_iter=1000, tol=1e-4
+        )
         transformed = ica.fit_transform(flat)
         power = np.var(transformed, axis=0)
         keep_idx = np.argsort(power)[-keep_n:]
         masked = np.zeros_like(transformed)
         masked[:, keep_idx] = transformed[:, keep_idx]
         reconstructed = masked @ ica.mixing_.T + ica.mean_
-        return _restore_time_axis(reconstructed.astype(x.dtype, copy=False), moved_shape, time_axis=time_axis)
+        return _restore_time_axis(
+            reconstructed.astype(x.dtype, copy=False), moved_shape, time_axis=time_axis
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("ica_denoise failed (%s); skipping", exc)
         return x
@@ -697,7 +754,7 @@ def compute_welch_power_spectrum(
     axis: int = 0,
     n_segments: int = 4,
     overlap: float = 0.5,
-    n_fft: Optional[int] = None,
+    n_fft: int | None = None,
     apply_hann: bool = True,
 ) -> np.ndarray:
     """
@@ -735,12 +792,16 @@ def compute_welch_power_spectrum(
             continue
         seg_work = np.array(seg, copy=True)
         if apply_hann and seg_work.shape[0] > 1:
-            window = hann_window(seg_work.shape[0]).reshape((-1,) + (1,) * (seg_work.ndim - 1))
+            window = hann_window(seg_work.shape[0]).reshape(
+                (-1,) + (1,) * (seg_work.ndim - 1)
+            )
             seg_work = seg_work * window
 
         if seg_work.shape[0] < n_fft_eff:
             pad_shape = (n_fft_eff - seg_work.shape[0],) + seg_work.shape[1:]
-            seg_work = np.concatenate([seg_work, np.zeros(pad_shape, dtype=seg_work.dtype)], axis=0)
+            seg_work = np.concatenate(
+                [seg_work, np.zeros(pad_shape, dtype=seg_work.dtype)], axis=0
+            )
         elif seg_work.shape[0] > n_fft_eff:
             seg_work = seg_work[:n_fft_eff]
 
@@ -765,16 +826,16 @@ def compute_welch_power_spectrum(
 def fftfreq_axis(n: int, d: float, shift: bool = True) -> np.ndarray:
     """
     Frequency axis (Hz) for FFT length n and sample spacing d.
-    
+
     Parameters
     ----------
     n : int
         FFT length
-    d : float  
+    d : float
         Sample spacing (time step) [s]
     shift : bool
         If True, returns fftshifted (centered) axis
-        
+
     Returns
     -------
     np.ndarray
@@ -787,16 +848,16 @@ def fftfreq_axis(n: int, d: float, shift: bool = True) -> np.ndarray:
 def k_axis_from_grid(n: int, d: float, shift: bool = True) -> np.ndarray:
     """
     Wavevector axis k (rad/m) for FFT length n and grid spacing d [m].
-    
+
     Parameters
     ----------
     n : int
         FFT length (number of grid points)
     d : float
-        Grid spacing [m]  
+        Grid spacing [m]
     shift : bool
         If True, returns fftshifted (centered) axis
-        
+
     Returns
     -------
     np.ndarray
@@ -809,14 +870,14 @@ def k_axis_from_grid(n: int, d: float, shift: bool = True) -> np.ndarray:
 def fold_k_to_bz(k: np.ndarray, a: float) -> np.ndarray:
     """
     Fold wavevector(s) k [rad/m] to first Brillouin zone (-π/a, π/a].
-    
+
     Parameters
     ----------
     k : np.ndarray
         Wavevector(s) [rad/m]
     a : float
         Real-space period [m] defining BZ size
-        
+
     Returns
     -------
     np.ndarray
@@ -829,45 +890,42 @@ def fold_k_to_bz(k: np.ndarray, a: float) -> np.ndarray:
 
 
 def fold_spectrum_1d(
-    Skf: np.ndarray, 
-    k: np.ndarray, 
-    a: float, 
-    agg: str = "sum"
-) -> Tuple[np.ndarray, np.ndarray]:
+    Skf: np.ndarray, k: np.ndarray, a: float, agg: str = "sum"
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Fold a 1D dispersion S(k,f) into first BZ defined by period a.
-    
+
     Parameters
     ----------
     Skf : np.ndarray
         Dispersion spectrum with shape (Nk, Nf)
-    k : np.ndarray  
+    k : np.ndarray
         Wavevector axis (Nk,) [rad/m]
     a : float
         Real-space period [m]
     agg : {'sum', 'max'}
         Aggregation method for aliased k bins
-        
+
     Returns
     -------
     k_fold_sorted : np.ndarray
         Unique folded k values, sorted
-    Skf_folded : np.ndarray  
+    Skf_folded : np.ndarray
         Folded spectrum (Nk_fold, Nf)
     """
     k_fold = fold_k_to_bz(k, a)
-    
+
     # Group by unique folded k values (with tolerance)
     dk = np.median(np.diff(np.sort(k))) if len(k) > 1 else 1.0
     tol = dk * 0.25
-    
+
     # Sort by folded k
     order = np.argsort(k_fold)
     kf_sorted = k_fold[order]
     Skf_sorted = Skf[order]
-    
+
     # Build index groups for identical k values
-    groups: List[np.ndarray] = []
+    groups: list[np.ndarray] = []
     current = [0]
     for i in range(1, len(kf_sorted)):
         if abs(kf_sorted[i] - kf_sorted[current[-1]]) <= tol:
@@ -879,11 +937,15 @@ def fold_spectrum_1d(
 
     # Aggregate each group
     k_fold_unique = np.array([np.mean(kf_sorted[g]) for g in groups])
-    
+
     if agg == "max":
-        Skf_folded = np.stack([np.nanmax(Skf_sorted[g], axis=0) for g in groups], axis=0)
+        Skf_folded = np.stack(
+            [np.nanmax(Skf_sorted[g], axis=0) for g in groups], axis=0
+        )
     else:  # sum
-        Skf_folded = np.stack([np.nansum(Skf_sorted[g], axis=0) for g in groups], axis=0)
+        Skf_folded = np.stack(
+            [np.nansum(Skf_sorted[g], axis=0) for g in groups], axis=0
+        )
 
     # Sort by k
     srt = np.argsort(k_fold_unique)
@@ -910,14 +972,10 @@ def hann_window(n: int) -> np.ndarray:
     return 0.5 - 0.5 * np.cos(2.0 * np.pi * idx / (n - 1))
 
 
-def apply_window_1d(
-    x: np.ndarray, 
-    axis: int, 
-    window: Optional[str]
-) -> np.ndarray:
+def apply_window_1d(x: np.ndarray, axis: int, window: str | None) -> np.ndarray:
     """
     Apply window function along specified axis.
-    
+
     Parameters
     ----------
     x : np.ndarray
@@ -926,7 +984,7 @@ def apply_window_1d(
         Axis along which to apply window
     window : Optional[str]
         Window type: 'hann' or None
-        
+
     Returns
     -------
     np.ndarray
@@ -934,27 +992,26 @@ def apply_window_1d(
     """
     if window is None:
         return x
-        
+
     n = x.shape[axis]
     if window == "hann":
         w = hann_window(n)
     else:
         raise ValueError(f"Unknown window '{window}'")
-        
+
     # Reshape for broadcasting
     shape = [1] * x.ndim
     shape[axis] = n
     return x * w.reshape(shape)
 
 
-
 def apply_filter_pipeline(
     x: np.ndarray,
-    filters: Optional[dict[str, Any]],
+    filters: dict[str, Any] | None,
     *,
     time_axis: int = 0,
     spatial_axes: Sequence[int] = (2, 3),
-    dt: Optional[float] = None,
+    dt: float | None = None,
 ) -> np.ndarray:
     """
     Apply raw-data preprocessing filters (compute stage).
@@ -1114,6 +1171,32 @@ def apply_filter_pipeline(
         )
         applied.append("sparse_denoise")
 
+    shared_pre_filters = {
+        "remove_mean",
+        "detrend_linear",
+        "savgol_smooth",
+        "baseline_correction",
+        "high_pass",
+        "band_pass",
+        "spectral_derivative",
+    }
+    for name, option in pre_filters.items():
+        if name not in shared_pre_filters:
+            continue
+        from ..filters.preprocess import apply_single_filter
+
+        ensure_copy()
+        parameters = _coerce_options(option)
+        if name == "spectral_derivative":
+            parameters.setdefault("spacing", dt)
+        if time_axis == 0:
+            result = apply_single_filter(result, name, **parameters)
+        else:
+            moved = np.moveaxis(result, time_axis, 0)
+            moved = apply_single_filter(moved, name, **parameters)
+            result = np.moveaxis(moved, 0, time_axis)
+        applied.append(name)
+
     if "welch_average" in pre_filters:
         # Deferred by design: applied to temporal FFT power in compute stage.
         options = _coerce_options(pre_filters["welch_average"])
@@ -1143,7 +1226,7 @@ def log_transform_dispersion(
 ) -> np.ndarray:
     """
     Dynamic range compression via logarithmic transforms.
-    
+
     Parameters
     ----------
     S_fk : np.ndarray
@@ -1154,14 +1237,14 @@ def log_transform_dispersion(
         Scaling factor applied before transform.
     floor_percentile : float
         Percentile for floor value (avoids log(0)).
-        
+
     Returns
     -------
     np.ndarray
         Transformed spectrum with compressed dynamic range.
     """
     data = np.abs(S_fk).astype(np.float32)
-    
+
     if method == "log1p":
         return np.log1p(data * scale)
     elif method == "log10":
@@ -1187,7 +1270,7 @@ def gamma_correction_dispersion(
 ) -> np.ndarray:
     """
     Power-law (gamma) correction for dispersion enhancement.
-    
+
     Parameters
     ----------
     S_fk : np.ndarray
@@ -1198,7 +1281,7 @@ def gamma_correction_dispersion(
         - gamma = 1: No change
         - gamma > 1: Emphasizes peaks (compresses low values)
         Typical values: 0.3-0.5 for revealing weak branches.
-        
+
     Returns
     -------
     np.ndarray
@@ -1206,13 +1289,13 @@ def gamma_correction_dispersion(
     """
     data = np.abs(S_fk).astype(np.float32)
     dmin, dmax = data.min(), data.max()
-    
+
     if dmax - dmin < 1e-20:
         return np.zeros_like(data)
-    
+
     # Normalize to [0, 1]
     normalized = (data - dmin) / (dmax - dmin)
-    
+
     # Apply gamma
     return np.power(normalized, max(0.01, gamma))
 
@@ -1225,9 +1308,9 @@ def clahe_dispersion(
 ) -> np.ndarray:
     """
     Contrast Limited Adaptive Histogram Equalization (CLAHE).
-    
+
     Enhances local contrast without over-amplifying noise.
-    
+
     Parameters
     ----------
     S_fk : np.ndarray
@@ -1236,7 +1319,7 @@ def clahe_dispersion(
         Clipping limit (0.01-0.1). Lower = more natural appearance.
     tile_size : int
         Size of local regions (8-32). Smaller = more local enhancement.
-        
+
     Returns
     -------
     np.ndarray
@@ -1254,16 +1337,16 @@ def clahe_dispersion(
         if dmax - dmin < 1e-20:
             return np.zeros_like(data)
         return (data - dmin) / (dmax - dmin)
-    
+
     data = np.abs(S_fk).astype(np.float32)
     dmin, dmax = data.min(), data.max()
-    
+
     if dmax - dmin < 1e-20:
         return np.zeros_like(data)
-    
+
     # Normalize to [0, 1] for CLAHE
     normalized = (data - dmin) / (dmax - dmin)
-    
+
     # Apply CLAHE
     kernel_size = max(4, min(tile_size, min(data.shape) // 2))
     return equalize_adapthist(
@@ -1282,10 +1365,10 @@ def local_contrast_normalization(
 ) -> np.ndarray:
     """
     Local Contrast Normalization (LCN).
-    
+
     Normalizes intensity relative to local neighborhood statistics.
     Smoother than CLAHE, preserves gradients better.
-    
+
     Parameters
     ----------
     S_fk : np.ndarray
@@ -1294,7 +1377,7 @@ def local_contrast_normalization(
         Gaussian kernel sigma (5-15 for detailed, 20-50 for smooth).
     epsilon : float
         Small constant to avoid division by zero.
-        
+
     Returns
     -------
     np.ndarray
@@ -1305,16 +1388,16 @@ def local_contrast_normalization(
     except ImportError:
         logger.warning("local_contrast requires scipy.ndimage")
         return np.abs(S_fk)
-    
+
     data = np.abs(S_fk).astype(np.float32)
     sigma_val = max(1.0, sigma)
-    
+
     local_mean = gaussian_filter(data, sigma=sigma_val)
     local_var = gaussian_filter((data - local_mean) ** 2, sigma=sigma_val)
     local_std = np.sqrt(local_var + epsilon)
-    
+
     normalized = (data - local_mean) / local_std
-    
+
     # Rescale to [0, 1] for display consistency
     nmin, nmax = normalized.min(), normalized.max()
     if nmax - nmin < 1e-20:
@@ -1331,9 +1414,9 @@ def unsharp_mask_dispersion(
 ) -> np.ndarray:
     """
     Unsharp masking for edge/branch enhancement.
-    
+
     Formula: enhanced = original + alpha * (original - blurred)
-    
+
     Parameters
     ----------
     S_fk : np.ndarray
@@ -1344,7 +1427,7 @@ def unsharp_mask_dispersion(
         Sharpening strength (0.5-1.0 subtle, 1.5-3.0 strong).
     threshold : float
         Ignore edges below this (reduces noise amplification).
-        
+
     Returns
     -------
     np.ndarray
@@ -1355,20 +1438,20 @@ def unsharp_mask_dispersion(
     except ImportError:
         logger.warning("unsharp_mask requires scipy.ndimage")
         return np.abs(S_fk)
-    
+
     data = np.abs(S_fk).astype(np.float32)
     sigma_val = max(0.5, sigma)
     alpha_val = max(0.0, alpha)
-    
+
     blurred = gaussian_filter(data, sigma=sigma_val)
     detail = data - blurred
-    
+
     if threshold > 0:
         # Only sharpen significant edges
         detail = np.where(np.abs(detail) > threshold, detail, 0.0)
-    
+
     enhanced = data + alpha_val * detail
-    
+
     # Clip to valid range
     return np.clip(enhanced, 0.0, None)
 
@@ -1381,7 +1464,7 @@ def percentile_autoscale(
 ) -> tuple[np.ndarray, float, float]:
     """
     Percentile-based autoscaling to handle outliers.
-    
+
     Parameters
     ----------
     S_fk : np.ndarray
@@ -1390,7 +1473,7 @@ def percentile_autoscale(
         Lower percentile (0-50). Default 2.0.
     high_percentile : float
         Upper percentile (50-100). Default 99.0.
-        
+
     Returns
     -------
     tuple[np.ndarray, float, float]
@@ -1398,19 +1481,19 @@ def percentile_autoscale(
     """
     data = np.abs(S_fk).astype(np.float32)
     valid = data[~np.isnan(data)]
-    
+
     if valid.size == 0:
         return data, 0.0, 1.0
-    
+
     low_pct = max(0.0, min(50.0, low_percentile))
     high_pct = max(50.0, min(100.0, high_percentile))
-    
+
     vmin = float(np.percentile(valid, low_pct))
     vmax = float(np.percentile(valid, high_pct))
-    
+
     if vmax - vmin < 1e-20:
         vmax = vmin + 1.0
-    
+
     clipped = np.clip(data, vmin, vmax)
     return clipped, vmin, vmax
 
@@ -1423,10 +1506,10 @@ def soft_threshold_dispersion(
 ) -> np.ndarray:
     """
     Soft thresholding using sigmoid - non-destructive noise suppression.
-    
+
     Unlike hard thresholding (which zeros out values), this uses a smooth
     sigmoid transition that preserves all data while suppressing noise.
-    
+
     Parameters
     ----------
     S_fk : np.ndarray
@@ -1435,28 +1518,28 @@ def soft_threshold_dispersion(
         Percentile for threshold center (0-100).
     smoothness : float
         Sigmoid steepness (1-10). Higher = sharper transition.
-        
+
     Returns
     -------
     np.ndarray
         Soft-thresholded spectrum.
     """
     data = np.abs(S_fk).astype(np.float32)
-    
+
     threshold = float(np.percentile(data, max(0.0, min(100.0, threshold_percentile))))
     smoothness_val = max(0.1, smoothness)
-    
+
     # Normalize data for sigmoid
     dmax = data.max()
     if dmax < 1e-20:
         return data
-    
+
     data_norm = data / dmax
     threshold_norm = threshold / dmax
-    
+
     # Sigmoid soft mask: 1 / (1 + exp(-smoothness * (x - threshold)))
     sigmoid = 1.0 / (1.0 + np.exp(-smoothness_val * (data_norm - threshold_norm) * 10))
-    
+
     return data * sigmoid
 
 
@@ -1470,22 +1553,22 @@ def fk_bandpass_filter(
     k_axis: np.ndarray,
     f_axis: np.ndarray,
     *,
-    f_min: Optional[float] = None,
-    f_max: Optional[float] = None,
-    k_min: Optional[float] = None,
-    k_max: Optional[float] = None,
+    f_min: float | None = None,
+    f_max: float | None = None,
+    k_min: float | None = None,
+    k_max: float | None = None,
 ) -> np.ndarray:
     """B2: Band-pass filtering in (k, f) space."""
     mask = np.ones_like(S_fk, dtype=bool)
 
     if f_min is not None:
-        mask &= (f_axis[np.newaxis, :] >= float(f_min))
+        mask &= f_axis[np.newaxis, :] >= float(f_min)
     if f_max is not None:
-        mask &= (f_axis[np.newaxis, :] <= float(f_max))
+        mask &= f_axis[np.newaxis, :] <= float(f_max)
     if k_min is not None:
-        mask &= (k_axis[:, np.newaxis] >= float(k_min))
+        mask &= k_axis[:, np.newaxis] >= float(k_min)
     if k_max is not None:
-        mask &= (k_axis[:, np.newaxis] <= float(k_max))
+        mask &= k_axis[:, np.newaxis] <= float(k_max)
 
     return np.where(mask, S_fk, 0.0)
 
@@ -1529,9 +1612,15 @@ def enhance_dispersion_2d(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """D1: 2D Gaussian smoothing + adaptive threshold + morphology."""
     try:
-        from scipy.ndimage import gaussian_filter, binary_opening, binary_closing  # type: ignore
+        from scipy.ndimage import (  # type: ignore
+            binary_closing,
+            binary_opening,
+            gaussian_filter,
+        )
     except Exception:
-        logger.warning("gaussian_morph requested but scipy.ndimage is unavailable; returning unmodified spectrum")
+        logger.warning(
+            "gaussian_morph requested but scipy.ndimage is unavailable; returning unmodified spectrum"
+        )
         abs_s = np.abs(S_fk)
         mask = np.ones_like(abs_s, dtype=bool)
         return abs_s, abs_s, mask
@@ -1539,7 +1628,9 @@ def enhance_dispersion_2d(
     abs_s = np.abs(S_fk)
     log_s = np.log10(abs_s + 1e-20)
     smooth = gaussian_filter(log_s, sigma=(max(sigma_k, 0.0), max(sigma_f, 0.0)))
-    threshold = float(np.mean(smooth) + _safe_float(threshold_std, 1.5) * np.std(smooth))
+    threshold = float(
+        np.mean(smooth) + _safe_float(threshold_std, 1.5) * np.std(smooth)
+    )
     mask = smooth > threshold
 
     open_n = max(1, _safe_int(opening_size, 3))
@@ -1556,7 +1647,7 @@ def wiener_filter_2d(
     S_fk: np.ndarray,
     *,
     window_size: int = 5,
-    noise_var: Optional[float] = None,
+    noise_var: float | None = None,
 ) -> np.ndarray:
     """D2: 2D Wiener-like adaptive filtering."""
     try:
@@ -1568,8 +1659,8 @@ def wiener_filter_2d(
     abs_s = np.abs(S_fk)
     size = max(1, _safe_int(window_size, 5))
     local_mean = uniform_filter(abs_s, size=size)
-    local_sq_mean = uniform_filter(abs_s ** 2, size=size)
-    local_var = np.maximum(local_sq_mean - local_mean ** 2, 0.0)
+    local_sq_mean = uniform_filter(abs_s**2, size=size)
+    local_var = np.maximum(local_sq_mean - local_mean**2, 0.0)
 
     if noise_var is None:
         edge_k = max(2, min(10, abs_s.shape[0] // 8))
@@ -1634,7 +1725,7 @@ def apply_dispersion_post_filters(
     *,
     k_axis: np.ndarray,
     f_axis: np.ndarray,
-    filters: Optional[dict[str, Any]],
+    filters: dict[str, Any] | None,
     include_live: bool = True,
 ) -> np.ndarray:
     """
@@ -1792,6 +1883,14 @@ def apply_dispersion_post_filters(
         )
         applied.append("unsharp_mask")
 
+    if "normalize" in chain:
+        finite = np.abs(result[np.isfinite(result)])
+        if finite.size:
+            scale = float(np.max(finite))
+            if scale > 0:
+                result = result / scale
+        applied.append("normalize")
+
     if applied:
         logger.info("Dispersion post-filters applied: %s", ", ".join(applied))
 
@@ -1799,13 +1898,11 @@ def apply_dispersion_post_filters(
 
 
 def detrend_time_series(
-    Mt: np.ndarray, 
-    axis: int = 0, 
-    method: str = "mean"
+    Mt: np.ndarray, axis: int = 0, method: str = "mean"
 ) -> np.ndarray:
     """
     Detrend time series along specified axis.
-    
+
     Parameters
     ----------
     Mt : np.ndarray
@@ -1816,7 +1913,7 @@ def detrend_time_series(
         Detrending method:
         - 'mean': Remove time average
         - 'initial': Remove initial value
-        
+
     Returns
     -------
     np.ndarray
@@ -1836,32 +1933,35 @@ def detrend_time_series(
         return Mt
 
 
-def find_peaks_1d(
-    y: np.ndarray, 
-    min_prominence: float = 0.0
-) -> np.ndarray:
+def find_peaks_1d(y: np.ndarray, min_prominence: float = 0.0) -> np.ndarray:
     """
     Simple peak finder for 1D arrays.
-    
+
     Parameters
     ----------
     y : np.ndarray
         1D signal
     min_prominence : float
         Minimum peak prominence to keep
-        
+
     Returns
     -------
     np.ndarray
         Indices of detected peaks
     """
-    y = np.asarray(y)
+    y = np.asarray(y, dtype=float)
+    if y.ndim != 1:
+        raise ValueError("Peak detection requires a 1D signal")
+    if not np.isfinite(y).all():
+        raise ValueError("Peak detection signal must be finite")
     if y.size < 3:
         return np.array([], dtype=int)
 
-    prom = float(min_prominence or 0.0)
-    if prom < 0:
-        prom = 0.0
+    if isinstance(min_prominence, (bool, np.bool_)):
+        raise TypeError("min_prominence must be a finite non-negative number")
+    prom = float(min_prominence)
+    if not np.isfinite(prom) or prom < 0:
+        raise ValueError("min_prominence must be finite and non-negative")
 
     # Prefer SciPy's reference implementation when available.
     if prom > 0:
@@ -1874,9 +1974,19 @@ def find_peaks_1d(
             peaks, _props = _scipy_find_peaks(y, prominence=prom)
             return np.asarray(peaks, dtype=int)
 
-    dy = np.diff(y)
-    # Candidate maxima where derivative changes from + to -.
-    cand = np.where((dy[:-1] > 0) & (dy[1:] < 0))[0] + 1
+    candidates: list[int] = []
+    index = 1
+    while index < y.size - 1:
+        if y[index] > y[index - 1]:
+            plateau_end = index
+            while plateau_end < y.size - 1 and y[plateau_end + 1] == y[index]:
+                plateau_end += 1
+            if plateau_end < y.size - 1 and y[plateau_end] > y[plateau_end + 1]:
+                candidates.append((index + plateau_end) // 2)
+            index = plateau_end + 1
+        else:
+            index += 1
+    cand = np.asarray(candidates, dtype=int)
 
     if prom <= 0 or cand.size == 0:
         return np.asarray(cand, dtype=int)
@@ -1914,13 +2024,11 @@ def find_peaks_1d(
 
 
 def group_velocity_1d(
-    k_axis: np.ndarray,
-    f_branch: np.ndarray, 
-    angular: bool = True
+    k_axis: np.ndarray, f_branch: np.ndarray, angular: bool = True
 ) -> np.ndarray:
     """
     Estimate group velocity from dispersion branch.
-    
+
     Parameters
     ----------
     k_axis : np.ndarray
@@ -1928,9 +2036,9 @@ def group_velocity_1d(
     f_branch : np.ndarray
         Branch frequencies [Hz]
     angular : bool
-        If True, return v_g = dω/dk [m/s] 
+        If True, return v_g = dω/dk [m/s]
         If False, return df/dk [Hz⋅m]
-        
+
     Returns
     -------
     np.ndarray
@@ -1938,19 +2046,19 @@ def group_velocity_1d(
     """
     dk = np.gradient(k_axis)
     df = np.gradient(f_branch)
-    
+
     vg = df / dk  # Hz⋅m
-    
+
     if angular:
         vg *= 2 * np.pi  # Convert to rad/s per (rad/m) = m/s
-        
+
     return vg
 
 
 def normalize_magnetization_components(M: np.ndarray) -> np.ndarray:
     """
     Ensure magnetization array has proper shape and component ordering.
-    
+
     Parameters
     ----------
     M : np.ndarray
@@ -1961,7 +2069,7 @@ def normalize_magnetization_components(M: np.ndarray) -> np.ndarray:
         - (T, Z, Y, X)     - single component pre-selected
         - (T, Y, X)        - 2D single component
         - (T, X)           - 1D single component
-        
+
     Returns
     -------
     np.ndarray
@@ -2002,17 +2110,14 @@ def normalize_magnetization_components(M: np.ndarray) -> np.ndarray:
             f"Expected shapes: (T,Z,Y,X,3), (T,Y,X,3), (T,X,3), "
             f"or single-component (T,Z,Y,X), (T,Y,X), (T,X)"
         )
-        
+
     return M
 
 
-def extract_magnetization_component(
-    M: np.ndarray, 
-    component: str
-) -> np.ndarray:
+def extract_magnetization_component(M: np.ndarray, component: str) -> np.ndarray:
     """
     Extract specified magnetization component(s).
-    
+
     Parameters
     ----------
     M : np.ndarray
@@ -2023,7 +2128,7 @@ def extract_magnetization_component(
         - 'mx', 'my', 'mz': individual components
         - 'sum': rough sum of all components
         - None or 'auto': use data as-is if already single component
-        
+
     Returns
     -------
     np.ndarray
@@ -2038,22 +2143,23 @@ def extract_magnetization_component(
             # User specified component but data already has only 1 component
             # This is fine - just use what we have
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(
                 f"Magnetization data already has single component (shape[-1]=1). "
                 f"Ignoring component='{component}' parameter and using existing data."
             )
             return M[..., 0].astype(np.complex64)
-    
+
     # Standard case: M has 3 components
     if M.shape[-1] != 3:
         raise ValueError(
             f"Magnetization array must have last axis = 1 (single component) or 3 (mx,my,mz). "
             f"Got shape[-1] = {M.shape[-1]}"
         )
-    
+
     mx = M[..., 0]
-    my = M[..., 1] 
+    my = M[..., 1]
     mz = M[..., 2]
 
     if component == "perp" or component is None:
@@ -2067,25 +2173,27 @@ def extract_magnetization_component(
     elif component == "sum":
         return ((mx + 1j * my) + mz).astype(np.complex64)
     else:
-        raise ValueError(f"Unknown component '{component}'. Use 'perp', 'mx', 'my', 'mz', or 'sum'.")
+        raise ValueError(
+            f"Unknown component '{component}'. Use 'perp', 'mx', 'my', 'mz', or 'sum'."
+        )
 
 
 def validate_grid_parameters(
     dt: float,
-    dx: Optional[float] = None,
-    dy: Optional[float] = None,
-    dz: Optional[float] = None
+    dx: float | None = None,
+    dy: float | None = None,
+    dz: float | None = None,
 ) -> None:
     """
     Validate grid spacing parameters.
-    
+
     Parameters
     ----------
     dt : float
         Time step [s]
     dx, dy, dz : Optional[float]
         Spatial grid spacings [m]
-        
+
     Raises
     ------
     ValueError
@@ -2093,56 +2201,54 @@ def validate_grid_parameters(
     """
     if dt <= 0:
         raise ValueError("Time step dt must be positive")
-        
+
     for name, val in [("dx", dx), ("dy", dy), ("dz", dz)]:
         if val is not None and val <= 0:
             raise ValueError(f"Grid spacing {name} must be positive, got {val}")
 
 
 def get_frequency_band_mask(
-    f_axis: np.ndarray,
-    f_min: Optional[float] = None,
-    f_max: Optional[float] = None
+    f_axis: np.ndarray, f_min: float | None = None, f_max: float | None = None
 ) -> np.ndarray:
     """
     Create boolean mask for frequency band selection.
-    
+
     Parameters
     ----------
     f_axis : np.ndarray
         Frequency axis [Hz]
     f_min, f_max : Optional[float]
         Frequency band limits [Hz]
-        
+
     Returns
     -------
     np.ndarray
         Boolean mask for frequency selection
     """
     mask = np.ones(len(f_axis), dtype=bool)
-    
+
     if f_min is not None:
-        mask &= (f_axis >= f_min)
+        mask &= f_axis >= f_min
     if f_max is not None:
-        mask &= (f_axis <= f_max)
-        
+        mask &= f_axis <= f_max
+
     return mask
 
 
 def create_amplitude_phase_colormap(
     complex_data: np.ndarray,
     saturation: float = 1.0,
-    amp_min: Optional[float] = None,
-    amp_max: Optional[float] = None,
+    amp_min: float | None = None,
+    amp_max: float | None = None,
 ) -> np.ndarray:
     """
     Create RGB image where phase determines hue and amplitude determines brightness.
-    
+
     This creates a visualization that combines both amplitude and phase information:
     - Hue (color): Determined by phase angle (-π to π)
     - Value (brightness): Determined by amplitude (0 to max)
     - Saturation: Fixed (can be adjusted)
-    
+
     Parameters
     ----------
     complex_data : np.ndarray
@@ -2151,14 +2257,14 @@ def create_amplitude_phase_colormap(
         HSV saturation value (0 to 1). Default 1.0 for vivid colors.
     amp_min : float, optional
         Minimum amplitude for scaling. If None, uses data minimum.
-    amp_max : float, optional  
+    amp_max : float, optional
         Maximum amplitude for scaling. If None, uses data maximum.
-    
+
     Returns
     -------
     np.ndarray
         RGB image of shape (M, N, 3) with values in [0, 1]
-    
+
     Examples
     --------
     >>> # Create test complex data
@@ -2166,7 +2272,7 @@ def create_amplitude_phase_colormap(
     >>> y = np.linspace(-np.pi, np.pi, 100)
     >>> X, Y = np.meshgrid(x, y)
     >>> complex_data = (1 + 0.5*np.sin(X)) * np.exp(1j * Y)
-    >>> 
+    >>>
     >>> # Generate RGB colormap
     >>> rgb = create_amplitude_phase_colormap(complex_data)
     >>> plt.imshow(rgb, origin='lower')
@@ -2176,42 +2282,42 @@ def create_amplitude_phase_colormap(
     # Extract amplitude and phase
     amplitude = np.abs(complex_data)
     phase = np.angle(complex_data)  # Range: -π to π
-    
+
     # Normalize amplitude to [0, 1]
     if amp_min is None:
         amp_min = amplitude.min()
     if amp_max is None:
         amp_max = amplitude.max()
-    
+
     # Avoid division by zero
     if amp_max - amp_min < 1e-12:
         value = np.ones_like(amplitude)
     else:
         value = (amplitude - amp_min) / (amp_max - amp_min)
         value = np.clip(value, 0, 1)
-    
+
     # Convert phase from [-π, π] to [0, 1] for hue
     # Phase = 0 → red, π/2 → green, -π/2 → purple, ±π → cyan
     hue = (phase + np.pi) / (2 * np.pi)  # Range: 0 to 1
-    
+
     # Create HSV array
     hsv = np.stack([hue, np.full_like(hue, saturation), value], axis=-1)
-    
+
     # Convert HSV to RGB using colorsys-based vectorized approach
     rgb = _hsv_to_rgb_array(hsv)
-    
+
     return rgb
 
 
 def _hsv_to_rgb_array(hsv: np.ndarray) -> np.ndarray:
     """
     Vectorized HSV to RGB conversion.
-    
+
     Parameters
     ----------
     hsv : np.ndarray
         Array of shape (..., 3) with H, S, V in range [0, 1]
-    
+
     Returns
     -------
     np.ndarray
@@ -2220,16 +2326,16 @@ def _hsv_to_rgb_array(hsv: np.ndarray) -> np.ndarray:
     h = hsv[..., 0]
     s = hsv[..., 1]
     v = hsv[..., 2]
-    
+
     # Convert using standard HSV→RGB algorithm
     c = v * s  # Chroma
     h_prime = (h * 6.0) % 6.0  # Scale to [0, 6) wrapping 6.0 to 0.0
     x = c * (1 - np.abs(h_prime % 2 - 1))
     m = v - c
-    
+
     # Initialize RGB
     rgb = np.zeros(hsv.shape)
-    
+
     # Conditional assignment based on h_prime sector
     mask0 = (h_prime >= 0) & (h_prime < 1)
     mask1 = (h_prime >= 1) & (h_prime < 2)
@@ -2237,26 +2343,26 @@ def _hsv_to_rgb_array(hsv: np.ndarray) -> np.ndarray:
     mask3 = (h_prime >= 3) & (h_prime < 4)
     mask4 = (h_prime >= 4) & (h_prime < 5)
     mask5 = (h_prime >= 5) & (h_prime < 6)
-    
+
     rgb[mask0, 0] = c[mask0]
     rgb[mask0, 1] = x[mask0]
-    
+
     rgb[mask1, 0] = x[mask1]
     rgb[mask1, 1] = c[mask1]
-    
+
     rgb[mask2, 1] = c[mask2]
     rgb[mask2, 2] = x[mask2]
-    
+
     rgb[mask3, 1] = x[mask3]
     rgb[mask3, 2] = c[mask3]
-    
+
     rgb[mask4, 0] = x[mask4]
     rgb[mask4, 2] = c[mask4]
-    
+
     rgb[mask5, 0] = c[mask5]
     rgb[mask5, 2] = x[mask5]
-    
+
     # Add minimum value
     rgb += m[..., np.newaxis]
-    
+
     return np.clip(rgb, 0, 1)

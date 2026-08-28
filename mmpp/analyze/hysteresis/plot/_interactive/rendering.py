@@ -8,7 +8,9 @@ import numpy as np
 def _field_axis_label_from_metadata(meta: dict) -> str:
     unit = str(meta.get("field_unit", "input")).strip()
 
-    raw = str(meta.get("field_column") or meta.get("field_source") or "B").strip().lower()
+    raw = (
+        str(meta.get("field_column") or meta.get("field_source") or "B").strip().lower()
+    )
     symbol = "H" if raw.startswith("h") else "B"
     suffix = raw[-1] if raw else ""
     if suffix in {"x", "y", "z"}:
@@ -44,7 +46,9 @@ def _magnetization_label_from_metadata(meta: dict) -> str:
 def resolve_loop_axis_labels(result) -> tuple[str, str]:
     """Resolve loop-axis labels from result metadata using math-style notation."""
     meta = getattr(result, "metadata", {}) or {}
-    return _field_axis_label_from_metadata(meta), _magnetization_label_from_metadata(meta)
+    return _field_axis_label_from_metadata(meta), _magnetization_label_from_metadata(
+        meta
+    )
 
 
 def _branch_color(explorer, branch_name: str) -> str:
@@ -79,7 +83,9 @@ def draw_loop_panel(explorer) -> None:
     use_branch_colors = explorer.state.show_flags.get("branch_colors", True)
     default_color = "#3b82f6"
 
-    point_colors = np.full(n_total, default_color if not use_branch_colors else asc_color, dtype=object)
+    point_colors = np.full(
+        n_total, default_color if not use_branch_colors else asc_color, dtype=object
+    )
     for branch in explorer.result.branches:
         if not use_branch_colors:
             color = default_color
@@ -124,9 +130,13 @@ def draw_loop_panel(explorer) -> None:
     if explorer.state.show_flags.get("ms", False):
         ms = explorer.result.metrics.saturation_points
         if np.isfinite(ms.ms_positive):
-            ax.scatter([ms.hs_positive], [ms.ms_positive], color="#22c55e", s=42, zorder=6)
+            ax.scatter(
+                [ms.hs_positive], [ms.ms_positive], color="#22c55e", s=42, zorder=6
+            )
         if np.isfinite(ms.ms_negative):
-            ax.scatter([ms.hs_negative], [ms.ms_negative], color="#ef4444", s=42, zorder=6)
+            ax.scatter(
+                [ms.hs_negative], [ms.ms_negative], color="#ef4444", s=42, zorder=6
+            )
 
     ax.set_xlabel(_field_axis_label(explorer))
     ax.set_ylabel(_magnetization_label(explorer))
@@ -136,7 +146,7 @@ def draw_loop_panel(explorer) -> None:
     # Trail disabled — for snapshot-per-field data it just retraces the loop
     # path itself and adds visual noise.  Use a no-op invisible line so that
     # update_loop_cursor can still call set_data() without attribute errors.
-    explorer._loop_trail, = ax.plot([], [], color="#0ea5e9", lw=0, alpha=0.0)
+    (explorer._loop_trail,) = ax.plot([], [], color="#0ea5e9", lw=0, alpha=0.0)
 
     explorer._loop_marker = ax.scatter(
         [],
@@ -153,7 +163,6 @@ def draw_loop_panel(explorer) -> None:
         xytext=(0.0, 0.0),
         arrowprops={"arrowstyle": "->", "color": "#f59e0b", "lw": 1.5, "alpha": 0.9},
     )
-
 
 
 def update_loop_cursor(explorer, *, redraw: bool = True) -> None:
@@ -182,7 +191,11 @@ def update_loop_cursor(explorer, *, redraw: bool = True) -> None:
     else:
         explorer._loop_trail.set_data([], [])
 
-    if explorer.state.show_flags.get("arrow", True) and n_points >= 2 and idx < (n_points - 1):
+    if (
+        explorer.state.show_flags.get("arrow", True)
+        and n_points >= 2
+        and idx < (n_points - 1)
+    ):
         next_idx = idx + 1
         explorer._loop_arrow.set_visible(True)
         explorer._loop_arrow.xy = (float(field[next_idx]), float(mag[next_idx]))

@@ -11,7 +11,9 @@ import numpy as np
 from .filters import component_plot_label, resolve_mode_components
 
 
-def _collect_mode_images_and_titles(explorer: Any) -> tuple[list[list[Any]], list[list[Any]]]:
+def _collect_mode_images_and_titles(
+    explorer: Any,
+) -> tuple[list[list[Any]], list[list[Any]]]:
     """Collect current mode subplot images and title handles."""
     mode_images: list[list[Any]] = []
     mode_titles: list[list[Any]] = []
@@ -45,6 +47,8 @@ def _resolve_mode_viz(
     *,
     viz_type: str,
     use_holography: bool = False,
+    holography_gamma: float = 0.6,
+    holography_noise_threshold: float = 1e-4,
 ) -> tuple[np.ndarray, float | None, float | None]:
     """Resolve frame data and clim values for a visualization mode."""
     comp_amplitude = float(np.nanmax(np.abs(comp_data)))
@@ -55,8 +59,16 @@ def _resolve_mode_viz(
         try:
             from ..vortex_optics import VortexOptics
 
-            return VortexOptics.complex_holography(comp_data), None, None
-        except Exception:
+            return (
+                VortexOptics.complex_holography(
+                    comp_data,
+                    gamma=holography_gamma,
+                    noise_threshold=holography_noise_threshold,
+                ),
+                None,
+                None,
+            )
+        except ImportError:
             pass
 
     if viz_type in {"magnitude", "abs"}:
@@ -97,6 +109,33 @@ def _resolve_animation_output_path(
     return output_path, fmt
 
 
+def _phase_preview_time_ns(actual_frequency_ghz: float, phase_fraction: float) -> float:
+    """Return physical preview time, or NaN for DC/invalid frequency bins."""
+    frequency_hz = float(actual_frequency_ghz) * 1e9
+    if not np.isfinite(frequency_hz) or frequency_hz <= 0:
+        return float("nan")
+    return float(phase_fraction) / frequency_hz * 1e9
+
+
+def _animation_phase_and_time_ns(
+    actual_frequency_ghz: float,
+    n_frames: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build one physical phase cycle and its time labels without frame data."""
+    if isinstance(n_frames, (bool, np.bool_)) or not isinstance(
+        n_frames, (int, np.integer)
+    ):
+        raise ValueError("n_frames must be an integer of at least 2")
+    if n_frames < 2:
+        raise ValueError("n_frames must be an integer of at least 2")
+    frequency_ghz = float(actual_frequency_ghz)
+    if not np.isfinite(frequency_ghz) or frequency_ghz <= 0:
+        raise ValueError("Animation export requires a positive finite frequency")
+    phase = np.linspace(0.0, 2.0 * np.pi, int(n_frames), endpoint=False)
+    time_ns = phase / (2.0 * np.pi * frequency_ghz)
+    return phase, time_ns
+
+
 def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
     """Save phase oscillation animation of selected FMR mode."""
     if explorer._is_saving_animation:
@@ -113,12 +152,13 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
         try:
             from matplotlib.animation import FFMpegWriter
         except Exception:  # pragma: no cover - optional backend
-            FFMpegWriter = None  # type: ignore[assignment]
+            FFMpegWriter = None  # type: ignore[misc, assignment]
         try:
             from matplotlib.animation import ImageMagickWriter
+
             has_imagemagick = True
         except Exception:  # pragma: no cover - optional backend
-            ImageMagickWriter = None  # type: ignore[assignment]
+            ImageMagickWriter = None  # type: ignore[misc, assignment]
             has_imagemagick = False
     except Exception as exc:  # pragma: no cover - optional backend
         explorer._set_status(f"Animation backend unavailable: {exc}", color="crimson")
@@ -144,22 +184,10 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
             freq_ghz, explorer._current_z_layer
         )
 
-        freq_hz = actual_freq * 1e9
-        omega = 2 * np.pi * freq_hz
-        period_s = 1.0 / freq_hz
-        time_array = np.linspace(0, period_s, n_frames, endpoint=False)
-
-        button.description = "Pre-computing..."
-        explorer._set_status(f"Pre-computing {n_frames} frames...", color="#0F766E")
-
-        precomputed_frames = []
-        for i, t in enumerate(time_array):
-            phase_factor = np.exp(-1j * omega * t)
-            mode_at_t = mode_array * phase_factor
-            precomputed_frames.append(mode_at_t)
-
-            if i % max(1, n_frames // 10) == 0:
-                button.description = f"Frame {i + 1}/{n_frames}"
+        mode_array = np.asarray(mode_array)
+        if mode_array.size == 0 or not np.isfinite(mode_array).all():
+            raise ValueError("Mode data must be non-empty and finite for export")
+        phase_offsets, time_ns = _animation_phase_and_time_ns(actual_freq, n_frames)
 
         button.description = "Rendering..."
         explorer._set_status("Rendering animation...", color="#0F766E")
@@ -168,10 +196,10 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
         mode_type = str(getattr(explorer, "_mode_type", "combined"))
 
         def _update_frame(frame_idx: int) -> list[Any]:
-            mode_at_t = precomputed_frames[frame_idx]
-            t = time_array[frame_idx]
-            phase_deg = (t / period_s) * 360
-            t_ns = t * 1e9
+            phase_offset = phase_offsets[frame_idx]
+            mode_at_t = mode_array * np.exp(-1j * phase_offset)
+            phase_deg = np.degrees(phase_offset)
+            frame_time_ns = time_ns[frame_idx]
 
             artists = []
             resolved_components = resolve_mode_components(
@@ -180,7 +208,9 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
 
             for row_idx, row_type in enumerate(explorer._mode_row_types):
                 for col_idx, comp in enumerate(explorer._mode_components):
-                    if row_idx >= len(mode_images) or col_idx >= len(mode_images[row_idx]):
+                    if row_idx >= len(mode_images) or col_idx >= len(
+                        mode_images[row_idx]
+                    ):
                         continue
                     img = mode_images[row_idx][col_idx]
                     if img is None:
@@ -199,6 +229,16 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                         comp_data,
                         viz_type=viz_type,
                         use_holography=use_holography,
+                        holography_gamma=float(
+                            getattr(explorer, "_holography_gamma", 0.6)
+                        ),
+                        holography_noise_threshold=float(
+                            getattr(
+                                explorer,
+                                "_holography_noise_threshold",
+                                1e-4,
+                            )
+                        ),
                     )
 
                     img.set_data(plot_data)
@@ -209,7 +249,8 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                     if row_idx == 0 and row_idx < len(mode_titles):
                         title_obj = mode_titles[row_idx][col_idx]
                         title_obj.set_text(
-                            f"{component_plot_label(comp)} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°"
+                            f"{component_plot_label(comp)} @ {actual_freq:.3f} GHz | "
+                            f"t={frame_time_ns:.2f}ns | φ={phase_deg:.0f}°"
                         )
                         artists.append(title_obj)
 
@@ -243,7 +284,14 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                                 fps=fps,
                                 bitrate=4000,
                                 codec="libx264",
-                                extra_args=["-pix_fmt", "yuv420p", "-preset", "slower", "-crf", "18"],
+                                extra_args=[
+                                    "-pix_fmt",
+                                    "yuv420p",
+                                    "-preset",
+                                    "slower",
+                                    "-crf",
+                                    "18",
+                                ],
                             ),
                             output_path.with_suffix(".mp4"),
                             int(explorer.dpi),
@@ -276,7 +324,10 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
                             "ImageMagick",
                             ImageMagickWriter(
                                 fps=fps,
-                                metadata={"Author": "MMPP", "Title": "FMR Mode Animation"},
+                                metadata={
+                                    "Author": "MMPP",
+                                    "Title": "FMR Mode Animation",
+                                },
                                 bitrate=2000,
                                 extra_args=["-layers", "Optimize"],
                             ),
@@ -301,14 +352,21 @@ def on_save_animation_clicked(explorer: Any, _btn: Any) -> None:
         writer_name = ""
         export_dpi = 150
         last_error: Exception | None = None
-        for idx, (candidate_name, candidate_writer, candidate_path, candidate_dpi) in enumerate(save_attempts):
+        for idx, (
+            candidate_name,
+            candidate_writer,
+            candidate_path,
+            candidate_dpi,
+        ) in enumerate(save_attempts):
             candidate_path.parent.mkdir(parents=True, exist_ok=True)
             explorer._set_status(
                 f"Saving animation: {candidate_path} ({candidate_name})...",
                 color="#0F766E",
             )
             try:
-                animation.save(str(candidate_path), writer=candidate_writer, dpi=candidate_dpi)
+                animation.save(
+                    str(candidate_path), writer=candidate_writer, dpi=candidate_dpi
+                )
                 output_path = candidate_path
                 writer_name = candidate_name
                 export_dpi = int(candidate_dpi)
@@ -376,7 +434,9 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
         return
 
     play_control = explorer._controls.get("play") if explorer._controls else None
-    phase_control = explorer._controls.get("phase_index") if explorer._controls else None
+    phase_control = (
+        explorer._controls.get("phase_index") if explorer._controls else None
+    )
     if play_control is not None and phase_control is not None:
         if explorer._is_animating:
             try:
@@ -421,6 +481,7 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
 
     try:
         from matplotlib.animation import FuncAnimation
+
         explorer._set_status("Starting animation...", color="#0F766E")
 
         freq_ghz = explorer._current_frequency_ghz
@@ -430,9 +491,7 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
 
         freq_hz = actual_freq * 1e9
         if not np.isfinite(freq_hz) or freq_hz <= 0:
-            raise ValueError(
-                f"Invalid frequency for animation: {actual_freq} GHz"
-            )
+            raise ValueError(f"Invalid frequency for animation: {actual_freq} GHz")
         omega = 2 * np.pi * freq_hz
         period_s = 1.0 / freq_hz
 
@@ -474,7 +533,9 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
 
             for row_idx, row_type in enumerate(explorer._mode_row_types):
                 for col_idx, comp in enumerate(explorer._mode_components):
-                    if row_idx >= len(mode_images) or col_idx >= len(mode_images[row_idx]):
+                    if row_idx >= len(mode_images) or col_idx >= len(
+                        mode_images[row_idx]
+                    ):
                         continue
                     img = mode_images[row_idx][col_idx]
                     if img is None:
@@ -493,8 +554,20 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
                             try:
                                 from ..vortex_optics import VortexOptics
 
-                                plot_data = VortexOptics.complex_holography(comp_data)
-                            except Exception:
+                                plot_data = VortexOptics.complex_holography(
+                                    comp_data,
+                                    gamma=float(
+                                        getattr(explorer, "_holography_gamma", 0.6)
+                                    ),
+                                    noise_threshold=float(
+                                        getattr(
+                                            explorer,
+                                            "_holography_noise_threshold",
+                                            1e-4,
+                                        )
+                                    ),
+                                )
+                            except ImportError:
                                 plot_data = np.angle(comp_data)
                         else:
                             plot_data = np.angle(comp_data)
@@ -539,7 +612,7 @@ def on_animate_clicked(explorer: Any, _btn: Any) -> None:
             explorer._controls["animate"].button_style = "danger"
 
         explorer._set_status(
-            f"Animating: {n_frames} frames, T={period_s*1e9:.2f}ns (1 period)",
+            f"Animating: {n_frames} frames, T={period_s * 1e9:.2f}ns (1 period)",
             color="seagreen",
         )
 
@@ -685,8 +758,20 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
                         try:
                             from ..vortex_optics import VortexOptics
 
-                            plot_data = VortexOptics.complex_holography(comp_data)
-                        except Exception:
+                            plot_data = VortexOptics.complex_holography(
+                                comp_data,
+                                gamma=float(
+                                    getattr(explorer, "_holography_gamma", 0.6)
+                                ),
+                                noise_threshold=float(
+                                    getattr(
+                                        explorer,
+                                        "_holography_noise_threshold",
+                                        1e-4,
+                                    )
+                                ),
+                            )
+                        except ImportError:
                             plot_data = np.angle(comp_data)
                             img.set_clim(-np.pi, np.pi)
                     else:
@@ -708,10 +793,13 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
                 ax.set_ylim(ylim_saved)
 
                 if row_idx == 0:
-                    freq_hz = actual_freq * 1e9
-                    t_ns = (phase_idx / n_frames) * (1.0 / freq_hz) * 1e9
+                    t_ns = _phase_preview_time_ns(
+                        actual_freq,
+                        phase_idx / n_frames,
+                    )
+                    time_label = f"{t_ns:.2f}ns" if np.isfinite(t_ns) else "n/a (DC)"
                     ax.set_title(
-                        f"{component_plot_label(comp)} @ {actual_freq:.3f} GHz | t={t_ns:.2f}ns | φ={phase_deg:.0f}°",
+                        f"{component_plot_label(comp)} @ {actual_freq:.3f} GHz | t={time_label} | φ={phase_deg:.0f}°",
                         fontsize=10,
                     )
 
@@ -727,10 +815,12 @@ def on_phase_index_changed(explorer: Any, change: Any) -> None:
                 color="#0F766E",
             )
 
-    except Exception:
+    except Exception as exc:
         import traceback
 
         traceback.print_exc()
+        if hasattr(explorer, "_set_status"):
+            explorer._set_status(f"Phase preview error: {exc}", color="crimson")
 
 
 __all__ = [

@@ -51,9 +51,13 @@ def moving_average(values: np.ndarray, window: int) -> np.ndarray:
     arr = np.asarray(values, dtype=float)
     if arr.size == 0:
         return arr
-    win = max(1, int(window))
+    if isinstance(window, (bool, np.bool_)) or int(window) != window or int(window) < 1:
+        raise ValueError("moving-average window must be a positive integer")
+    win = int(window)
     if win <= 1:
         return arr
+    if win % 2 == 0:
+        raise ValueError("moving-average window must be odd for centered bin alignment")
 
     kernel = np.ones(win, dtype=float) / float(win)
 
@@ -89,28 +93,53 @@ def apply_smoothing(
         return moving_average(arr, win)
 
     if mode in {"gaussian", "gaussian_smooth"}:
-        sigma = max(0.0, _safe_float(smooth_sigma, 1.0))
+        try:
+            sigma = float(smooth_sigma)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("Gaussian smooth_sigma must be numeric") from exc
+        if not np.isfinite(sigma) or sigma < 0.0:
+            raise ValueError("Gaussian smooth_sigma must be finite and non-negative")
         if sigma == 0.0:
             return arr
         if gaussian_filter1d is None:
-            win = max(3, int(round(4 * sigma)) | 1)
-            return moving_average(arr, win)
+            raise ImportError(
+                "Gaussian spectrum smoothing requires scipy; install scipy or "
+                "remove gaussian_smooth"
+            )
         return gaussian_filter1d(arr, sigma=sigma, axis=0, mode="nearest")
 
     if mode in {"savgol", "savgol_smooth"}:
-        win = max(3, _safe_int(smooth_window, 7))
+        if isinstance(smooth_window, (bool, np.bool_)) or not isinstance(
+            smooth_window, (int, np.integer)
+        ):
+            raise TypeError("Savitzky-Golay smooth_window must be an integer")
+        if isinstance(polyorder, (bool, np.bool_)) or not isinstance(
+            polyorder, (int, np.integer)
+        ):
+            raise TypeError("Savitzky-Golay polyorder must be an integer")
+        if arr.shape[0] < 3:
+            return arr
+        win = max(3, int(smooth_window))
         if win % 2 == 0:
             win += 1
         if win >= arr.shape[0]:
-            win = max(3, arr.shape[0] - (1 - arr.shape[0] % 2))
-        if win < 3:
-            return arr
+            win = arr.shape[0] if arr.shape[0] % 2 else arr.shape[0] - 1
         if savgol_filter is None:
-            return moving_average(arr, win)
-        po = min(max(1, _safe_int(polyorder, 2)), win - 1)
-        return savgol_filter(arr, window_length=win, polyorder=po, axis=0, mode="interp")
+            raise ImportError(
+                "Savitzky-Golay spectrum smoothing requires scipy; install "
+                "scipy or remove savgol_smooth"
+            )
+        po = int(polyorder)
+        if po < 0 or po >= win:
+            raise ValueError(
+                f"Savitzky-Golay polyorder ({po}) must satisfy 0 <= "
+                f"polyorder < window_length ({win})"
+            )
+        return savgol_filter(
+            arr, window_length=win, polyorder=po, axis=0, mode="interp"
+        )
 
-    return arr
+    raise ValueError(f"Unknown smoothing filter: {smooth_filter!r}")
 
 
 def apply_baseline(
@@ -153,7 +182,7 @@ def apply_baseline(
             else:
                 out = out - base
         else:
-            out = out - base
+            raise ValueError(f"Unknown baseline mode: {mode!r}")
 
         min_val = float(np.nanmin(out))
         if np.isfinite(min_val) and min_val < 0:
@@ -173,8 +202,10 @@ def apply_percentile_clip(
     if arr.size == 0:
         return arr
 
-    lo = float(np.clip(min(low, high), 0.0, 100.0))
-    hi = float(np.clip(max(low, high), 0.0, 100.0))
+    lo = float(low)
+    hi = float(high)
+    if not np.isfinite(lo) or not np.isfinite(hi) or not 0.0 <= lo <= hi <= 100.0:
+        raise ValueError("percentiles must satisfy 0 <= low <= high <= 100")
     if lo <= 0.0 and hi >= 100.0:
         return arr
 
@@ -199,7 +230,9 @@ def apply_soft_threshold(values: np.ndarray, percentile: float = 0.0) -> np.ndar
     arr = np.asarray(values, dtype=float)
     if arr.size == 0:
         return arr
-    pct = float(np.clip(percentile, 0.0, 100.0))
+    pct = float(percentile)
+    if not np.isfinite(pct) or not 0.0 <= pct <= 100.0:
+        raise ValueError("threshold percentile must be in [0, 100]")
     if pct <= 0.0:
         return arr
 
@@ -222,7 +255,10 @@ def apply_normalize(values: np.ndarray) -> np.ndarray:
         return arr
 
     def _normalize_1d(trace: np.ndarray) -> np.ndarray:
-        max_val = float(np.nanmax(np.abs(trace)))
+        finite = np.abs(trace[np.isfinite(trace)])
+        if finite.size == 0:
+            return trace
+        max_val = float(np.max(finite))
         if max_val > 0:
             return trace / max_val
         return trace
@@ -243,6 +279,8 @@ def apply_gamma(values: np.ndarray, gamma: float = 1.0) -> np.ndarray:
     """Gamma correction."""
     arr = np.asarray(values, dtype=float)
     gamma_val = _safe_float(gamma, 1.0)
+    if not np.isfinite(gamma_val) or gamma_val <= 0:
+        raise ValueError("gamma must be finite and positive")
     if arr.size == 0 or gamma_val == 1.0:
         return arr
     return np.power(np.abs(arr), gamma_val) * np.sign(arr)
@@ -263,8 +301,23 @@ def apply_postprocess_filters(
     if not stage_filters:
         return np.asarray(spectrum)
 
+    known = {
+        "baseline_correction",
+        "percentile_clip",
+        "soft_threshold",
+        "gaussian_smooth",
+        "savgol_smooth",
+        "moving_average",
+        "normalize",
+        "log_transform",
+        "gamma",
+    }
+    unknown = sorted(set(stage_filters) - known)
+    if unknown:
+        raise ValueError(f"Unknown postprocess filter(s): {', '.join(unknown)}")
+
     result = np.array(spectrum, copy=True)
-    sequence = [
+    sequence: list[tuple[str, Any]] = [
         ("baseline_correction", apply_baseline),
         ("percentile_clip", apply_percentile_clip),
         ("soft_threshold", apply_soft_threshold),
@@ -281,38 +334,43 @@ def apply_postprocess_filters(
             continue
         option = stage_filters.get(name)
         opts = _coerce_options(option)
-        try:
-            if name == "baseline_correction":
-                mode = opts.get("mode", option if isinstance(option, str) else "linear")
-                result = func(result, mode=mode)
-            elif name == "percentile_clip":
-                low = _safe_float(opts.get("low", opts.get("clip_percentile_low", 0.0)), 0.0)
-                high = _safe_float(opts.get("high", opts.get("clip_percentile_high", 100.0)), 100.0)
-                result = func(result, low=low, high=high)
-            elif name == "soft_threshold":
-                pct = _safe_float(opts.get("percentile", option if isinstance(option, (int, float)) else 0.0), 0.0)
-                result = func(result, percentile=pct)
-            elif name in {"gaussian_smooth", "savgol_smooth", "moving_average"}:
-                mode = name.replace("_smooth", "")
-                smooth_mode = opts.get("smooth_filter", mode)
-                if not isinstance(smooth_mode, str):
-                    smooth_mode = mode
-                win = _safe_int(opts.get("window", opts.get("smooth_window", 7)), 7)
-                sigma = _safe_float(opts.get("sigma", opts.get("smooth_sigma", 1.0)), 1.0)
-                po = _safe_int(opts.get("polyorder", 2), 2)
-                result = func(
-                    result,
-                    smooth_filter=str(smooth_mode),
-                    smooth_window=win,
-                    smooth_sigma=sigma,
-                    polyorder=po,
-                )
-            elif name == "gamma":
-                gamma = _safe_float(opts.get("gamma", option), 1.0)
-                result = func(result, gamma=gamma)
-            else:
-                result = func(result)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Postprocess filter %s failed: %s", name, exc)
+        if name == "baseline_correction":
+            mode = opts.get("mode", option if isinstance(option, str) else "linear")
+            result = func(result, mode=mode)  # type: ignore[call-arg]
+        elif name == "percentile_clip":
+            low = _safe_float(
+                opts.get("low", opts.get("clip_percentile_low", 0.0)), 0.0
+            )
+            high = _safe_float(
+                opts.get("high", opts.get("clip_percentile_high", 100.0)), 100.0
+            )
+            result = func(result, low=low, high=high)  # type: ignore[call-arg]
+        elif name == "soft_threshold":
+            pct = _safe_float(
+                opts.get(
+                    "percentile", option if isinstance(option, (int, float)) else 0.0
+                ),
+                0.0,
+            )
+            result = func(result, percentile=pct)  # type: ignore[call-arg]
+        elif name in {"gaussian_smooth", "savgol_smooth", "moving_average"}:
+            mode = name.replace("_smooth", "")
+            smooth_mode = opts.get("smooth_filter", mode)
+            if not isinstance(smooth_mode, str):
+                raise TypeError("smooth_filter must be a string")
+            win = _safe_int(opts.get("window", opts.get("smooth_window", 7)), 7)
+            sigma = _safe_float(opts.get("sigma", opts.get("smooth_sigma", 1.0)), 1.0)
+            po = _safe_int(opts.get("polyorder", 2), 2)
+            result = func(  # type: ignore[call-arg]
+                result,
+                smooth_filter=str(smooth_mode),
+                smooth_window=win,
+                smooth_sigma=sigma,
+                polyorder=po,
+            )
+        elif name == "gamma":
+            gamma = _safe_float(opts.get("gamma", option), 1.0)
+            result = func(result, gamma=gamma)  # type: ignore[call-arg]
+        else:
+            result = func(result)  # type: ignore[call-arg]
     return result
-

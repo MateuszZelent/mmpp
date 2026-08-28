@@ -27,7 +27,7 @@ def _make_vortex_snapshot(
     radius = np.hypot(x_grid, y_grid)
     phi = np.arctan2(y_grid, x_grid)
 
-    mz = float(polarity) * np.exp(-(radius / core_radius_px) ** 2)
+    mz = float(polarity) * np.exp(-((radius / core_radius_px) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
 
     mx = -m_perp * np.sin(phi)
@@ -55,7 +55,9 @@ def _make_polarity_switch_data(
     return data, dx, dy, dt
 
 
-def _create_job(tmp_path, name: str, data: np.ndarray, *, dx: float, dy: float, dt: float):
+def _create_job(
+    tmp_path, name: str, data: np.ndarray, *, dx: float, dy: float, dt: float
+):
     zarr_path = tmp_path / f"{name}.zarr"
     z = zarr.open(str(zarr_path), mode="w")
     z.create_dataset("m", data=data, chunks=data.shape)
@@ -65,7 +67,9 @@ def _create_job(tmp_path, name: str, data: np.ndarray, *, dx: float, dy: float, 
     return ZarrJobResult(str(zarr_path), {})
 
 
-def _create_table_only_job(tmp_path, name: str, *, dt: float = 8.0e-12, diameter: float = 80.0e-9):
+def _create_table_only_job(
+    tmp_path, name: str, *, dt: float = 8.0e-12, diameter: float = 80.0e-9
+):
     zarr_path = tmp_path / f"{name}.zarr"
     z = zarr.open(str(zarr_path), mode="w")
     table = z.create_group("table")
@@ -85,7 +89,9 @@ def _create_table_only_job(tmp_path, name: str, *, dt: float = 8.0e-12, diameter
 
 def test_events_polarity_switch_detection_and_timeline_plot(tmp_path):
     data, dx, dy, dt = _make_polarity_switch_data()
-    job = _create_job(tmp_path, "vortex_events_switch", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    job = _create_job(
+        tmp_path, "vortex_events_switch", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt
+    )
 
     traj = job.m.solitons.vortex.core.track(method="centroid")
     switches = job.m.solitons.vortex.events.polarity_switches(
@@ -112,7 +118,9 @@ def test_events_polarity_switch_detection_and_timeline_plot(tmp_path):
 
 def test_events_state_switches_and_dwell_times(tmp_path):
     data, dx, dy, dt = _make_polarity_switch_data(nt=40)
-    job = _create_job(tmp_path, "vortex_events_states", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    job = _create_job(
+        tmp_path, "vortex_events_states", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt
+    )
 
     time = np.linspace(0.0, 20.0e-9, 400)
     omega = 2.0 * np.pi * 1.2e9
@@ -169,7 +177,14 @@ def test_events_state_switches_and_dwell_times(tmp_path):
 
 def test_events_core_expulsion_detection(tmp_path):
     data, dx, dy, dt = _make_polarity_switch_data(nt=30)
-    job = _create_job(tmp_path, "vortex_events_expulsion", data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    job = _create_job(
+        tmp_path,
+        "vortex_events_expulsion",
+        data[:, np.newaxis, ...],
+        dx=dx,
+        dy=dy,
+        dt=dt,
+    )
 
     time = np.linspace(0.0, 8.0e-9, 200)
     radius = np.linspace(1.0e-9, 25.0e-9, 200)
@@ -196,7 +211,9 @@ def test_events_core_expulsion_detection(tmp_path):
 
 
 def test_events_core_expulsion_infers_radius_from_diameter_attr(tmp_path):
-    job = _create_table_only_job(tmp_path, "vortex_events_table_radius", diameter=80.0e-9)
+    job = _create_table_only_job(
+        tmp_path, "vortex_events_table_radius", diameter=80.0e-9
+    )
 
     time = np.linspace(0.0, 8.0e-9, 200)
     radius = np.linspace(1.0e-9, 39.0e-9, 200)

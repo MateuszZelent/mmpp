@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, fields
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from ...cli.logging_config import get_mmpp_logger
 from ..method_helpers import CallableMethodHelper
-
 from .cache import TransmissionCache
 from .compute import TransmissionCompute, TransmissionConfig, TransmissionResult
-from .plot import TransmissionPlotConfig, TransmissionPlotter
+
+if TYPE_CHECKING:
+    from .plot import TransmissionPlotConfig
 
 
 log = get_mmpp_logger("mmpp.fft.transmission.interface")
@@ -21,7 +24,7 @@ class FFTTransmissionHelpAccessor:
     """Callable helper namespace for transmission workflows."""
 
     def __init__(
-        self, transmission: "FFTTransmissionInterface", owner: str = "fft.transmission"
+        self, transmission: FFTTransmissionInterface, owner: str = "fft.transmission"
     ):
         self._transmission = transmission
         self._owner = owner
@@ -116,21 +119,30 @@ class FFTTransmissionInterface:
         fft_instance: Any,
         fft_compute,
         job_result: Any,
-        dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
+        dataset_name: str | None = None,
+        slice_info: Any | None = None,
+        preloaded_data: np.ndarray | None = None,
+        time_step_scale: float = 1.0,
+        view_geometry=None,
     ):
         self._fft = fft_instance
         self._job_result = job_result
         self._compute = TransmissionCompute(fft_compute, job_result)
         self.dataset_name = dataset_name
         self.slice_info = slice_info
+        self.preloaded_data = preloaded_data
+        self.time_step_scale = float(time_step_scale)
+        self.view_geometry = view_geometry
         self._cache = TransmissionCache(job_result, dataset_name)
 
     def clone_for_dataset(
         self,
-        dataset_name: Optional[str],
-        slice_info: Optional[Any] = None,
-    ) -> "FFTTransmissionInterface":
+        dataset_name: str | None,
+        slice_info: Any | None = None,
+        preloaded_data: np.ndarray | None = None,
+        time_step_scale: float = 1.0,
+        view_geometry=None,
+    ) -> FFTTransmissionInterface:
         """Return a dataset-aware clone for transmission analysis."""
         return FFTTransmissionInterface(
             self._fft,
@@ -138,6 +150,9 @@ class FFTTransmissionInterface:
             self._job_result,
             dataset_name=dataset_name,
             slice_info=slice_info,
+            preloaded_data=preloaded_data,
+            time_step_scale=time_step_scale,
+            view_geometry=view_geometry,
         )
 
     @property
@@ -152,10 +167,10 @@ class FFTTransmissionInterface:
 
     def __call__(
         self,
-        config: Optional[TransmissionConfig] = None,
+        config: TransmissionConfig | None = None,
         /,
         save: bool = False,
-        cache_path: Optional[Union[str, Path]] = None,
+        cache_path: str | Path | None = None,
         force: bool = False,
         use_cache: bool = True,
         **kwargs,
@@ -217,6 +232,15 @@ class FFTTransmissionInterface:
         # like spatial_window=0/False (treated as 1).
         config.ensure_valid()
 
+        view_identity = None
+        if self.preloaded_data is not None:
+            from ..spectrum.compute import fingerprint_array
+
+            view_identity = (
+                f"{fingerprint_array(self.preloaded_data)};"
+                f"dt_scale={self.time_step_scale}"
+            )
+
         # Convert cache_path to Path if string
         cache_dir = Path(cache_path) if cache_path is not None else None
 
@@ -224,7 +248,10 @@ class FFTTransmissionInterface:
         result = None
         if use_cache and not force:
             result = self._cache.load_result(
-                config, self.slice_info, cache_path=cache_dir
+                config,
+                self.slice_info,
+                cache_path=cache_dir,
+                view_identity=view_identity,
             )
             if result is not None:
                 log.info("Loaded transmission result from cache")
@@ -235,22 +262,32 @@ class FFTTransmissionInterface:
         config_dict = asdict(config)
         config_dict.pop("progress_callback", None)
         log.debug("Computing transmission with configuration: %s", config_dict)
-        result = self._compute.compute(config, slice_info=self.slice_info)
+        result = self._compute.compute(
+            config,
+            slice_info=self.slice_info,
+            preloaded_data=self.preloaded_data,
+            time_step_scale=self.time_step_scale,
+            view_geometry=self.view_geometry,
+        )
 
         # Save to cache if requested
         if save and use_cache:
             self._cache.save_result(
-                result, self.slice_info, cache_path=cache_dir, overwrite=force
+                result,
+                self.slice_info,
+                cache_path=cache_dir,
+                overwrite=force,
+                view_identity=view_identity,
             )
 
         return result
 
     def compute(
         self,
-        config: Optional[TransmissionConfig] = None,
+        config: TransmissionConfig | None = None,
         /,
         save: bool = False,
-        cache_path: Optional[Union[str, Path]] = None,
+        cache_path: str | Path | None = None,
         force: bool = False,
         use_cache: bool = True,
         **kwargs,
@@ -290,10 +327,10 @@ class FFTTransmissionInterface:
 
     def plot_transmission(
         self,
-        config: Optional[TransmissionConfig] = None,
-        plot_config: Optional[TransmissionPlotConfig] = None,
+        config: TransmissionConfig | None = None,
+        plot_config: TransmissionPlotConfig | None = None,
         save: bool = False,
-        cache_path: Optional[Union[str, Path]] = None,
+        cache_path: str | Path | None = None,
         force: bool = False,
         use_cache: bool = True,
         **kwargs,
@@ -335,13 +372,13 @@ class FFTTransmissionInterface:
 
     def visualize_mode(
         self,
-        f: Optional[float] = None,
+        f: float | None = None,
         *,
-        k: Optional[int] = None,
-        result: Optional[TransmissionResult] = None,
-        compute_kwargs: Optional[dict[str, Any]] = None,
+        k: int | None = None,
+        result: TransmissionResult | None = None,
+        compute_kwargs: dict[str, Any] | None = None,
         save: bool = False,
-        cache_path: Optional[Union[str, Path]] = None,
+        cache_path: str | Path | None = None,
         force: bool = False,
         use_cache: bool = True,
         **visualize_kwargs,
@@ -383,10 +420,10 @@ class FFTTransmissionInterface:
         self,
         frequencies,
         *,
-        result: Optional[TransmissionResult] = None,
-        compute_kwargs: Optional[dict[str, Any]] = None,
+        result: TransmissionResult | None = None,
+        compute_kwargs: dict[str, Any] | None = None,
         save: bool = False,
-        cache_path: Optional[Union[str, Path]] = None,
+        cache_path: str | Path | None = None,
         force: bool = False,
         use_cache: bool = True,
         **visualize_kwargs,
@@ -412,10 +449,10 @@ class FFTTransmissionInterface:
     def animate_mode(
         self,
         *,
-        result: Optional[TransmissionResult] = None,
-        compute_kwargs: Optional[dict[str, Any]] = None,
+        result: TransmissionResult | None = None,
+        compute_kwargs: dict[str, Any] | None = None,
         save: bool = False,
-        cache_path: Optional[Union[str, Path]] = None,
+        cache_path: str | Path | None = None,
         force: bool = False,
         use_cache: bool = True,
         **animate_kwargs,
@@ -440,12 +477,12 @@ class FFTTransmissionInterface:
 
     def save_mode_visualizations(
         self,
-        output_dir: Union[str, Path],
+        output_dir: str | Path,
         *,
-        result: Optional[TransmissionResult] = None,
-        compute_kwargs: Optional[dict[str, Any]] = None,
+        result: TransmissionResult | None = None,
+        compute_kwargs: dict[str, Any] | None = None,
         save: bool = False,
-        cache_path: Optional[Union[str, Path]] = None,
+        cache_path: str | Path | None = None,
         force: bool = False,
         use_cache: bool = True,
         **save_kwargs,
@@ -519,7 +556,7 @@ class FFTTransmissionInterface:
     # Internal helpers -------------------------------------------------
     def _basic_display(self) -> str:
         """Fallback basic display matching FFT core style."""
-        default_cfg = TransmissionConfig()
+        TransmissionConfig()
         dataset_hint = self._job_result.get_largest_m_dataset()
 
         lines = [
@@ -627,7 +664,7 @@ class FFTTransmissionInterface:
         buffer = io.StringIO()
         console = Console(file=buffer, width=120, force_terminal=True)
 
-        default_cfg = TransmissionConfig()
+        TransmissionConfig()
         dataset_hint = self._job_result.get_largest_m_dataset()
 
         # Summary Panel ------------------------------------------------

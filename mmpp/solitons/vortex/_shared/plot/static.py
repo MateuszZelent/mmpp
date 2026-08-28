@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 class TrajectoryPlotAccessor:
     """Plotting namespace for :class:`TrajectoryResult`."""
 
-    def __init__(self, result: "TrajectoryResult"):
+    def __init__(self, result: TrajectoryResult):
         self._result = result
 
     def xy(self, *, ax=None, component: str = "both", **kwargs):
@@ -100,7 +100,9 @@ class TrajectoryPlotAccessor:
         axes[1, 1].set_title("Instantaneous frequency")
 
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="The figure layout has changed to tight")
+            warnings.filterwarnings(
+                "ignore", message="The figure layout has changed to tight"
+            )
             fig.tight_layout()
         return fig
 
@@ -112,17 +114,29 @@ class TrajectoryPlotAccessor:
 
     def _repr_html_(self) -> str:
         from mmpp._repr_helpers import plot_accessor_html
-        return plot_accessor_html("TrajectoryPlotAccessor", [
-            (".xy(component='both')",
-             "Plot X(t) and/or Y(t) core position",
-             "component: 'both', 'x', or 'y'. Accepts matplotlib kwargs."),
-            (".orbit_2d(show_center=True)",
-             "2-D orbit trajectory in XY plane",
-             "show_center: mark mean position. Aspect ratio forced equal."),
-            (".overview()",
-             "Compact 2×2 diagnostics panel",
-             "X/Y vs time, orbit, radius, instantaneous frequency."),
-            (".interactive()",
-             "Interactive orbit/snapshot viewer",
-             "matplotlib-based interactive controls."),
-        ])
+
+        return plot_accessor_html(
+            "TrajectoryPlotAccessor",
+            [
+                (
+                    ".xy(component='both')",
+                    "Plot X(t) and/or Y(t) core position",
+                    "component: 'both', 'x', or 'y'. Accepts matplotlib kwargs.",
+                ),
+                (
+                    ".orbit_2d(show_center=True)",
+                    "2-D orbit trajectory in XY plane",
+                    "show_center: mark mean position. Aspect ratio forced equal.",
+                ),
+                (
+                    ".overview()",
+                    "Compact 2×2 diagnostics panel",
+                    "X/Y vs time, orbit, radius, instantaneous frequency.",
+                ),
+                (
+                    ".interactive()",
+                    "Interactive orbit/snapshot viewer",
+                    "matplotlib-based interactive controls.",
+                ),
+            ],
+        )

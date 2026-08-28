@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import time as _time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 import numpy as np
 from scipy import optimize
@@ -69,14 +69,14 @@ def run_optimization(
 
     state = _OptimizationState()
 
-    bounds = []
-    x0 = []
+    bounds: list[tuple[float, float]] = []
+    x0_values: list[float] = []
     for name in param_names:
         spec = param_specs[name]
         bounds.append((spec.lower, spec.upper))
-        x0.append(initial_values.get(name, spec.initial or 0.0))
+        x0_values.append(initial_values.get(name, spec.initial or 0.0))
 
-    x0 = np.array(x0, dtype=float)
+    x0 = np.array(x0_values, dtype=float)
     x0 = _clip_to_bounds(x0, bounds)
     state.best_x = x0.copy()
 
@@ -96,9 +96,9 @@ def run_optimization(
 
     # Evaluate initial point
     try:
-        init_loss = _scalar_objective(x0)
+        _scalar_objective(x0)
     except _MaxEvalReached:
-        init_loss = state.best_loss
+        pass
 
     optimizer_message = ""
     optimizer_nit = 0
@@ -152,6 +152,7 @@ def run_optimization(
     n_before_local = state.n_evals
 
     if len(param_names) > 0:
+        assert state.best_x is not None
         try:
             local_result = optimize.minimize(
                 _scalar_objective,
@@ -174,6 +175,7 @@ def run_optimization(
     t_total = _time.monotonic() - t_start
 
     best_x = state.best_x
+    assert best_x is not None
     best_params = {name: float(best_x[i]) for i, name in enumerate(param_names)}
 
     # Check active bounds
@@ -196,9 +198,7 @@ def run_optimization(
     hessian_cost = 2 * len(param_names)
     if len(param_names) >= 1 and remaining_budget >= hessian_cost:
         try:
-            hessian_approx = _approx_hessian_diag(
-                _scalar_objective, best_x, bounds
-            )
+            hessian_approx = _approx_hessian_diag(_scalar_objective, best_x, bounds)
             param_uncertainties = {}
             for i, name in enumerate(param_names):
                 if hessian_approx[i] > 0:
@@ -257,7 +257,7 @@ def _approx_hessian_diag(
 
         f_plus = func(x_plus)
         f_minus = func(x_minus)
-        diag[i] = (f_plus - 2 * f0 + f_minus) / (actual_h ** 2)
+        diag[i] = (f_plus - 2 * f0 + f_minus) / (actual_h**2)
 
     return diag
 

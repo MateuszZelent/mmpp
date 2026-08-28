@@ -7,36 +7,139 @@ as parametric heatmaps.
 
 from __future__ import annotations
 
+import copy
 import gc
 import hashlib
 import json
-import os
 import pickle
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict
-from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
+from typing import Any, Literal, cast
 
 import numpy as np
 
-# Try to use joblib for parallel processing (much better for numpy/scipy CPU-bound tasks)
-try:
-    from joblib import Parallel, delayed
-
-    _USE_JOBLIB = True
-except ImportError:
-    _USE_JOBLIB = False
-
 from ...cli.logging_config import get_mmpp_logger
 from .compute import TransmissionConfig, TransmissionResult
-from .interface import FFTTransmissionInterface
 
 log = get_mmpp_logger("mmpp.fft.transmission.batch")
 
+
+def _frequency_grids_match(
+    first: np.ndarray,
+    second: np.ndarray,
+    *,
+    rtol: float = 1e-9,
+    atol: float = 0.0,
+) -> bool:
+    """Return whether two frequency grids represent the same sample points."""
+    first_arr = np.asarray(first)
+    second_arr = np.asarray(second)
+    return (
+        first_arr.shape == second_arr.shape
+        and first_arr.ndim == 1
+        and np.allclose(first_arr, second_arr, rtol=rtol, atol=atol)
+    )
+
+
+def _interpolate_frequency_series(
+    source_freq: np.ndarray,
+    source_values: np.ndarray,
+    target_freq: np.ndarray,
+) -> np.ndarray:
+    """Interpolate one spectrum without inventing values outside its support."""
+    source_freq_arr = np.asarray(source_freq, dtype=float)
+    source_values_arr = np.asarray(source_values)
+    target_freq_arr = np.asarray(target_freq, dtype=float)
+
+    if source_freq_arr.ndim != 1 or target_freq_arr.ndim != 1:
+        raise ValueError("Frequency grids must be one-dimensional")
+    if source_values_arr.ndim != 1 or source_values_arr.shape != source_freq_arr.shape:
+        raise ValueError("Frequency values must be one-dimensional and match the grid")
+    if source_freq_arr.size < 2:
+        raise ValueError("At least two source-frequency points are required")
+    if not np.all(np.isfinite(source_freq_arr)) or not np.all(
+        np.isfinite(target_freq_arr)
+    ):
+        raise ValueError("Frequency grids must contain only finite values")
+
+    source_steps = np.diff(source_freq_arr)
+    if np.all(source_steps < 0):
+        source_freq_arr = source_freq_arr[::-1]
+        source_values_arr = source_values_arr[::-1]
+    elif not np.all(source_steps > 0):
+        raise ValueError("Source frequency grid must be strictly monotonic")
+
+    target_descending = target_freq_arr.size > 1 and np.all(
+        np.diff(target_freq_arr) < 0
+    )
+    if target_freq_arr.size > 1 and not (
+        target_descending or np.all(np.diff(target_freq_arr) > 0)
+    ):
+        raise ValueError("Target frequency grid must be strictly monotonic")
+    interpolation_target = (
+        target_freq_arr[::-1] if target_descending else target_freq_arr
+    )
+    interpolated = np.interp(
+        interpolation_target,
+        source_freq_arr,
+        source_values_arr,
+        left=np.nan,
+        right=np.nan,
+    )
+    return interpolated[::-1] if target_descending else interpolated
+
+
+def _finite_max(values: np.ndarray) -> float | None:
+    """Return the maximum finite value, or ``None`` if there is no such value."""
+    finite_values = np.asarray(values)[np.isfinite(values)]
+    if finite_values.size == 0:
+        return None
+    return float(np.max(finite_values))
+
+
+def _source_state_signature(path_value: Any) -> dict[str, Any]:
+    """Return a content-state signature without reading source file payloads."""
+    path = Path(path_value)
+    if not path.exists():
+        return {"path": str(path), "exists": False}
+
+    digest = hashlib.blake2b(digest_size=16)
+    file_count = 0
+    total_size = 0
+    newest_mtime_ns = 0
+    candidates = (
+        [path]
+        if path.is_file()
+        else sorted(
+            (entry for entry in path.rglob("*") if entry.is_file()),
+            key=lambda entry: entry.as_posix(),
+        )
+    )
+    for entry in candidates:
+        stat = entry.stat()
+        relative = entry.name if path.is_file() else entry.relative_to(path).as_posix()
+        digest.update(relative.encode("utf-8", errors="surrogateescape"))
+        digest.update(str(stat.st_size).encode("ascii"))
+        digest.update(str(stat.st_mtime_ns).encode("ascii"))
+        file_count += 1
+        total_size += int(stat.st_size)
+        newest_mtime_ns = max(newest_mtime_ns, int(stat.st_mtime_ns))
+    return {
+        "path": str(path),
+        "exists": True,
+        "files": file_count,
+        "bytes": total_size,
+        "newest_mtime_ns": newest_mtime_ns,
+        "manifest": digest.hexdigest(),
+    }
+
+
 try:
     import matplotlib.pyplot as plt
-    from matplotlib.axes import Axes
+    from matplotlib.axes import Axes as _Axes
+
+    Axes: Any = _Axes
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
     MATPLOTLIB_AVAILABLE = True
@@ -54,9 +157,10 @@ class BatchTransmissionResult:
 
     def __init__(
         self,
-        results: List[TransmissionResult],
-        parameters: Dict[str, List[Any]],
-        job_paths: List[str],
+        results: list[TransmissionResult],
+        parameters: dict[str, list[Any]],
+        job_paths: list[str],
+        errors: list[dict[str, Any]] | None = None,
     ):
         """Initialize batch transmission result.
 
@@ -72,6 +176,7 @@ class BatchTransmissionResult:
         self.results = results
         self.parameters = parameters
         self.job_paths = job_paths
+        self.errors = list(errors or [])
 
         # Validate consistency
         n = len(results)
@@ -98,7 +203,7 @@ class BatchTransmissionResult:
         """Iterate over transmission results."""
         return iter(self.results)
 
-    def save(self, path: Union[str, Path]) -> None:
+    def save(self, path: str | Path) -> None:
         """Save batch result to file.
 
         Parameters
@@ -114,7 +219,8 @@ class BatchTransmissionResult:
             "results": self.results,
             "parameters": self.parameters,
             "job_paths": self.job_paths,
-            "version": "1.0",
+            "errors": self.errors,
+            "version": "1.1",
         }
 
         with open(path, "wb") as f:
@@ -123,7 +229,7 @@ class BatchTransmissionResult:
         log.info(f"Saved batch result to {path} ({len(self.results)} results)")
 
     @classmethod
-    def load(cls, path: Union[str, Path]) -> "BatchTransmissionResult":
+    def load(cls, path: str | Path) -> BatchTransmissionResult:
         """Load batch result from file.
 
         Parameters
@@ -146,13 +252,14 @@ class BatchTransmissionResult:
 
         # Handle version compatibility
         version = data.get("version", "0.0")
-        if version != "1.0":
-            log.warning(f"Loading batch result with version {version}, current is 1.0")
+        if version not in {"1.0", "1.1"}:
+            log.warning(f"Loading batch result with version {version}, current is 1.1")
 
         result = cls(
             results=data["results"],
             parameters=data["parameters"],
             job_paths=data["job_paths"],
+            errors=data.get("errors", []),
         )
 
         log.info(f"Loaded batch result from {path} ({len(result.results)} results)")
@@ -174,13 +281,12 @@ class BatchTransmissionResult:
         if param_name not in self.parameters:
             available = ", ".join(self.parameters.keys())
             raise KeyError(
-                f"Parameter '{param_name}' not found. "
-                f"Available parameters: {available}"
+                f"Parameter '{param_name}' not found. Available parameters: {available}"
             )
         return np.array(self.parameters[param_name])
 
     @staticmethod
-    def _normalize_mode(normalize: Union[bool, str, None]) -> str:
+    def _normalize_mode(normalize: bool | str | None) -> str:
         """Convert user-facing normalize flag to canonical mode string."""
         if normalize is True:
             return "per_column"
@@ -194,11 +300,11 @@ class BatchTransmissionResult:
         self,
         swapping_parameter: str,
         x: float,
-        x_width: Optional[float],
+        x_width: float | None,
         freq_unit: str,
         trim_0f: int,
-        fmin: Optional[float],
-        fmax: Optional[float],
+        fmin: float | None,
+        fmax: float | None,
         normalize_mode: str,
         flip: bool,
         disable_averaging: bool,
@@ -207,21 +313,21 @@ class BatchTransmissionResult:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Extract normalized heatmap data without plotting."""
         param_values = self.get_parameter_values(swapping_parameter)
-        
+
         # Validate parameter values
         if len(param_values) == 0:
             raise ValueError(
                 f"No valid values found for parameter '{swapping_parameter}'. "
                 f"Available parameters with data: {list(self.parameters.keys())}"
             )
-        
+
         if len(param_values) == 1:
             raise ValueError(
                 f"Only 1 simulation found for parameter '{swapping_parameter}'. "
                 f"Heatmap requires at least 2 different parameter values. "
                 f"Current value: {param_values[0]}"
             )
-        
+
         # Check if all values are the same
         unique_values = np.unique(param_values)
         if len(unique_values) == 1:
@@ -232,11 +338,11 @@ class BatchTransmissionResult:
             )
 
         if verbose:
-            print(f"\n{'='*60}")
-            print(f"🔍 plot_transmission_crosssection_heatmap()")
-            print(f"{'='*60}")
+            print(f"\n{'=' * 60}")
+            print("🔍 plot_transmission_crosssection_heatmap()")
+            print(f"{'=' * 60}")
             print(f"  swapping_parameter: {swapping_parameter}")
-            print(f"  x: {x} ({x*1e9:.1f} nm)")
+            print(f"  x: {x} ({x * 1e9:.1f} nm)")
             print(f"  x_width: {x_width}")
             print(f"  normalize_mode: {normalize_mode}")
             print(f"  freq_unit: {freq_unit}")
@@ -268,32 +374,18 @@ class BatchTransmissionResult:
                 )
 
                 if frequencies is None:
-                    frequencies = freq
-                    n_freq_expected = len(freq)
-                else:
-                    if len(freq) != n_freq_expected:
-                        try:
-                            from scipy.interpolate import interp1d
-
-                            interp_func = interp1d(
-                                freq,
-                                cross_section,
-                                kind="linear",
-                                bounds_error=False,
-                                fill_value=0.0,
-                            )
-                            cross_section = interp_func(frequencies)
-                        except Exception:
-                            cross_section = np.interp(
-                                frequencies, freq, cross_section, left=0.0, right=0.0
-                            )
-                        if verbose and i == 1:
-                            log.info(
-                                "Interpolating result %d from %d to %d frequency points",
-                                i,
-                                len(freq),
-                                n_freq_expected,
-                            )
+                    frequencies = np.asarray(freq, dtype=float)
+                elif not _frequency_grids_match(freq, frequencies):
+                    cross_section = _interpolate_frequency_series(
+                        freq, cross_section, frequencies
+                    )
+                    if verbose:
+                        log.info(
+                            "Interpolating result %d from %d to %d frequency points",
+                            i,
+                            len(freq),
+                            len(frequencies),
+                        )
 
                 cross_sections.append(cross_section)
 
@@ -322,19 +414,19 @@ class BatchTransmissionResult:
             )
             print(
                 f"  heatmap_data range (raw): "
-                f"[{heatmap_data.min():.4e}, {heatmap_data.max():.4e}]"
+                f"[{np.nanmin(heatmap_data):.4e}, {np.nanmax(heatmap_data):.4e}]"
             )
 
         if normalize_mode == "per_column":
             for i in range(heatmap_data.shape[0]):
-                col_max = heatmap_data[i, :].max()
-                if col_max > 0:
+                col_max = _finite_max(heatmap_data[i, :])
+                if col_max is not None and col_max > 0:
                     heatmap_data[i, :] = heatmap_data[i, :] / col_max
             if verbose:
                 print("  Applied per_column normalization: each simulation -> [0, 1]")
         elif normalize_mode == "global":
-            global_max = heatmap_data.max()
-            if global_max > 0:
+            global_max = _finite_max(heatmap_data)
+            if global_max is not None and global_max > 0:
                 heatmap_data = heatmap_data / global_max
             if verbose:
                 print("  Applied global normalization: entire heatmap -> [0, 1]")
@@ -344,7 +436,7 @@ class BatchTransmissionResult:
         if verbose:
             print(
                 f"  heatmap_data range (after norm): "
-                f"[{heatmap_data.min():.4e}, {heatmap_data.max():.4e}]"
+                f"[{np.nanmin(heatmap_data):.4e}, {np.nanmax(heatmap_data):.4e}]"
             )
 
         param_values_scaled = param_values * param_scale
@@ -362,25 +454,25 @@ class BatchTransmissionResult:
         self,
         swapping_parameter: str,
         x: float,
-        x_width: Optional[float] = None,
+        x_width: float | None = None,
         freq_unit: str = "GHz",
         trim_0f: int = 0,
-        fmin: Optional[float] = None,
-        fmax: Optional[float] = None,
-        normalize: Union[bool, str] = "per_column",
+        fmin: float | None = None,
+        fmax: float | None = None,
+        normalize: bool | str = "per_column",
         cmap: str = "inferno",
-        ax: Optional[Axes] = None,
-        mark_on_ax: Optional[Axes] = None,
+        ax: Axes | None = None,
+        mark_on_ax: Axes | None = None,
         flip: bool = False,
         log_scale: bool = False,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
         disable_averaging: bool = False,
         interpolation: str = "nearest",
-        colorbar_label: Optional[str] = None,
+        colorbar_label: str | None = None,
         param_scale: float = 1.0,
-        param_label: Optional[str] = None,
-        title: Optional[str] = None,
+        param_label: str | None = None,
+        title: str | None = None,
         figsize: tuple = (10, 6),
         dpi: int = 100,
         verbose: bool = False,
@@ -396,7 +488,7 @@ class BatchTransmissionResult:
         grid_linestyle: str = "--",
         grid_axis: str = "y",
         # Kittel FMR overlay
-        kittel = None,
+        kittel=None,
         kittel_color: str = "cyan",
         kittel_linestyle: str = "--",
         kittel_linewidth: float = 2.0,
@@ -554,6 +646,7 @@ class BatchTransmissionResult:
         )
 
         # Create plot
+        fig: Any = None
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
@@ -567,15 +660,15 @@ class BatchTransmissionResult:
         if log_scale:
             plot_data = np.log10(plot_data + 1e-10)  # Add small value to avoid log(0)
             if verbose:
-                print(f"  Applied log10 scale")
+                print("  Applied log10 scale")
 
         # Create imshow with SCALED parameter values
-        extent = [
+        extent = (
             param_values_scaled.min(),
             param_values_scaled.max(),
             frequencies.min(),
             frequencies.max(),
-        ]
+        )
 
         if verbose:
             print(f"  extent: {extent}")
@@ -583,8 +676,7 @@ class BatchTransmissionResult:
         # Remove kittel-related parameters from kwargs before passing to imshow
         # (they are handled separately below for overlay)
         kwargs_for_imshow = {
-            k: v for k, v in kwargs.items() 
-            if not k.startswith('kittel')
+            k: v for k, v in kwargs.items() if not k.startswith("kittel")
         }
 
         img = ax.imshow(
@@ -609,13 +701,15 @@ class BatchTransmissionResult:
         if title is not None:
             ax.set_title(title, fontsize=14)
         else:
-            ax.set_title(f"Transmission Cross-section at x={x*1e9:.1f} nm", fontsize=14)
+            ax.set_title(
+                f"Transmission Cross-section at x={x * 1e9:.1f} nm", fontsize=14
+            )
 
         # Add grid if requested
         if show_grid:
             ax.grid(
                 True,
-                axis=grid_axis,
+                axis=cast(Literal["both", "x", "y"], grid_axis),
                 alpha=grid_alpha,
                 color=grid_color,
                 linestyle=grid_linestyle,
@@ -668,7 +762,7 @@ class BatchTransmissionResult:
 
             # Inner colorbar
             cbar_ax = inset_axes(cbbox, "85%", "35%", loc="upper center", borderpad=0)
-            cbar = fig.colorbar(img, cax=cbar_ax, orientation="horizontal")
+            cbar: Any = fig.colorbar(img, cax=cbar_ax, orientation="horizontal")
             cbar.set_ticks([])
             cbar.ax.set_xticklabels([])
             cbar.outline.set_visible(False)
@@ -731,7 +825,7 @@ class BatchTransmissionResult:
                     linestyle="--",
                     linewidth=2,
                     alpha=0.7,
-                    label=f"x={x*1e9:.1f} nm",
+                    label=f"x={x * 1e9:.1f} nm",
                 )
                 mark_on_ax.legend()
             except Exception as e:
@@ -755,6 +849,7 @@ class BatchTransmissionResult:
                     )
                     # FMRResult.f is in GHz, need to convert to freq_unit
                     from .plot import FREQ_SCALE
+
                     freq_scale = FREQ_SCALE.get(freq_unit, 1e-9)
                     f_plot = fmr_result.f * 1e9 * freq_scale  # GHz -> Hz -> unit
                     B_plot = B_values * param_scale
@@ -763,16 +858,20 @@ class BatchTransmissionResult:
                         f_plot,
                         color=kittel_color,
                         s=kittel_linewidth * 20,  # convert linewidth to marker size
-                        marker='o',
+                        marker="o",
                         label=kittel_label,
                         zorder=10,
-                        edgecolors='white',
+                        edgecolors="white",
                         linewidths=0.5,
                     )
                     ax.legend(loc="upper left", fontsize=10)
                     if verbose:
-                        print(f"  Kittel FMR points: B=[{B_values[0]:.4f}, {B_values[-1]:.4f}] T ({len(B_values)} points)")
-                        print(f"  Kittel f range: [{f_plot.min():.2f}, {f_plot.max():.2f}] {freq_unit}")
+                        print(
+                            f"  Kittel FMR points: B=[{B_values[0]:.4f}, {B_values[-1]:.4f}] T ({len(B_values)} points)"
+                        )
+                        print(
+                            f"  Kittel f range: [{f_plot.min():.2f}, {f_plot.max():.2f}] {freq_unit}"
+                        )
                 else:
                     log.warning(
                         "kittel parameter should be an FMRResult from "
@@ -783,7 +882,7 @@ class BatchTransmissionResult:
                 log.warning(f"Failed to overlay Kittel FMR line: {e}")
 
         if verbose:
-            print(f"{'='*60}\n")
+            print(f"{'=' * 60}\n")
 
         return fig, ax, img
 
@@ -792,23 +891,23 @@ class BatchTransmissionResult:
         peaks: str,
         errors: str,
         shift: float = 0.0,
-        target_field: Optional[float] = None,
+        target_field: float | None = None,
         field_tolerance: float = 0.01,
-        marker: str = 'o',
-        color: str = 'cyan',
+        marker: str = "o",
+        color: str = "cyan",
         s: float = 36,
-        error_color: Optional[str] = None,
+        error_color: str | None = None,
         error_linewidth: float = 1.5,
-        label: str = 'Experimental',
-        ax: Optional[Axes] = None,
-        **heatmap_kwargs
+        label: str = "Experimental",
+        ax: Axes | None = None,
+        **heatmap_kwargs,
     ) -> tuple:
         """Plot heatmap with experimental peak positions overlaid.
-        
+
         Loads experimental transmission peak data from CSV files and overlays as scatter
         points with error bars on simulation heatmap. Automatically handles
         folding replication to match simulation data.
-        
+
         Parameters
         ----------
         peaks : str
@@ -843,12 +942,12 @@ class BatchTransmissionResult:
         **heatmap_kwargs
             Additional arguments passed to plot_transmission_crosssection_heatmap()
             (e.g., swapping_parameter, x, x_width, cmap, normalize, fmin, fmax)
-            
+
         Returns
         -------
         tuple
             (fig, ax, img) - Matplotlib figure, axes, and image object
-            
+
         Examples
         --------
         >>> # Plot with experimental data overlay
@@ -866,19 +965,19 @@ class BatchTransmissionResult:
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
-        
+
         try:
             import pandas as pd
         except ImportError:
-            raise ImportError("Pandas required for loading experimental data")
-        
+            raise ImportError("Pandas required for loading experimental data") from None
+
         # Load experimental data
         peaks_df = pd.read_csv(peaks)
         errors_df = pd.read_csv(errors)
-        
+
         # Auto-detect column names (support various formats)
         position_col = None
-        for col in ['Position', 'position', 'angle', 'Angle (°)', 'phi (rad)']:
+        for col in ["Position", "position", "angle", "Angle (°)", "phi (rad)"]:
             if col in peaks_df.columns:
                 position_col = col
                 break
@@ -887,15 +986,15 @@ class BatchTransmissionResult:
                 f"Could not find position column in peaks CSV. "
                 f"Available columns: {list(peaks_df.columns)}"
             )
-        
+
         field_col = None
-        for col in ['Field (T)', 'field', 'Field', 'B0']:
+        for col in ["Field (T)", "field", "Field", "B0"]:
             if col in peaks_df.columns:
                 field_col = col
                 break
-        
+
         freq_col = None
-        for col in ['fres (GHz)', 'fres', 'freq (GHz)', 'frequency']:
+        for col in ["fres (GHz)", "fres", "freq (GHz)", "frequency"]:
             if col in peaks_df.columns:
                 freq_col = col
                 break
@@ -904,14 +1003,14 @@ class BatchTransmissionResult:
                 f"Could not find frequency column in peaks CSV. "
                 f"Available columns: {list(peaks_df.columns)}"
             )
-        
+
         exp_data = {
-            'positions': peaks_df[position_col].values,
-            'fields': peaks_df[field_col].values if field_col else None,
-            'fres': peaks_df[freq_col].values,
-            'fres_err': errors_df[freq_col].values,
+            "positions": peaks_df[position_col].values,
+            "fields": peaks_df[field_col].values if field_col else None,
+            "fres": peaks_df[freq_col].values,
+            "fres_err": errors_df[freq_col].values,
         }
-        
+
         # Create heatmap only if ax not provided
         if ax is None:
             fig, ax, img = self.plot_transmission_crosssection_heatmap(**heatmap_kwargs)
@@ -919,28 +1018,30 @@ class BatchTransmissionResult:
             # Use existing axes - only overlay experimental data
             fig = ax.figure
             img = None  # No new image created
-        
+
         # Filter by field if requested
-        if target_field is not None and exp_data['fields'] is not None:
-            mask = np.abs(exp_data['fields'] - target_field) < field_tolerance
-            positions = exp_data['positions'][mask]
-            fres = exp_data['fres'][mask]
-            fres_err = exp_data['fres_err'][mask]
+        if target_field is not None and exp_data["fields"] is not None:
+            mask = np.abs(exp_data["fields"] - target_field) < field_tolerance
+            positions = exp_data["positions"][mask]
+            fres = exp_data["fres"][mask]
+            fres_err = exp_data["fres_err"][mask]
             field_info = f" @ {target_field} T"
         else:
-            positions = exp_data['positions']
-            fres = exp_data['fres']
-            fres_err = exp_data['fres_err']
+            positions = exp_data["positions"]
+            fres = exp_data["fres"]
+            fres_err = exp_data["fres_err"]
             field_info = ""
-        
+
         # Apply user's shift
         positions = positions + shift
-        
+
         # Handle folding - replicate points to match simulation
         # Extract swapping_parameter from heatmap_kwargs to determine if angular data
-        swapping_param = heatmap_kwargs.get('swapping_parameter', '')
-        is_angular = any(substr in swapping_param.lower() for substr in ['angle', 'phi', 'theta'])
-        
+        swapping_param = heatmap_kwargs.get("swapping_parameter", "")
+        is_angular = any(
+            substr in swapping_param.lower() for substr in ["angle", "phi", "theta"]
+        )
+
         # Auto-detect folding from position range
         pos_range = positions.max() - positions.min()
         if is_angular:
@@ -951,45 +1052,53 @@ class BatchTransmissionResult:
                 folding = 2 * np.pi
             else:  # Already radians
                 folding = 2 * np.pi
-            
+
             # Normalize to [0, folding]
             positions = positions % folding
-            
+
             # Replicate with mirroring
             positions, fres, fres_err = self._replicate_experimental_points(
                 positions, fres, fres_err, folding
             )
-        
+
         # Set error color
         if error_color is None:
             error_color = color
-        
+
         # Calculate marker size (convert area to radius for errorbar)
         markersize = np.sqrt(s / np.pi)
-        
+
         # Overlay scatter points with error bars
         ax.errorbar(
-            positions, fres, yerr=fres_err,
-            fmt=marker, color=color, markersize=markersize,
-            markeredgecolor='black', markeredgewidth=0.5,
-            ecolor=error_color, elinewidth=error_linewidth, capsize=3,
-            label=label + field_info, zorder=10
+            positions,
+            fres,
+            yerr=fres_err,
+            fmt=marker,
+            color=color,
+            markersize=markersize,
+            markeredgecolor="black",
+            markeredgewidth=0.5,
+            ecolor=error_color,
+            elinewidth=error_linewidth,
+            capsize=3,
+            label=label + field_info,
+            zorder=10,
         )
-        
+
         # Update legend
-        ax.legend(loc='best', framealpha=0.9)
-        
+        ax.legend(loc="best", framealpha=0.9)
+
         return fig, ax, img if img is not None else ax.images[0] if ax.images else None
-    
+
     def _replicate_experimental_points(
         self,
         positions: np.ndarray,
         fres: np.ndarray,
         fres_err: np.ndarray,
-        folding: float
+        folding: float,
     ) -> tuple:
         """Replicate experimental points to fill folding period with mirroring.
-        
+
         Parameters
         ----------
         positions : np.ndarray
@@ -1000,7 +1109,7 @@ class BatchTransmissionResult:
             Frequency errors
         folding : float
             Folding period
-            
+
         Returns
         -------
         tuple
@@ -1009,15 +1118,15 @@ class BatchTransmissionResult:
         pos_min = positions.min()
         pos_max = positions.max()
         original_span = pos_max - pos_min
-        
+
         # Determine number of replications needed
         n_copies = int(np.ceil(folding / original_span))
-        
+
         # Collect replicated data
         pos_list = []
         fres_list = []
         fres_err_list = []
-        
+
         for i in range(n_copies):
             if i % 2 == 0:
                 # Forward copy
@@ -1025,14 +1134,14 @@ class BatchTransmissionResult:
             else:
                 # Mirrored copy (backward)
                 new_pos = 2 * (i * original_span + pos_min) - positions + original_span
-            
+
             # Only keep points within [0, folding]
             mask = (new_pos >= 0) & (new_pos < folding)
             if np.any(mask):
                 pos_list.append(new_pos[mask])
                 fres_list.append(fres[mask])
                 fres_err_list.append(fres_err[mask])
-        
+
         # Concatenate all copies
         if len(pos_list) > 0:
             positions_rep = np.concatenate(pos_list)
@@ -1042,31 +1151,31 @@ class BatchTransmissionResult:
             positions_rep = positions
             fres_rep = fres
             fres_err_rep = fres_err
-        
+
         return positions_rep, fres_rep, fres_err_rep
 
-    def plot_experimental_data(
+    def _plot_experimental_data_legacy(
         self,
         peaks: str,
         errors: str,
         shift: float = 0.0,
-        target_field: Optional[float] = None,
+        target_field: float | None = None,
         field_tolerance: float = 0.01,
-        marker: str = 'o',
-        color: str = 'cyan',
+        marker: str = "o",
+        color: str = "cyan",
         s: float = 36,
-        error_color: Optional[str] = None,
+        error_color: str | None = None,
         error_linewidth: float = 1.5,
-        label: str = 'Experimental',
-        ax: Optional[Axes] = None,
-        **heatmap_kwargs
+        label: str = "Experimental",
+        ax: Axes | None = None,
+        **heatmap_kwargs,
     ) -> tuple:
         """Plot heatmap with experimental peak positions overlaid.
-        
+
         Loads experimental transmission peak data from CSV files and overlays as scatter
         points with error bars on simulation heatmap. Automatically handles
         folding replication to match simulation data.
-        
+
         Parameters
         ----------
         peaks : str
@@ -1101,12 +1210,12 @@ class BatchTransmissionResult:
         **heatmap_kwargs
             Additional arguments passed to plot_transmission_crosssection_heatmap()
             (e.g., swapping_parameter, x, x_width, cmap, normalize, fmin, fmax)
-            
+
         Returns
         -------
         tuple
             (fig, ax, img) - Matplotlib figure, axes, and image object
-            
+
         Examples
         --------
         >>> # Plot with experimental data overlay
@@ -1124,19 +1233,19 @@ class BatchTransmissionResult:
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
-        
+
         try:
             import pandas as pd
         except ImportError:
-            raise ImportError("Pandas required for loading experimental data")
-        
+            raise ImportError("Pandas required for loading experimental data") from None
+
         # Load experimental data
         peaks_df = pd.read_csv(peaks)
         errors_df = pd.read_csv(errors)
-        
+
         # Auto-detect column names (support various formats)
         position_col = None
-        for col in ['Position', 'position', 'angle', 'Angle (°)', 'phi (rad)']:
+        for col in ["Position", "position", "angle", "Angle (°)", "phi (rad)"]:
             if col in peaks_df.columns:
                 position_col = col
                 break
@@ -1145,15 +1254,15 @@ class BatchTransmissionResult:
                 f"Could not find position column in peaks CSV. "
                 f"Available columns: {list(peaks_df.columns)}"
             )
-        
+
         field_col = None
-        for col in ['Field (T)', 'field', 'Field', 'B0']:
+        for col in ["Field (T)", "field", "Field", "B0"]:
             if col in peaks_df.columns:
                 field_col = col
                 break
-        
+
         freq_col = None
-        for col in ['fres (GHz)', 'fres', 'freq (GHz)', 'frequency']:
+        for col in ["fres (GHz)", "fres", "freq (GHz)", "frequency"]:
             if col in peaks_df.columns:
                 freq_col = col
                 break
@@ -1162,14 +1271,14 @@ class BatchTransmissionResult:
                 f"Could not find frequency column in peaks CSV. "
                 f"Available columns: {list(peaks_df.columns)}"
             )
-        
+
         exp_data = {
-            'positions': peaks_df[position_col].values,
-            'fields': peaks_df[field_col].values if field_col else None,
-            'fres': peaks_df[freq_col].values,
-            'fres_err': errors_df[freq_col].values,
+            "positions": peaks_df[position_col].values,
+            "fields": peaks_df[field_col].values if field_col else None,
+            "fres": peaks_df[freq_col].values,
+            "fres_err": errors_df[freq_col].values,
         }
-        
+
         # Create heatmap only if ax not provided
         if ax is None:
             fig, ax, img = self.plot_transmission_crosssection_heatmap(**heatmap_kwargs)
@@ -1177,28 +1286,30 @@ class BatchTransmissionResult:
             # Use existing axes - only overlay experimental data
             fig = ax.figure
             img = None  # No new image created
-        
+
         # Filter by field if requested
-        if target_field is not None and exp_data['fields'] is not None:
-            mask = np.abs(exp_data['fields'] - target_field) < field_tolerance
-            positions = exp_data['positions'][mask]
-            fres = exp_data['fres'][mask]
-            fres_err = exp_data['fres_err'][mask]
+        if target_field is not None and exp_data["fields"] is not None:
+            mask = np.abs(exp_data["fields"] - target_field) < field_tolerance
+            positions = exp_data["positions"][mask]
+            fres = exp_data["fres"][mask]
+            fres_err = exp_data["fres_err"][mask]
             field_info = f" @ {target_field} T"
         else:
-            positions = exp_data['positions']
-            fres = exp_data['fres']
-            fres_err = exp_data['fres_err']
+            positions = exp_data["positions"]
+            fres = exp_data["fres"]
+            fres_err = exp_data["fres_err"]
             field_info = ""
-        
+
         # Apply user's shift
         positions = positions + shift
-        
+
         # Handle folding - replicate points to match simulation
         # Extract swapping_parameter from heatmap_kwargs to determine if angular data
-        swapping_param = heatmap_kwargs.get('swapping_parameter', '')
-        is_angular = any(substr in swapping_param.lower() for substr in ['angle', 'phi', 'theta'])
-        
+        swapping_param = heatmap_kwargs.get("swapping_parameter", "")
+        is_angular = any(
+            substr in swapping_param.lower() for substr in ["angle", "phi", "theta"]
+        )
+
         # Auto-detect folding from position range
         pos_range = positions.max() - positions.min()
         if is_angular:
@@ -1209,45 +1320,53 @@ class BatchTransmissionResult:
                 folding = 2 * np.pi
             else:  # Already radians
                 folding = 2 * np.pi
-            
+
             # Normalize to [0, folding]
             positions = positions % folding
-            
+
             # Replicate with mirroring
             positions, fres, fres_err = self._replicate_experimental_points(
                 positions, fres, fres_err, folding
             )
-        
+
         # Set error color
         if error_color is None:
             error_color = color
-        
+
         # Calculate marker size (convert area to radius for errorbar)
         markersize = np.sqrt(s / np.pi)
-        
+
         # Overlay scatter points with error bars
         ax.errorbar(
-            positions, fres, yerr=fres_err,
-            fmt=marker, color=color, markersize=markersize,
-            markeredgecolor='black', markeredgewidth=0.5,
-            ecolor=error_color, elinewidth=error_linewidth, capsize=3,
-            label=label + field_info, zorder=10
+            positions,
+            fres,
+            yerr=fres_err,
+            fmt=marker,
+            color=color,
+            markersize=markersize,
+            markeredgecolor="black",
+            markeredgewidth=0.5,
+            ecolor=error_color,
+            elinewidth=error_linewidth,
+            capsize=3,
+            label=label + field_info,
+            zorder=10,
         )
-        
+
         # Update legend
-        ax.legend(loc='best', framealpha=0.9)
-        
+        ax.legend(loc="best", framealpha=0.9)
+
         return fig, ax, img if img is not None else ax.images[0] if ax.images else None
-    
-    def _replicate_experimental_points(
+
+    def _replicate_experimental_points_legacy(
         self,
         positions: np.ndarray,
         fres: np.ndarray,
         fres_err: np.ndarray,
-        folding: float
+        folding: float,
     ) -> tuple:
         """Replicate experimental points to fill folding period with mirroring.
-        
+
         Parameters
         ----------
         positions : np.ndarray
@@ -1258,7 +1377,7 @@ class BatchTransmissionResult:
             Frequency errors
         folding : float
             Folding period
-            
+
         Returns
         -------
         tuple
@@ -1267,15 +1386,15 @@ class BatchTransmissionResult:
         pos_min = positions.min()
         pos_max = positions.max()
         original_span = pos_max - pos_min
-        
+
         # Determine number of replications needed
         n_copies = int(np.ceil(folding / original_span))
-        
+
         # Collect replicated data
         pos_list = []
         fres_list = []
         fres_err_list = []
-        
+
         for i in range(n_copies):
             if i % 2 == 0:
                 # Forward copy
@@ -1283,14 +1402,14 @@ class BatchTransmissionResult:
             else:
                 # Mirrored copy (backward)
                 new_pos = 2 * (i * original_span + pos_min) - positions + original_span
-            
+
             # Only keep points within [0, folding]
             mask = (new_pos >= 0) & (new_pos < folding)
             if np.any(mask):
                 pos_list.append(new_pos[mask])
                 fres_list.append(fres[mask])
                 fres_err_list.append(fres_err[mask])
-        
+
         # Concatenate all copies
         if len(pos_list) > 0:
             positions_rep = np.concatenate(pos_list)
@@ -1300,34 +1419,34 @@ class BatchTransmissionResult:
             positions_rep = positions
             fres_rep = fres
             fres_err_rep = fres_err
-        
+
         return positions_rep, fres_rep, fres_err_rep
 
     def plot_transmission_crosssection_heatmap_difference(
         self,
-        other: "BatchTransmissionResult",
+        other: BatchTransmissionResult,
         swapping_parameter: str,
         x: float,
-        x_width: Optional[float] = None,
+        x_width: float | None = None,
         freq_unit: str = "GHz",
         trim_0f: int = 0,
-        fmin: Optional[float] = None,
-        fmax: Optional[float] = None,
-        normalize: Union[bool, str] = "per_column",
+        fmin: float | None = None,
+        fmax: float | None = None,
+        normalize: bool | str = "per_column",
         cmap: str = "coolwarm",
-        ax: Optional[Axes] = None,
+        ax: Axes | None = None,
         flip: bool = False,
         disable_averaging: bool = False,
         interpolation: str = "nearest",
         param_scale: float = 1.0,
-        param_label: Optional[str] = None,
-        title: Optional[str] = None,
+        param_label: str | None = None,
+        title: str | None = None,
         figsize: tuple = (10, 6),
         dpi: int = 100,
         symmetric_clim: bool = True,
-        vmin: Optional[float] = None,
-        vmax: Optional[float] = None,
-        colorbar_label: Optional[str] = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        colorbar_label: str | None = None,
         verbose: bool = False,
         align_strategy: str = "auto",
         atol: float = 1e-9,
@@ -1399,7 +1518,7 @@ class BatchTransmissionResult:
             matched_vals = []
             used_b = set()
             for i, val in enumerate(params_a):
-                candidates = np.where(
+                candidates: Any = np.where(
                     np.isclose(val, params_b, atol=atol_match, rtol=rtol_match)
                 )[0]
                 candidates = [c for c in candidates if c not in used_b]
@@ -1453,34 +1572,12 @@ class BatchTransmissionResult:
             target_freq: np.ndarray,
         ) -> np.ndarray:
             """Interpolate heatmap rows onto target_freq (handles flipped axes)."""
-            source_freq_arr = np.asarray(source_freq)
-            target_freq_arr = np.asarray(target_freq)
-
-            source_desc = np.any(np.diff(source_freq_arr) < 0)
-            target_desc = np.any(np.diff(target_freq_arr) < 0)
-
-            if source_desc:
-                source_freq_arr = source_freq_arr[::-1]
-                source_data = source_data[:, ::-1]
-            if target_desc:
-                target_freq_arr = target_freq_arr[::-1]
-
-            interpolated = np.array(
+            return np.array(
                 [
-                    np.interp(
-                        target_freq_arr,
-                        source_freq_arr,
-                        row,
-                        left=0.0,
-                        right=0.0,
-                    )
+                    _interpolate_frequency_series(source_freq, row, target_freq)
                     for row in source_data
                 ]
             )
-
-            if target_desc:
-                interpolated = interpolated[:, ::-1]
-            return interpolated
 
         freq_target = freq_a
         heatmap_b_aligned = heatmap_b
@@ -1497,18 +1594,19 @@ class BatchTransmissionResult:
         diff_data = heatmap_a - heatmap_b_aligned
         plot_data = diff_data.T
 
+        fig: Any = None
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         else:
             fig = ax.figure
             fig.set_dpi(dpi)
 
-        extent = [
+        extent = (
             param_values_scaled_a.min(),
             param_values_scaled_a.max(),
             freq_target.min(),
             freq_target.max(),
-        ]
+        )
 
         if symmetric_clim and vmin is None and vmax is None:
             abs_max = np.nanmax(np.abs(plot_data))
@@ -1536,7 +1634,7 @@ class BatchTransmissionResult:
             fontsize=12,
         )
 
-        default_title = f"Difference heatmap (batch1 - batch2) at x={x*1e9:.1f} nm"
+        default_title = f"Difference heatmap (batch1 - batch2) at x={x * 1e9:.1f} nm"
         ax.set_title(title or default_title, fontsize=14)
 
         if colorbar_label is not None:
@@ -1558,19 +1656,19 @@ class BatchTransmissionResult:
         swapping_parameter: str,
         param_value: float,
         x: float,
-        x_width: Optional[float] = None,
+        x_width: float | None = None,
         freq_unit: str = "GHz",
         trim_0f: int = 0,
-        fmin: Optional[float] = None,
-        fmax: Optional[float] = None,
+        fmin: float | None = None,
+        fmax: float | None = None,
         normalize: bool = False,
         flip: bool = False,
         log_scale: bool = False,
-        ax: Optional[Axes] = None,
-        mark_on_ax: Optional[Axes] = None,
+        ax: Axes | None = None,
+        mark_on_ax: Axes | None = None,
         disable_averaging: bool = False,
-        find_minima: Optional[dict] = None,
-        legend: Union[bool, dict] = False,
+        find_minima: dict | None = None,
+        legend: bool | dict = False,
         figsize: tuple = (10, 6),
         dpi: int = 100,
         verbose: bool = False,
@@ -1656,7 +1754,7 @@ class BatchTransmissionResult:
 
         # Get parameter values and find closest match
         param_values = self.get_parameter_values(swapping_parameter)
-        
+
         if len(param_values) == 0:
             raise ValueError(
                 f"No values found for parameter '{swapping_parameter}'. "
@@ -1666,9 +1764,12 @@ class BatchTransmissionResult:
         # Find closest matching parameter value
         param_index = np.argmin(np.abs(param_values - param_value))
         actual_param_value = param_values[param_index]
-        
+
         # Check if match is within tolerance
-        if abs(actual_param_value - param_value) / (abs(param_value) + 1e-15) > param_tolerance:
+        if (
+            abs(actual_param_value - param_value) / (abs(param_value) + 1e-15)
+            > param_tolerance
+        ):
             if verbose:
                 print(
                     f"  Note: Requested {swapping_parameter}={param_value}, "
@@ -1676,9 +1777,9 @@ class BatchTransmissionResult:
                 )
 
         if verbose:
-            print(f"\n{'='*60}")
-            print(f"🔍 plot_batch_crosssection()")
-            print(f"{'='*60}")
+            print(f"\n{'=' * 60}")
+            print("🔍 plot_batch_crosssection()")
+            print(f"{'=' * 60}")
             print(f"  swapping_parameter: {swapping_parameter}")
             print(f"  param_value requested: {param_value}")
             print(f"  param_value found: {actual_param_value} (index {param_index})")
@@ -1706,7 +1807,7 @@ class BatchTransmissionResult:
             "legend": legend,
             **kwargs,
         }
-        
+
         # Only pass figsize/dpi when creating new figure
         if ax is None:
             call_kwargs["figsize"] = figsize
@@ -1719,10 +1820,10 @@ class BatchTransmissionResult:
         self,
         result: TransmissionResult,
         x: float,
-        x_width: Optional[float],
+        x_width: float | None,
         trim_0f: int,
-        fmin: Optional[float],
-        fmax: Optional[float],
+        fmin: float | None,
+        fmax: float | None,
         freq_unit: str,
         normalize: bool,
         flip: bool,
@@ -1774,7 +1875,7 @@ class BatchTransmissionResult:
         x_positions = result.x_positions
 
         if verbose:
-            print(f"\n  _extract_crosssection():")
+            print("\n  _extract_crosssection():")
             print(f"    transmission.shape: {transmission.shape}")
             print(
                 f"    x_positions range: [{x_positions.min():.1f}, {x_positions.max():.1f}] nm"
@@ -1817,11 +1918,13 @@ class BatchTransmissionResult:
             if num_points == 0:
                 import warnings
 
-                min_width = (result.dx * 1e9) if getattr(result, "dx", None) else 1.0
+                dx_value = getattr(result, "dx", None)
+                min_width = float(dx_value) * 1e9 if dx_value is not None else 1.0
                 warnings.warn(
                     f"x_width={x_width} nm is too small (no points in range). "
                     f"Using single point at x={actual_x:.1f}. Try x_width >= {min_width:.1f} nm.",
                     UserWarning,
+                    stacklevel=2,
                 )
                 cross_section = transmission[:, x_index]
             elif num_points == 1:
@@ -1881,7 +1984,7 @@ class BatchTransmissionResult:
             if max_val > 0:
                 cross_section = cross_section / max_val
             if verbose:
-                print(f"    normalized to [0, 1]")
+                print("    normalized to [0, 1]")
 
         # Flip if requested
         if flip:
@@ -1908,10 +2011,10 @@ class BatchTransmission:
 
     def __init__(
         self,
-        results: List[Any],
+        results: list[Any],
         mmpp_ref: Any,
-        dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
+        dataset_name: str | None = None,
+        slice_info: Any | None = None,
     ):
         """Initialize batch transmission processor.
 
@@ -1930,21 +2033,21 @@ class BatchTransmission:
         self.mmpp_ref = mmpp_ref
         self.dataset_name = dataset_name
         self.slice_info = slice_info
-    
+
     def __call__(self, **kwargs) -> BatchTransmissionResult:
         """Allow calling BatchTransmission directly as a function.
-        
+
         This enables the syntax:
             job[:].m_layer13[...].fft.transmission(...)
-        
+
         Instead of requiring:
             job[:].m_layer13[...].fft.transmission.compute_all(...)
-        
+
         Parameters
         ----------
         **kwargs
             All arguments are forwarded to compute_all()
-            
+
         Returns
         -------
         BatchTransmissionResult
@@ -1954,18 +2057,18 @@ class BatchTransmission:
 
     def compute_all(
         self,
-        config: Optional[TransmissionConfig] = None,
-        dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
+        config: TransmissionConfig | None = None,
+        dataset_name: str | None = None,
+        slice_info: Any | None = None,
         parallel: bool = True,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         use_cache: bool = True,
         save: bool = False,
         force: bool = False,
-        cache_path: Optional[Union[str, Path]] = None,
-        extract_parameters: Optional[List[str]] = None,
+        cache_path: str | Path | None = None,
+        extract_parameters: list[str] | None = None,
         save_batch: bool = True,
-        batch_cache_dir: Optional[Union[str, Path]] = None,
+        batch_cache_dir: str | Path | None = None,
         **kwargs,
     ) -> BatchTransmissionResult:
         """Compute transmission for all results in batch.
@@ -2044,17 +2147,37 @@ class BatchTransmission:
             # Common simulation parameters - extended list for various naming conventions
             extract_parameters = [
                 # Magnetic field
-                "B0", "Bext", "bex", "bias_field", "applied_field",
+                "B0",
+                "Bext",
+                "bex",
+                "bias_field",
+                "applied_field",
                 # Geometry
-                "d", "diameter", "thickness", "t",
-                "p", "period", "latticeconst", "a",
-                "w", "width", "L", "length",
+                "d",
+                "diameter",
+                "thickness",
+                "t",
+                "p",
+                "period",
+                "latticeconst",
+                "a",
+                "w",
+                "width",
+                "L",
+                "length",
                 # Material
-                "Ms", "alpha", "A_ex", "K_u",
+                "Ms",
+                "alpha",
+                "A_ex",
+                "K_u",
                 # Excitation
-                "f_exc", "freq", "frequency",
+                "f_exc",
+                "freq",
+                "frequency",
                 # Other
-                "frozen", "vort", "vorticity",
+                "frozen",
+                "vort",
+                "vorticity",
             ]
 
         # Build config from kwargs if not provided
@@ -2108,10 +2231,11 @@ class BatchTransmission:
         failed = 0
         errors = []
         computed_results = []
+        successful_records = []
         computation_times = []
 
         # Initialize parameter storage
-        parameters: Dict[str, List[Any]] = {param: [] for param in extract_parameters}
+        parameters: dict[str, list[Any]] = {param: [] for param in extract_parameters}
         job_paths = []
 
         def compute_single_result(result_info):
@@ -2141,7 +2265,7 @@ class BatchTransmission:
                 # Compute transmission - pass config only, not kwargs
                 # (kwargs were already used to create config above)
                 trans_result = transmission_interface.compute(
-                    config,
+                    copy.deepcopy(config),
                     use_cache=use_cache,
                     save=save,
                     force=force,
@@ -2162,6 +2286,7 @@ class BatchTransmission:
                 computation_time = time.time() - start_time
 
                 return {
+                    "index": i,
                     "success": True,
                     "result": trans_result,
                     "path": result.path,
@@ -2176,6 +2301,7 @@ class BatchTransmission:
                 # Cleanup after error
                 gc.collect()
                 return {
+                    "index": i,
                     "success": False,
                     "result": None,
                     "path": result.path,
@@ -2188,6 +2314,7 @@ class BatchTransmission:
                 gc.collect()
 
         # Execute computations
+        iterator: Any
         if parallel and len(self.results) > 1:
             # Use ThreadPoolExecutor - numpy/scipy FFT releases GIL so this works well
             if max_workers is None:
@@ -2206,8 +2333,9 @@ class BatchTransmission:
 
                 # Process completed tasks with progress bar
                 try:
-                    from mmpp.core.mmpp import _running_in_ipython_kernel
                     from tqdm import tqdm
+
+                    from mmpp.core.mmpp import _running_in_ipython_kernel
 
                     if _running_in_ipython_kernel():
                         iterator = as_completed(future_to_result)
@@ -2227,26 +2355,24 @@ class BatchTransmission:
 
                     if result_data["success"]:
                         successful += 1
-                        computed_results.append(result_data["result"])
-                        job_paths.append(result_data["path"])
-
-                        # Collect parameters
-                        for param_name, param_value in result_data[
-                            "parameters"
-                        ].items():
-                            parameters[param_name].append(param_value)
+                        successful_records.append(result_data)
                     else:
                         failed += 1
                         errors.append(
-                            {"path": result_data["path"], "error": result_data["error"]}
+                            {
+                                "index": result_data["index"],
+                                "path": result_data["path"],
+                                "error": result_data["error"],
+                            }
                         )
         else:
             # Sequential execution
             log.info("Using sequential execution")
 
             try:
-                from mmpp.core.mmpp import _running_in_ipython_kernel
                 from tqdm import tqdm
+
+                from mmpp.core.mmpp import _running_in_ipython_kernel
 
                 if _running_in_ipython_kernel():
                     iterator = enumerate(self.results)
@@ -2266,16 +2392,15 @@ class BatchTransmission:
 
                 if result_data["success"]:
                     successful += 1
-                    computed_results.append(result_data["result"])
-                    job_paths.append(result_data["path"])
-
-                    # Collect parameters
-                    for param_name, param_value in result_data["parameters"].items():
-                        parameters[param_name].append(param_value)
+                    successful_records.append(result_data)
                 else:
                     failed += 1
                     errors.append(
-                        {"path": result_data["path"], "error": result_data["error"]}
+                        {
+                            "index": result_data["index"],
+                            "path": result_data["path"],
+                            "error": result_data["error"],
+                        }
                     )
 
         # Compute statistics
@@ -2291,6 +2416,15 @@ class BatchTransmission:
             log.warning(f"Errors occurred in {len(errors)} computations:")
             for error in errors[:5]:  # Show first 5 errors
                 log.warning(f"  {error['path']}: {error['error']}")
+
+        successful_records.sort(key=lambda record: int(record["index"]))
+        errors.sort(key=lambda record: int(record["index"]))
+        computed_results = [record["result"] for record in successful_records]
+        job_paths = [record["path"] for record in successful_records]
+        parameters = {
+            param: [record["parameters"].get(param) for record in successful_records]
+            for param in extract_parameters
+        }
 
         # Clean up parameters - remove those with all None values
         parameters = {
@@ -2310,6 +2444,7 @@ class BatchTransmission:
             results=computed_results,
             parameters=parameters,
             job_paths=job_paths,
+            errors=errors,
         )
 
         # Save batch result if requested
@@ -2325,9 +2460,9 @@ class BatchTransmission:
     def _generate_batch_cache_hash(
         self,
         config: TransmissionConfig,
-        dataset_name: Optional[str],
-        slice_info: Optional[Any],
-        extract_parameters: List[str],
+        dataset_name: str | None,
+        slice_info: Any | None,
+        extract_parameters: list[str],
     ) -> str:
         """Generate a unique hash for batch cache identification.
 
@@ -2355,8 +2490,9 @@ class BatchTransmission:
         """
         # Collect all hashable data
         hash_data = {
-            # Job paths (sorted for consistency)
-            "job_paths": sorted([str(r.path) for r in self.results]),
+            # Input order is part of the public BatchTransmissionResult contract.
+            "job_paths": [str(r.path) for r in self.results],
+            "source_states": [_source_state_signature(r.path) for r in self.results],
             "n_jobs": len(self.results),
             # Config parameters (convert dataclass to dict)
             "config": {
@@ -2380,6 +2516,7 @@ class BatchTransmission:
                 "keep_complex_fft": config.keep_complex_fft,
                 "store_component_maps": config.store_component_maps,
                 "raw_fft_output": config.raw_fft_output,
+                "metadata": config.metadata,
             },
             # Dataset context
             "dataset_name": dataset_name,
@@ -2398,7 +2535,7 @@ class BatchTransmission:
 
 
 def stack_results(
-    results: Union[List[TransmissionResult], BatchTransmissionResult],
+    results: list[TransmissionResult] | BatchTransmissionResult,
     field: str = "transmission",
 ) -> np.ndarray:
     """Stack transmission results into a single ndarray.
@@ -2448,8 +2585,7 @@ def stack_results(
         data = getattr(result, field)
         if data.shape != ref_shape:
             raise ValueError(
-                f"Shape mismatch at result {i}: "
-                f"expected {ref_shape}, got {data.shape}"
+                f"Shape mismatch at result {i}: expected {ref_shape}, got {data.shape}"
             )
 
         # Check frequency/position consistency

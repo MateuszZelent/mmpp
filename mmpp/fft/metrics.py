@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -33,7 +34,7 @@ def _as_float_array(data: Iterable[float]) -> np.ndarray:
 
 def compute_half_width_at_half_max(
     frequencies: Iterable[float], values: Iterable[float]
-) -> Optional[PeakWidth]:
+) -> PeakWidth | None:
     """
     Compute the half-width at half-maximum (FWHM) for the dominant peak.
 
@@ -139,7 +140,7 @@ def format_width_value(width_ghz: float) -> str:
     return f"{width_ghz * 1e9:.1f} Hz"
 
 
-def normalize_peak_width_option(value: Any) -> Tuple[bool, str]:
+def normalize_peak_width_option(value: Any) -> tuple[bool, str]:
     """Resolve user input for peak-width annotation requests."""
 
     default_label = "FWHM"

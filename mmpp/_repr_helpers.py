@@ -15,6 +15,7 @@ import inspect
 import re
 from collections.abc import Sequence
 from html import escape as _esc
+from typing import Any
 
 __all__ = [
     "NODE_COLOR_COMPUTE",
@@ -502,7 +503,7 @@ def html_tabs(tabs: Sequence[tuple[str, str]], *, uid: str) -> str:
     panel_ids = [f"{uid}-panel-{idx}" for idx, _ in enumerate(tabs)]
     button_ids = [f"{uid}-tab-{idx}" for idx, _ in enumerate(tabs)]
     for idx, ((label, body), panel_id, button_id) in enumerate(
-        zip(tabs, panel_ids, button_ids)
+        zip(tabs, panel_ids, button_ids, strict=False)
     ):
         active = idx == 0
         show_panels = ";".join(
@@ -607,7 +608,7 @@ def _public_callables(
     return out
 
 
-def _signature_text(func: object) -> str:
+def _signature_text(func: Any) -> str:
     try:
         sig = str(inspect.signature(func))
     except Exception:
@@ -625,7 +626,7 @@ def _summary_text(func: object) -> str:
     return first or "No docstring summary available."
 
 
-def _example_for(prefix: str, name: str, func: object) -> str:
+def _example_for(prefix: str, name: str, func: Any) -> str:
     call_args = ""
     params = []
     try:

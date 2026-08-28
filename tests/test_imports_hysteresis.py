@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from mmpp.analyze.hysteresis.animation import create_animation as create_animation_hysteresis
+from mmpp.analyze.hysteresis.animation import (
+    create_animation as create_animation_hysteresis,
+)
 from mmpp.analyze.hysteresis.compat import dependency_report
 from mmpp.analyze.hysteresis.metrics.registry import (
     get_registered_metric,

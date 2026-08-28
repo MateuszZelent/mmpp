@@ -39,7 +39,7 @@ class MetricsAccessor:
 
     def __init__(self, result):
         self._result = result
-        self._cache: dict[str, Any] = {}
+        self._cache: dict[Any, Any] = {}
 
     @property
     def _field(self) -> np.ndarray:
@@ -317,7 +317,7 @@ class MetricsAccessor:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;\">"
+            'color:#e2e8f0;">'
             "<div style='font-size:1.03em;font-weight:600;color:#f1f5f9;'>Hysteresis Metrics</div>"
             "<div style='margin-top:6px;color:#94a3b8;font-size:0.9em;'>"
             f"Registered plugin metrics: {plugin_count}</div>"

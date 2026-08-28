@@ -33,7 +33,9 @@ def classify_gc_states(
     return labels.astype("<U8"), normalized
 
 
-def _estimate_min_dwell_time(trajectory: TrajectoryResult, min_dwell_periods: int) -> float:
+def _estimate_min_dwell_time(
+    trajectory: TrajectoryResult, min_dwell_periods: int
+) -> float:
     if trajectory.time.size < 2:
         return 0.0
     dt = float(np.median(np.diff(np.asarray(trajectory.time, dtype=float))))
@@ -130,7 +132,13 @@ def detect_state_switches(
             continue
         last_time = t
 
-        conf = float(np.mean(confidence[max(0, curr_start - 1) : min(curr_start + 1, confidence.size)]))
+        conf = float(
+            np.mean(
+                confidence[
+                    max(0, curr_start - 1) : min(curr_start + 1, confidence.size)
+                ]
+            )
+        )
         events.append(
             StateSwitchEvent(
                 time=t,
@@ -139,9 +147,15 @@ def detect_state_switches(
                 to_state=curr_label,
                 confidence=conf,
                 metadata={
-                    "radius_before_norm": float(np.mean(normalized_radius[prev_start : prev_end + 1])),
+                    "radius_before_norm": float(
+                        np.mean(normalized_radius[prev_start : prev_end + 1])
+                    ),
                     "radius_after_norm": float(
-                        np.mean(normalized_radius[curr_start : min(curr_start + 3, normalized_radius.size)])
+                        np.mean(
+                            normalized_radius[
+                                curr_start : min(curr_start + 3, normalized_radius.size)
+                            ]
+                        )
                     ),
                     "min_dwell_time": float(min_dwell_time),
                 },

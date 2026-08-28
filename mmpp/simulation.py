@@ -5,9 +5,10 @@ import os
 import re
 import subprocess
 import time
-from typing import Any, Optional, Union
-import yaml
+from collections.abc import Callable
+from typing import Any
 
+import yaml  # type: ignore[import-untyped]
 import zarr
 
 # Import shared logging configuration optimized for dark themes
@@ -56,7 +57,7 @@ class SimulationManager:
         return False
 
     @staticmethod
-    def find_status_file(path: str, sim_name: str, status: str) -> Optional[str]:
+    def find_status_file(path: str, sim_name: str, status: str) -> str | None:
         """Locate a status file based on its name and type."""
         pattern = re.compile(rf"{sim_name}\.mx3_status\.{status}.*")
         for file in os.listdir(path):
@@ -117,13 +118,13 @@ class SimulationManager:
     def submit_python_code(
         self,
         code_to_execute: str,
-        last_param_name: Optional[str] = None,
+        last_param_name: str | None = None,
         cleanup: bool = False,
         sbatch: bool = True,
         check: bool = False,
         force: bool = False,
         full_name: bool = False,
-        **kwargs: Union[str, float, int],
+        **kwargs: str | float | int,
     ) -> None:
         """
         Submit a Python simulation based on provided parameters.
@@ -335,7 +336,7 @@ fi
 
     @staticmethod
     def replace_variables_in_template(
-        file_path: str, variables: dict[str, Union[str, float, int]]
+        file_path: str, variables: dict[str, str | float | int]
     ) -> str:
         """Replace placeholders in a template file with actual values."""
         with open(file_path) as file:
@@ -345,7 +346,7 @@ fi
         return content
 
     @staticmethod
-    def raw_code(*args: Any, **kwargs: Union[str, float, int]) -> str:
+    def raw_code(*args: Any, **kwargs: str | float | int) -> str:
         """Generate the raw code by filling in a template with parameters."""
         import os
 
@@ -358,7 +359,7 @@ fi
         params: dict[str, Any],  # Changed from np.ndarray to Any to accept numpy arrays
         last_param_name: str,
         minsim: int = 0,
-        maxsim: Optional[int] = None,
+        maxsim: int | None = None,
         sbatch: bool = True,
         cleanup: bool = False,
         template: str = "template.mx3",
@@ -374,17 +375,18 @@ fi
         """
         param_names = list(params.keys())
 
+        value_sets: Any
         if pairs:
             # Check that all parameter arrays have the same length
             param_lengths = [len(params[name]) for name in param_names]
             if len(set(param_lengths)) != 1:
                 raise ValueError(
                     "When using pairs=True, all parameter arrays must have the same length. "
-                    f"Found lengths: {dict(zip(param_names, param_lengths))}"
+                    f"Found lengths: {dict(zip(param_names, param_lengths, strict=False))}"
                 )
 
             # Zip parameter values instead of computing product
-            value_sets = zip(*[params[name] for name in param_names])
+            value_sets = zip(*[params[name] for name in param_names], strict=False)
         else:
             # Original behavior - compute Cartesian product
             value_sets = itertools.product(*params.values())
@@ -395,8 +397,12 @@ fi
             if maxsim is not None and i >= maxsim:
                 break
 
-            kwargs = {"prefix": self.prefix, "i": i, "template": template}
-            for name, value in zip(param_names, values):
+            kwargs: dict[str, Any] = {
+                "prefix": self.prefix,
+                "i": i,
+                "template": template,
+            }
+            for name, value in zip(param_names, values, strict=False):
                 kwargs[name] = value
 
             time.sleep(1)
@@ -416,20 +422,21 @@ fi
         params: dict[str, Any],
         last_param_name: str,
         minsim: int = 0,
-        maxsim: Optional[int] = None,
+        maxsim: int | None = None,
         sbatch: bool = True,
         cleanup: bool = False,
         template: str = "template.mx3",
         check: bool = False,
         force: bool = False,
         pairs: bool = False,
-        progress_callback: Optional[callable] = None,
+        progress_callback: Callable[..., Any] | None = None,
     ) -> None:
         """Submit all simulations with progress tracking and organized folder structure."""
-        import os
         import itertools
+        import os
 
         param_names = list(params.keys())
+        value_sets: Any
 
         if pairs:
             # Check that all parameter arrays have the same length
@@ -437,10 +444,10 @@ fi
             if len(set(param_lengths)) != 1:
                 raise ValueError(
                     "When using pairs=True, all parameter arrays must have the same length. "
-                    f"Found lengths: {dict(zip(param_names, param_lengths))}"
+                    f"Found lengths: {dict(zip(param_names, param_lengths, strict=False))}"
                 )
             # Zip parameter values instead of computing product
-            value_sets = zip(*[params[name] for name in param_names])
+            value_sets = zip(*[params[name] for name in param_names], strict=False)
         else:
             # Original behavior - compute Cartesian product
             value_sets = itertools.product(*params.values())
@@ -455,10 +462,14 @@ fi
             if maxsim is not None and i >= maxsim:
                 break
 
-            kwargs = {"prefix": self.prefix, "i": i, "template": template}
+            kwargs: dict[str, Any] = {
+                "prefix": self.prefix,
+                "i": i,
+                "template": template,
+            }
             param_folder_parts = []
 
-            for name, value in zip(param_names, values):
+            for name, value in zip(param_names, values, strict=False):
                 kwargs[name] = value
                 # Create folder-friendly parameter representation
                 param_str = f"{name}_{str(value).replace('.', 'p').replace('-', 'neg')}"
@@ -485,7 +496,7 @@ fi
             with open(param_info_file, "w") as f:
                 f.write(f"Simulation {i:04d}\n")
                 f.write("=" * 20 + "\n")
-                for name, value in zip(param_names, values):
+                for name, value in zip(param_names, values, strict=False):
                     f.write(f"{name}: {value}\n")
                 f.write(f"\nGenerated from template: {template}\n")
                 f.write(f"Prefix: {self.prefix}\n")
@@ -897,7 +908,7 @@ class TemplateParser:
 
     def generate_yaml_template(
         self,
-        last_param: Optional[str] = None,
+        last_param: str | None = None,
         prefix: str = "v1",
         template_name: str = "template.mx3",
     ) -> str:

@@ -10,8 +10,8 @@ from mmpp._repr_helpers import (
     NODE_COLOR_ANALYSIS,
     NODE_COLOR_COMPUTE,
     NODE_COLOR_PLOT,
-    api_help_html,
     accessors_section_html,
+    api_help_html,
     examples_section_html,
     metrics_section_html,
     node_card_html,
@@ -32,7 +32,7 @@ class AnalyzeInterface:
         self._mmpp = mmpp_instance
         self._dataset_name = dataset_name
         self._slice_info = slice_info
-        self._hysteresis = None
+        self._hysteresis: Any | None = None
 
     @property
     def hysteresis(self):

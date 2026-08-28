@@ -57,7 +57,9 @@ def get_current_params(explorer: Any) -> dict:
         "pre_hann_time": bool(explorer.w_pre_hann_time.value),
         "pre_hann_space": bool(explorer.w_pre_hann_space.value),
         "pre_envelope_enabled": bool(explorer.w_pre_envelope_enabled.value),
-        "pre_envelope_threshold_std": float(explorer.w_pre_envelope_threshold_std.value),
+        "pre_envelope_threshold_std": float(
+            explorer.w_pre_envelope_threshold_std.value
+        ),
         "pre_envelope_margin": int(explorer.w_pre_envelope_margin.value),
         "pre_wavelet_enabled": bool(explorer.w_pre_wavelet_enabled.value),
         "pre_wavelet_level": int(explorer.w_pre_wavelet_level.value),
@@ -83,7 +85,9 @@ def get_current_params(explorer: Any) -> dict:
         "live_percentile_enabled": bool(explorer.w_live_percentile_enabled.value),
         "live_percentile_low": float(explorer.w_live_percentile_low.value),
         "live_percentile_high": float(explorer.w_live_percentile_high.value),
-        "live_soft_threshold_enabled": bool(explorer.w_live_soft_threshold_enabled.value),
+        "live_soft_threshold_enabled": bool(
+            explorer.w_live_soft_threshold_enabled.value
+        ),
         "live_soft_percentile": float(explorer.w_live_soft_percentile.value),
         "live_soft_smoothness": float(explorer.w_live_soft_smoothness.value),
     }
@@ -169,7 +173,9 @@ def apply_params(explorer: Any, params: dict) -> None:
     if "pre_equalize_enabled" in params:
         explorer.w_pre_equalize_enabled.value = bool(params["pre_equalize_enabled"])
     if "pre_compression_enabled" in params:
-        explorer.w_pre_compression_enabled.value = bool(params["pre_compression_enabled"])
+        explorer.w_pre_compression_enabled.value = bool(
+            params["pre_compression_enabled"]
+        )
     if "pre_compression_alpha" in params:
         explorer.w_pre_compression_alpha.value = float(params["pre_compression_alpha"])
     if "pre_welch_enabled" in params:
@@ -205,13 +211,17 @@ def apply_params(explorer: Any, params: dict) -> None:
     if "live_unsharp_alpha" in params:
         explorer.w_live_unsharp_alpha.value = float(params["live_unsharp_alpha"])
     if "live_percentile_enabled" in params:
-        explorer.w_live_percentile_enabled.value = bool(params["live_percentile_enabled"])
+        explorer.w_live_percentile_enabled.value = bool(
+            params["live_percentile_enabled"]
+        )
     if "live_percentile_low" in params:
         explorer.w_live_percentile_low.value = float(params["live_percentile_low"])
     if "live_percentile_high" in params:
         explorer.w_live_percentile_high.value = float(params["live_percentile_high"])
     if "live_soft_threshold_enabled" in params:
-        explorer.w_live_soft_threshold_enabled.value = bool(params["live_soft_threshold_enabled"])
+        explorer.w_live_soft_threshold_enabled.value = bool(
+            params["live_soft_threshold_enabled"]
+        )
     if "live_soft_percentile" in params:
         explorer.w_live_soft_percentile.value = float(params["live_soft_percentile"])
     if "live_soft_smoothness" in params:
@@ -310,13 +320,13 @@ def on_save_preset(explorer: Any, _evt: Any, logger: Any) -> None:
     """Save current parameters as a preset from UI callback."""
     preset_name = explorer.w_preset_name.value.strip()
     if not preset_name:
-        explorer.w_info.value = "<small style='color:orange'>⚠️ Enter preset name</small>"
+        explorer.w_info.value = (
+            "<small style='color:orange'>⚠️ Enter preset name</small>"
+        )
         return
 
     if save_preset(explorer, preset_name, logger):
-        explorer.w_info.value = (
-            f"<small style='color:green'>✅ Saved to .mmpp_presets/{preset_name}.json</small>"
-        )
+        explorer.w_info.value = f"<small style='color:green'>✅ Saved to .mmpp_presets/{preset_name}.json</small>"
         refresh_preset_dropdown(explorer, logger)
         explorer.w_preset_name.value = ""
     else:
@@ -353,7 +363,9 @@ def on_delete_preset(explorer: Any, _evt: Any, logger: Any) -> None:
         return
 
     if delete_preset(explorer, preset_name, logger):
-        explorer.w_info.value = f"<small style='color:green'>✅ Deleted '{preset_name}'</small>"
+        explorer.w_info.value = (
+            f"<small style='color:green'>✅ Deleted '{preset_name}'</small>"
+        )
         refresh_preset_dropdown(explorer, logger)
         explorer.w_preset_load.value = ""
     else:
@@ -367,9 +379,7 @@ def on_refresh_presets(explorer: Any, _evt: Any, logger: Any) -> None:
     refresh_preset_dropdown(explorer, logger)
     presets_dir = get_presets_dir(explorer, logger)
     count = len(list_presets(explorer, logger))
-    explorer.w_info.value = (
-        f"<small style='color:green'>✅ Found {count} preset(s) in {presets_dir.name}/</small>"
-    )
+    explorer.w_info.value = f"<small style='color:green'>✅ Found {count} preset(s) in {presets_dir.name}/</small>"
 
 
 __all__ = [

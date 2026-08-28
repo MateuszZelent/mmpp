@@ -28,7 +28,9 @@ def _to_scalar(value: Any) -> float:
     return float("nan")
 
 
-def _single_valued_curve(field: np.ndarray, magnetization: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _single_valued_curve(
+    field: np.ndarray, magnetization: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     order = np.argsort(np.asarray(field, dtype=float))
     f_sorted = np.asarray(field, dtype=float)[order]
     m_sorted = np.asarray(magnetization, dtype=float)[order]
@@ -89,7 +91,7 @@ class HysteresisComparison:
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "border:2px solid #334155;border-radius:12px;padding:14px;margin:8px 0;"
             "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;\">"
+            'color:#e2e8f0;">'
             f"<div style='font-size:1.03em;font-weight:600;color:#f1f5f9;'>Comparison: {left_label} vs {right_label}</div>"
             "<table style='width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;'>"
             "<thead><tr style='text-align:left;background:rgba(51,65,85,0.6);'>"
@@ -107,7 +109,9 @@ class HysteresisComparisonPlotAccessor:
     def __init__(self, comparison: HysteresisComparison):
         self._comparison = comparison
 
-    def overlay(self, *, ax=None, figsize: tuple[float, float] = (7.5, 5.0), dpi: int = 120):
+    def overlay(
+        self, *, ax=None, figsize: tuple[float, float] = (7.5, 5.0), dpi: int = 120
+    ):
         if not _HAS_MPL:
             raise ImportError("Matplotlib is required for comparison plotting")
 
@@ -149,7 +153,9 @@ class HysteresisComparisonPlotAccessor:
         lo = max(float(np.min(f1)), float(np.min(f2)))
         hi = min(float(np.max(f1)), float(np.max(f2)))
         if hi <= lo:
-            raise ValueError("Field ranges do not overlap - cannot compute M(B) difference")
+            raise ValueError(
+                "Field ranges do not overlap - cannot compute M(B) difference"
+            )
 
         grid = np.linspace(lo, hi, int(max(50, n_grid)))
         interp1 = np.interp(grid, f1, m1)

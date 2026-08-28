@@ -6,14 +6,20 @@ from typing import Any
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from .._cache import InMemoryResultCache, build_cache_key
 from ..config import VortexConfig
 from .detection import detect_topology
 from .models import TopologyResult
 
 
-class TopologyInterface:
+class TopologyInterface(InteractiveNodeMixin):
     """Topology analysis for a dataset-backed vortex signal."""
+
+    _interactive_owner = "job[0].vortex.topology"
+    _interactive_nodes = frozenset(
+        {"detect", "polarity", "chirality", "winding_number", "topological_charge"}
+    )
 
     def __init__(
         self,
@@ -42,7 +48,10 @@ class TopologyInterface:
         return self._dataset_name
 
     def _resolve_dataset_array(self) -> np.ndarray:
-        dataset = getattr(self._job, self.dataset_name)
+        dataset_name = self.dataset_name
+        if dataset_name is None:
+            raise ValueError("No dataset selected")
+        dataset = getattr(self._job, dataset_name)
         if self._slice_info is not None:
             dataset = dataset[self._slice_info]
         return np.asarray(dataset.numpy(copy=False), dtype=float)
@@ -141,7 +150,6 @@ class TopologyInterface:
 
     def _repr_html_(self) -> str:
         import uuid as _uuid
-
         from html import escape as _esc
 
         from mmpp._repr_helpers import (

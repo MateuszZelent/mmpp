@@ -20,10 +20,18 @@ def load_spectrum_data(explorer: Any) -> None:
     """Load and normalize spectrum data from available source."""
     freqs: np.ndarray | None = None
     spectrum: np.ndarray | None = None
+    frequencies_are_ghz = False
     component_hint = _component_from_label(explorer._component_label)
+    single_component = component_hint is not None
 
     if explorer.spectrum_result is not None:
-        freqs = np.asarray(getattr(explorer.spectrum_result, "frequencies", []), dtype=float)
+        if hasattr(explorer.spectrum_result, "frequencies_ghz"):
+            freqs = np.asarray(explorer.spectrum_result.frequencies_ghz, dtype=float)
+            frequencies_are_ghz = True
+        else:
+            freqs = np.asarray(
+                getattr(explorer.spectrum_result, "frequencies", []), dtype=float
+            )
         if hasattr(explorer.spectrum_result, "power"):
             spectrum = np.asarray(explorer.spectrum_result.power)
         elif hasattr(explorer.spectrum_result, "spectrum"):
@@ -35,16 +43,25 @@ def load_spectrum_data(explorer: Any) -> None:
             getattr(explorer.spectrum_result, "component_label", None)
         )
         component_hint = hint_from_result or component_hint
+        single_component = bool(
+            getattr(explorer.spectrum_result, "_single_component", False)
+            or hint_from_result is not None
+        )
 
     if (freqs is None or spectrum is None) and explorer.data_loader is not None:
-        loaded_freqs, loaded_spectrum, loaded_label = explorer.data_loader.load_spectrum()
+        loaded_freqs, loaded_spectrum, loaded_label = (
+            explorer.data_loader.load_spectrum()
+        )
         freqs = np.asarray(loaded_freqs, dtype=float)
+        frequencies_are_ghz = True
         spectrum = _to_power(np.asarray(loaded_spectrum))
         component_hint = _component_from_label(loaded_label) or component_hint
+        single_component = component_hint is not None
 
     if (freqs is None or spectrum is None) and explorer.analyzer is not None:
         if getattr(explorer.analyzer, "frequencies", None) is not None:
             freqs = np.asarray(explorer.analyzer.frequencies, dtype=float)
+            frequencies_are_ghz = True
         if getattr(explorer.analyzer, "spectrum", None) is not None:
             spectrum = _to_power(np.asarray(explorer.analyzer.spectrum))
 
@@ -53,23 +70,30 @@ def load_spectrum_data(explorer: Any) -> None:
             "No spectrum data available. Provide spectrum_result, data_loader, or analyzer."
         )
 
-    freqs_ghz = _to_ghz(freqs)
-    component_power = collapse_spectrum_components(_to_power(spectrum), component_hint)
+    freqs_ghz = freqs if frequencies_are_ghz else _to_ghz(freqs)
+    component_power = collapse_spectrum_components(
+        _to_power(spectrum),
+        component_hint,
+        single_component=single_component,
+    )
 
     trimmed: dict[str, np.ndarray] = {}
     for comp, values in component_power.items():
         arr = np.asarray(values, dtype=float)
-        length = min(arr.shape[0], freqs_ghz.shape[0])
-        if length == 0:
+        if arr.shape[0] != freqs_ghz.shape[0]:
+            raise ValueError(
+                f"Spectrum component '{comp}' has {arr.shape[0]} samples, "
+                f"but the frequency axis has {freqs_ghz.shape[0]}"
+            )
+        if arr.shape[0] == 0:
             continue
-        trimmed[comp] = arr[:length]
+        trimmed[comp] = arr
 
     if not trimmed:
         raise ValueError("Spectrum data is empty after preprocessing")
 
-    min_len = min(trace.shape[0] for trace in trimmed.values())
-    explorer._raw_frequencies_ghz = freqs_ghz[:min_len]
-    explorer._raw_component_power = {k: v[:min_len] for k, v in trimmed.items()}
+    explorer._raw_frequencies_ghz = freqs_ghz
+    explorer._raw_component_power = trimmed
     explorer._available_components = list(explorer._raw_component_power.keys())
 
 
@@ -118,7 +142,9 @@ def initialize_frequency(explorer: Any, initial_frequency: float | None) -> None
 
     if explorer._filtered_frequencies_ghz.size:
         center = explorer._filtered_frequencies_ghz.size // 2
-        explorer._current_frequency_ghz = float(explorer._filtered_frequencies_ghz[center])
+        explorer._current_frequency_ghz = float(
+            explorer._filtered_frequencies_ghz[center]
+        )
         return
 
     explorer._current_frequency_ghz = None

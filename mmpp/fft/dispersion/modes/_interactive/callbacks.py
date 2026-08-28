@@ -58,20 +58,21 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
 
         # Pre-compute all frames for selected visualization mode
         mode_labels = {
-            'real': 'Re[M]',
-            'imag': 'Im[M]',
-            'abs': '|M|',
-            'phase': 'φ[M]',
-            'ampl_phase': 'Ampl×Phase',
+            "real": "Re[M]",
+            "imag": "Im[M]",
+            "abs": "|M|",
+            "phase": "φ[M]",
+            "ampl_phase": "Ampl×Phase",
         }
         mode_label = mode_labels.get(mode_type, mode_type)
-        is_rgb = (mode_type == 'ampl_phase')
+        is_rgb = mode_type == "ampl_phase"
 
-        if mode_type in ['real', 'imag']:
+        frames: Any = []
+        if mode_type in ["real", "imag"]:
             frames = []
             for t in time_array:
                 m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
-                if mode_type == 'real':
+                if mode_type == "real":
                     m_t = np.real(m_t_complex)
                 else:
                     m_t = np.imag(m_t_complex)
@@ -83,9 +84,9 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
                 vmax = 1.0
             vmin = -vmax
             cmap = explorer.w_cmap_mode.value
-            cbar_label = "Re[M(t)]" if mode_type == 'real' else "Im[M(t)]"
+            cbar_label = "Re[M(t)]" if mode_type == "real" else "Im[M(t)]"
 
-        elif mode_type == 'abs':
+        elif mode_type == "abs":
             # |M| is the spatial envelope and stays constant in time for a pure harmonic mode.
             amplitude = np.abs(mode_2d_complex)
             frames = np.repeat(amplitude[np.newaxis, :, :], n_frames, axis=0)
@@ -93,10 +94,10 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
             vmax = np.max(amplitude)
             if vmax < 1e-20:
                 vmax = 1.0
-            cmap = 'hot'
+            cmap = "hot"
             cbar_label = "|M|"
 
-        elif mode_type == 'phase':
+        elif mode_type == "phase":
             frames = []
             for t in time_array:
                 m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
@@ -105,10 +106,10 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
             frames = np.array(frames)
             vmin = -np.pi
             vmax = np.pi
-            cmap = 'hsv'
+            cmap = "hsv"
             cbar_label = "φ[M(t)] [rad]"
 
-        elif mode_type == 'ampl_phase':
+        elif mode_type == "ampl_phase":
             from ..utils import create_amplitude_phase_colormap
 
             amplitude_ref = np.abs(mode_2d_complex)
@@ -155,7 +156,7 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
         # Extent
         x_um = x_axis * 1e6
         y_um = y_axis * 1e6
-        extent = [x_um[0], x_um[-1], y_um[0], y_um[-1]]
+        extent = (float(x_um[0]), float(x_um[-1]), float(y_um[0]), float(y_um[-1]))
 
         # Initial frame
         if is_rgb:
@@ -180,25 +181,28 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
 
         # Colorbar only for scalar data
         if not is_rgb:
-            explorer._colorbar_mode = explorer._fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
-            explorer._colorbar_mode.set_label(cbar_label, fontsize=9)
+            explorer._colorbar_mode = explorer._fig.colorbar(
+                im, ax=ax, shrink=0.8, pad=0.02
+            )
+            explorer._colorbar_mode.set_label(str(cbar_label or ""), fontsize=9)
 
         # Labels
         ax.set_xlabel("x [μm]", fontsize=10)
         ax.set_ylabel("y [μm]", fontsize=10)
 
         # Title (will be updated each frame)
-        k_str = f"k = {explorer._selected_k/1e6:.2f} rad/μm"
-        f_str = f"f = {explorer._selected_f/1e9:.2f} GHz"
+        k_str = f"k = {explorer._selected_k / 1e6:.2f} rad/μm"
+        f_str = f"f = {explorer._selected_f / 1e9:.2f} GHz"
         title = ax.set_title(
-            f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns | φ=0.00°",
-            fontsize=11
+            f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns | φ=0.00°", fontsize=11
         )
         ax.tick_params(labelsize=9)
 
         # Restore zoom/pan state (preserve user's zoom during animation)
         # Check if this is first plot (matplotlib default xlim is 0,1)
-        is_first_plot = (abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01)
+        is_first_plot = (
+            abs(xlim_saved[0] - 0.0) < 0.01 and abs(xlim_saved[1] - 1.0) < 0.01
+        )
 
         if not is_first_plot and not explorer._first_mode_plot:
             # Preserve user's zoom/pan
@@ -222,22 +226,28 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
 
                 # Draw contour at level 0.5 (boundary between 0 and 1)
                 ax.contour(
-                    geom_x, geom_y, geom,
+                    geom_x,
+                    geom_y,
+                    geom,
                     levels=[0.5],
-                    colors=['white'],
+                    colors=["white"],
                     linewidths=[1.5],
-                    linestyles=['solid'],
+                    linestyles=["solid"],
                 )
                 # Add black outline for visibility on light backgrounds
                 ax.contour(
-                    geom_x, geom_y, geom,
+                    geom_x,
+                    geom_y,
+                    geom,
                     levels=[0.5],
-                    colors=['black'],
+                    colors=["black"],
                     linewidths=[0.5],
-                    linestyles=['solid'],
+                    linestyles=["solid"],
                 )
             except Exception as contour_err:
-                logger.warning(f"Failed to draw geometry contour in animation: {contour_err}")
+                logger.warning(
+                    f"Failed to draw geometry contour in animation: {contour_err}"
+                )
 
         # Animation update function
         def update(frame_idx):
@@ -263,10 +273,12 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
         explorer._is_animating = True
         explorer.w_animate.description = "⏸️ Stop Animation"
         explorer.w_animate.button_style = "danger"
-        abs_note = " | |M| is time-invariant for harmonic modes" if mode_type == 'abs' else ""
+        abs_note = (
+            " | |M| is time-invariant for harmonic modes" if mode_type == "abs" else ""
+        )
         explorer.w_info.value = (
             f"<small style='color:green'>🎬 Animating: {n_frames} frames, "
-            f"T={period_s*1e9:.2f} ns (1 period = 2π), mode={mode_label}{abs_note}</small>"
+            f"T={period_s * 1e9:.2f} ns (1 period = 2π), mode={mode_label}{abs_note}</small>"
         )
 
         # Redraw
@@ -274,12 +286,16 @@ def on_animate(explorer: Any, _evt: Any, logger: Any) -> None:
 
     except Exception as e:
         import traceback
+
         tb = traceback.format_exc()
         logger.error(f"Animation failed:\n{tb}")
-        explorer.w_info.value = f"<small style='color:red'>❌ Animation error: {str(e)[:50]}</small>"
+        explorer.w_info.value = (
+            f"<small style='color:red'>❌ Animation error: {str(e)[:50]}</small>"
+        )
         explorer._is_animating = False
         explorer.w_animate.description = "🎬 Animate Mode"
         explorer.w_animate.button_style = "warning"
+
 
 def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
     """Save the current animation to file.
@@ -294,8 +310,10 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
     try:
         import matplotlib.pyplot as plt
         from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
+
         try:
             from matplotlib.animation import ImageMagickWriter
+
             _has_imagemagick = True
         except ImportError:
             _has_imagemagick = False
@@ -312,7 +330,9 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
         save_mode = explorer.w_anim_save_mode.value
         file_format = explorer.w_anim_file_format.value
 
-        explorer.w_info.value = "<small style='color:blue'>⏳ Preparing animation for save...</small>"
+        explorer.w_info.value = (
+            "<small style='color:blue'>⏳ Preparing animation for save...</small>"
+        )
 
         # Capture current view state (zoom/pan) so the saved animation matches the UI.
         disp_xlim = None
@@ -345,55 +365,65 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
 
         # Pre-compute frames (same logic as _on_animate)
         mode_labels = {
-            'real': 'Re[M]',
-            'imag': 'Im[M]',
-            'abs': '|M|',
-            'phase': 'φ[M]',
-            'ampl_phase': 'Ampl×Phase',
+            "real": "Re[M]",
+            "imag": "Im[M]",
+            "abs": "|M|",
+            "phase": "φ[M]",
+            "ampl_phase": "Ampl×Phase",
         }
         mode_label = mode_labels.get(mode_type, mode_type)
-        is_rgb = (mode_type == 'ampl_phase')
+        is_rgb = mode_type == "ampl_phase"
 
-        if mode_type in ['real', 'imag']:
+        frames: Any = []
+        if mode_type in ["real", "imag"]:
             frames = []
             for t in time_array:
                 m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
-                frames.append(np.real(m_t_complex) if mode_type == 'real' else np.imag(m_t_complex))
+                frames.append(
+                    np.real(m_t_complex)
+                    if mode_type == "real"
+                    else np.imag(m_t_complex)
+                )
             frames = np.array(frames)
             vmax = np.max(np.abs(frames))
             if vmax < 1e-20:
                 vmax = 1.0
             vmin = -vmax
             cmap = explorer.w_cmap_mode.value
-            cbar_label = "Re[M(t)]" if mode_type == 'real' else "Im[M(t)]"
+            cbar_label = "Re[M(t)]" if mode_type == "real" else "Im[M(t)]"
 
-        elif mode_type == 'abs':
+        elif mode_type == "abs":
             amplitude = np.abs(mode_2d_complex)
             frames = np.repeat(amplitude[np.newaxis, :, :], n_frames, axis=0)
             vmin, vmax = 0.0, np.max(amplitude)
             if vmax < 1e-20:
                 vmax = 1.0
-            cmap = 'hot'
+            cmap = "hot"
             cbar_label = "|M|"
 
-        elif mode_type == 'phase':
+        elif mode_type == "phase":
             frames = []
             for t in time_array:
                 m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
                 frames.append(np.angle(m_t_complex))
             frames = np.array(frames)
             vmin, vmax = -np.pi, np.pi
-            cmap = 'hsv'
+            cmap = "hsv"
             cbar_label = "φ[M(t)] [rad]"
 
-        elif mode_type == 'ampl_phase':
+        elif mode_type == "ampl_phase":
             from ..utils import create_amplitude_phase_colormap
+
             amplitude_ref = np.abs(mode_2d_complex)
             amp_min, amp_max = float(amplitude_ref.min()), float(amplitude_ref.max())
             frames = []
             for t in time_array:
                 m_t_complex = mode_2d_complex * np.exp(-1j * omega * t)
-                frames.append(create_amplitude_phase_colormap(m_t_complex, amp_min=amp_min, amp_max=amp_max))
+                frames.append(
+                    create_amplitude_phase_colormap(
+                        m_t_complex, amp_min=amp_min, amp_max=amp_max
+                    )
+                )
             frames = np.array(frames)
             vmin, vmax = None, None
             cmap = None
@@ -440,7 +470,9 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
                         include_live=True,
                     )
                 except Exception:
-                    logger.exception("Live post-filter application failed for save; using raw S")
+                    logger.exception(
+                        "Live post-filter application failed for save; using raw S"
+                    )
                     S_map = explorer.result.S
 
             S = S_map.T  # (Nf, Nk)
@@ -473,12 +505,18 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
                 cmap=explorer.w_cmap_disp.value,
                 interpolation="bilinear",
             )
-            fig_save.colorbar(im_disp, ax=ax_disp_save, shrink=0.8, pad=0.02).set_label("log₁₀(S)", fontsize=9)
+            fig_save.colorbar(im_disp, ax=ax_disp_save, shrink=0.8, pad=0.02).set_label(
+                "log₁₀(S)", fontsize=9
+            )
 
             G = 2 * np.pi / a / 1e6  # rad/μm
             # Restore current zoom/pan if available (match UI)
-            is_default_xlim = disp_xlim is None or (abs(disp_xlim[0] - 0.0) < 0.01 and abs(disp_xlim[1] - 1.0) < 0.01)
-            is_default_ylim = disp_ylim is None or (abs(disp_ylim[0] - 0.0) < 0.01 and abs(disp_ylim[1] - 1.0) < 0.01)
+            is_default_xlim = disp_xlim is None or (
+                abs(disp_xlim[0] - 0.0) < 0.01 and abs(disp_xlim[1] - 1.0) < 0.01
+            )
+            is_default_ylim = disp_ylim is None or (
+                abs(disp_ylim[0] - 0.0) < 0.01 and abs(disp_ylim[1] - 1.0) < 0.01
+            )
             if is_default_xlim:
                 ax_disp_save.set_xlim(-1.5 * G, 1.5 * G)
             else:
@@ -488,6 +526,7 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
                 ax_disp_save.set_ylim(0, f_axis_positive[-1])
             else:
                 # Preserve user zoom but constrain to frequency limits and available data
+                assert disp_ylim is not None
                 view_f_min = max(disp_ylim[0], f_min, 0)
                 view_f_max = min(disp_ylim[1], f_max, f_axis_positive[-1])
                 ax_disp_save.set_ylim(view_f_min, view_f_max)
@@ -515,14 +554,18 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
                             alpha=alpha,
                         )
 
-                ax_disp_save.legend([f"BZ boundaries (G = {G:.1f} rad/μm)"], loc="upper right", fontsize=8)
+                ax_disp_save.legend(
+                    [f"BZ boundaries (G = {G:.1f} rad/μm)"],
+                    loc="upper right",
+                    fontsize=8,
+                )
 
             # Always add k=0 reference line
             ax_disp_save.axvline(0, color="gray", linestyle=":", alpha=0.5, linewidth=1)
             ax_disp_save.set_xlabel(r"$k$ [rad/μm]", fontsize=10)
             ax_disp_save.set_ylabel("f [GHz]", fontsize=10)
             ax_disp_save.set_title(
-                f"Dispersion S(k, f) | a = {a*1e9:.0f} nm | Click to select mode",
+                f"Dispersion S(k, f) | a = {a * 1e9:.0f} nm | Click to select mode",
                 fontsize=11,
             )
             ax_disp_save.grid(True, alpha=0.3, linestyle=":")
@@ -534,14 +577,30 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
         # Setup mode animation axes
         x_um = x_axis * 1e6
         y_um = y_axis * 1e6
-        extent = [x_um[0], x_um[-1], y_um[0], y_um[-1]]
+        extent = (float(x_um[0]), float(x_um[-1]), float(y_um[0]), float(y_um[-1]))
 
         if is_rgb:
-            im = ax_save.imshow(frames[0], aspect="auto", origin="lower", extent=extent, interpolation="bilinear")
+            im = ax_save.imshow(
+                frames[0],
+                aspect="auto",
+                origin="lower",
+                extent=extent,
+                interpolation="bilinear",
+            )
         else:
-            im = ax_save.imshow(frames[0], aspect="auto", origin="lower", extent=extent,
-                               cmap=cmap, vmin=vmin, vmax=vmax, interpolation="bilinear")
-            fig_save.colorbar(im, ax=ax_save, shrink=0.8, pad=0.02).set_label(cbar_label, fontsize=9)
+            im = ax_save.imshow(
+                frames[0],
+                aspect="auto",
+                origin="lower",
+                extent=extent,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                interpolation="bilinear",
+            )
+            fig_save.colorbar(im, ax=ax_save, shrink=0.8, pad=0.02).set_label(
+                str(cbar_label or ""), fontsize=9
+            )
 
         # Add geometry contour if available
         if explorer._geometry_contour is not None:
@@ -549,15 +608,29 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
                 geom = explorer._geometry_contour
                 geom_y = np.linspace(y_um[0], y_um[-1], geom.shape[0])
                 geom_x = np.linspace(x_um[0], x_um[-1], geom.shape[1])
-                ax_save.contour(geom_x, geom_y, geom, levels=[0.5], colors=['white'], linewidths=[1.5])
-                ax_save.contour(geom_x, geom_y, geom, levels=[0.5], colors=['black'], linewidths=[0.5])
+                ax_save.contour(
+                    geom_x,
+                    geom_y,
+                    geom,
+                    levels=[0.5],
+                    colors=["white"],
+                    linewidths=[1.5],
+                )
+                ax_save.contour(
+                    geom_x,
+                    geom_y,
+                    geom,
+                    levels=[0.5],
+                    colors=["black"],
+                    linewidths=[0.5],
+                )
             except Exception:
                 pass
 
         ax_save.set_xlabel("x [μm]", fontsize=10)
         ax_save.set_ylabel("y [μm]", fontsize=10)
-        k_str = f"k = {explorer._selected_k/1e6:.2f} rad/μm"
-        f_str = f"f = {explorer._selected_f/1e9:.2f} GHz"
+        k_str = f"k = {explorer._selected_k / 1e6:.2f} rad/μm"
+        f_str = f"f = {explorer._selected_f / 1e9:.2f} GHz"
         title = ax_save.set_title(
             f"{mode_label} Mode | {k_str}, {f_str} | t=0.00 ns | φ=0.00°",
             fontsize=11,
@@ -565,8 +638,12 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
         ax_save.tick_params(labelsize=9)
 
         # Match current mode zoom/pan when available.
-        is_default_xlim = mode_xlim is None or (abs(mode_xlim[0] - 0.0) < 0.01 and abs(mode_xlim[1] - 1.0) < 0.01)
-        is_default_ylim = mode_ylim is None or (abs(mode_ylim[0] - 0.0) < 0.01 and abs(mode_ylim[1] - 1.0) < 0.01)
+        is_default_xlim = mode_xlim is None or (
+            abs(mode_xlim[0] - 0.0) < 0.01 and abs(mode_xlim[1] - 1.0) < 0.01
+        )
+        is_default_ylim = mode_ylim is None or (
+            abs(mode_ylim[0] - 0.0) < 0.01 and abs(mode_ylim[1] - 1.0) < 0.01
+        )
 
         if is_default_xlim:
             # Same default view logic as the UI.
@@ -603,18 +680,21 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
         )
 
         # Generate filename
-        k_val = f"{explorer._selected_k/1e6:.2f}".replace('.', 'p')
-        f_val = f"{explorer._selected_f/1e9:.2f}".replace('.', 'p')
+        k_val = f"{explorer._selected_k / 1e6:.2f}".replace(".", "p")
+        f_val = f"{explorer._selected_f / 1e9:.2f}".replace(".", "p")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"mode_anim_{save_mode}_k{k_val}_f{f_val}_{mode_type}_{timestamp}.{file_format}"
 
         # Save animation with appropriate writer
         output_path = Path.cwd() / filename
-        explorer.w_info.value = f"<small style='color:blue'>💾 Saving animation to {filename}...</small>"
+        explorer.w_info.value = (
+            f"<small style='color:blue'>💾 Saving animation to {filename}...</small>"
+        )
 
         # Use higher DPI for GIF to compensate for color limitation
         export_dpi = 150 if file_format == "gif" else save_dpi
 
+        writer: Any
         if file_format == "gif":
             # Try ImageMagick first (much better quality and dithering)
             if _has_imagemagick:
@@ -622,22 +702,34 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
                     # ImageMagick with optimized settings for quality
                     writer = ImageMagickWriter(
                         fps=fps,
-                        metadata={'Author': 'MMPP', 'Title': 'Mode Animation'},
+                        metadata={"Author": "MMPP", "Title": "Mode Animation"},
                         bitrate=2000,  # Higher bitrate for better quality
-                        extra_args=['-layers', 'Optimize']  # Optimize file size while keeping quality
+                        extra_args=[
+                            "-layers",
+                            "Optimize",
+                        ],  # Optimize file size while keeping quality
                     )
                     writer_name = "ImageMagick"
                 except Exception:
                     # Fallback to Pillow if ImageMagick fails
-                    writer = PillowWriter(fps=fps, metadata={'Author': 'MMPP', 'Title': 'Mode Animation'})
+                    writer = PillowWriter(
+                        fps=fps, metadata={"Author": "MMPP", "Title": "Mode Animation"}
+                    )
                     writer_name = "Pillow (256 colors)"
             else:
                 # PillowWriter fallback - limited to 256 colors
-                writer = PillowWriter(fps=fps, metadata={'Author': 'MMPP', 'Title': 'Mode Animation'})
+                writer = PillowWriter(
+                    fps=fps, metadata={"Author": "MMPP", "Title": "Mode Animation"}
+                )
                 writer_name = "Pillow (256 colors)"
         else:  # mp4
             # High quality MP4: increased bitrate for Full HD
-            writer = FFMpegWriter(fps=fps, bitrate=4000, codec='libx264', extra_args=['-pix_fmt', 'yuv420p', '-preset', 'slower', '-crf', '18'])
+            writer = FFMpegWriter(
+                fps=fps,
+                bitrate=4000,
+                codec="libx264",
+                extra_args=["-pix_fmt", "yuv420p", "-preset", "slower", "-crf", "18"],
+            )
             writer_name = "FFmpeg"
 
         anim.save(str(output_path), writer=writer, dpi=export_dpi)
@@ -658,8 +750,12 @@ def on_save_animation(explorer: Any, _evt: Any, logger: Any) -> None:
 
     except Exception as e:
         import traceback
+
         logger.error(f"Animation save failed:\n{traceback.format_exc()}")
-        explorer.w_info.value = f"<small style='color:red'>❌ Save error: {str(e)[:80]}</small>"
+        explorer.w_info.value = (
+            f"<small style='color:red'>❌ Save error: {str(e)[:80]}</small>"
+        )
+
 
 def stop_animation(explorer: Any) -> None:
     """Stop the current animation."""

@@ -6,10 +6,9 @@ classes for FMR mode visualization.
 """
 
 import numpy as np
-from typing import Optional
 
-from .compat import MATPLOTLIB_AVAILABLE, require_dependency
 from ...cli.logging_config import get_mmpp_logger
+from .compat import MATPLOTLIB_AVAILABLE, require_dependency
 
 log = get_mmpp_logger(__name__)
 
@@ -19,14 +18,29 @@ if MATPLOTLIB_AVAILABLE:
 
 # Track styling availability from mmpp.plotting
 try:
-    from ...plotting import setup_custom_fonts, load_paper_style, apply_custom_colors
+    from ...plotting import apply_custom_colors, load_paper_style, setup_custom_fonts
+
     STYLING_AVAILABLE = True
 except ImportError:
     STYLING_AVAILABLE = False
-    setup_custom_fonts = load_paper_style = apply_custom_colors = None
+    globals()["setup_custom_fonts"] = None
+    globals()["load_paper_style"] = None
+    globals()["apply_custom_colors"] = None
 
 
-class MidpointNormalize(mcolors.Normalize):
+class _MissingMatplotlibNormalize:
+    """Placeholder base that fails only when plotting functionality is used."""
+
+    def __init__(self, *args, **kwargs):
+        require_dependency("matplotlib", "midpoint color normalization")
+
+
+_NormalizeBase = (
+    mcolors.Normalize if MATPLOTLIB_AVAILABLE else _MissingMatplotlibNormalize
+)
+
+
+class MidpointNormalize(_NormalizeBase):  # type: ignore[valid-type, misc]
     """
     Matplotlib normalization class with symmetric colormap around midpoint.
 
@@ -49,14 +63,15 @@ class MidpointNormalize(mcolors.Normalize):
         clip : bool, optional
             Whether to clip values outside [vmin, vmax]
         """
+        require_dependency("matplotlib", "midpoint color normalization")
         self.midpoint = midpoint
-        mcolors.Normalize.__init__(self, vmin, vmax, clip)
+        super().__init__(vmin, vmax, clip)
 
     def __call__(self, value, clip=None):
         """Apply normalization to values."""
         # Handle the case where vmin, vmax, or midpoint could be None
         if self.vmin is None or self.vmax is None:
-            return mcolors.Normalize.__call__(self, value, clip)
+            return super().__call__(value, clip)
 
         # Calculate normalized positions for min, mid, max
         normalized_min = max(
@@ -98,8 +113,8 @@ def setup_animation_styling(
     bool
         True if styling was successfully applied
     """
-    require_dependency('matplotlib', 'animation styling')
-    
+    require_dependency("matplotlib", "animation styling")
+
     if not STYLING_AVAILABLE:
         log.warning(
             "Styling functions not available - using default matplotlib styling"
@@ -141,16 +156,16 @@ def setup_animation_styling(
 
 
 def setup_colorbar_style(
-    colorbar, 
-    label: str, 
-    fontsize: int = 10, 
+    colorbar,
+    label: str,
+    fontsize: int = 10,
     tick_fontsize: int = 9,
     pad: float = 0.01,
-    fraction: float = 0.04
+    fraction: float = 0.04,
 ) -> None:
     """
     Apply consistent styling to colorbar.
-    
+
     Parameters:
     -----------
     colorbar : matplotlib.colorbar.Colorbar
@@ -166,14 +181,14 @@ def setup_colorbar_style(
     fraction : float, default 0.04
         Width fraction of the colorbar
     """
-    require_dependency('matplotlib', 'colorbar styling')
-    
+    require_dependency("matplotlib", "colorbar styling")
+
     # Set label
     colorbar.set_label(label, fontsize=fontsize, labelpad=10)
-    
+
     # Style tick labels
     colorbar.ax.tick_params(labelsize=tick_fontsize)
-    
+
     # Improve tick formatting
     colorbar.ax.yaxis.get_major_formatter().set_useOffset(False)
     colorbar.ax.yaxis.get_major_formatter().set_scientific(True)
@@ -182,16 +197,16 @@ def setup_colorbar_style(
 def create_scalebar(
     ax,
     length_nm: float,
-    location: str = 'lower right',
-    color: str = 'white',
+    location: str = "lower right",
+    color: str = "white",
     fontsize: int = 9,
     pad: float = 0.3,
     height_fraction: float = 0.01,
-    units: str = 'nm'
-) -> Optional[object]:
+    units: str = "nm",
+) -> object | None:
     """
     Create and add scalebar to axis.
-    
+
     Parameters:
     -----------
     ax : matplotlib.axes.Axes
@@ -210,24 +225,24 @@ def create_scalebar(
         Height as fraction of plot height
     units : str, default 'nm'
         Units to display
-        
+
     Returns:
     --------
     scalebar object or None if creation failed
     """
-    require_dependency('matplotlib', 'scalebar creation')
-    
+    require_dependency("matplotlib", "scalebar creation")
+
     try:
         from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
-        
+
         # Format length for display
         if length_nm >= 1000:
             display_length = length_nm / 1000
-            display_units = 'μm'
-            display_text = f'{display_length:.0f} {display_units}'
+            display_units = "μm"
+            display_text = f"{display_length:.0f} {display_units}"
         else:
-            display_text = f'{int(length_nm)} {units}'
-        
+            display_text = f"{int(length_nm)} {units}"
+
         # Create scalebar
         scalebar = AnchoredSizeBar(
             ax.transData,
@@ -238,12 +253,12 @@ def create_scalebar(
             color=color,
             frameon=False,
             size_vertical=height_fraction * ax.bbox.height,
-            fontproperties={'size': fontsize}
+            fontproperties={"size": fontsize},
         )
-        
+
         ax.add_artist(scalebar)
         return scalebar
-        
+
     except ImportError:
         log.warning("Scalebar creation failed - mpl_toolkits not available")
         return None
@@ -255,93 +270,101 @@ def create_scalebar(
 def apply_paper_style() -> bool:
     """
     Apply publication-ready styling to current matplotlib context.
-    
+
     Returns:
     --------
     bool
         True if style was successfully applied
     """
-    require_dependency('matplotlib', 'paper styling')
-    
+    require_dependency("matplotlib", "paper styling")
+
     try:
         # Set publication parameters
-        plt.rcParams.update({
-            'font.size': 10,
-            'font.family': 'serif',
-            'axes.linewidth': 0.8,
-            'axes.spines.top': False,
-            'axes.spines.right': False,
-            'axes.labelsize': 10,
-            'axes.titlesize': 12,
-            'xtick.labelsize': 9,
-            'ytick.labelsize': 9,
-            'xtick.direction': 'in',
-            'ytick.direction': 'in',
-            'xtick.major.width': 0.8,
-            'ytick.major.width': 0.8,
-            'figure.dpi': 150,
-            'savefig.dpi': 300,
-            'savefig.bbox': 'tight',
-            'savefig.pad_inches': 0.1,
-            'legend.frameon': False,
-            'legend.fontsize': 9,
-        })
-        
+        plt.rcParams.update(
+            {
+                "font.size": 10,
+                "font.family": "serif",
+                "axes.linewidth": 0.8,
+                "axes.spines.top": False,
+                "axes.spines.right": False,
+                "axes.labelsize": 10,
+                "axes.titlesize": 12,
+                "xtick.labelsize": 9,
+                "ytick.labelsize": 9,
+                "xtick.direction": "in",
+                "ytick.direction": "in",
+                "xtick.major.width": 0.8,
+                "ytick.major.width": 0.8,
+                "figure.dpi": 150,
+                "savefig.dpi": 300,
+                "savefig.bbox": "tight",
+                "savefig.pad_inches": 0.1,
+                "legend.frameon": False,
+                "legend.fontsize": 9,
+            }
+        )
+
         log.debug("Applied publication-ready styling")
         return True
-        
+
     except Exception as e:
         log.warning(f"Failed to apply paper style: {e}")
         return False
 
 
-def get_scientific_colormap(name: str, fallback: str = 'viridis'):
+def get_scientific_colormap(name: str, fallback: str = "viridis"):
     """
     Get scientific colormap with fallback.
-    
+
     Parameters:
     -----------
     name : str
         Name of desired colormap
     fallback : str, default 'viridis'
         Fallback colormap name
-        
+
     Returns:
     --------
     matplotlib colormap
     """
-    require_dependency('matplotlib', 'colormap access')
-    
+    require_dependency("matplotlib", "colormap access")
+
     # Try cmcrameri first
     try:
         from .compat import CMCRAMERI_AVAILABLE
+
         if CMCRAMERI_AVAILABLE:
             import cmcrameri.cm as cmc
-            return getattr(cmc, name.replace('cmc.', ''))
+
+            return getattr(cmc, name.replace("cmc.", ""))
     except (ImportError, AttributeError):
         pass
-    
+
     # Try cmocean
     try:
         from .compat import CMOCEAN_AVAILABLE
+
         if CMOCEAN_AVAILABLE:
             import cmocean
+
             return getattr(cmocean.cm, name)
     except (ImportError, AttributeError):
         pass
-    
+
     # Fallback to matplotlib
     try:
         return plt.get_cmap(name)
-    except:
+    except Exception:
         log.warning(f"Colormap '{name}' not found, using '{fallback}'")
         return plt.get_cmap(fallback)
 
 
-def create_custom_norm(data: np.ndarray, symmetric: bool = False, midpoint: float = 0.0):
+def create_custom_norm(
+    data: np.ndarray, symmetric: bool = False, midpoint: float = 0.0
+):
     """
     Create appropriate normalization for data.
-    
+
     Parameters:
     -----------
     data : np.ndarray
@@ -350,22 +373,20 @@ def create_custom_norm(data: np.ndarray, symmetric: bool = False, midpoint: floa
         Whether to use symmetric normalization around midpoint
     midpoint : float, default 0.0
         Midpoint for symmetric normalization
-        
+
     Returns:
     --------
     matplotlib normalization object
     """
-    require_dependency('matplotlib', 'data normalization')
-    
+    require_dependency("matplotlib", "data normalization")
+
     vmin, vmax = np.nanmin(data), np.nanmax(data)
-    
+
     if symmetric:
         # Use symmetric normalization
         abs_max = max(abs(vmin - midpoint), abs(vmax - midpoint))
         return MidpointNormalize(
-            vmin=midpoint - abs_max,
-            vmax=midpoint + abs_max,
-            midpoint=midpoint
+            vmin=midpoint - abs_max, vmax=midpoint + abs_max, midpoint=midpoint
         )
     else:
         # Use standard normalization
@@ -375,26 +396,26 @@ def create_custom_norm(data: np.ndarray, symmetric: bool = False, midpoint: floa
 def format_colorbar_label(view_type: str) -> str:
     """
     Get formatted label for colorbar based on view type.
-    
+
     Parameters:
     -----------
     view_type : str
         Type of view ('magnitude', 'phase', 'combined', etc.)
-        
+
     Returns:
     --------
     str
         Formatted label
     """
     labels = {
-        'magnitude': 'Magnetization |m|',
-        'phase': 'Phase (rad)',
-        'combined': 'Re(m) × cos(φ)',
-        'real': 'Re(m)',
-        'imaginary': 'Im(m)',
-        'x': 'mx',
-        'y': 'my', 
-        'z': 'mz'
+        "magnitude": "Magnetization |m|",
+        "phase": "Phase (rad)",
+        "combined": "Re(m) × cos(φ)",
+        "real": "Re(m)",
+        "imaginary": "Im(m)",
+        "x": "mx",
+        "y": "my",
+        "z": "mz",
     }
-    
+
     return labels.get(view_type.lower(), view_type)

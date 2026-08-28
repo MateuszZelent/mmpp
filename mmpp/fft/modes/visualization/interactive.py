@@ -6,8 +6,9 @@ users to click on the spectrum to visualize corresponding FMR modes.
 """
 
 import logging
-from typing import Any, Optional, Union, TYPE_CHECKING
+from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 
@@ -20,43 +21,62 @@ if MATPLOTLIB_AVAILABLE:
     import matplotlib.pyplot as plt
     from matplotlib import gridspec
 
-from ..compat import (
-    AXES_GRID_AVAILABLE,
-)
 
 from ..style import STYLING_AVAILABLE, load_paper_style
-
 from .animation import (
-    toggle_mode_animation as _toggle_mode_animation,
-    stop_mode_animation as _stop_mode_animation,
     save_animated_view as _save_animated_view,
+)
+from .animation import (
     start_mode_animation as _start_mode_animation,
 )
+from .animation import (
+    stop_mode_animation as _stop_mode_animation,
+)
+from .animation import (
+    toggle_mode_animation as _toggle_mode_animation,
+)
 
-from .static_plots import update_single_mode_plot as _update_single_mode_plot
-from ..utils.scalebar import calculate_optimal_length, format_scalebar_label
-
-# Import inset colorbar for publication-ready mode plots
-try:
-    from ...transmission.plot import _make_inset_colorbar
-    INSET_COLORBAR_AVAILABLE = True
-except ImportError:
-    INSET_COLORBAR_AVAILABLE = False
 
 def add_scale_bar(analyzer, ax, extent):
     """Add scale bar to axis - imported from static_plots via analyzer."""
     from .static_plots import add_scale_bar as _add_scale_bar_impl
+
     return _add_scale_bar_impl(analyzer, ax, extent)
+
 
 _add_scale_bar = add_scale_bar  # For local use
 
 
+def _spectrum_result_frequency_axis_ghz(spectrum_result: Any) -> np.ndarray:
+    """Read the public SpectrumResult frequency contract without unit guessing."""
+    if hasattr(spectrum_result, "frequencies_ghz"):
+        frequencies = np.asarray(spectrum_result.frequencies_ghz, dtype=float)
+    else:
+        frequencies = (
+            np.asarray(getattr(spectrum_result, "frequencies", []), dtype=float) * 1e-9
+        )
+    if frequencies.ndim != 1 or frequencies.size == 0:
+        raise ValueError("SpectrumResult frequency axis must be a non-empty 1D array")
+    if not np.isfinite(frequencies).all():
+        raise ValueError("SpectrumResult frequency axis must be finite")
+    return frequencies
+
 
 # Utility functions for peak width annotation
-def normalize_peak_width_option(option):
+@dataclass(frozen=True)
+class WidthInfo:
+    peak_frequency: float
+    peak_value: float
+    half_level: float
+    left_frequency: float
+    right_frequency: float
+    width: float
+
+
+def normalize_peak_width_option(option: Any) -> tuple[bool, str]:
     """
     Normalize the peak_width option to (show: bool, label: str).
-    
+
     Returns:
         tuple: (show_peak_width: bool, peak_width_label: str)
     """
@@ -64,114 +84,109 @@ def normalize_peak_width_option(option):
         return (False, "FWHM")
     elif option is True:
         return (True, "FWHM")
-    elif isinstance(option, str):
-        return (True, option)
-    else:
-        return (False, "FWHM")
+    if isinstance(option, str):
+        label = option.strip()
+        if not label:
+            raise ValueError("peak_width label must not be empty")
+        return (True, label)
+    raise TypeError("peak_width must be None, a boolean, or a non-empty label")
 
 
-def compute_half_width_at_half_max(frequencies, spectrum):
+def compute_half_width_at_half_max(frequencies, spectrum) -> WidthInfo | None:
     """
-    Compute half-width at half-maximum (FWHM) for the dominant peak.
-    
+    Compute full width at half height for the dominant peak.
+
     Parameters:
         frequencies: array of frequencies
         spectrum: array of spectrum values
-        
+
     Returns:
-        WidthInfo object or None if computation fails
+        WidthInfo object, or ``None`` when the peak has no two half-height
+        crossings inside the supplied frequency window.
     """
-    from dataclasses import dataclass
-    
-    @dataclass
-    class WidthInfo:
-        peak_frequency: float
-        peak_value: float
-        half_level: float
-        left_frequency: float
-        right_frequency: float
-        width: float
-    
-    if len(frequencies) == 0 or len(spectrum) == 0:
+    frequencies = np.asarray(frequencies, dtype=float)
+    spectrum = np.asarray(spectrum, dtype=float)
+    if frequencies.ndim != 1 or spectrum.ndim != 1:
+        raise ValueError("frequencies and spectrum must be 1D arrays")
+    if frequencies.size != spectrum.size:
+        raise ValueError("frequencies and spectrum must have equal lengths")
+    if frequencies.size < 3:
         return None
-        
-    # Find peak
-    peak_idx = np.argmax(spectrum)
-    peak_freq = frequencies[peak_idx]
-    peak_val = spectrum[peak_idx]
-    half_val = peak_val / 2.0
-    
-    if peak_val <= 0:
+    if not np.isfinite(frequencies).all() or not np.isfinite(spectrum).all():
+        raise ValueError("frequencies and spectrum must contain only finite values")
+    if np.any(np.diff(frequencies) <= 0):
+        raise ValueError("frequencies must be strictly increasing")
+    if np.any(spectrum < 0):
+        raise ValueError("spectrum must be non-negative for FWHM calculation")
+
+    peak_idx = int(np.argmax(spectrum))
+    peak_freq = float(frequencies[peak_idx])
+    peak_val = float(spectrum[peak_idx])
+    baseline = float(np.min(spectrum))
+    peak_height = peak_val - baseline
+    if peak_height <= 0:
         return None
-        
-    # Find left half-max point
-    left_idx = peak_idx
-    while left_idx > 0 and spectrum[left_idx] > half_val:
-        left_idx -= 1
-        
-    # Find right half-max point
-    right_idx = peak_idx
-    while right_idx < len(spectrum) - 1 and spectrum[right_idx] > half_val:
-        right_idx += 1
-        
-    if left_idx == 0 or right_idx == len(spectrum) - 1:
+    half_val = baseline + 0.5 * peak_height
+
+    left_candidates = np.flatnonzero(spectrum[:peak_idx] <= half_val)
+    right_candidates = np.flatnonzero(spectrum[peak_idx + 1 :] <= half_val)
+    if left_candidates.size == 0 or right_candidates.size == 0:
         return None
-        
-    # Interpolate for more accurate boundary
-    if left_idx < len(frequencies) - 1:
-        left_freq = np.interp(half_val, 
-                             [spectrum[left_idx], spectrum[left_idx + 1]],
-                             [frequencies[left_idx], frequencies[left_idx + 1]])
-    else:
-        left_freq = frequencies[left_idx]
-        
-    if right_idx > 0:
-        right_freq = np.interp(half_val,
-                              [spectrum[right_idx], spectrum[right_idx - 1]],
-                              [frequencies[right_idx], frequencies[right_idx - 1]])
-    else:
-        right_freq = frequencies[right_idx]
-        
-    width = abs(right_freq - left_freq)
-    
+
+    left_idx = int(left_candidates[-1])
+    right_idx = int(peak_idx + 1 + right_candidates[0])
+
+    def interpolate_crossing(i0: int, i1: int) -> float:
+        y0, y1 = float(spectrum[i0]), float(spectrum[i1])
+        x0, x1 = float(frequencies[i0]), float(frequencies[i1])
+        if y1 == y0:
+            return 0.5 * (x0 + x1)
+        fraction = (half_val - y0) / (y1 - y0)
+        return x0 + fraction * (x1 - x0)
+
+    left_freq = interpolate_crossing(left_idx, left_idx + 1)
+    right_freq = interpolate_crossing(right_idx - 1, right_idx)
+    width = right_freq - left_freq
+
     return WidthInfo(
         peak_frequency=peak_freq,
         peak_value=peak_val,
         half_level=half_val,
         left_frequency=left_freq,
         right_frequency=right_freq,
-        width=width
+        width=width,
     )
 
 
-def format_width_value(width_ghz):
+def format_width_value(width_ghz: float) -> str:
     """Format width value with appropriate units."""
+    width_ghz = float(width_ghz)
+    if not np.isfinite(width_ghz) or width_ghz < 0:
+        raise ValueError("width_ghz must be finite and non-negative")
     if width_ghz < 0.001:
         return f"{width_ghz * 1000:.2f} MHz"
     else:
         return f"{width_ghz:.3f} GHz"
 
 
-from ..utils.peak_detection import detect_peaks
-
 log = logging.getLogger(__name__)
 
 
 def interactive_spectrum(
     analyzer,
-    components: Optional[list[Union[int, str]]] = None,
+    components: list[int | str] | None = None,
     z_layer: int = 0,
     method: int = 1,
     show: bool = True,
     force: bool = False,
     use_fft_spectrum: bool = True,
-    saveanim: Union[bool, str, None] = None,
+    saveanim: bool | str | None = None,
     auto_animate: bool = False,
     auto_save: bool = False,
     spectrum_result: Any = None,  # NEW: Inject spectrum from FFT.spectrum()
     use_holography: bool = False,  # NEW: Enable complex holography visualization
     **kwargs,
-) -> "Figure":
+) -> Any:
     """
     Create interactive spectrum plot with mode visualization.
 
@@ -228,7 +243,7 @@ def interactive_spectrum(
         When True with auto_animate=True, saves animation without requiring 's' key press
     use_holography : bool, optional
         Enable complex holography (domain coloring) for phase visualization (default: False)
-        When True, replaces standard phase plots with RGB images encoding both 
+        When True, replaces standard phase plots with RGB images encoding both
         amplitude and phase simultaneously. Particularly useful for:
         - Gyrotropic vortex core modes (circular basis: m+, m-)
         - Azimuthal spin wave modes (cylindrical basis: m_rho, m_phi)
@@ -273,9 +288,7 @@ def interactive_spectrum(
         if alias_value is not None:
             peak_width_option = alias_value
 
-    show_peak_width, peak_width_label = normalize_peak_width_option(
-        peak_width_option
-    )
+    show_peak_width, peak_width_label = normalize_peak_width_option(peak_width_option)
 
     # Setup animation saving
     analyzer._saveanim_enabled = saveanim is not None and saveanim is not False
@@ -298,23 +311,17 @@ def interactive_spectrum(
             artist.remove()
         except ValueError:
             pass
-    analyzer._fwhm_artists: list[Any] = []
+    analyzer._fwhm_artists = []
     analyzer._last_fwhm = None
 
     # === PRIORITY: Use injected spectrum_result from FFT.spectrum() ===
     # This ensures consistency with job[0].m[:200,...,1].fft.spectrum() calls
     if spectrum_result is not None:
         log.info("Using injected spectrum_result from FFT (respects slice context)")
-        # spectrum_result.frequencies are in Hz, convert to GHz for legacy compatibility
-        frequencies_raw = spectrum_result.frequencies
-        if np.max(frequencies_raw) > 1e6:  # Likely in Hz
-            frequencies_to_use = frequencies_raw / 1e9  # Convert Hz to GHz
-            log.debug(f"Converted frequencies from Hz to GHz: max={np.max(frequencies_to_use):.3f} GHz")
-        else:
-            frequencies_to_use = frequencies_raw  # Already in GHz
+        frequencies_to_use = _spectrum_result_frequency_axis_ghz(spectrum_result)
         spectrum_to_use = spectrum_result.power
         # Store component label for plot title
-        component_label = getattr(spectrum_result, 'component_label', None)
+        component_label = getattr(spectrum_result, "component_label", None)
         if component_label:
             log.debug(f"Component label from spectrum_result: {component_label}")
     else:
@@ -398,8 +405,10 @@ def interactive_spectrum(
             if analyzer.modes_path and analyzer.modes_path in analyzer.zarr_file:
                 mode_shape = analyzer.zarr_file[analyzer.modes_path].shape
                 n_comp_available = mode_shape[-1]  # Last dimension is components
-                log.debug(f"Detected {n_comp_available} components from mode data shape: {mode_shape}")
-                
+                log.debug(
+                    f"Detected {n_comp_available} components from mode data shape: {mode_shape}"
+                )
+
                 # Map components based on available count
                 if n_comp_available == 1:
                     components = ["z"]  # Single component, likely z
@@ -412,17 +421,19 @@ def interactive_spectrum(
                     log.info("Auto-selected components: x, y, z (full 3D data)")
                 else:
                     components = ["x", "y", "z"]  # Fallback
-                    log.warning(f"Unexpected component count {n_comp_available}, using default [x,y,z]")
+                    log.warning(
+                        f"Unexpected component count {n_comp_available}, using default [x,y,z]"
+                    )
             else:
                 components = ["x", "y", "z"]  # Default fallback
                 log.info("No mode data available yet, using default components [x,y,z]")
         except Exception as e:
             log.debug(f"Could not auto-detect components: {e}, using default [x,y,z]")
             components = ["x", "y", "z"]
-    
+
     n_components = len(components)
     log.info(f"Using {n_components} component(s) for visualization: {components}")
-    
+
     # Store components as instance attribute for callbacks
     analyzer._current_components = components
 
@@ -468,16 +479,18 @@ def interactive_spectrum(
         )
 
     # ── Determine visualization types ────────────────────────────────────────
-    n_vis_types = sum([
-        analyzer.config.show_magnitude,
-        analyzer.config.show_phase,
-        analyzer.config.show_combined,
-    ])
+    n_vis_types = sum(
+        [
+            analyzer.config.show_magnitude,
+            analyzer.config.show_phase,
+            analyzer.config.show_combined,
+        ]
+    )
     if n_vis_types == 0:
         raise ValueError("At least one visualization type must be enabled")
 
     # ── Auto-size figure based on content ────────────────────────────────────
-    _horizontal = (n_components == 1)   # single-component → horizontal layout
+    _horizontal = n_components == 1  # single-component → horizontal layout
     analyzer._layout_horizontal = _horizontal
 
     if _horizontal:
@@ -497,9 +510,11 @@ def interactive_spectrum(
     # ── Interactive backend ──────────────────────────────────────────────────
     try:
         import matplotlib
+
         current_backend = matplotlib.get_backend()
         try:
             from IPython import get_ipython
+
             ipython = get_ipython()
             in_jupyter = ipython is not None and hasattr(ipython, "kernel")
         except ImportError:
@@ -513,8 +528,13 @@ def interactive_spectrum(
                 try:
                     ipython.run_line_magic("matplotlib", "nbagg")
                 except Exception:
-                    if not any(k in current_backend.lower() for k in ("ipympl", "widget", "nbagg")):
-                        log.warning(f"Backend '{current_backend}' may lack interactivity – run %matplotlib widget")
+                    if not any(
+                        k in current_backend.lower()
+                        for k in ("ipympl", "widget", "nbagg")
+                    ):
+                        log.warning(
+                            f"Backend '{current_backend}' may lack interactivity – run %matplotlib widget"
+                        )
         else:
             log.info(f"Backend: {current_backend}")
     except Exception as e:
@@ -525,9 +545,9 @@ def interactive_spectrum(
     analyzer._interactive_fig = fig
 
     # ── Build GridSpec (adaptive layout) ─────────────────────────────────────
-    _SPEC_W  = 1.5      # spectrum column weight
-    _MODE_W  = 1.0      # each mode-image column weight
-    _CBAR_W  = 0.06     # each colorbar column weight
+    _SPEC_W = 1.5  # spectrum column weight
+    _MODE_W = 1.0  # each mode-image column weight
+    _CBAR_W = 0.06  # each colorbar column weight
 
     if _horizontal:
         # Single component – one row, vis types are columns
@@ -538,17 +558,22 @@ def interactive_spectrum(
             w_ratios.extend([_MODE_W, _CBAR_W])
 
         gs = gridspec.GridSpec(
-            1, n_gcols,
+            1,
+            n_gcols,
             width_ratios=w_ratios,
-            hspace=0.05, wspace=0.25,
-            left=0.06, right=0.97, top=0.88, bottom=0.12,
+            hspace=0.05,
+            wspace=0.25,
+            left=0.06,
+            right=0.97,
+            top=0.88,
+            bottom=0.12,
         )
         ax_spectrum = fig.add_subplot(gs[0, 0])
 
         # _mode_axes shape: (n_vis_types, 1) – row=vis_type, col=0
         _axes, _cbars = [], []
         for v in range(n_vis_types):
-            gc = 1 + v * 2   # GridSpec column for image
+            gc = 1 + v * 2  # GridSpec column for image
             _axes.append([fig.add_subplot(gs[0, gc])])
             _cbars.append(fig.add_subplot(gs[0, gc + 1]))
         analyzer._mode_axes = np.array(_axes)  # (n_vis_types, 1)
@@ -560,28 +585,39 @@ def interactive_spectrum(
         w_ratios = [_SPEC_W] + [_MODE_W] * n_components + [_CBAR_W]
 
         gs = gridspec.GridSpec(
-            n_vis_types, n_gcols,
+            n_vis_types,
+            n_gcols,
             width_ratios=w_ratios,
             height_ratios=[1.0] * n_vis_types,
-            hspace=0.35, wspace=0.20,
-            left=0.06, right=0.97, top=0.90, bottom=0.08,
+            hspace=0.35,
+            wspace=0.20,
+            left=0.06,
+            right=0.97,
+            top=0.90,
+            bottom=0.08,
         )
         ax_spectrum = fig.add_subplot(gs[:, 0])
 
-        analyzer._mode_axes = np.array([
-            [fig.add_subplot(gs[row, col + 1]) for col in range(n_components)]
-            for row in range(n_vis_types)
-        ])
+        analyzer._mode_axes = np.array(
+            [
+                [fig.add_subplot(gs[row, col + 1]) for col in range(n_components)]
+                for row in range(n_vis_types)
+            ]
+        )
         analyzer._cbar_axes = [
             fig.add_subplot(gs[row, -1]) for row in range(n_vis_types)
         ]
 
     # Plot spectrum
     # Debug: check spectrum shape
-    log.debug(f"Spectrum shape before mask: {spectrum_to_use.shape if hasattr(spectrum_to_use, 'shape') else 'N/A'}")
-    log.debug(f"Frequencies shape: {frequencies_to_use.shape if hasattr(frequencies_to_use, 'shape') else 'N/A'}")
+    log.debug(
+        f"Spectrum shape before mask: {spectrum_to_use.shape if hasattr(spectrum_to_use, 'shape') else 'N/A'}"
+    )
+    log.debug(
+        f"Frequencies shape: {frequencies_to_use.shape if hasattr(frequencies_to_use, 'shape') else 'N/A'}"
+    )
     log.debug(f"f_min={analyzer.config.f_min}, f_max={analyzer.config.f_max}")
-    
+
     # Handle multi-dimensional spectrum - plot each component separately
     # NOTE: n_spec_curves is the number of *spectral* curves, NOT the number of
     #       mode components used in the GridSpec layout (which is len(components)).
@@ -590,47 +626,65 @@ def interactive_spectrum(
 
     # Generate pastel colors for spectral curves
     try:
-        from mmpp.fft.spectrum._plotting.static import _generate_pastel_colors as _gen_colors
+        from mmpp.fft.spectrum._plotting.static import (
+            _generate_pastel_colors as _gen_colors,
+        )
     except ImportError:
         from matplotlib.colors import to_rgba
+
         def _gen_colors(n: int) -> list:
-            colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
-            return [to_rgba(c) for c in colors[:int(n)]]
+            colors = plt.get_cmap("Accent")(np.linspace(0, 1, max(int(n), 3)))
+            return [to_rgba(c) for c in colors[: int(n)]]
+
     pastel_colors = _gen_colors(n_spec_curves)
     component_labels = [r"$m_x$", r"$m_y$", r"$m_z$"][:n_spec_curves]
-    
+
     # Apply frequency mask FIRST
     freq_mask = (frequencies_to_use >= analyzer.config.f_min) & (
         frequencies_to_use <= analyzer.config.f_max
     )
-    
+
     # Ensure we have data to plot
     if not np.any(freq_mask):
-        log.warning(f"No frequencies in range [{analyzer.config.f_min}, {analyzer.config.f_max}] GHz. Using all data.")
+        log.warning(
+            f"No frequencies in range [{analyzer.config.f_min}, {analyzer.config.f_max}] GHz. Using all data."
+        )
         freq_mask = np.ones(len(frequencies_to_use), dtype=bool)
-    
+
     freqs_plot = frequencies_to_use[freq_mask]
-    
+
     if has_multi_components:
-        log.info(f"Multi-component spectrum detected (shape={spectrum_to_use.shape}), plotting {n_spec_curves} curves")
+        log.info(
+            f"Multi-component spectrum detected (shape={spectrum_to_use.shape}), plotting {n_spec_curves} curves"
+        )
         # For each component
         spectrum_components = []
         for i in range(n_spec_curves):
-            comp_spectrum = spectrum_to_use[:, i] if spectrum_to_use.ndim == 2 else spectrum_to_use[..., i].mean(axis=tuple(range(1, spectrum_to_use.ndim - 1)))
+            comp_spectrum = (
+                spectrum_to_use[:, i]
+                if spectrum_to_use.ndim == 2
+                else spectrum_to_use[..., i].mean(
+                    axis=tuple(range(1, spectrum_to_use.ndim - 1))
+                )
+            )
             spectrum_components.append(comp_spectrum[freq_mask])
     else:
         spectrum_1d = spectrum_to_use
         spectrum_components = [spectrum_1d[freq_mask]]
-    
+
     # For peak detection later, store averaged version
-    spectrum_segment = np.mean(np.array(spectrum_components), axis=0) if len(spectrum_components) > 1 else spectrum_components[0]
-    
+    spectrum_segment = (
+        np.mean(np.array(spectrum_components), axis=0)
+        if len(spectrum_components) > 1
+        else spectrum_components[0]
+    )
+
     log.debug(f"After mask: freqs_plot.shape={freqs_plot.shape}")
 
     # Determine scale factor for Y-axis label
     all_max = max(np.max(s) for s in spectrum_components) if spectrum_components else 1
     scale_factor = 1
-    
+
     if analyzer.config.spectrum_log_scale:
         ax_spectrum.set_ylabel("log₁₀(Power)")
     else:
@@ -638,7 +692,7 @@ def interactive_spectrum(
         if all_max > 0:
             exponent = int(np.floor(np.log10(all_max)))
             if abs(exponent) >= 2:
-                scale_factor = 10 ** exponent
+                scale_factor = 10**exponent
                 ax_spectrum.set_ylabel(f"Power (×10$^{{{exponent}}}$ arb. u.)")
             else:
                 ax_spectrum.set_ylabel("Power (arb. u.)")
@@ -648,36 +702,53 @@ def interactive_spectrum(
     # Plot each component with pastel colors
     for i, comp_spectrum in enumerate(spectrum_components):
         spectrum_plot = comp_spectrum.copy()
-        
+
         if analyzer.config.spectrum_normalize and spectrum_plot.size:
             max_val = np.max(spectrum_plot)
             if max_val > 0:
                 spectrum_plot = spectrum_plot / max_val
-        
+
         if analyzer.config.spectrum_log_scale:
             spectrum_plot = np.log10(spectrum_plot + 1e-10)
         else:
             spectrum_plot = spectrum_plot / scale_factor
-        
+
         label = component_labels[i] if has_multi_components else "Power"
-        ax_spectrum.plot(freqs_plot, spectrum_plot, 
-                        color=pastel_colors[i], linewidth=1.8, alpha=0.9,
-                        label=label)
-    
+        ax_spectrum.plot(
+            freqs_plot,
+            spectrum_plot,
+            color=pastel_colors[i],
+            linewidth=1.8,
+            alpha=0.9,
+            label=label,
+        )
+
     # Add legend if multiple components
     if has_multi_components:
-        ax_spectrum.legend(loc='upper right', frameon=True, fancybox=True,
-                          framealpha=0.9, edgecolor='lightgray', fontsize=9)
-    
+        ax_spectrum.legend(
+            loc="upper right",
+            frameon=True,
+            fancybox=True,
+            framealpha=0.9,
+            edgecolor="lightgray",
+            fontsize=9,
+        )
+
     ax_spectrum.set_xlabel("Frequency (GHz)", fontsize=10)
 
     # ── Professional spectrum panel styling ──────────────────────────────────
     _title_comp = ""
-    if spectrum_result is not None and hasattr(spectrum_result, 'component_label') and spectrum_result.component_label:
+    if (
+        spectrum_result is not None
+        and hasattr(spectrum_result, "component_label")
+        and spectrum_result.component_label
+    ):
         _title_comp = f" {spectrum_result.component_label}"
     ax_spectrum.set_title(
         f"FMR Spectrum{_title_comp}",
-        fontsize=11, fontweight="semibold", pad=6,
+        fontsize=11,
+        fontweight="semibold",
+        pad=6,
     )
     ax_spectrum.grid(True, alpha=0.25, linestyle="-", linewidth=0.5, color="#cccccc")
     ax_spectrum.tick_params(axis="both", labelsize=9, direction="in", length=3)
@@ -694,24 +765,31 @@ def interactive_spectrum(
         if analyzer.config.f_min <= peak.freq <= analyzer.config.f_max:
             y_val = spectrum_plot[np.argmin(np.abs(freqs_plot - peak.freq))]
             # Professional peak markers
-            ax_spectrum.plot(peak.freq, y_val, 'o', 
-                           color='#E74C3C', markersize=6, 
-                           markeredgecolor='white', markeredgewidth=1.5, zorder=5)
+            ax_spectrum.plot(
+                peak.freq,
+                y_val,
+                "o",
+                color="#E74C3C",
+                markersize=6,
+                markeredgecolor="white",
+                markeredgewidth=1.5,
+                zorder=5,
+            )
             ax_spectrum.annotate(
                 f"{peak.freq:.2f} GHz",
                 xy=(peak.freq, y_val),
                 xytext=(5, 8),
-                textcoords='offset points',
+                textcoords="offset points",
                 fontsize=8,
-                color='#2C3E50',
-                bbox=dict(
-                    boxstyle='round,pad=0.2',
-                    facecolor='white',
-                    edgecolor='#E74C3C',
-                    alpha=0.85,
-                    linewidth=0.8
-                ),
-                zorder=10
+                color="#2C3E50",
+                bbox={
+                    "boxstyle": "round,pad=0.2",
+                    "facecolor": "white",
+                    "edgecolor": "#E74C3C",
+                    "alpha": 0.85,
+                    "linewidth": 0.8,
+                },
+                zorder=10,
             )
 
     if show_peak_width and freqs_plot.size and spectrum_segment.size:
@@ -719,13 +797,13 @@ def interactive_spectrum(
         if width_info is None:
             log.debug("FWHM annotation skipped: could not determine half-width")
         else:
-            scale_factor = (
+            width_scale_factor = float(
                 width_info.peak_value if analyzer.config.spectrum_normalize else 1.0
             )
-            if scale_factor <= 0:
+            if width_scale_factor <= 0:
                 log.debug("FWHM annotation skipped: invalid scale factor")
             else:
-                half_level_plot = width_info.half_level / scale_factor
+                half_level_plot: Any = width_info.half_level / width_scale_factor
                 if analyzer.config.spectrum_log_scale:
                     if half_level_plot > 0:
                         half_level_plot = np.log10(half_level_plot + 1e-10)
@@ -798,12 +876,14 @@ def interactive_spectrum(
         # Find peak with highest amplitude
         max_peak = max(peaks, key=lambda p: p.amplitude)
         init_freq = max_peak.freq
-        log.info(f"Initialized at peak frequency {init_freq:.3f} GHz (amplitude={max_peak.amplitude:.2e})")
+        log.info(
+            f"Initialized at peak frequency {init_freq:.3f} GHz (amplitude={max_peak.amplitude:.2e})"
+        )
     else:
         # Fallback to middle frequency if no peaks found
         init_freq = freqs_plot[len(freqs_plot) // 2]
         log.warning(f"No peaks found, using middle frequency {init_freq:.3f} GHz")
-    
+
     analyzer._frequency_line = ax_spectrum.axvline(
         init_freq, color="red", linestyle="--", linewidth=2, alpha=0.8
     )
@@ -841,14 +921,20 @@ def interactive_spectrum(
                 for col_idx, ax in enumerate(ax_row):
                     if event.inaxes == ax:
                         # Use stored components list
-                        if hasattr(analyzer, '_current_components') and col_idx < len(analyzer._current_components):
+                        if hasattr(analyzer, "_current_components") and col_idx < len(
+                            analyzer._current_components
+                        ):
                             component = analyzer._current_components[col_idx]
-                            log.debug(f"Double-click detected on axis ({row_idx}, {col_idx}) for component {component}")
+                            log.debug(
+                                f"Double-click detected on axis ({row_idx}, {col_idx}) for component {component}"
+                            )
                             _toggle_mode_animation(
                                 analyzer, ax, row_idx, col_idx, component, z_layer
                             )
                         else:
-                            log.warning(f"Could not determine component for axis ({row_idx}, {col_idx})")
+                            log.warning(
+                                f"Could not determine component for axis ({row_idx}, {col_idx})"
+                            )
                         return
 
     # Store event connection for cleanup
@@ -1035,7 +1121,7 @@ Interactive Spectrum Controls:
         log.debug("Interactive plot event handlers cleaned up")
 
     # Store cleanup function for later use
-    analyzer._interactive_fig._mmpp_cleanup = cleanup
+    setattr(analyzer._interactive_fig, "_mmpp_cleanup", cleanup)  # noqa: B010
 
     # Margins are already set in the GridSpec; no tight_layout needed.
     analyzer._interactive_fig.canvas.draw_idle()
@@ -1065,7 +1151,11 @@ Interactive Spectrum Controls:
                     )
 
         # Auto-save animation if requested
-        if auto_save and analyzer._saveanim_enabled:
+        if (
+            auto_save
+            and analyzer._saveanim_enabled
+            and analyzer._saveanim_path is not None
+        ):
             try:
                 if analyzer._mode_animations:
                     log.info(f"Auto-saving animation to: {analyzer._saveanim_path}")
@@ -1084,9 +1174,7 @@ Interactive Spectrum Controls:
                 print(f"❌ Auto-save failed: {e}")
         elif auto_save and not analyzer._saveanim_enabled:
             log.warning("auto_save=True requires saveanim to be enabled")
-            print(
-                "⚠️ auto_save=True requires saveanim parameter (True or custom path)"
-            )
+            print("⚠️ auto_save=True requires saveanim parameter (True or custom path)")
 
     # Update log message based on animation saving capability
     log_message = (
@@ -1108,15 +1196,13 @@ Interactive Spectrum Controls:
     if show:
         plt.show()
         return None  # Return None to prevent Jupyter auto-display after plt.show()
-    
+
     # Return figure and axes for user customization when show=False
     # Returns: (fig, ax_spectrum, mode_axes)
     return analyzer._interactive_fig, ax_spectrum, analyzer._mode_axes
 
 
-def update_mode_plots(
-    analyzer, components: list[Union[int, str]], z_layer: int
-) -> None:
+def update_mode_plots(analyzer, components: list[int | str], z_layer: int) -> None:
     """Update mode plots for current frequency."""
     if analyzer._mode_axes is None or analyzer._current_frequency is None:
         return
@@ -1144,10 +1230,13 @@ def update_mode_plots(
 
     if has_active_column_animations:
         from .animation import stop_column_animation as _stop_col_anim
+
         active_column_indices = list(range(len(components)))
         for col_idx in active_column_indices:
             _stop_col_anim(analyzer, col_idx)
-        log.debug(f"Stopped {len(active_column_indices)} column animations for frequency update")
+        log.debug(
+            f"Stopped {len(active_column_indices)} column animations for frequency update"
+        )
 
     # Clear previous shared colorbars safely
     for cbar in getattr(analyzer, "_row_colorbars", []):
@@ -1168,7 +1257,7 @@ def update_mode_plots(
     if analyzer.config.show_combined:
         vis_types.append("combined")
 
-    images_for_colorbar: list[Optional[Any]] = [None] * len(vis_types)
+    images_for_colorbar: list[Any | None] = [None] * len(vis_types)
 
     # Clear all axes (only non-animated ones, or all if we stopped animations)
     for ax_row in analyzer._mode_axes:
@@ -1200,12 +1289,13 @@ def update_mode_plots(
 
     # ── Pre-compute shared rendering parameters (constant across all components) ──
     try:
-        from ..vortex_optics import VortexOptics, TopologicalAnimator
+        from ..vortex_optics import VortexOptics
+
         _have_vortex = True
     except ImportError:
         _have_vortex = False
 
-    use_holo  = getattr(analyzer.config, "use_holography", False)
+    use_holo = getattr(analyzer.config, "use_holography", False)
     holo_gamma = getattr(analyzer.config, "holography_gamma", 0.5)
     holo_noise = getattr(analyzer.config, "holography_noise_threshold", 1e-4)
 
@@ -1216,9 +1306,10 @@ def update_mode_plots(
             magnitude = np.abs(comp_data)
             phase = np.angle(comp_data)
 
-            comp_label = (
+            (
                 VortexOptics.get_component_label(str(comp), latex=False)
-                if _have_vortex else str(comp)
+                if _have_vortex
+                else str(comp)
             )
 
             row_idx = 0
@@ -1262,7 +1353,9 @@ def update_mode_plots(
                 else:
                     img = ax_phase.imshow(
                         phase,
-                        cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
+                        cmap=analyzer.config._resolve_colormap(
+                            analyzer.config.colormap_phase
+                        ),
                         extent=mode_data.extent,
                         aspect="equal",
                         interpolation=analyzer.config.interpolation,
@@ -1273,9 +1366,7 @@ def update_mode_plots(
                 if images_for_colorbar[row_idx] is None and not use_holo:
                     images_for_colorbar[row_idx] = img
                 if i == 0:
-                    _add_scale_bar(
-                        analyzer, ax_phase, mode_data.extent
-                    )
+                    _add_scale_bar(analyzer, ax_phase, mode_data.extent)
                 row_idx += 1
 
             # Combined plot (if enabled)
@@ -1286,7 +1377,9 @@ def update_mode_plots(
 
                 img = analyzer._mode_axes[row_idx, i].imshow(
                     combined_data,
-                    cmap=analyzer.config._resolve_colormap(analyzer.config.colormap_phase),
+                    cmap=analyzer.config._resolve_colormap(
+                        analyzer.config.colormap_phase
+                    ),
                     extent=mode_data.extent,
                     aspect="equal",
                     interpolation=analyzer.config.interpolation,
@@ -1308,8 +1401,8 @@ def update_mode_plots(
     # ── Labels (adaptive: horizontal vs vertical) ────────────────────────────
     _vis_label = {
         "magnitude": "Amplitude",
-        "phase":     "Hologram" if use_holo else "Phase",
-        "combined":  "Re[m(t)]",
+        "phase": "Hologram" if use_holo else "Phase",
+        "combined": "Re[m(t)]",
     }
 
     _is_horiz = getattr(analyzer, "_layout_horizontal", False)
@@ -1318,7 +1411,8 @@ def update_mode_plots(
         # Horizontal (1 component): each vis type is a column → use title
         _comp_lbl = (
             VortexOptics.get_component_label(str(components[0]), latex=False)
-            if _have_vortex else str(components[0])
+            if _have_vortex
+            else str(components[0])
         )
         for v_idx, vis_type in enumerate(vis_types):
             ax = analyzer._mode_axes[v_idx, 0]
@@ -1326,7 +1420,9 @@ def update_mode_plots(
                 f"{_vis_label.get(vis_type, vis_type)} |{_comp_lbl}|"
                 if vis_type == "magnitude"
                 else f"{_vis_label.get(vis_type, vis_type)} ({_comp_lbl})",
-                fontsize=9, fontweight="semibold", pad=4,
+                fontsize=9,
+                fontweight="semibold",
+                pad=4,
             )
     else:
         # Vertical (multi-component): row labels on left, column headers on top
@@ -1334,47 +1430,62 @@ def update_mode_plots(
             if r_idx < len(analyzer._mode_axes) and analyzer._mode_axes.shape[1] > 0:
                 analyzer._mode_axes[r_idx, 0].set_ylabel(
                     _vis_label.get(vis_type, vis_type),
-                    fontsize=9, labelpad=6, rotation=90,
+                    fontsize=9,
+                    labelpad=6,
+                    rotation=90,
                 )
         for c_idx, comp in enumerate(components):
-            if analyzer._mode_axes.shape[0] > 0 and c_idx < analyzer._mode_axes.shape[1]:
+            if (
+                analyzer._mode_axes.shape[0] > 0
+                and c_idx < analyzer._mode_axes.shape[1]
+            ):
                 _cl = (
                     VortexOptics.get_component_label(str(comp), latex=False)
-                    if _have_vortex else str(comp)
+                    if _have_vortex
+                    else str(comp)
                 )
                 analyzer._mode_axes[0, c_idx].set_title(
-                    _cl, fontsize=10, fontweight="semibold", pad=4,
+                    _cl,
+                    fontsize=10,
+                    fontweight="semibold",
+                    pad=4,
                 )
 
     # Suptitle with frequency
     analyzer._interactive_fig.suptitle(
         f"FMR Modes @ {analyzer._current_frequency:.3f} GHz",
-        fontsize=13, fontweight="bold", y=0.98 if _is_horiz else 0.96,
+        fontsize=13,
+        fontweight="bold",
+        y=0.98 if _is_horiz else 0.96,
     )
 
     # ── Per-row colorbars in dedicated axes ──────────────────────────────────
     _CBAR_LABELS = {
         "magnitude": "Amplitude",
-        "phase":     "Phase (rad)",
-        "combined":  "Re[m]",
+        "phase": "Phase (rad)",
+        "combined": "Re[m]",
     }
     _PHASE_TICKS = [-np.pi, -np.pi / 2, 0.0, np.pi / 2, np.pi]
-    _PHASE_TLBLS = [r"$-\pi$", r"$-\frac{\pi}{2}$", "0",
-                    r"$\frac{\pi}{2}$", r"$\pi$"]
+    _PHASE_TLBLS = [r"$-\pi$", r"$-\frac{\pi}{2}$", "0", r"$\frac{\pi}{2}$", r"$\pi$"]
 
     _cbar_axes_list = getattr(analyzer, "_cbar_axes", [])
-    for row_idx, (vis_type, img) in enumerate(zip(vis_types, images_for_colorbar)):
+    for row_idx, (vis_type, img) in enumerate(
+        zip(vis_types, images_for_colorbar, strict=False)
+    ):
         if img is None or row_idx >= len(_cbar_axes_list):
             continue
         cax = _cbar_axes_list[row_idx]
         try:
             cax.clear()
             cbar = analyzer._interactive_fig.colorbar(
-                img, cax=cax, orientation="vertical",
+                img,
+                cax=cax,
+                orientation="vertical",
             )
             cbar.set_label(
                 _CBAR_LABELS.get(vis_type, vis_type.capitalize()),
-                fontsize=8, labelpad=3,
+                fontsize=8,
+                labelpad=3,
             )
             cbar.ax.tick_params(labelsize=7, length=2, pad=1, width=0.5)
             cbar.outline.set_linewidth(0.4)
@@ -1417,14 +1528,18 @@ def update_mode_plots(
     # Restart column animations that were active before the update
     if active_column_indices:
         from .animation import start_column_animation as _start_col_anim
+
         frames = analyzer.config.animation_time_steps
         for col_idx in active_column_indices:
             if col_idx < len(components):
                 try:
-                    _start_col_anim(analyzer, col_idx, components[col_idx], z_layer, frames=frames)
+                    _start_col_anim(
+                        analyzer, col_idx, components[col_idx], z_layer, frames=frames
+                    )
                     log.debug(
                         f"Restarted column animation for col={col_idx} at {analyzer._current_frequency:.3f} GHz"
                     )
                 except Exception as e:
-                    log.warning(f"Failed to restart column animation for col={col_idx}: {e}")
-
+                    log.warning(
+                        f"Failed to restart column animation for col={col_idx}: {e}"
+                    )

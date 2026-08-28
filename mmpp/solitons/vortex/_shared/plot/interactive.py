@@ -76,16 +76,18 @@ def trajectory_interactive(
         cache = None
 
     ax_orbit.plot(x, y, color="#1d4ed8", lw=1.6, alpha=0.85)
-    trail_line, = ax_orbit.plot([], [], color="#0ea5e9", lw=2.2, alpha=0.85)
-    marker = ax_orbit.scatter([x[0]], [y[0]], s=70, color="#f59e0b", edgecolors="black", zorder=5)
+    (trail_line,) = ax_orbit.plot([], [], color="#0ea5e9", lw=2.2, alpha=0.85)
+    marker = ax_orbit.scatter(
+        [x[0]], [y[0]], s=70, color="#f59e0b", edgecolors="black", zorder=5
+    )
     ax_orbit.set_title("Core trajectory")
     ax_orbit.set_xlabel("X [m]")
     ax_orbit.set_ylabel("Y [m]")
     ax_orbit.set_aspect("equal")
     ax_orbit.grid(True, alpha=0.25)
 
-    slider_ax = fig.add_axes([0.16, 0.035, 0.52, 0.035])
-    play_ax = fig.add_axes([0.71, 0.028, 0.12, 0.05])
+    slider_ax = fig.add_axes((0.16, 0.035, 0.52, 0.035))
+    play_ax = fig.add_axes((0.71, 0.028, 0.12, 0.05))
     frame_slider = Slider(
         slider_ax,
         "Frame",
@@ -164,7 +166,7 @@ def trajectory_interactive(
         cache_frame_data=False,
     )
     # keep widgets/animation alive for interactive backends
-    fig._mmpp_interactive = {
+    fig._mmpp_interactive = {  # type: ignore[attr-defined]
         "slider": frame_slider,
         "play_button": play_btn,
         "animation": anim,

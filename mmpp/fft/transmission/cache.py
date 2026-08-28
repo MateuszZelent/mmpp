@@ -6,18 +6,16 @@ import asyncio
 import hashlib
 import inspect
 import json
-import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import numpy as np
 import zarr
 
-from .compute import TransmissionConfig, TransmissionResult
 from ...cli.logging_config import get_mmpp_logger
-
+from .compute import TransmissionConfig, TransmissionResult
 
 log = get_mmpp_logger("mmpp.fft.transmission.cache")
 
@@ -25,7 +23,7 @@ log = get_mmpp_logger("mmpp.fft.transmission.cache")
 class TransmissionCache:
     """Handles on-disk caching of transmission results using zarr."""
 
-    def __init__(self, job_result: Any, dataset_name: Optional[str] = None):
+    def __init__(self, job_result: Any, dataset_name: str | None = None):
         self.job_result = job_result
         self.dataset_name = dataset_name
 
@@ -33,7 +31,7 @@ class TransmissionCache:
         """Sanitize name for use as zarr key."""
         return "".join(c if c.isalnum() or c in "_-" else "_" for c in name)
 
-    def _ensure_text(self, value: Any) -> Optional[str]:
+    def _ensure_text(self, value: Any) -> str | None:
         """Convert value to text if it's bytes or bytearray."""
         if isinstance(value, (bytes, bytearray)):
             return value.decode("utf-8")
@@ -60,7 +58,7 @@ class TransmissionCache:
             }
         return str(obj)
 
-    def _load_group_array(self, group: Any, name: str) -> Optional[np.ndarray]:
+    def _load_group_array(self, group: Any, name: str) -> np.ndarray | None:
         """Safely load array from zarr group."""
         try:
             node = group.get(name)
@@ -76,7 +74,7 @@ class TransmissionCache:
 
     def _create_dataset(self, group: Any, name: str, data: Any) -> None:
         """Create a dataset under ``group`` with compatibility for zarr API variants."""
-        create = getattr(group, "create_dataset")
+        create = group.create_dataset
 
         # Convert data to numpy array to get shape and dtype
         data_array = np.asarray(data)
@@ -136,9 +134,9 @@ class TransmissionCache:
 
     def _get_cache_group(
         self,
-        cache_path: Optional[Path] = None,
+        cache_path: Path | None = None,
         write: bool = False,
-    ) -> Optional[zarr.Group]:
+    ) -> zarr.Group | None:
         """Get or create the zarr group for transmission cache.
 
         Parameters
@@ -238,7 +236,10 @@ class TransmissionCache:
         return dataset_group
 
     def generate_cache_key(
-        self, config: TransmissionConfig, slice_info: Any = None
+        self,
+        config: TransmissionConfig,
+        slice_info: Any = None,
+        view_identity: str | None = None,
     ) -> str:
         """Generate unique cache key from configuration and slice info."""
         from dataclasses import asdict
@@ -250,6 +251,8 @@ class TransmissionCache:
         # Add slice info to cache key
         if slice_info is not None:
             config_dict["slice_info"] = self._serialize_for_json(slice_info)
+        if view_identity is not None:
+            config_dict["view_identity"] = str(view_identity)
 
         config_json = json.dumps(config_dict, sort_keys=True)
         hash_obj = hashlib.sha256(config_json.encode())
@@ -259,8 +262,9 @@ class TransmissionCache:
         self,
         config: TransmissionConfig,
         slice_info: Any = None,
-        cache_path: Optional[Path] = None,
-    ) -> Optional[TransmissionResult]:
+        cache_path: Path | None = None,
+        view_identity: str | None = None,
+    ) -> TransmissionResult | None:
         """Load transmission result from cache if available.
 
         Parameters
@@ -286,7 +290,7 @@ class TransmissionCache:
             log.debug("Cache group not available - cannot load from cache")
             return None
 
-        cache_key = self.generate_cache_key(config, slice_info)
+        cache_key = self.generate_cache_key(config, slice_info, view_identity)
         entry_name = f"transmission_{cache_key}"
         log.debug("Looking for cache entry: %s (key=%s)", entry_name, cache_key[:16])
 
@@ -400,8 +404,9 @@ class TransmissionCache:
         self,
         result: TransmissionResult,
         slice_info: Any = None,
-        cache_path: Optional[Path] = None,
+        cache_path: Path | None = None,
         overwrite: bool = False,
+        view_identity: str | None = None,
     ) -> None:
         """Save transmission result to cache.
 
@@ -427,7 +432,7 @@ class TransmissionCache:
             log.debug("Skipping transmission cache save; cache group unavailable")
             return
 
-        cache_key = self.generate_cache_key(result.config, slice_info)
+        cache_key = self.generate_cache_key(result.config, slice_info, view_identity)
         entry_name = f"transmission_{cache_key}"
         log.debug("Saving cache entry: %s (key=%s)", entry_name, cache_key[:16])
 

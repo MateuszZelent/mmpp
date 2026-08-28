@@ -77,7 +77,9 @@ def create_layout(explorer: Any, widgets_module: Any) -> Any:
             explorer.w_live_soft_threshold_enabled,
             explorer.w_live_soft_percentile,
             explorer.w_live_soft_smoothness,
-            widgets.HTML("<small style='color:#888'>These filters enhance visibility without destroying data.</small>"),
+            widgets.HTML(
+                "<small style='color:#888'>These filters enhance visibility without destroying data.</small>"
+            ),
         ],
         layout=widgets.Layout(width="100%"),
     )
@@ -91,16 +93,15 @@ def create_layout(explorer: Any, widgets_module: Any) -> Any:
     filters_accordion.set_title(1, "🔧 Classic post-filters")
     filters_accordion.set_title(2, "♻️ Compute filters (recompute)")
 
-
     # Preset controls at the very top
     preset_load_box = widgets.HBox(
         [explorer.w_preset_load, explorer.w_preset_refresh_btn],
-        layout=widgets.Layout(width="100%")
+        layout=widgets.Layout(width="100%"),
     )
 
     preset_save_box = widgets.HBox(
         [explorer.w_preset_name, explorer.w_preset_save_btn],
-        layout=widgets.Layout(width="100%")
+        layout=widgets.Layout(width="100%"),
     )
 
     preset_controls = widgets.VBox(
@@ -110,7 +111,7 @@ def create_layout(explorer: Any, widgets_module: Any) -> Any:
             preset_save_box,
             explorer.w_preset_delete_btn,
         ],
-        layout=widgets.Layout(width="100%", padding="3px")
+        layout=widgets.Layout(width="100%", padding="3px"),
     )
 
     # === TAB 1: Dispersion Parameters ===
@@ -129,7 +130,7 @@ def create_layout(explorer: Any, widgets_module: Any) -> Any:
             widgets.HTML("<small><b>Display</b></small>"),
             explorer.w_cmap_disp,
         ],
-        layout=widgets.Layout(width="100%", padding="5px")
+        layout=widgets.Layout(width="100%", padding="5px"),
     )
 
     # === TAB 2: Mode Parameters ===
@@ -147,7 +148,7 @@ def create_layout(explorer: Any, widgets_module: Any) -> Any:
             explorer.w_mode_x_periods,
             explorer.w_cmap_mode,
         ],
-        layout=widgets.Layout(width="100%", padding="5px")
+        layout=widgets.Layout(width="100%", padding="5px"),
     )
 
     # === TAB 3: Actions & Animation ===
@@ -165,7 +166,7 @@ def create_layout(explorer: Any, widgets_module: Any) -> Any:
             explorer.w_anim_file_format,
             explorer.w_save_animation,
         ],
-        layout=widgets.Layout(width="100%", padding="5px")
+        layout=widgets.Layout(width="100%", padding="5px"),
     )
 
     # === TAB 4: Filters ===
@@ -173,13 +174,13 @@ def create_layout(explorer: Any, widgets_module: Any) -> Any:
         [
             filters_accordion,
         ],
-        layout=widgets.Layout(width="100%", padding="5px")
+        layout=widgets.Layout(width="100%", padding="5px"),
     )
 
     # Create tabs
     tabs = widgets.Tab(
         children=[tab_dispersion, tab_modes, tab_actions, tab_filters],
-        layout=widgets.Layout(width="100%")
+        layout=widgets.Layout(width="100%"),
     )
     tabs.set_title(0, "📊 Dispersion")
     tabs.set_title(1, "🎯 Modes")

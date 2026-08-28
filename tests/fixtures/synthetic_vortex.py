@@ -32,7 +32,7 @@ def generate_synthetic_vortex(
     radius = np.hypot(x_grid, y_grid)
     phi = np.arctan2(y_grid, x_grid)
 
-    mz = float(p) * np.exp(-(radius / float(core_radius_px)) ** 2)
+    mz = float(p) * np.exp(-((radius / float(core_radius_px)) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
 
     # ``w=+1`` yields vortex-like in-plane circulation; ``w=-1`` flips it.
@@ -78,4 +78,3 @@ def generate_vortex_mz_centered(
         core_radius_px=core_radius_px,
         center_pix=core_pix,
     )
-

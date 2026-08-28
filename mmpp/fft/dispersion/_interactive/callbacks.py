@@ -7,7 +7,6 @@ from typing import Any
 from .rendering import draw_dispersion_panel, refresh_output_widget
 from .status import set_status
 
-
 _ANALYTICAL_MATERIAL_KEYS = ("B", "Ms", "Aex", "d", "Ku", "Kc1", "Kc2", "phi_ani", "g")
 _ANALYTICAL_MAPPED_MATERIAL_KEYS = {"phi": "analytical_phi", "D": "analytical_D"}
 
@@ -104,7 +103,9 @@ def _update_analytical_state_from_controls(explorer: Any) -> None:
     if "analytical_n_modes" in controls:
         analytical["n_modes"] = _positive_int(controls["analytical_n_modes"].value, 1)
     if "analytical_k_points" in controls:
-        analytical["k_points"] = _positive_int(controls["analytical_k_points"].value, 500)
+        analytical["k_points"] = _positive_int(
+            controls["analytical_k_points"].value, 500
+        )
     for key in _ANALYTICAL_MATERIAL_KEYS:
         control_key = f"analytical_{key}"
         if control_key in controls:
@@ -247,7 +248,7 @@ def on_display_change(explorer: Any) -> None:
         refresh_output_widget(explorer)
         render_note = "rendered"
     else:
-        render_note = "press Render heatmap to update plot"
+        render_note = "press Render / refresh dispersion to update plot"
     set_status(
         explorer,
         (
@@ -310,7 +311,9 @@ def _render_extracted_mode(explorer: Any, mode: Any) -> bool:
     output = explorer.controls.get("output") if explorer.controls else None
     if output is None:
         return False
-    if not hasattr(output, "clear_output") or not hasattr(output, "append_display_data"):
+    if not hasattr(output, "clear_output") or not hasattr(
+        output, "append_display_data"
+    ):
         return False
 
     mode_type = _selected_mode_type(explorer)
@@ -343,9 +346,7 @@ def on_mode_extract(explorer: Any) -> None:
     request = _selected_mode_request_from_explorer(explorer)
     if not request["available"]:
         if "mode_info" in explorer.controls:
-            explorer.controls["mode_info"].value = (
-                f"<small>{request['reason']}</small>"
-            )
+            explorer.controls["mode_info"].value = f"<small>{request['reason']}</small>"
         set_status(explorer, str(request["reason"]), color="crimson")
         return
 
@@ -358,7 +359,9 @@ def on_mode_extract(explorer: Any) -> None:
         )
     except Exception as exc:
         if "mode_info" in explorer.controls:
-            explorer.controls["mode_info"].value = (
+            explorer.controls[
+                "mode_info"
+            ].value = (
                 f"<small>Mode extraction failed: {type(exc).__name__}: {exc}</small>"
             )
         set_status(explorer, f"Mode extraction failed: {exc}", color="crimson")

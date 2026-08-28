@@ -6,11 +6,10 @@ for FMR mode analysis and visualization.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Any
-import matplotlib.pyplot as plt
+from typing import Any
 
-from .compat import CMCRAMERI_AVAILABLE, CMOCEAN_AVAILABLE
 from ...cli.logging_config import get_mmpp_logger
+from .compat import CMCRAMERI_AVAILABLE, CMOCEAN_AVAILABLE
 
 log = get_mmpp_logger(__name__)
 
@@ -53,7 +52,7 @@ class ModeVisualizationConfig:
 
     # Publication-style annotations
     show_scalebar: bool = True
-    scalebar_length_nm: Optional[float] = None  # Auto-computed when None
+    scalebar_length_nm: float | None = None  # Auto-computed when None
     scalebar_location: str = "lower right"
     scalebar_pad: float = 0.3
     scalebar_color: str = "white"
@@ -62,14 +61,14 @@ class ModeVisualizationConfig:
     scalebar_height_fraction: float = 0.01
     scale_units: str = "nm"
 
-    colorbar_fraction: float = 0.04   # Proper colorbar width
-    colorbar_pad: float = 0.01       # Small padding for close positioning
+    colorbar_fraction: float = 0.04  # Proper colorbar width
+    colorbar_pad: float = 0.01  # Small padding for close positioning
     colorbar_ticklabel_size: int = 9  # Larger tick labels
-    colorbar_label_size: int = 10     # Larger labels
+    colorbar_label_size: int = 10  # Larger labels
     colorbar_labels: dict[str, str] = field(
         default_factory=lambda: {
             "magnitude": "Magnetization |m|",
-            "phase": "Phase (rad)", 
+            "phase": "Phase (rad)",
             "combined": "Re(m) × cos(φ)",
         }
     )
@@ -80,8 +79,8 @@ class ModeVisualizationConfig:
 
     # Layout settings
     # GridSpec ratios: spectrum column vs. each mode column (1.0) vs. colorbar strip
-    spectrum_width_ratio: float = 1.5   # ~1.5× wider than each mode panel
-    modes_width_ratio: float = 1.0      # each mode panel = 1.0 unit
+    spectrum_width_ratio: float = 1.5  # ~1.5× wider than each mode panel
+    modes_width_ratio: float = 1.0  # each mode panel = 1.0 unit
 
     def __post_init__(self):
         """Validate configuration parameters."""
@@ -152,26 +151,32 @@ class ModeVisualizationConfig:
                 pass
 
         # Fallback to matplotlib
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError as exc:
+            raise ImportError(
+                "Resolving Matplotlib colormaps requires matplotlib"
+            ) from exc
         return plt.get_cmap(cmap_name)
 
     def get_colormap(self, cmap_type: str):
         """
         Get resolved colormap for a specific type.
-        
+
         Parameters:
         -----------
         cmap_type : str
             Type of colormap ('magnitude', 'phase', 'animation')
-            
+
         Returns:
         --------
         matplotlib colormap object
         """
-        if cmap_type == 'magnitude':
+        if cmap_type == "magnitude":
             return self._resolve_colormap(self.colormap_magnitude)
-        elif cmap_type == 'phase':
+        elif cmap_type == "phase":
             return self._resolve_colormap(self.colormap_phase)
-        elif cmap_type == 'animation':
+        elif cmap_type == "animation":
             return self._resolve_colormap(self.colormap_animation)
         else:
             raise ValueError(f"Unknown colormap type: {cmap_type}")
@@ -179,12 +184,12 @@ class ModeVisualizationConfig:
     def get_colorbar_label(self, view_type: str) -> str:
         """
         Get colorbar label for a specific view type.
-        
+
         Parameters:
         -----------
         view_type : str
             Type of view ('magnitude', 'phase', 'combined')
-            
+
         Returns:
         --------
         str
@@ -195,12 +200,12 @@ class ModeVisualizationConfig:
     def validate_frequency_range(self, frequencies: list[float]) -> bool:
         """
         Validate that frequencies are within configured range.
-        
+
         Parameters:
         -----------
         frequencies : list[float]
             List of frequencies to validate
-            
+
         Returns:
         --------
         bool
@@ -211,36 +216,35 @@ class ModeVisualizationConfig:
     def to_dict(self) -> dict[str, Any]:
         """Convert configuration to dictionary."""
         return {
-            'figsize': self.figsize,
-            'dpi': self.dpi,
-            'spectrum_log_scale': self.spectrum_log_scale,
-            'spectrum_normalize': self.spectrum_normalize,
-            'peak_threshold': self.peak_threshold,
-            'peak_min_distance': self.peak_min_distance,
-            'show_magnitude': self.show_magnitude,
-            'show_phase': self.show_phase,
-            'show_combined': self.show_combined,
-            'colormap_magnitude': self.colormap_magnitude,
-            'colormap_phase': self.colormap_phase,
-            'colormap_animation': self.colormap_animation,
-            'interpolation': self.interpolation,
-            'use_midpoint_norm': self.use_midpoint_norm,
-            'animation_time_steps': self.animation_time_steps,
-            'show_scalebar': self.show_scalebar,
-            'scalebar_length_nm': self.scalebar_length_nm,
-            'f_min': self.f_min,
-            'f_max': self.f_max,
-            'spectrum_width_ratio': self.spectrum_width_ratio,
-            'modes_width_ratio': self.modes_width_ratio
+            "figsize": self.figsize,
+            "dpi": self.dpi,
+            "spectrum_log_scale": self.spectrum_log_scale,
+            "spectrum_normalize": self.spectrum_normalize,
+            "peak_threshold": self.peak_threshold,
+            "peak_min_distance": self.peak_min_distance,
+            "show_magnitude": self.show_magnitude,
+            "show_phase": self.show_phase,
+            "show_combined": self.show_combined,
+            "colormap_magnitude": self.colormap_magnitude,
+            "colormap_phase": self.colormap_phase,
+            "colormap_animation": self.colormap_animation,
+            "interpolation": self.interpolation,
+            "use_midpoint_norm": self.use_midpoint_norm,
+            "animation_time_steps": self.animation_time_steps,
+            "show_scalebar": self.show_scalebar,
+            "scalebar_length_nm": self.scalebar_length_nm,
+            "f_min": self.f_min,
+            "f_max": self.f_max,
+            "spectrum_width_ratio": self.spectrum_width_ratio,
+            "modes_width_ratio": self.modes_width_ratio,
         }
 
     @classmethod
-    def from_dict(cls, config_dict: dict[str, Any]) -> 'ModeVisualizationConfig':
+    def from_dict(cls, config_dict: dict[str, Any]) -> "ModeVisualizationConfig":
         """Create configuration from dictionary."""
         # Filter only known parameters
         known_params = {
-            key: value for key, value in config_dict.items()
-            if hasattr(cls, key)
+            key: value for key, value in config_dict.items() if hasattr(cls, key)
         }
         return cls(**known_params)
 

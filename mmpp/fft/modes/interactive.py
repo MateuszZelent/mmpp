@@ -9,24 +9,25 @@ It supports two operation modes:
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Optional, Sequence, Tuple, Union
-
 import logging
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 
 log = logging.getLogger("mmpp.fft.modes")
 
 try:
     import matplotlib.pyplot as plt
-    from matplotlib.figure import Figure
     from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
     from matplotlib.gridspec import GridSpec
 
     _HAS_MATPLOTLIB = True
 except ImportError:  # pragma: no cover - optional dependency
-    Figure = Any
-    Axes = Any
+    Figure = Any  # type: ignore[misc, assignment]
+    Axes = Any  # type: ignore[misc, assignment]
     _HAS_MATPLOTLIB = False
 
 try:
@@ -43,40 +44,77 @@ from ._interactive import (
     COMPONENT_NAMES,
     SpectrumFilterState,
     apply_preset_state,
+    build_toolbar,
     closest_freq_index,
     collect_preset_state,
-    build_toolbar,
     create_figure,
     draw_frequency_line,
     draw_spectrum,
-    guess_layer_bounds,
     get_presets_dir,
+    guess_layer_bounds,
     initialize_frequency,
     list_presets,
     load_spectrum_data,
+    normalize_component_selection,
+    normalize_spectrum_component_selection,
     on_animate_clicked,
     on_delete_preset_clicked,
     on_load_preset_changed,
-    on_spectrum_click,
     on_mode_type_changed,
     on_phase_index_changed,
     on_save_animation_clicked,
     on_save_preset_clicked,
+    on_spectrum_click,
     plot_compat,
     read_controls,
-    render_figure,
+    recompute_filtered_spectrum,
     refresh_freq_slider_bounds,
     refresh_preset_options,
+    render_figure,
     resolve_mode_rows,
-    recompute_filtered_spectrum,
     set_status,
     stop_animation,
+    update_frequency_selection,
     update_mode_plots,
     update_status_text,
-    update_frequency_selection,
-    normalize_component_selection,
-    normalize_spectrum_component_selection,
 )
+
+
+def _require_bool(name: str, value: Any) -> bool:
+    if not isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be boolean")
+    return bool(value)
+
+
+def _require_integer(name: str, value: Any, *, minimum: int | None = None) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer")
+    result = int(value)
+    if minimum is not None and result < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return result
+
+
+def _validate_figsize(figsize: Any) -> tuple[float, float]:
+    try:
+        values = tuple(float(value) for value in figsize)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("figsize must contain two positive finite values") from exc
+    if len(values) != 2 or not np.isfinite(values).all() or min(values) <= 0:
+        raise ValueError("figsize must contain two positive finite values")
+    return values
+
+
+def _validate_axis_limits(name: str, limits: Any) -> tuple[float, float] | None:
+    if limits is None:
+        return None
+    try:
+        values = tuple(float(value) for value in limits)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must contain two finite increasing values") from exc
+    if len(values) != 2 or not np.isfinite(values).all() or values[0] >= values[1]:
+        raise ValueError(f"{name} must contain two finite increasing values")
+    return values
 
 
 class InteractiveSpectrum:
@@ -86,10 +124,10 @@ class InteractiveSpectrum:
         self,
         data_loader: Any = None,
         spectrum_result: Any = None,
-        component_label: Optional[str] = None,
+        component_label: str | None = None,
         analyzer: Any = None,
         dpi: int = 100,
-        figsize: Tuple[float, float] = (16.0, 10.0),
+        figsize: tuple[float, float] = (16.0, 10.0),
     ):
         if not _HAS_MATPLOTLIB:
             raise ImportError("Matplotlib is required for interactive spectrum")
@@ -99,8 +137,8 @@ class InteractiveSpectrum:
         self._component_label = component_label
         self.analyzer = analyzer
 
-        self.dpi = int(dpi)
-        self.figsize = tuple(figsize)
+        self.dpi = _require_integer("dpi", dpi, minimum=1)
+        self.figsize = _validate_figsize(figsize)
 
         # Spectrum state
         self._raw_frequencies_ghz: np.ndarray = np.array([], dtype=float)
@@ -112,26 +150,26 @@ class InteractiveSpectrum:
         self._peaks: list[tuple[float, float]] = []
 
         # Visualization state
-        self._fig: Optional[Figure] = None
-        self._ax_spectrum: Optional[Axes] = None
-        self._mode_axes: Optional[np.ndarray] = None
+        self._fig: Figure | None = None
+        self._ax_spectrum: Axes | None = None
+        self._mode_axes: np.ndarray | None = None
         self._mode_cbar_axes: list[Any] = []
         self._mode_row_types: list[str] = ["magnitude", "phase", "combined"]
         self._mode_colorbars: list[Any] = []
         self._frequency_line: Any = None
-        self._current_frequency_ghz: Optional[float] = None
-        self._loaded_frequency_ghz: Optional[float] = None
-        self._phase_source_mode_array: Optional[np.ndarray] = None
-        self._phase_source_frequency_ghz: Optional[float] = None
-        self._phase_source_actual_frequency_ghz: Optional[float] = None
-        self._phase_source_z_layer: Optional[int] = None
+        self._current_frequency_ghz: float | None = None
+        self._loaded_frequency_ghz: float | None = None
+        self._phase_source_mode_array: np.ndarray | None = None
+        self._phase_source_frequency_ghz: float | None = None
+        self._phase_source_actual_frequency_ghz: float | None = None
+        self._phase_source_z_layer: int | None = None
         self._mode_components: list[str] = ["x", "y", "z"]
         self._spectrum_components: list[str] = ["x", "y", "z"]
         # Backward-compat alias used by older helpers/extensions.
         self._current_components: list[str] = list(self._mode_components)
         self._current_z_layer: int = -1
         self._freq_unit: str = "GHz"
-        self._title: Optional[str] = None
+        self._title: str | None = None
         self._show_peaks: bool = True
         self._filter_state = SpectrumFilterState(0.0, 1.0)
 
@@ -143,39 +181,43 @@ class InteractiveSpectrum:
         self._controls: dict[str, Any] = {}
         self._status_history: list[str] = []
         self._internal_update = False
-        self._presets_dir: Optional[Path] = None
+        self._presets_dir: Path | None = None
         self._is_saving_animation = False
-        self._save_animation_path: Optional[Path] = None
-        
+        self._save_animation_path: Path | None = None
+
         # Layout configuration
         self._mode_aspect: str = "equal"
-        self._xlim: Optional[Tuple[float, float]] = None
-        self._ylim: Optional[Tuple[float, float]] = None
+        self._xlim: tuple[float, float] | None = None
+        self._ylim: tuple[float, float] | None = None
         self._layout_mode: str = "auto"  # "auto", "vertical" or "horizontal"
         self._layout_variant: str = "vertical"
-        
+
         # Animation state (matching dispersion module pattern)
         self._animation: Any = None
         self._is_animating: bool = False
-        self._geometry_contour: Optional[np.ndarray] = None  # For overlay on mode plots
-        self._mode_type: str = "combined"  # real, imag, abs, phase, combined, ampl_phase
+        self._geometry_contour: np.ndarray | None = None  # For overlay on mode plots
+        self._mode_type: str = (
+            "combined"  # real, imag, abs, phase, combined, ampl_phase
+        )
         self._use_holography: bool = False
+        self._holography_gamma: float = 0.6
+        self._holography_noise_threshold: float = 1e-4
 
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
     def show(
         self,
-        components: Optional[Sequence[Union[int, str]]] = None,
-        mode_components: Optional[Sequence[Union[int, str]]] = None,
-        spectrum_components: Optional[Sequence[Union[int, str]]] = None,
+        components: Sequence[int | str] | None = None,
+        mode_components: Sequence[int | str] | None = None,
+        spectrum_components: Sequence[int | str] | None = None,
         z_layer: int = -1,
         log_scale: bool = False,
         normalize: bool = True,
         freq_unit: str = "GHz",
         show_peaks: bool = True,
-        title: Optional[str] = None,
-        initial_frequency: Optional[float] = None,
+        title: str | None = None,
+        initial_frequency: float | None = None,
         toolbar: bool = True,
         smooth_filter: str = "none",
         smooth_window: int = 7,
@@ -184,18 +226,20 @@ class InteractiveSpectrum:
         clip_percentile_low: float = 0.0,
         clip_percentile_high: float = 100.0,
         soft_threshold_percentile: float = 0.0,
-        freq_min: Optional[float] = None,
-        freq_max: Optional[float] = None,
+        freq_min: float | None = None,
+        freq_max: float | None = None,
         peak_prominence: float = 0.05,
         peak_distance: int = 5,
         mode_view: str = "all",
         show: bool = True,
         # New layout parameters
         aspect: str = "equal",
-        xlim: Optional[Tuple[float, float]] = None,
-        ylim: Optional[Tuple[float, float]] = None,
+        xlim: tuple[float, float] | None = None,
+        ylim: tuple[float, float] | None = None,
         layout: str = "auto",
         use_holography: bool = False,
+        holography_gamma: float | None = None,
+        holography_noise_threshold: float | None = None,
         auto_animate: bool = False,
         **_ignored: Any,
     ) -> Any:
@@ -203,19 +247,51 @@ class InteractiveSpectrum:
 
         Parameters mirror previous API and extend it with toolbar/filter options.
         """
+        save_path_override = _ignored.pop("save_path", None)
+        if save_path_override is None:
+            save_path_override = _ignored.pop("animation_save_path", None)
+        if not auto_animate and "animate" in _ignored:
+            auto_animate = _require_bool("animate", _ignored.pop("animate"))
+        else:
+            _ignored.pop("animate", None)
+        if _ignored:
+            unknown = ", ".join(sorted(str(key) for key in _ignored))
+            raise TypeError(f"Unknown interactive_spectrum option(s): {unknown}")
+
+        z_layer = _require_integer("z_layer", z_layer)
+        log_scale = _require_bool("log_scale", log_scale)
+        normalize = _require_bool("normalize", normalize)
+        show_peaks = _require_bool("show_peaks", show_peaks)
+        toolbar = _require_bool("toolbar", toolbar)
+        show = _require_bool("show", show)
+        use_holography = _require_bool("use_holography", use_holography)
+        auto_animate = _require_bool("auto_animate", auto_animate)
+        aspect_mode = str(aspect).strip().lower()
+        if aspect_mode not in {"equal", "auto"}:
+            raise ValueError("aspect must be 'equal' or 'auto'")
+        layout_mode = str(layout).strip().lower()
+        if layout_mode not in {"auto", "vertical", "horizontal"}:
+            raise ValueError("layout must be 'auto', 'vertical', or 'horizontal'")
+        xlim = _validate_axis_limits("xlim", xlim)
+        ylim = _validate_axis_limits("ylim", ylim)
+        peak_distance = _require_integer("peak_distance", peak_distance, minimum=1)
+
         self._load_spectrum_data()
 
-        self._current_z_layer = int(z_layer)
-        self._freq_unit = str(freq_unit)
+        self._current_z_layer = z_layer
+        self._get_freq_scale(freq_unit)  # validate before mutating UI state
+        self._freq_unit = str(freq_unit).strip()
         self._title = title
-        self._show_peaks = bool(show_peaks)
+        self._show_peaks = show_peaks
         self._mode_row_types = self._resolve_mode_rows(mode_view)
 
         base_components = normalize_component_selection(
             components,
             available=self._available_components or COMPONENT_NAMES,
         )
-        mode_selection = mode_components if mode_components is not None else base_components
+        mode_selection = (
+            mode_components if mode_components is not None else base_components
+        )
         spectrum_selection = (
             spectrum_components if spectrum_components is not None else base_components
         )
@@ -228,16 +304,33 @@ class InteractiveSpectrum:
             available=self._available_components,
         )
         self._current_components = list(self._mode_components)
-        
+
         # Store layout configuration
-        self._mode_aspect = str(aspect)
-        self._xlim = tuple(xlim) if xlim else None
-        self._ylim = tuple(ylim) if ylim else None
-        layout_mode = str(layout).strip().lower()
-        if layout_mode not in {"auto", "vertical", "horizontal"}:
-            layout_mode = "auto"
+        self._mode_aspect = aspect_mode
+        self._xlim = xlim
+        self._ylim = ylim
         self._layout_mode = layout_mode
-        self._use_holography = bool(use_holography)
+        self._use_holography = use_holography
+        analyzer_config = getattr(self.analyzer, "config", None)
+        default_gamma = getattr(analyzer_config, "holography_gamma", 0.6)
+        default_noise = getattr(analyzer_config, "holography_noise_threshold", 1e-4)
+        self._holography_gamma = float(
+            default_gamma if holography_gamma is None else holography_gamma
+        )
+        self._holography_noise_threshold = float(
+            default_noise
+            if holography_noise_threshold is None
+            else holography_noise_threshold
+        )
+        if not np.isfinite(self._holography_gamma) or self._holography_gamma <= 0:
+            raise ValueError("holography_gamma must be finite and positive")
+        if (
+            not np.isfinite(self._holography_noise_threshold)
+            or self._holography_noise_threshold < 0
+        ):
+            raise ValueError(
+                "holography_noise_threshold must be finite and non-negative"
+            )
 
         data_fmin = float(np.nanmin(self._raw_frequencies_ghz))
         data_fmax = float(np.nanmax(self._raw_frequencies_ghz))
@@ -252,22 +345,19 @@ class InteractiveSpectrum:
             freq_min=init_fmin,
             freq_max=init_fmax,
             smooth_filter=str(smooth_filter),
-            smooth_window=int(smooth_window),
+            smooth_window=smooth_window,
             smooth_sigma=float(smooth_sigma),
             baseline_mode=str(baseline_mode),
             clip_percentile_low=float(clip_percentile_low),
             clip_percentile_high=float(clip_percentile_high),
             soft_threshold_percentile=float(soft_threshold_percentile),
-            normalize=bool(normalize),
-            log_scale=bool(log_scale),
+            normalize=normalize,
+            log_scale=log_scale,
         )
 
         self._peak_prominence = float(peak_prominence)
-        self._peak_distance = int(peak_distance)
+        self._peak_distance = peak_distance
 
-        save_path_override = _ignored.pop("save_path", None)
-        if save_path_override is None:
-            save_path_override = _ignored.pop("animation_save_path", None)
         if save_path_override is not None:
             self._save_animation_path = Path(str(save_path_override)).expanduser()
         else:
@@ -275,10 +365,6 @@ class InteractiveSpectrum:
 
         self._recompute_filtered_spectrum()
         self._initialize_frequency(initial_frequency)
-
-        # Backward-compatible alias from older API.
-        if not auto_animate and "animate" in _ignored:
-            auto_animate = bool(_ignored.get("animate"))
 
         if toolbar and _HAS_WIDGETS:
             self._toolbar_enabled = True
@@ -314,7 +400,7 @@ class InteractiveSpectrum:
         """Recompute filtered traces and peak list from current filter state."""
         recompute_filtered_spectrum(self)
 
-    def _initialize_frequency(self, initial_frequency: Optional[float]) -> None:
+    def _initialize_frequency(self, initial_frequency: float | None) -> None:
         """Set current frequency based on initial request, peaks, or center."""
         initialize_frequency(self, initial_frequency)
 
@@ -433,7 +519,9 @@ class InteractiveSpectrum:
             self._controls["peak_dist"].value = 5
             self._controls["mode_view"].value = "all"
             if "mode_components" in self._controls:
-                self._controls["mode_components"].value = tuple(self._available_components)
+                self._controls["mode_components"].value = tuple(
+                    self._available_components
+                )
             elif "components" in self._controls:
                 # Backward-compat for legacy toolbar keys.
                 self._controls["components"].value = tuple(self._available_components)
@@ -511,18 +599,33 @@ class InteractiveSpectrum:
         """Draw or update current frequency indicator line."""
         draw_frequency_line(self)
 
-    def _load_mode(self, frequency_ghz: float, z_layer: int) -> tuple[np.ndarray, float, tuple[float, float, float, float]]:
+    def _load_mode(
+        self, frequency_ghz: float, z_layer: int
+    ) -> tuple[np.ndarray, float, tuple[float, float, float, float]]:
         """Load mode array and metadata at selected frequency."""
         if self.analyzer is not None:
             mode_data = self.analyzer.get_mode(frequency_ghz, z_layer)
-            mode_array = np.asarray(mode_data.mode_array)
+            mode_array = np.asanyarray(mode_data.masked_mode_array)
+            self._geometry_contour = (
+                None
+                if mode_data.material_mask is None
+                else np.asarray(mode_data.material_mask, dtype=bool)
+            )
             extent = tuple(mode_data.extent)
             actual = float(mode_data.frequency)
             return mode_array, actual, extent
 
         if self.data_loader is not None:
-            mode_array, actual, _meta = self.data_loader.load_mode_at_frequency(frequency_ghz, z_layer)
-            arr = np.asarray(mode_array)
+            mode_array, actual, _meta = self.data_loader.load_mode_at_frequency(
+                frequency_ghz, z_layer
+            )
+            arr = np.asanyarray(mode_array)
+            stored_mask = (
+                _meta.get("material_mask") if isinstance(_meta, dict) else None
+            )
+            self._geometry_contour = (
+                None if stored_mask is None else np.asarray(stored_mask, dtype=bool)
+            )
             if arr.ndim == 2:
                 arr = arr[:, :, np.newaxis]
             ny, nx = arr.shape[:2]
@@ -555,7 +658,7 @@ class InteractiveSpectrum:
         """Handle spectrum click interactions."""
         on_spectrum_click(self, event)
 
-    def _closest_freq_index(self, freq_ghz: Optional[float]) -> int:
+    def _closest_freq_index(self, freq_ghz: float | None) -> int:
         return closest_freq_index(self, freq_ghz)
 
     def _cleanup_figure_connections(self) -> None:
@@ -577,10 +680,14 @@ class InteractiveSpectrum:
             "ghz": 1.0,
             "thz": 1e-3,
         }
-        return float(mapping.get(str(freq_unit).lower(), 1.0))
+        key = str(freq_unit).strip().lower()
+        if key not in mapping:
+            raise ValueError("freq_unit must be Hz, kHz, MHz, GHz, or THz")
+        return float(mapping[key])
 
 
 # Backward-compatible alias
+
 
 def plot(
     data_loader: Any,
@@ -588,8 +695,8 @@ def plot(
     normalize: bool = True,
     freq_unit: str = "GHz",
     show_peaks: bool = True,
-    freq_min: Optional[float] = None,
-    freq_max: Optional[float] = None,
+    freq_min: float | None = None,
+    freq_max: float | None = None,
     smooth_filter: str = "none",
     smooth_window: int = 7,
     smooth_sigma: float = 1.0,
@@ -599,9 +706,9 @@ def plot(
     soft_threshold_percentile: float = 0.0,
     peak_prominence: float = 0.05,
     peak_distance: int = 5,
-    title: Optional[str] = None,
+    title: str | None = None,
     dpi: int = 100,
-    figsize: Tuple[float, float] = (12.0, 6.0),
+    figsize: tuple[float, float] = (12.0, 6.0),
 ) -> Figure:
     """Simple static spectrum plot compatibility helper."""
     return plot_compat(

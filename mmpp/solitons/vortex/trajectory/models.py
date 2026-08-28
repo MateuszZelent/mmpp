@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from .._plotting import (
     apply_axes_style,
     ensure_axis,
@@ -144,8 +145,11 @@ class PhaseResult:
         return PhasePlotAccessor(self)
 
 
-class PhasePlotAccessor:
+class PhasePlotAccessor(InteractiveNodeMixin):
     """Plotting namespace for :class:`PhaseResult`."""
+
+    _interactive_owner = "job[0].vortex.trajectory.phase.plt"
+    _interactive_nodes = frozenset({"phase_portrait", "frequency_vs_time"})
 
     def __init__(self, result: PhaseResult):
         self._result = result

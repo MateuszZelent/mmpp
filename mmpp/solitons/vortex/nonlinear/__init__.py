@@ -9,8 +9,8 @@ from .models import (
     STParametersResult,
     ThieleForceBalanceResult,
 )
-from .slavin_tiberkevich import extract_st_parameters
 from .nonliniearthiele import ThieleAnalyzer
+from .slavin_tiberkevich import extract_st_parameters
 
 __all__ = [
     "NonlinearInterface",

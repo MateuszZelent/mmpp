@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -21,7 +21,7 @@ try:
 
     _HAS_METADATA_DIFF = True
 except ImportError:  # pragma: no cover - optional dependency
-    generate_auto_labels = None
+    generate_auto_labels = None  # type: ignore[assignment]
     _HAS_METADATA_DIFF = False
 
 
@@ -48,16 +48,40 @@ def _try_enable_widget_backend() -> None:
 def _generate_pastel_colors(n: int) -> list[Any]:
     if not _HAS_MATPLOTLIB:
         return [(0.4, 0.6, 0.8, 1.0)] * max(1, int(n))
-    colors = plt.cm.Accent(np.linspace(0, 1, max(int(n), 3)))
+    cmap = plt.cm.Accent  # type: ignore[attr-defined]
+    colors = cmap(np.linspace(0, 1, max(int(n), 3)))
     return [to_rgba(c) for c in colors[: int(n)]]
+
+
+def _multi_spectrum_trace(spectrum: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Validate and reduce one overlay spectrum to frequency and power traces."""
+    frequencies = np.asarray(spectrum.frequencies, dtype=float)
+    power = np.asarray(spectrum.power, dtype=float)
+    if frequencies.ndim != 1 or frequencies.size == 0:
+        raise ValueError("Overlay frequency axis must be a non-empty 1D array")
+    if not np.isfinite(frequencies).all() or np.any(np.diff(frequencies) <= 0):
+        raise ValueError(
+            "Overlay frequency axis must be finite and strictly increasing"
+        )
+    if power.ndim == 0 or power.shape[0] != frequencies.size:
+        raise ValueError("Overlay power first axis must match frequencies")
+    if not np.isfinite(power).all() or np.any(power < 0):
+        raise ValueError("Overlay power must be finite and non-negative")
+    if power.ndim > 1:
+        power = np.mean(power, axis=tuple(range(1, power.ndim)))
+    return frequencies, np.asarray(power, dtype=float)
 
 
 class MultiSpectrumResult:
     """Collection of spectrum results with overlay plotting."""
 
     def __init__(self, spectra: list[Any]):
-        self.spectra = spectra
-        self._labels: list[str] | None = None
+        if not isinstance(spectra, list):
+            raise TypeError("spectra must be a list")
+        if not spectra:
+            raise ValueError("MultiSpectrumResult requires at least one spectrum")
+        self.spectra = list(spectra)
+        self._labels: list[str | None] | None = None
 
     def __len__(self):
         return len(self.spectra)
@@ -74,7 +98,7 @@ class MultiSpectrumResult:
     def plot(
         self,
         ax: Any | None = None,
-        labels: list[str] | None = None,
+        labels: Any = None,
         auto_label: bool = True,
         legend: bool = True,
         freq_unit: str = "GHz",
@@ -90,6 +114,28 @@ class MultiSpectrumResult:
         if not _HAS_MATPLOTLIB:
             raise ImportError("Matplotlib required for plotting")
 
+        frequency_scales: dict[str, float] = {
+            "Hz": 1.0,
+            "kHz": 1e-3,
+            "MHz": 1e-6,
+            "GHz": 1e-9,
+            "THz": 1e-12,
+        }
+        if freq_unit not in frequency_scales:
+            raise ValueError("freq_unit must be Hz, kHz, MHz, GHz, or THz")
+        for name, value in (
+            ("auto_label", auto_label),
+            ("legend", legend),
+            ("log_scale", log_scale),
+            ("normalize", normalize),
+        ):
+            if not isinstance(value, (bool, np.bool_)):
+                raise TypeError(f"{name} must be boolean")
+        if labels is not None and len(labels) != len(self.spectra):
+            raise ValueError("labels length must match the number of spectra")
+        if colors is not None and len(colors) != len(self.spectra):
+            raise ValueError("colors length must match the number of spectra")
+
         _try_enable_widget_backend()
 
         if ax is None:
@@ -98,9 +144,18 @@ class MultiSpectrumResult:
             fig = ax.figure
             fig.set_dpi(dpi)
 
+        labels = cast(Any, labels)
         if legend and labels is None and auto_label:
-            jobs = [s._source_job for s in self.spectra if getattr(s, "_source_job", None) is not None]
-            if _HAS_METADATA_DIFF and generate_auto_labels is not None and len(jobs) == len(self.spectra):
+            jobs = [
+                s._source_job
+                for s in self.spectra
+                if getattr(s, "_source_job", None) is not None
+            ]
+            if (
+                _HAS_METADATA_DIFF
+                and generate_auto_labels is not None
+                and len(jobs) == len(self.spectra)
+            ):
                 labels = generate_auto_labels(jobs)
             else:
                 labels = [f"Spectrum {i + 1}" for i in range(len(self.spectra))]
@@ -110,14 +165,11 @@ class MultiSpectrumResult:
         if colors is None:
             colors = _generate_pastel_colors(len(self.spectra))
 
-        freq_scale = {"Hz": 1, "kHz": 1e-3, "MHz": 1e-6, "GHz": 1e-9, "THz": 1e-12}
-        scale = freq_scale.get(freq_unit, 1e-9)
+        scale = frequency_scales[freq_unit]
 
-        for spectrum, label, color in zip(self.spectra, labels, colors):
-            freqs = np.asarray(spectrum.frequencies, dtype=float) * scale
-            power = np.asarray(spectrum.power, dtype=float)
-            if power.ndim > 1:
-                power = np.mean(power, axis=tuple(range(1, power.ndim)))
+        for spectrum, label, color in zip(self.spectra, labels, colors, strict=False):
+            frequencies, power = _multi_spectrum_trace(spectrum)
+            freqs = frequencies * scale
             if normalize and power.size:
                 vmax = float(np.nanmax(power))
                 if vmax > 0:
@@ -140,4 +192,3 @@ class MultiSpectrumResult:
     def plot_spectrum(self, **kwargs):
         """Alias for :meth:`plot` (compatibility)."""
         return self.plot(**kwargs)
-

@@ -1,7 +1,7 @@
 # ruff: noqa: PLR0913
 """Functions for visualizing and plotting snapshots of Pyzfn datasets."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -94,12 +94,15 @@ def inner_snapshot(
         If `dx` or `dy` are not floats.
 
     """
-    dx, dy = self.attrs["dx"], self.attrs["dy"]
+    attrs: Any = self.attrs
+    dx, dy = float(attrs["dx"]), float(attrs["dy"])
     if not isinstance(dx, float) or not isinstance(dy, float):
         msg = "dx and dy must be floats"
         raise TypeError(msg)
 
-    m_original = np.array(self.get_array(dset_str)[t, z], dtype=np.float32)
+    get_array: Any = self.get_array
+    array: Any = get_array(dset_str)
+    m_original = np.array(array[t, z], dtype=np.float32)
 
     if ax is None:
         shape_ratio = m_original.shape[1] / m_original.shape[0]

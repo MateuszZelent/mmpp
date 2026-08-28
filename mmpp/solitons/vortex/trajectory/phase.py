@@ -6,6 +6,7 @@ import warnings
 
 import numpy as np
 
+from ..._method_helpers import InteractiveNodeMixin
 from ..core.models import TrajectoryResult
 from .models import PhaseResult
 
@@ -37,8 +38,13 @@ def _phase_from_hilbert(trajectory: TrajectoryResult) -> tuple[np.ndarray, str]:
     return np.angle(analytic), "hilbert"
 
 
-class PhaseAnalyzer:
+class PhaseAnalyzer(InteractiveNodeMixin):
     """Phase analysis facade for a trajectory."""
+
+    _interactive_owner = "job[0].vortex.trajectory.phase"
+    _interactive_nodes = frozenset(
+        {"instantaneous", "unwrapped", "frequency", "mean_frequency"}
+    )
 
     def __init__(self, trajectory: TrajectoryResult):
         self._trajectory = trajectory

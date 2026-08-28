@@ -8,9 +8,9 @@ import sys
 from .. import __version__
 
 try:
-    import yaml
+    import yaml  # type: ignore[import-untyped]
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore[assignment]
 
 
 def main() -> None:

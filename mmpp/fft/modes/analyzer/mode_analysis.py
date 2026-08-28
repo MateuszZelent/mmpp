@@ -7,18 +7,21 @@ Contains functions for analyzing and classifying FMR modes:
 - print_characterization_details: Detailed analysis output
 """
 
-import numpy as np
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
+
+import numpy as np
+
+from ...mode_characterization import ModeCharacterAnalyzer
 
 if TYPE_CHECKING:
-    from ...mode_characterization import ModeCharacterizationResult, ModeCharacteristicConfig
+    from ...mode_characterization import (
+        ModeCharacteristicConfig,
+        ModeCharacterizationResult,
+    )
     from ...mode_characterization.vortex_classifier import VortexModeResult
 
 log = logging.getLogger("mmpp.fft.modes")
-
-# Import analyzer components
-from ...mode_characterization import ModeCharacterAnalyzer
 
 
 def characterize_mode(
@@ -26,8 +29,8 @@ def characterize_mode(
     frequency: float,
     z_layer: int = 0,
     *,
-    core_position: Optional[tuple[float, float]] = None,
-    analysis_radius: Optional[float] = None,
+    core_position: tuple[float, float] | None = None,
+    analysis_radius: float | None = None,
     config: Optional["ModeCharacteristicConfig"] = None,
     verbose: bool = False,
 ) -> "ModeCharacterizationResult":
@@ -80,8 +83,8 @@ def characterize_vortex_mode(
     frequency: float,
     z_layer: int = 0,
     *,
-    core_position: Optional[tuple[float, float]] = None,
-    R_dot: Optional[float] = None,
+    core_position: tuple[float, float] | None = None,
+    R_dot: float | None = None,
     config: Optional["ModeCharacteristicConfig"] = None,
     verbose: bool = False,
 ) -> "VortexModeResult":
@@ -135,8 +138,8 @@ def characterize_vortex_mode(
 
     except ImportError as e:
         log.error(f"Advanced vortex classifier not available: {e}")
-        print(f"❌ Advanced vortex classifier not available.")
-        print(f"   Falling back to standard characterization...")
+        print("❌ Advanced vortex classifier not available.")
+        print("   Falling back to standard characterization...")
 
         # Fallback to standard analysis
         std_result = analyzer.analyze(
@@ -145,7 +148,9 @@ def characterize_vortex_mode(
         )
 
         if verbose:
-            print_characterization_details(analyzer_instance, std_result, frequency, z_layer)
+            print_characterization_details(
+                analyzer_instance, std_result, frequency, z_layer
+            )
 
         # Convert to VortexModeResult format (basic mapping)
         from ...mode_characterization.vortex_classifier import VortexModeResult
@@ -173,7 +178,7 @@ def print_characterization_details(
 ) -> None:
     """Print detailed characterization analysis results."""
     print("\n" + "=" * 80)
-    print(f"🔍 DETAILED MODE CHARACTERIZATION ANALYSIS")
+    print("🔍 DETAILED MODE CHARACTERIZATION ANALYSIS")
     print("=" * 80)
     print(f"Frequency: {frequency:.3f} GHz, Layer: {z_layer}")
     print(f"Final Classification: {result.primary_class.upper()}")
@@ -184,9 +189,7 @@ def print_characterization_details(
     print(f"   • In-plane energy (Ex + Ey):  {result.energy_parallel:.6e}")
     print(f"   • Out-of-plane energy (Ez):   {result.energy_perp:.6e}")
     total_energy = result.energy_parallel + result.energy_perp
-    parallel_ratio = (
-        result.energy_parallel / total_energy if total_energy > 0 else 0
-    )
+    parallel_ratio = result.energy_parallel / total_energy if total_energy > 0 else 0
     perp_ratio = result.energy_perp / total_energy if total_energy > 0 else 0
     print(f"   • In-plane ratio:             {parallel_ratio:.3f}")
     print(f"   • Out-of-plane ratio:         {perp_ratio:.3f}")
@@ -198,7 +201,7 @@ def print_characterization_details(
         print(f"   • Winding quality:            {result.m_quality:.3f}")
         print(f"   • Rotation sense:             {result.rotation_sense or 'N/A'}")
     else:
-        print(f"   • Winding number (m):         Not determined")
+        print("   • Winding number (m):         Not determined")
 
     if result.phase_xy_mean is not None:
         phase_deg = np.degrees(result.phase_xy_mean)
@@ -253,7 +256,7 @@ def print_characterization_details(
 
     # Configuration thresholds
     config = analyzer_instance._character_analyzer.config
-    print(f"\n⚙️  CONFIGURATION THRESHOLDS:")
+    print("\n⚙️  CONFIGURATION THRESHOLDS:")
     print(f"   • Amplitude threshold:        {config.relative_amplitude_threshold}")
     print(f"   • Quadrature tolerance:       {config.quadrature_tolerance:.3f} rad")
     print(f"   • Breathing uniformity:       {config.breathing_phase_uniformity}")

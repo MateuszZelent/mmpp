@@ -1,19 +1,17 @@
-import os
-import shutil
-import warnings
-from typing import Optional, Union, Any
+from typing import Any
 
-from .mmpp import MMPP
 from ..cli.logging_config import get_mmpp_logger
+from .mmpp import MMPP
 
 log = get_mmpp_logger("mmpp")
+
 
 def open(
     base_path: str = ".",
     max_workers: int = 8,
     database_name: str = "mmpy_database",
     debug: bool = False,
-    log_level: Optional[Union[str, int]] = None,
+    log_level: str | int | None = None,
 ) -> MMPP:
     """
     Open a directory or .zarr file and return an MMPP instance.
@@ -44,6 +42,7 @@ def open(
         log_level=log_level,
     )
 
+
 def mmpp(base_path: str, force: bool = False, **kwargs: Any) -> MMPP:
     """
     Convenience function to create and initialize a MMPP.
@@ -65,6 +64,7 @@ def mmpp(base_path: str, force: bool = False, **kwargs: Any) -> MMPP:
     processor = MMPP(base_path, **kwargs)
     processor.scan(force=force)
     return processor
+
 
 def install_ffmpeg() -> None:
     """

@@ -31,6 +31,63 @@ values in metres; multiply by `1e9` for nm.
    :show-inheritance:
 ```
 
+## Interactive dashboard
+
+All public callable nodes below use the notebook helper contract. Evaluating a
+node without `()` displays a tabbed `Overview` / `API` card with the live method
+signature; calling the same node with `(...)` performs the computation. This
+applies recursively to single-result, batch, analysis, and plotting namespaces,
+for example `job[0].vortex.topology.topological_charge`,
+`job[0].vortex.spectrum.gyration.interactive_modes`, and
+`jobs[:].skyrmion.analyze`.
+
+`SkyrmionInterface.interactive(...)` is the single-result visualization entry
+point.  It displays the selected `m_z` snapshot, topological-charge density,
+and measured/fitted radial profile in one ipywidgets dashboard:
+
+```python
+dashboard = job[0].skyrmion.interactive(
+    initial_frame=0,
+    z_layer=0,
+    initial_module="analysis",
+    topology_method="berg_luscher",
+    size_method="auto",
+    figsize=(13, 4),
+    dpi=110,
+)
+```
+
+Set `initial_module="spectrum"` or `initial_module="modes"` to open the
+dataset-aware FFT workflow from the same dashboard. Direct entry points exist
+for both soliton types:
+
+```python
+job[0].vortex.interactive_spectrum(dpi=140)
+job[0].vortex.interactive_modes(dpi=140)
+job[0].skyrmion.interactive_spectrum(dpi=140)
+job[0].skyrmion.interactive_modes(dpi=140)
+```
+
+This combined viewer contains the frequency spectrum, peak selection, and
+spatial complex mode maps. It inherits dataset and slice context from the
+originating vortex or skyrmion accessor.
+
+Use `show=False` to create and configure the dashboard without displaying it.
+For a folder/batch, select one result for visual inspection:
+
+```python
+dashboard = jobs[:].skyrmion.interactive(
+    index=0,
+    sort_by="Dind",
+    initial_frame=0,
+    z_layer=0,
+)
+```
+
+Batch visualization deliberately opens one run.  Use
+`jobs[:].skyrmion.analyze("size" | "charge", parameter=...)` for the complete
+parameter dependence.
+
 ## Topology
 
 `sk.topology.detect(...)` and its `sk.detect(...)` shortcut return a
@@ -241,6 +298,30 @@ context, examples, and nested accessors:
 The `job.solitons` card presents both the existing vortex workflow and the
 dedicated skyrmion topology/size workflow.  These cards are discovery aids;
 their examples call the same public methods documented above.
+
+### Interactive views and spatial modes
+
+```python
+# Skyrmion snapshot, topological density, and radial size fit.
+job[0].skyrmion.interactive(initial_frame=0, z_layer=0)
+
+# Select one simulation from a folder/batch, optionally ordered by metadata.
+jobs[:].skyrmion.interactive(index=0, sort_by="Dind")
+
+# The bare vortex gyration node is a callable notebook helper.
+job[0].vortex.spectrum.gyration
+job[0].vortex.spectrum.gyration.interactive()
+
+# Spatial complex magnetisation modes, not trajectory-mode labels.
+job[0].vortex.spectrum.gyration.interactive_modes()
+mode = job[0].vortex.spectrum.gyration.mode()  # dominant gyration peak
+mode.plot.interactive()
+```
+
+`job[0].vortex.modes` classifies peaks from the tracked core trajectory as
+gyration, breathing, or higher-order dynamics.  Spatial maps
+`m(x, y, f)` belong to `job[0].fft.modes`; the gyration helper links these two
+workflows without treating a trajectory label as a spatial eigenmode.
 
 ## Data-quality limits
 

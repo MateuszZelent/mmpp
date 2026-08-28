@@ -10,20 +10,20 @@ from typing import Any
 
 def serialize_slice(slice_info: Any) -> str:
     """Serialize slice_info to hashable string.
-    
+
     Handles slice objects, Ellipsis, tuples of slices, and nested structures.
     Returns a 16-character hex hash for consistent cache keys.
-    
+
     Parameters
     ----------
     slice_info : Any
         Slice information (slice, Ellipsis, tuple, etc.)
-        
+
     Returns
     -------
     str
         16-character hex hash of serialized slice
-        
+
     Examples
     --------
     >>> serialize_slice(slice(0, 100))
@@ -33,7 +33,7 @@ def serialize_slice(slice_info: Any) -> str:
     """
     if slice_info is None:
         return "none"
-    
+
     def _convert(obj: Any) -> Any:
         """Recursively convert slice objects to JSON-serializable form."""
         if obj is None:
@@ -53,7 +53,7 @@ def serialize_slice(slice_info: Any) -> str:
             return obj
         # Fallback for other types
         return str(obj)
-    
+
     converted = _convert(slice_info)
     json_str = json.dumps(converted, sort_keys=True)
     return hashlib.sha256(json_str.encode()).hexdigest()[:16]
@@ -61,15 +61,15 @@ def serialize_slice(slice_info: Any) -> str:
 
 def serialize_config(config: Any) -> str:
     """Serialize configuration object to hashable string.
-    
+
     Handles dataclasses, dicts, and objects with __dict__.
     Removes non-serializable fields (callbacks, etc.).
-    
+
     Parameters
     ----------
     config : Any
         Configuration object (dataclass, dict, or object)
-        
+
     Returns
     -------
     str
@@ -77,7 +77,7 @@ def serialize_config(config: Any) -> str:
     """
     if config is None:
         return "none"
-    
+
     # Convert to dictionary
     if is_dataclass(config):
         config_dict = asdict(config)
@@ -88,7 +88,7 @@ def serialize_config(config: Any) -> str:
     else:
         # Fallback: hash string representation
         return hashlib.sha256(str(config).encode()).hexdigest()[:16]
-    
+
     # Remove non-serializable fields
     exclude_fields = {
         "progress_callback",
@@ -96,7 +96,7 @@ def serialize_config(config: Any) -> str:
         "_internal",
         "_cache",
     }
-    
+
     clean_dict = {}
     for k, v in config_dict.items():
         if k in exclude_fields:
@@ -104,19 +104,19 @@ def serialize_config(config: Any) -> str:
         if callable(v):
             continue
         clean_dict[k] = v
-    
+
     # Serialize to JSON with sorted keys for consistency
     try:
         json_str = json.dumps(clean_dict, sort_keys=True, default=str)
     except Exception:
         json_str = str(clean_dict)
-    
+
     return hashlib.sha256(json_str.encode()).hexdigest()[:16]
 
 
 def serialize_for_json(obj: Any) -> Any:
     """Recursively prepare object for JSON serialization.
-    
+
     Used for storing metadata in zarr attributes.
     """
     if obj is None or isinstance(obj, (bool, int, float, str)):

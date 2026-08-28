@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import hashlib
+from typing import Any
 
 import numpy as np
 
 from ..compute_fft import FFTCompute, FFTComputeResult
 
 
-def format_slice_identifier(slice_info: Optional[Any]) -> str:
+def format_slice_identifier(slice_info: Any | None) -> str:
     """Create a deterministic cache/save identifier from ``slice_info``."""
     if slice_info is None:
         return "slice=None"
@@ -34,7 +35,7 @@ def build_cache_key(
     dataset_name: str,
     z_layer: int,
     method: int,
-    slice_identifier: Optional[str] = None,
+    slice_identifier: str | None = None,
     **kwargs,
 ) -> str:
     """Generate a stable cache key for FFT computations."""
@@ -46,19 +47,28 @@ def build_cache_key(
     return "|".join(key_parts)
 
 
+def fingerprint_array(data: np.ndarray) -> str:
+    """Return a stable identity for a materialized dataset view."""
+    array = np.ascontiguousarray(np.asarray(data))
+    digest = hashlib.blake2b(array.tobytes(), digest_size=12).hexdigest()
+    return f"{array.dtype}:{array.shape}:{digest}"
+
+
 def compute_fft_cached(
     *,
     compute_engine: FFTCompute,
     job_result: Any,
     cache: dict[str, FFTComputeResult],
-    dataset_name: Optional[str] = None,
+    dataset_name: str | None = None,
     z_layer: int = -1,
     method: int = 1,
     use_cache: bool = True,
     save: bool = False,
     force: bool = False,
-    save_dataset_name: Optional[str] = None,
-    slice_info: Optional[Any] = None,
+    save_dataset_name: str | None = None,
+    slice_info: Any | None = None,
+    preloaded_data: np.ndarray | None = None,
+    time_step_scale: float = 1.0,
     **kwargs,
 ) -> FFTComputeResult:
     """Compute FFT with cache-aware delegation to ``FFTCompute``."""
@@ -68,6 +78,8 @@ def compute_fft_cached(
         dataset_name = str(dataset_name)
 
     slice_identifier = format_slice_identifier(slice_info)
+    if preloaded_data is not None:
+        slice_identifier = f"materialized={fingerprint_array(preloaded_data)};dt_scale={time_step_scale}"
     cache_key = build_cache_key(
         dataset_name,
         z_layer,
@@ -89,7 +101,11 @@ def compute_fft_cached(
             force=force,
             save_dataset_name=save_dataset_name,
             slice_info=slice_info,
-            slice_identifier=(None if slice_identifier == "slice=None" else slice_identifier),
+            slice_identifier=(
+                None if slice_identifier == "slice=None" else slice_identifier
+            ),
+            preloaded_data=preloaded_data,
+            time_step_scale=time_step_scale,
             **kwargs,
         )
     except OSError as exc:

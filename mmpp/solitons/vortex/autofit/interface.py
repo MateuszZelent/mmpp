@@ -460,7 +460,7 @@ class AutofitInterface:
             label = loss_labels.get(key, key)
             html += "<tr style='border-bottom:1px solid rgba(71,85,105,0.3);'>"
             html += f"<td style='{td_desc}'>{_esc(label)}</td>"
-            for preset_name, weights in LOSS_PRESETS.items():
+            for _preset_name, weights in LOSS_PRESETS.items():
                 w = weights.get(key, 0.0)
                 color = "#22c55e" if w >= 0.5 else ("#a5b4fc" if w > 0 else "#475569")
                 html += (

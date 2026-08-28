@@ -115,7 +115,9 @@ class TrajectoryResult:
         n = int(self.time.size)
         radius_mean_nm = float(np.mean(self.r) * 1e9) if n else float("nan")
         freq_mean_ghz = (
-            float(np.mean(self.instantaneous_frequency) * 1e-9) if n >= 2 else float("nan")
+            float(np.mean(self.instantaneous_frequency) * 1e-9)
+            if n >= 2
+            else float("nan")
         )
         rows = [
             ("samples", str(n)),

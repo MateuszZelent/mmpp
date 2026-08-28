@@ -5,14 +5,14 @@ This module handles loading, caching, and accessing data from zarr files
 for FMR mode analysis.
 """
 
+from typing import Any
+
 import numpy as np
 import zarr
-from typing import Optional, Any, Union, List, Tuple
-from pathlib import Path
 
-from ..models import Peak, FMRModeData
-from ..compatibility import require_dependency, SCIPY_AVAILABLE
 from ....cli.logging_config import get_mmpp_logger
+from ..compat import SCIPY_AVAILABLE, require_dependency
+from ..models import FMRModeData, Peak
 
 if SCIPY_AVAILABLE:
     from scipy.signal import find_peaks
@@ -22,37 +22,37 @@ log = get_mmpp_logger(__name__)
 
 class DataAccessMixin:
     """Mixin providing data access functionality for FMR mode analyzer."""
-    
+
     def __init__(self):
         # Data storage
-        self.zarr_file: Optional[zarr.Group] = None
-        self.zarr_path: Optional[str] = None
-        self.dataset_name: Optional[str] = None
-        
+        self.zarr_file: zarr.Group | None = None
+        self.zarr_path: str | None = None
+        self.dataset_name: str | None = None
+
         # Paths in zarr file
-        self.modes_path: Optional[str] = None
-        self.freqs_path: Optional[str] = None
-        self.spectrum_path: Optional[str] = None
-        
+        self.modes_path: str | None = None
+        self.freqs_path: str | None = None
+        self.spectrum_path: str | None = None
+
         # Loaded data
-        self.frequencies: Optional[np.ndarray] = None
-        self.spectrum: Optional[np.ndarray] = None
-        
+        self.frequencies: np.ndarray | None = None
+        self.spectrum: np.ndarray | None = None
+
         # Spatial information
         self.dx: float = 1.0  # nm
         self.dy: float = 1.0  # nm
-        
+
         # Cache
         self._mode_cache: dict[tuple[float, int], FMRModeData] = {}
-        self._peak_cache: Optional[List[Peak]] = None
-        
-    def _list_available_datasets(self) -> List[str]:
+        self._peak_cache: list[Peak] | None = None
+
+    def _list_available_datasets(self) -> list[str]:
         """Enumerate top-level datasets available in the zarr archive."""
-        require_dependency('zarr', 'dataset enumeration')
-        
+        require_dependency("zarr", "dataset enumeration")
+
         if not self.zarr_file:
             return []
-            
+
         try:
             keys = set(self.zarr_file.group_keys()) | set(self.zarr_file.array_keys())
             return sorted({key.split("/")[0] for key in keys})
@@ -60,7 +60,7 @@ class DataAccessMixin:
             log.debug("Unable to list datasets in %s: %s", self.zarr_path, exc)
             return []
 
-    def _get_zarr_paths(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def _get_zarr_paths(self) -> tuple[str | None, str | None, str | None]:
         """
         Unified path resolution for zarr datasets.
 
@@ -71,7 +71,7 @@ class DataAccessMixin:
         """
         if not self.zarr_file or not self.dataset_name:
             return None, None, None
-            
+
         # Possible base paths for modes/frequencies - consistent order
         base_paths = [f"modes/{self.dataset_name}", f"tmodes/{self.dataset_name}"]
 
@@ -114,21 +114,23 @@ class DataAccessMixin:
             # Try other z_layers and methods
             *[f"fft/{self.dataset_name}_z{z}_m1/spectrum" for z in range(-5, 10)],
         ]
-        
+
         for path in spectrum_candidates:
             if path in self.zarr_file:
                 spectrum_path = path
                 log.debug(f"Found spectrum at: {spectrum_path}")
                 break
-        
+
         # If not found, try scanning for paths with slice hash (from sliced FFT calls)
         # Pattern: fft/{dataset}_z{z}_m{m}_s{hash}/spectrum
         if spectrum_path is None:
             try:
-                fft_keys = [k for k in self.zarr_file.keys() if k.startswith('fft/')]
+                fft_keys = [k for k in self.zarr_file.keys() if k.startswith("fft/")]
                 for key in fft_keys:
-                    if key.startswith(f'fft/{self.dataset_name}_z') and key.endswith('/spectrum'):
-                        if '_s' in key:  # Check for slice hash marker
+                    if key.startswith(f"fft/{self.dataset_name}_z") and key.endswith(
+                        "/spectrum"
+                    ):
+                        if "_s" in key:  # Check for slice hash marker
                             spectrum_path = key
                             log.info(f"Found sliced spectrum at: {spectrum_path}")
                             break
@@ -139,11 +141,11 @@ class DataAccessMixin:
 
     def _load_data(self) -> None:
         """Load mode and spectrum data from zarr file."""
-        require_dependency('zarr', 'data loading')
-        
+        require_dependency("zarr", "data loading")
+
         if not self.zarr_path:
             raise ValueError("zarr_path must be set before loading data")
-            
+
         try:
             self.zarr_file = zarr.open(self.zarr_path, mode="r")  # type: ignore
             log.info(f"Opened zarr file: {self.zarr_path}")
@@ -195,6 +197,7 @@ class DataAccessMixin:
                 )
             if np.iscomplexobj(self.spectrum):
                 self.spectrum = np.abs(self.spectrum)
+            assert self.spectrum is not None
             log.info(f"Loaded spectrum data: shape {self.spectrum.shape}")
         else:
             # Try to load power_sum from computed modes as fallback spectrum
@@ -203,13 +206,16 @@ class DataAccessMixin:
                 self.spectrum = np.array(self.zarr_file[modes_power_path])
                 if np.iscomplexobj(self.spectrum):
                     self.spectrum = np.abs(self.spectrum)
-                log.info(f"Using computed modes power_sum as spectrum: shape {self.spectrum.shape}")
+                assert self.spectrum is not None
+                log.info(
+                    f"Using computed modes power_sum as spectrum: shape {self.spectrum.shape}"
+                )
             else:
                 self.spectrum = None
 
         # Get spatial information
         self._get_spatial_info()
-        
+
         # Clear caches
         self._clear_cache()
 
@@ -217,7 +223,7 @@ class DataAccessMixin:
         """Extract spatial information from zarr metadata."""
         if not self.zarr_file:
             return
-            
+
         # Try to get spatial resolution from attributes
         self.dx = 1.0  # Default spatial resolution in nm
         self.dy = 1.0
@@ -242,7 +248,7 @@ class DataAccessMixin:
 
     def _detect_peaks(
         self, spectrum: np.ndarray, frequencies: np.ndarray
-    ) -> List[Peak]:
+    ) -> list[Peak]:
         """
         Detect peaks in spectrum.
 
@@ -258,14 +264,14 @@ class DataAccessMixin:
         List[Peak]
             List of detected peaks
         """
-        if not hasattr(self, 'config'):
+        if not hasattr(self, "config"):
             # Set default values if config not available
             peak_threshold = 0.1
             peak_min_distance = 5
         else:
             peak_threshold = self.config.peak_threshold
             peak_min_distance = self.config.peak_min_distance
-            
+
         if not SCIPY_AVAILABLE:
             log.warning("SciPy not available, using simple peak detection")
             # Simple peak detection without scipy
@@ -298,9 +304,9 @@ class DataAccessMixin:
             for idx in peak_indices:
                 peaks.append(
                     Peak(
-                        idx=int(idx), 
-                        freq=float(frequencies[idx]), 
-                        amplitude=float(spectrum[idx])
+                        idx=int(idx),
+                        freq=float(frequencies[idx]),
+                        amplitude=float(spectrum[idx]),
                     )
                 )
 
@@ -350,10 +356,12 @@ class DataAccessMixin:
         # Find closest frequency index
         freq_idx = np.argmin(np.abs(self.frequencies - frequency))
         actual_freq = self.frequencies[freq_idx]
-        
+
         if abs(actual_freq - frequency) > 0.001:  # 1 MHz tolerance
-            log.warning(f"Requested frequency {frequency:.3f} GHz not found, "
-                       f"using closest: {actual_freq:.3f} GHz")
+            log.warning(
+                f"Requested frequency {frequency:.3f} GHz not found, "
+                f"using closest: {actual_freq:.3f} GHz"
+            )
 
         # Load mode data
         if not self.modes_path or not self.zarr_file:
@@ -363,11 +371,13 @@ class DataAccessMixin:
             modes_array_zarr = self.zarr_file[self.modes_path]
             # Convert to numpy array for easier handling
             modes_array = np.array(modes_array_zarr)
-            
+
             # Handle different array shapes
             if modes_array.ndim == 5:  # (freq, z, y, x, components)
                 if z_layer >= modes_array.shape[1] or z_layer < -modes_array.shape[1]:
-                    raise ValueError(f"Z-layer {z_layer} out of range [0, {modes_array.shape[1]})")
+                    raise ValueError(
+                        f"Z-layer {z_layer} out of range [0, {modes_array.shape[1]})"
+                    )
                 mode_data = modes_array[freq_idx, z_layer, :, :, :]
             elif modes_array.ndim == 4:  # (freq, y, x, components) - single z-layer
                 if z_layer != 0:
@@ -385,27 +395,29 @@ class DataAccessMixin:
                 frequency=actual_freq,
                 mode_array=mode_data,
                 extent=extent,
-                metadata={'z_layer': z_layer, 'freq_index': freq_idx}
+                metadata={"z_layer": z_layer, "freq_index": freq_idx},
             )
 
             # Cache the result
             self._mode_cache[cache_key] = fmr_mode
-            
+
             return fmr_mode
 
         except Exception as e:
-            log.error(f"Failed to load mode data for frequency {frequency:.3f} GHz: {e}")
-            raise RuntimeError(f"Failed to load mode data: {e}")
+            log.error(
+                f"Failed to load mode data for frequency {frequency:.3f} GHz: {e}"
+            )
+            raise RuntimeError(f"Failed to load mode data: {e}") from e
 
-    def get_peaks(self, use_cache: bool = True) -> List[Peak]:
+    def get_peaks(self, use_cache: bool = True) -> list[Peak]:
         """
         Get detected peaks from spectrum.
-        
+
         Parameters:
         -----------
         use_cache : bool, default True
             Whether to use cached results
-            
+
         Returns:
         --------
         List[Peak]
@@ -413,23 +425,23 @@ class DataAccessMixin:
         """
         if use_cache and self._peak_cache is not None:
             return self._peak_cache
-            
+
         if self.spectrum is None or self.frequencies is None:
             log.warning("No spectrum data available for peak detection")
             return []
-            
+
         peaks = self._detect_peaks(self.spectrum, self.frequencies)
-        
+
         if use_cache:
             self._peak_cache = peaks
-            
+
         return peaks
 
-    def get_available_frequencies(self) -> Optional[np.ndarray]:
+    def get_available_frequencies(self) -> np.ndarray | None:
         """Get array of available frequencies."""
         return self.frequencies.copy() if self.frequencies is not None else None
 
-    def get_available_datasets(self) -> List[str]:
+    def get_available_datasets(self) -> list[str]:
         """Get list of available datasets in zarr file."""
         return self._list_available_datasets()
 
@@ -440,36 +452,36 @@ class DataAccessMixin:
     def get_data_info(self) -> dict[str, Any]:
         """Get information about loaded data."""
         info = {
-            'zarr_path': self.zarr_path,
-            'dataset_name': self.dataset_name,
-            'data_loaded': self.is_data_loaded(),
-            'frequencies_available': self.frequencies is not None,
-            'spectrum_available': self.spectrum is not None,
-            'modes_available': self.modes_path is not None,
-            'spatial_resolution': {'dx': self.dx, 'dy': self.dy}
+            "zarr_path": self.zarr_path,
+            "dataset_name": self.dataset_name,
+            "data_loaded": self.is_data_loaded(),
+            "frequencies_available": self.frequencies is not None,
+            "spectrum_available": self.spectrum is not None,
+            "modes_available": self.modes_path is not None,
+            "spatial_resolution": {"dx": self.dx, "dy": self.dy},
         }
-        
+
         if self.frequencies is not None:
-            info['frequency_range'] = {
-                'min': float(np.min(self.frequencies)),
-                'max': float(np.max(self.frequencies)),
-                'count': len(self.frequencies)
+            info["frequency_range"] = {
+                "min": float(np.min(self.frequencies)),
+                "max": float(np.max(self.frequencies)),
+                "count": len(self.frequencies),
             }
-            
+
         if self.spectrum is not None:
-            info['spectrum_shape'] = self.spectrum.shape
-            
+            info["spectrum_shape"] = self.spectrum.shape
+
         return info
 
     def _clear_cache(self) -> None:
         """Clear internal caches."""
         self._mode_cache.clear()
         self._peak_cache = None
-        
+
     def reload_data(self, force: bool = False) -> None:
         """
         Reload data from zarr file.
-        
+
         Parameters:
         -----------
         force : bool, default False
@@ -477,7 +489,7 @@ class DataAccessMixin:
         """
         if force:
             self._clear_cache()
-            
+
         if self.zarr_path:
             self._load_data()
         else:

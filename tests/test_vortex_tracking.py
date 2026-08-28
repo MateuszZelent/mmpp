@@ -35,7 +35,7 @@ def _make_vortex_snapshot(
     radius = np.hypot(x_grid, y_grid)
     phi = np.arctan2(y_grid, x_grid)
 
-    mz = polarity * np.exp(-(radius / core_radius_px) ** 2)
+    mz = polarity * np.exp(-((radius / core_radius_px) ** 2))
     m_perp = np.sqrt(np.clip(1.0 - mz**2, 0.0, 1.0))
 
     mx = -chirality * m_perp * np.sin(phi)
@@ -61,8 +61,12 @@ def _make_orbit_data(
     center_x_px = (nx - 1) / 2.0
     center_y_px = (ny - 1) / 2.0
 
-    x_expected = center_x_px * dx + orbit_radius_m * np.cos(2.0 * np.pi * frequency_hz * t)
-    y_expected = center_y_px * dy + orbit_radius_m * np.sin(2.0 * np.pi * frequency_hz * t)
+    x_expected = center_x_px * dx + orbit_radius_m * np.cos(
+        2.0 * np.pi * frequency_hz * t
+    )
+    y_expected = center_y_px * dy + orbit_radius_m * np.sin(
+        2.0 * np.pi * frequency_hz * t
+    )
 
     data = np.zeros((nt, ny, nx, 3), dtype=float)
     for i in range(nt):
@@ -98,7 +102,9 @@ def _create_table_job(
     table.create_dataset("ext_coreposy", data=np.asarray(y, dtype=float))
     table.create_dataset("t", data=np.asarray(t, dtype=float))
     if polarity_signal is not None:
-        table.create_dataset("ext_coreposz", data=np.asarray(polarity_signal, dtype=float))
+        table.create_dataset(
+            "ext_coreposz", data=np.asarray(polarity_signal, dtype=float)
+        )
     dt = float(np.median(np.diff(t))) if np.asarray(t).size >= 2 else 1e-12
     z.attrs["dx"] = 1e-9
     z.attrs["dy"] = 1e-9
@@ -120,7 +126,9 @@ def _attach_table_corepos(
     table.create_dataset("ext_coreposy", data=np.asarray(y, dtype=float))
     table.create_dataset("t", data=np.asarray(t, dtype=float))
     if polarity_signal is not None:
-        table.create_dataset("ext_coreposz", data=np.asarray(polarity_signal, dtype=float))
+        table.create_dataset(
+            "ext_coreposz", data=np.asarray(polarity_signal, dtype=float)
+        )
 
 
 @pytest.mark.parametrize(
@@ -297,7 +305,9 @@ def test_polarity_series_contains_switch_metadata():
     dx = dy = 1e-9
     dt = 1e-12
 
-    base = _make_vortex_snapshot(nx, ny, center_x=(nx - 1) / 2.0, center_y=(ny - 1) / 2.0)
+    base = _make_vortex_snapshot(
+        nx, ny, center_x=(nx - 1) / 2.0, center_y=(ny - 1) / 2.0
+    )
     data = np.repeat(base[np.newaxis, ...], nt, axis=0)
     data[: nt // 2, ..., 2] *= 1.0
     data[nt // 2 :, ..., 2] *= -1.0

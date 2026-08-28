@@ -56,6 +56,11 @@ LIVE_FILTER_KEYS = {
     "baseline_correction",
 }
 
+# Names that exist in both domains are post-FFT at the root-level public API,
+# matching the notebook helper. Time-domain use must be explicit via
+# ``pre={...}`` so execution stage is never selected by set-check order.
+AMBIGUOUS_ROOT_FILTER_KEYS = PREPROCESS_FILTER_KEYS & POSTPROCESS_FILTER_KEYS
+
 
 def _is_enabled(option: Any) -> bool:
     if isinstance(option, dict):
@@ -99,29 +104,47 @@ def normalize_filter_config(
     """
     if not filters:
         return None
+    if not isinstance(filters, dict):
+        raise TypeError("filters must be a dictionary or None")
 
     normalized: dict[str, Any] = {}
 
     # Legacy aliases used by interactive spectrum.
     for legacy_key in ("smooth_filter", "baseline_mode", "log_scale"):
         if legacy_key in filters:
-            mapped_key, mapped_val = _normalize_legacy_entry(legacy_key, filters[legacy_key])
+            mapped_key, mapped_val = _normalize_legacy_entry(
+                legacy_key, filters[legacy_key]
+            )
             if mapped_key:
                 normalized.setdefault("post", {})[mapped_key] = mapped_val
 
     # Explicit stage blocks.
     for stage_name in ("pre", "post", "live"):
         stage_cfg = filters.get(stage_name)
-        if isinstance(stage_cfg, dict):
-            normalized.setdefault(stage_name, {}).update(
-                {str(k): v for k, v in stage_cfg.items()}
-            )
+        if stage_cfg is None:
+            continue
+        if not isinstance(stage_cfg, dict):
+            raise TypeError(f"{stage_name} filter stage must be a dictionary")
+        normalized.setdefault(stage_name, {}).update(
+            {str(k): v for k, v in stage_cfg.items()}
+        )
 
-    skip_keys = {"pre", "post", "live", "advanced", "smooth_filter", "baseline_mode", "log_scale"}
+    skip_keys = {
+        "pre",
+        "post",
+        "live",
+        "advanced",
+        "smooth_filter",
+        "baseline_mode",
+        "log_scale",
+    }
     for key, value in filters.items():
         if key in skip_keys:
             continue
-        if key in PREPROCESS_FILTER_KEYS:
+        if key in AMBIGUOUS_ROOT_FILTER_KEYS:
+            if _is_enabled(value):
+                normalized.setdefault("post", {})[key] = value
+        elif key in PREPROCESS_FILTER_KEYS:
             if _is_enabled(value):
                 normalized.setdefault("pre", {})[key] = value
         elif key in POSTPROCESS_FILTER_KEYS:
@@ -131,8 +154,20 @@ def normalize_filter_config(
             if _is_enabled(value):
                 normalized.setdefault("live", {})[key] = value
         else:
-            # Preserve unknown keys to keep cache signatures stable.
-            normalized[key] = value
+            raise ValueError(f"Unknown FFT filter: {key!r}")
+
+    allowed_by_stage = {
+        "pre": PREPROCESS_FILTER_KEYS,
+        "post": POSTPROCESS_FILTER_KEYS,
+        "live": LIVE_FILTER_KEYS,
+    }
+    for stage_name, allowed in allowed_by_stage.items():
+        stage_cfg = normalized.get(stage_name, {})
+        unknown = sorted(set(stage_cfg) - allowed)
+        if unknown:
+            raise ValueError(
+                f"Unknown {stage_name} FFT filter(s): {', '.join(unknown)}"
+            )
 
     return normalized or None
 
@@ -194,7 +229,9 @@ class FilterPipeline:
         if self.config.pre.window and self.config.pre.window != "none":
             pre["hann_time"] = self.config.pre.window
         if self.config.pre.high_pass_cutoff is not None:
-            pre["high_pass"] = {"cutoff_fraction": float(self.config.pre.high_pass_cutoff)}
+            pre["high_pass"] = {
+                "cutoff_fraction": float(self.config.pre.high_pass_cutoff)
+            }
         if self.config.pre.band_pass is not None:
             lo, hi = self.config.pre.band_pass
             pre["band_pass"] = {"low_fraction": float(lo), "high_fraction": float(hi)}
@@ -211,7 +248,9 @@ class FilterPipeline:
         if lo > 0.0 or hi < 100.0:
             post["percentile_clip"] = {"low": float(lo), "high": float(hi)}
         if self.config.post.soft_threshold > 0.0:
-            post["soft_threshold"] = {"percentile": float(self.config.post.soft_threshold)}
+            post["soft_threshold"] = {
+                "percentile": float(self.config.post.soft_threshold)
+            }
         if self.config.post.smooth != "none":
             post_key = {
                 "gaussian": "gaussian_smooth",
@@ -238,8 +277,11 @@ class FilterPipeline:
         filters: dict[str, Any] | None = None,
     ) -> np.ndarray:
         """Apply preprocessing filters (time-domain)."""
-        _ = dt  # reserved for future filters requiring physical frequency scale
-        cfg = normalize_filter_config(filters) if filters is not None else self._config_to_stages()
+        cfg = (
+            normalize_filter_config(filters)
+            if filters is not None
+            else self._config_to_stages()
+        )
         pre_filters = cfg.get("pre", {}) if cfg else {}
         if not pre_filters:
             return np.asarray(data)
@@ -256,7 +298,11 @@ class FilterPipeline:
                     window_type = str(option.get("window", "hann"))
                 result = apply_window(result, window_type=window_type)
                 continue
-            result = apply_preprocess_filter(result, lname)
+            parameters = option if isinstance(option, dict) else {}
+            if lname == "spectral_derivative":
+                parameters = dict(parameters)
+                parameters.setdefault("spacing", dt)
+            result = apply_preprocess_filter(result, lname, **parameters)
         return result
 
     def postprocess(
@@ -267,13 +313,29 @@ class FilterPipeline:
         stage: str = "post",
     ) -> np.ndarray:
         """Apply postprocess or live-stage filters to spectrum arrays."""
-        cfg = normalize_filter_config(filters) if filters is not None else self._config_to_stages()
+        if stage not in {"post", "live"}:
+            raise ValueError("stage must be 'post' or 'live'")
+        values = np.asarray(spectrum)
+        freq = np.asarray(frequencies, dtype=float)
+        if values.ndim == 0:
+            raise ValueError("spectrum must have at least one dimension")
+        if freq.ndim != 1 or freq.size != values.shape[0]:
+            raise ValueError(
+                "frequencies must be one-dimensional and match spectrum axis 0"
+            )
+        if not np.all(np.isfinite(freq)):
+            raise ValueError("frequencies must contain only finite values")
+        cfg = (
+            normalize_filter_config(filters)
+            if filters is not None
+            else self._config_to_stages()
+        )
         if not cfg:
-            return np.asarray(spectrum)
+            return values
         stage_filters = cfg.get(stage, {})
         if not stage_filters:
-            return np.asarray(spectrum)
-        return apply_postprocess_filters(spectrum, frequencies, stage_filters)
+            return values
+        return apply_postprocess_filters(values, freq, stage_filters)
 
     def live(
         self,

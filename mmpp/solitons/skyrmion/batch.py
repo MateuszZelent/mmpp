@@ -11,6 +11,7 @@ from typing import Any, Optional, cast
 import numpy as np
 import pandas as pd
 
+from .._method_helpers import InteractiveNodeMixin
 from ._analysis import SIZE_METRIC_UNITS, analysis_catalog_rows, get_analysis_spec
 
 _PARAMETER_PRIORITY = (
@@ -82,8 +83,29 @@ def _iter_progress(
         return items
 
 
-class BatchSkyrmionInterface:
+class BatchSkyrmionInterface(InteractiveNodeMixin):
     """Run skyrmion measurements across a batch of job results."""
+
+    _interactive_owner = "jobs[:].skyrmion"
+    _interactive_nodes = frozenset(
+        {
+            "parameter_candidates",
+            "available_analyses",
+            "detect",
+            "measure_size",
+            "size_vs_parameter",
+            "fit_size",
+            "analyze",
+            "interactive",
+        }
+    )
+    _interactive_examples = {
+        "analyze": [
+            "curve = jobs[:].skyrmion.analyze('size', parameter='Dind')",
+            "charge = jobs[:].skyrmion.analyze('charge', parameter=None)",
+        ],
+        "interactive": ["jobs[:].skyrmion.interactive(index=0, sort_by='Dind')"],
+    }
 
     def __init__(self, results: list[Any], mmpp_instance: Any = None):
         self._results = list(results)
@@ -571,6 +593,29 @@ class BatchSkyrmionInterface:
     def __repr__(self) -> str:
         return f"BatchSkyrmionInterface({len(self._results)} results)"
 
+    def interactive(
+        self,
+        index: int = 0,
+        *,
+        sort_by: Optional[str] = None,
+        **kwargs: Any,
+    ):
+        """Open one selected skyrmion dashboard from a batch/folder."""
+        if not self._results:
+            raise ValueError(
+                "Cannot open skyrmion interactive mode for an empty batch."
+            )
+        ordered = list(self._results)
+        if sort_by:
+            ordered.sort(
+                key=lambda result: (
+                    self._numeric_scalar(self._attributes(result).get(sort_by)) is None,
+                    self._numeric_scalar(self._attributes(result).get(sort_by)) or 0.0,
+                )
+            )
+        selected = ordered[index]
+        return selected.solitons.skyrmion.interactive(**kwargs)
+
     def _repr_html_(self) -> str:
         import uuid
 
@@ -595,6 +640,7 @@ class BatchSkyrmionInterface:
                 "available_analyses",
                 "fit_size",
                 "analyze",
+                "interactive",
             ],
             properties=[],
             chrome=False,
@@ -617,6 +663,7 @@ class BatchSkyrmionInterface:
                                     (".measure_size()", NODE_COLOR_COMPUTE),
                                     (".analyze('size')", NODE_COLOR_ANALYSIS),
                                     (".analyze('charge')", NODE_COLOR_ANALYSIS),
+                                    (".interactive(index=0)", NODE_COLOR_ANALYSIS),
                                 ],
                             )
                         ]

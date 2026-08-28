@@ -9,6 +9,7 @@ import numpy as np
 
 from mmpp._repr_helpers import api_help_html, html_tabs
 
+from ...._method_helpers import InteractiveNodeMixin
 from ..._cache import InMemoryResultCache, build_cache_key
 from ..._shared.models import TrajectoryResult
 from ...config import VortexConfig
@@ -171,8 +172,11 @@ def _track_core_from_table(
     )
 
 
-class CoreInterface:
+class CoreInterface(InteractiveNodeMixin):
     """Vortex core tracking namespace."""
+
+    _interactive_owner = "job[0].vortex.core"
+    _interactive_nodes = frozenset({"track", "position", "velocity"})
 
     def __init__(
         self,
@@ -201,7 +205,10 @@ class CoreInterface:
         return self._dataset_name
 
     def _resolve_dataset(self):
-        dataset = getattr(self._job, self.dataset_name)
+        dataset_name = self.dataset_name
+        if dataset_name is None:
+            raise ValueError("No magnetisation dataset is available for core tracking")
+        dataset = getattr(self._job, dataset_name)
         if self._slice_info is not None:
             dataset = dataset[self._slice_info]
         return dataset

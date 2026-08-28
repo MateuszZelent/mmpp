@@ -7,8 +7,9 @@ import glob
 import math
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -363,7 +364,9 @@ def _derive_geometry(
             resolved["R"] = 0.5 * _coerce_scalar(resolved["D"])
             sources["R"] = f"{sources['D']} -> R"
         elif "Area" in resolved:
-            resolved["R"] = math.sqrt(max(_coerce_scalar(resolved["Area"]), 0.0) / math.pi)
+            resolved["R"] = math.sqrt(
+                max(_coerce_scalar(resolved["Area"]), 0.0) / math.pi
+            )
             sources["R"] = f"{sources['Area']} -> R"
         else:
             attrs = _mapping_from_view(getattr(job_result, "attrs", None))
@@ -382,11 +385,16 @@ def _derive_geometry(
                     pass
 
     if "L" not in resolved:
-        if "FreeLayerThickness" in resolved and abs(_coerce_scalar(resolved["FreeLayerThickness"])) > 0.0:
+        if (
+            "FreeLayerThickness" in resolved
+            and abs(_coerce_scalar(resolved["FreeLayerThickness"])) > 0.0
+        ):
             resolved["L"] = _coerce_scalar(resolved["FreeLayerThickness"])
             sources["L"] = f"{sources['FreeLayerThickness']} -> L"
         elif "dz" in resolved and "Nz" in resolved:
-            resolved["L"] = _coerce_scalar(resolved["dz"]) * max(int(_coerce_scalar(resolved["Nz"])), 1)
+            resolved["L"] = _coerce_scalar(resolved["dz"]) * max(
+                int(_coerce_scalar(resolved["Nz"])), 1
+            )
             sources["L"] = f"{sources['dz']}+{sources['Nz']} -> L"
         else:
             attrs = _mapping_from_view(getattr(job_result, "attrs", None))
@@ -633,7 +641,9 @@ def _derived_current_from_density(
     if "current_density" not in resolved or "Area" not in resolved:
         return None
     try:
-        current_amp = _coerce_scalar(resolved["current_density"]) * _coerce_scalar(resolved["Area"])
+        current_amp = _coerce_scalar(resolved["current_density"]) * _coerce_scalar(
+            resolved["Area"]
+        )
     except Exception:
         return None
     source = f"{sources.get('current_density', 'current_density')}+{sources.get('Area', 'Area')} -> current"
@@ -694,8 +704,12 @@ def _resolve_current_views(
     if derived is not None:
         derived_amp, derived_mA, derived_source = derived
         density_source = sources.get("current_density", "")
-        use_derived = current_amp is None or not _current_source_has_explicit_unit(current_source or "")
-        if not use_derived and _source_precedence(density_source) < _source_precedence(current_source):
+        use_derived = current_amp is None or not _current_source_has_explicit_unit(
+            current_source or ""
+        )
+        if not use_derived and _source_precedence(density_source) < _source_precedence(
+            current_source
+        ):
             use_derived = True
         if use_derived:
             current_amp = derived_amp
@@ -705,10 +719,14 @@ def _resolve_current_views(
 
     if current_amp is not None:
         resolved["current_A"] = current_amp
-        sources["current_A"] = sources.get("current", sources.get("current_density", "derived"))
+        sources["current_A"] = sources.get(
+            "current", sources.get("current_density", "derived")
+        )
     if current_mA is not None:
         resolved["current_mA"] = current_mA
-        sources["current_mA"] = sources.get("current", sources.get("current_density", "derived"))
+        sources["current_mA"] = sources.get(
+            "current", sources.get("current_density", "derived")
+        )
 
 
 def _resolve_field(
@@ -726,10 +744,24 @@ def _resolve_field(
         resolved.pop("field", None)
         sources.pop("field", None)
 
-    if any(key in resolved for key in ("Bx_T", "By_T", "Bz_T", "Bx_mT", "By_mT", "Bz_mT")):
-        bx = float(_coerce_scalar(resolved.get("Bx_T", 0.0))) if "Bx_T" in resolved else 0.0
-        by = float(_coerce_scalar(resolved.get("By_T", 0.0))) if "By_T" in resolved else 0.0
-        bz = float(_coerce_scalar(resolved.get("Bz_T", 0.0))) if "Bz_T" in resolved else 0.0
+    if any(
+        key in resolved for key in ("Bx_T", "By_T", "Bz_T", "Bx_mT", "By_mT", "Bz_mT")
+    ):
+        bx = (
+            float(_coerce_scalar(resolved.get("Bx_T", 0.0)))
+            if "Bx_T" in resolved
+            else 0.0
+        )
+        by = (
+            float(_coerce_scalar(resolved.get("By_T", 0.0)))
+            if "By_T" in resolved
+            else 0.0
+        )
+        bz = (
+            float(_coerce_scalar(resolved.get("Bz_T", 0.0)))
+            if "Bz_T" in resolved
+            else 0.0
+        )
         if "Bx_mT" in resolved:
             bx += float(_coerce_scalar(resolved["Bx_mT"])) * 1e-3
         if "By_mT" in resolved:
@@ -742,7 +774,11 @@ def _resolve_field(
         for name in ("Bx_T", "By_T", "Bz_T", "Bx_mT", "By_mT", "Bz_mT"):
             if name in sources:
                 field_sources.append(sources[name])
-        sources["field"] = " + ".join(field_sources) + " -> field" if field_sources else "derived:field_components"
+        sources["field"] = (
+            " + ".join(field_sources) + " -> field"
+            if field_sources
+            else "derived:field_components"
+        )
 
 
 def _coerce_fixed_layer_position(value: Any) -> tuple[str, float]:
@@ -755,7 +791,7 @@ def _coerce_fixed_layer_position(value: Any) -> tuple[str, float]:
 
 
 def _coerce_polarizer(value: Any) -> tuple[float, float, float]:
-    arr = np.asarray(value, dtype=float).reshape(-1)
+    arr: Any = np.asarray(value, dtype=float).reshape(-1)
     if arr.size == 2:
         arr = np.array([arr[0], arr[1], 0.0], dtype=float)
     if arr.size < 3:
@@ -778,10 +814,15 @@ def _resolve_cpp_spin_torque_terms(
 
     if "L_stt" in resolved:
         torque_thickness = float(_coerce_scalar(resolved["L_stt"]))
-    elif "FreeLayerThickness" in resolved and abs(float(_coerce_scalar(resolved["FreeLayerThickness"]))) > 0.0:
+    elif (
+        "FreeLayerThickness" in resolved
+        and abs(float(_coerce_scalar(resolved["FreeLayerThickness"]))) > 0.0
+    ):
         torque_thickness = float(_coerce_scalar(resolved["FreeLayerThickness"]))
         resolved["L_stt"] = torque_thickness
-        sources["L_stt"] = sources.get("FreeLayerThickness", "derived:FreeLayerThickness")
+        sources["L_stt"] = sources.get(
+            "FreeLayerThickness", "derived:FreeLayerThickness"
+        )
     elif "L" in resolved:
         torque_thickness = float(_coerce_scalar(resolved["L"]))
         resolved["L_stt"] = torque_thickness
@@ -793,11 +834,17 @@ def _resolve_cpp_spin_torque_terms(
     # MuMax Slonczewski descriptors, treat it as a direct Guslienko-style
     # polarization. This lets manual ``params={...}`` bypass hidden mx3/attrs
     # reduction and use the exact values supplied by the user.
-    _SLON_KEYS = ("polarizer", "FixedLayer", "p_z", "Lambda", "epsilonprime", "FixedLayerPosition")
+    _SLON_KEYS = (
+        "polarizer",
+        "FixedLayer",
+        "p_z",
+        "Lambda",
+        "epsilonprime",
+        "FixedLayerPosition",
+    )
     explicit_manual_p = sources.get("P", "").startswith("params:")
     explicit_manual_slonczewski = any(
-        sources.get(key, "").startswith("params:")
-        for key in _SLON_KEYS
+        sources.get(key, "").startswith("params:") for key in _SLON_KEYS
     )
 
     if explicit_manual_p and not explicit_manual_slonczewski:
@@ -819,7 +866,9 @@ def _resolve_cpp_spin_torque_terms(
         resolved["P_raw"] = raw_p
         sources["P_raw"] = sources.get("P", "resolved:P")
         resolved["P_model"] = raw_p
-        sources["P_model"] = f"{sources.get('P', 'resolved:P')} -> P_model (direct, no Slonczewski)"
+        sources["P_model"] = (
+            f"{sources.get('P', 'resolved:P')} -> P_model (direct, no Slonczewski)"
+        )
         resolved["polarizer"] = (0.0, 0.0, 1.0)
         sources["polarizer"] = "default"
         resolved["p_z"] = 1.0
@@ -868,7 +917,9 @@ def _resolve_cpp_spin_torque_terms(
         sources["p_z"] = f"{sources['polarizer']} -> p_z"
 
     if "FixedLayerPosition" in resolved:
-        fixed_layer_position, current_sign = _coerce_fixed_layer_position(resolved["FixedLayerPosition"])
+        fixed_layer_position, current_sign = _coerce_fixed_layer_position(
+            resolved["FixedLayerPosition"]
+        )
     else:
         fixed_layer_position, current_sign = ("top", 1.0)
         resolved["FixedLayerPosition"] = "FIXEDLAYER_TOP"
@@ -905,9 +956,7 @@ def _resolve_cpp_spin_torque_terms(
     )
 
     resolved["P_eff"] = reduction.epsilon
-    sources["P_eff"] = (
-        f"{sources['P']}+{sources['Lambda']}+{sources['p_z']} -> P_eff"
-    )
+    sources["P_eff"] = f"{sources['P']}+{sources['Lambda']}+{sources['p_z']} -> P_eff"
     resolved["P_model"] = reduction.pump_polarization
     sources["P_model"] = (
         f"{sources['P_eff']}+{sources['alpha']}+{sources['epsilonprime']}+"
@@ -923,7 +972,11 @@ def _resolve_cpp_spin_torque_terms(
         f"{sources['phase_polarization']}+{sources['L_stt']}+{sources['Ms']} -> domega0_dJ_stt"
     )
 
-    raw_domega = float(_coerce_scalar(resolved["domega0_dJ"])) if "domega0_dJ" in resolved else 0.0
+    raw_domega = (
+        float(_coerce_scalar(resolved["domega0_dJ"]))
+        if "domega0_dJ" in resolved
+        else 0.0
+    )
     raw_source = sources.get("domega0_dJ", "default:0.0")
     resolved["domega0_dJ_user"] = raw_domega
     sources["domega0_dJ_user"] = raw_source
@@ -969,7 +1022,9 @@ def extract_model_defaults(
         dataset_name = dataset_name or getattr(vortex_interface, "_dataset", None)
 
     if job_result is None:
-        raise ValueError("job_result or vortex_interface is required for parameter extraction")
+        raise ValueError(
+            "job_result or vortex_interface is required for parameter extraction"
+        )
 
     attrs_map = _mapping_from_view(getattr(job_result, "attrs", None))
     mx3_path = _sidecar_mx3_path(job_result)
@@ -977,10 +1032,19 @@ def extract_model_defaults(
 
     if isinstance(params, Mapping):
         params_map = dict(params)
-        search_locations = ("params", "attrs", f"mx3:{mx3_path}" if mx3_path else "mx3:none", "overrides")
+        search_locations: tuple[str, ...] = (
+            "params",
+            "attrs",
+            f"mx3:{mx3_path}" if mx3_path else "mx3:none",
+            "overrides",
+        )
     elif str(params).strip().lower() == "auto":
         params_map = {}
-        search_locations = ("attrs", f"mx3:{mx3_path}" if mx3_path else "mx3:none", "overrides")
+        search_locations = (
+            "attrs",
+            f"mx3:{mx3_path}" if mx3_path else "mx3:none",
+            "overrides",
+        )
     else:
         raise ValueError("params must be 'auto' or a mapping of parameter values")
 
@@ -988,7 +1052,9 @@ def extract_model_defaults(
     sources: dict[str, str] = {}
 
     if params_map:
-        _apply_source_layer(resolved, sources, "params", params_map, param_keys=param_keys)
+        _apply_source_layer(
+            resolved, sources, "params", params_map, param_keys=param_keys
+        )
     _apply_source_layer(resolved, sources, "attrs", attrs_map, param_keys=param_keys)
     _apply_source_layer(resolved, sources, "mx3", mx3_map, param_keys=param_keys)
 

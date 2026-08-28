@@ -5,4 +5,9 @@ from .helpers import SpectrumHelper
 from .multi import MultiSpectrumResult
 from .result import SpectrumResult
 
-__all__ = ["SpectrumResult", "MultiSpectrumResult", "SpectrumHelper", "SpectrumFilterChain"]
+__all__ = [
+    "SpectrumResult",
+    "MultiSpectrumResult",
+    "SpectrumHelper",
+    "SpectrumFilterChain",
+]

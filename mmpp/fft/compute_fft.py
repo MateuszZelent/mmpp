@@ -7,7 +7,7 @@ Provides low-level FFT calculations without user interface elements.
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -45,7 +45,7 @@ try:
 
     PYZFN_AVAILABLE = True
 except ImportError:
-    Pyzfn = None  # type: ignore[assignment]
+    globals()["Pyzfn"] = None
     PYZFN_AVAILABLE = False
 
 # Import shared logging configuration
@@ -62,11 +62,23 @@ from ._compute_methods import build_fft_metadata, run_fft_method1, run_fft_metho
 from ._scaling import SPECTRUM_SCALINGS
 from .filters.preprocess import (
     apply_filter as apply_preprocess_filter,
+)
+from .filters.preprocess import (
     apply_single_filter as apply_single_preprocess_filter,
-    baseline_correction as preprocess_baseline_correction,
+)
+from .filters.preprocess import (
     band_pass as preprocess_band_pass,
+)
+from .filters.preprocess import (
+    baseline_correction as preprocess_baseline_correction,
+)
+from .filters.preprocess import (
     high_pass as preprocess_high_pass,
+)
+from .filters.preprocess import (
     savgol_smooth as preprocess_savgol_smooth,
+)
+from .filters.preprocess import (
     spectral_derivative as preprocess_spectral_derivative,
 )
 from .filters.windows import apply_window as apply_fft_window
@@ -82,15 +94,31 @@ if not PYZFN_AVAILABLE:
 
 # Type hints
 WINDOW_TYPES = Literal[
-    "none", "hann", "hamming", "blackman", "bartlett", "kaiser", "tukey", "gaussian",
-    "flattop", "nuttall"
+    "none",
+    "hann",
+    "hamming",
+    "blackman",
+    "bartlett",
+    "kaiser",
+    "tukey",
+    "gaussian",
+    "flattop",
+    "nuttall",
 ]
 FILTER_TYPE_OPTIONS = Literal[
-    "none", "remove_mean", "remove_static", "detrend_linear", "remove_mean_and_static",
+    "none",
+    "remove_mean",
+    "remove_static",
+    "detrend_linear",
+    "remove_mean_and_static",
     # New filters from FMR literature:
-    "savgol_smooth", "baseline_correction", "high_pass", "band_pass", "spectral_derivative"
+    "savgol_smooth",
+    "baseline_correction",
+    "high_pass",
+    "band_pass",
+    "spectral_derivative",
 ]
-FILTER_TYPES = Union[FILTER_TYPE_OPTIONS, list[FILTER_TYPE_OPTIONS]]
+FILTER_TYPES = FILTER_TYPE_OPTIONS | list[FILTER_TYPE_OPTIONS]
 FFT_ENGINES = Literal["numpy", "pyfftw", "scipy", "auto"]
 
 
@@ -103,7 +131,7 @@ class FFTComputeConfig:
     fft_engine: FFT_ENGINES = "auto"
     scaling: SPECTRUM_SCALINGS = "raw"
     zero_padding: bool = True
-    nfft: Optional[int] = None
+    nfft: int | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration."""
@@ -216,36 +244,34 @@ class FFTComputeResult:
         else:
             fft_group = fft_main_group[dataset_name]
             if not force:
-                log.warning(
-                    f"FFT dataset fft/{dataset_name} already exists. Use force=True to overwrite."
+                raise FileExistsError(
+                    f"FFT dataset fft/{dataset_name} already exists. "
+                    "Use force=True to overwrite."
                 )
-                return
             log.info(f"Overwriting existing FFT dataset: fft/{dataset_name}")
 
         # Disable chunking for FFT data to avoid unnecessary fragmentation
-        spectrum_chunks = None
-        freq_chunks = None
 
         # Save spectrum data - handle chunking properly based on array dimensions
-        spectrum_chunks = None  # Let zarr decide chunking
-        freq_chunks = None      # Let zarr decide chunking
-        
-        log.debug(f"Saving spectrum shape: {self.spectrum.shape}, frequencies shape: {self.frequencies.shape}")
+
+        log.debug(
+            f"Saving spectrum shape: {self.spectrum.shape}, frequencies shape: {self.frequencies.shape}"
+        )
 
         # Save spectrum data
         fft_group.create_dataset(
-            "spectrum", 
+            "spectrum",
             data=self.spectrum,
             shape=self.spectrum.shape,
             dtype=self.spectrum.dtype,
-            overwrite=force
+            overwrite=force,
         )
         fft_group.create_dataset(
-            "frequencies", 
+            "frequencies",
             data=self.frequencies,
             shape=self.frequencies.shape,
             dtype=self.frequencies.dtype,
-            overwrite=force
+            overwrite=force,
         )
 
         # Save metadata as attributes
@@ -312,7 +338,9 @@ class FFTCompute:
             ),
             # New windows for FMR analysis
             "flattop": (
-                scipy.signal.windows.flattop if SCIPY_AVAILABLE else lambda N: np.ones(N)
+                scipy.signal.windows.flattop
+                if SCIPY_AVAILABLE
+                else lambda N: np.ones(N)
             ),
             "nuttall": (
                 scipy.signal.windows.nuttall if SCIPY_AVAILABLE else np.blackman
@@ -397,7 +425,7 @@ class FFTCompute:
         self, data: np.ndarray, window_length: int = 11, polyorder: int = 3
     ) -> np.ndarray:
         """Apply Savitzky-Golay smoothing filter.
-        
+
         Reduces noise while preserving signal shape and peak positions.
         Common in spectroscopic data processing.
         """
@@ -411,10 +439,10 @@ class FFTCompute:
         self, data: np.ndarray, lam: float = 1e5, p: float = 0.01, niter: int = 10
     ) -> np.ndarray:
         """Apply asymmetric least squares baseline correction.
-        
+
         Removes slowly varying baseline drift common in VNA-FMR spectra.
         Uses iterative weighted least squares fitting.
-        
+
         Parameters:
         -----------
         lam : float
@@ -430,10 +458,10 @@ class FFTCompute:
         self, data: np.ndarray, cutoff_fraction: float = 0.01
     ) -> np.ndarray:
         """Apply high-pass filter to remove low-frequency components.
-        
+
         Useful for removing DC offset and slow drifts.
         Uses FFT-based filtering for efficiency.
-        
+
         Parameters:
         -----------
         cutoff_fraction : float
@@ -449,9 +477,9 @@ class FFTCompute:
         self, data: np.ndarray, low_fraction: float = 0.01, high_fraction: float = 0.9
     ) -> np.ndarray:
         """Apply band-pass filter to keep frequencies in specified range.
-        
+
         Useful for isolating FMR resonance frequency range.
-        
+
         Parameters:
         -----------
         low_fraction : float
@@ -476,19 +504,19 @@ class FFTCompute:
         )
 
     def _apply_spectral_derivative(
-        self, data: np.ndarray, order: int = 1
+        self, data: np.ndarray, order: int = 1, spacing: float = 1.0
     ) -> np.ndarray:
         """Apply spectral derivative to enhance peaks and resolve overlaps.
-        
+
         First derivative helps identify peak positions.
         Second derivative enhances narrow peaks over broad backgrounds.
-        
+
         Parameters:
         -----------
         order : int
             Derivative order (1 or 2)
         """
-        return preprocess_spectral_derivative(data, order=order)
+        return preprocess_spectral_derivative(data, order=order, spacing=spacing)
 
     def compute_fft(
         self,
@@ -497,7 +525,7 @@ class FFTCompute:
         engine: str,
         *,
         zero_padding: bool,
-        nfft: Optional[int],
+        nfft: int | None,
     ) -> tuple[np.ndarray, np.ndarray, int]:
         """
         Compute FFT using specified engine.
@@ -538,10 +566,12 @@ class FFTCompute:
         dt: float,
         window: WINDOW_TYPES = "hann",
         filter_type: FILTER_TYPES = "remove_mean",
-        engine: Optional[str] = None,
+        engine: str | None = None,
         scaling: SPECTRUM_SCALINGS = "raw",
         zero_padding: bool = True,
-        nfft: Optional[int] = None,
+        nfft: int | None = None,
+        spatial_axes: tuple[int, ...] | None = None,
+        component_axis: int | None = None,
     ) -> FFTComputeResult:
         """FFT Method 1: filter, spatial averaging, window, then FFT."""
         execution = run_fft_method1(
@@ -555,8 +585,9 @@ class FFTCompute:
             nfft=nfft,
             determine_engine=self.determine_engine,
             apply_filter=self.apply_filter,
-            apply_window=self.apply_window,
+            apply_window=cast(Any, self.apply_window),
             compute_fft=self.compute_fft,
+            spatial_axes=spatial_axes,
         )
         metadata = build_fft_metadata(
             method=1,
@@ -573,11 +604,13 @@ class FFTCompute:
             frequencies=execution.frequencies,
             fft_length=execution.fft_length,
             scaling_metadata=execution.scaling_metadata,
+            spatial_axes=spatial_axes,
+            component_axis=component_axis,
         )
         config = FFTComputeConfig(
             window_function=window,
             filter_type=filter_type,
-            fft_engine=execution.selected_engine,
+            fft_engine=cast(Any, execution.selected_engine),
             scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
@@ -595,10 +628,12 @@ class FFTCompute:
         dt: float,
         window: WINDOW_TYPES = "hann",
         filter_type: FILTER_TYPES = "remove_mean",
-        engine: Optional[str] = None,
+        engine: str | None = None,
         scaling: SPECTRUM_SCALINGS = "raw",
         zero_padding: bool = True,
-        nfft: Optional[int] = None,
+        nfft: int | None = None,
+        spatial_axes: tuple[int, ...] | None = None,
+        component_axis: int | None = None,
     ) -> FFTComputeResult:
         """FFT Method 2: filter+window, FFT per pixel, then spatial average of |FFT|²."""
         execution = run_fft_method2(
@@ -612,8 +647,9 @@ class FFTCompute:
             nfft=nfft,
             determine_engine=self.determine_engine,
             apply_filter=self.apply_filter,
-            apply_window=self.apply_window,
+            apply_window=cast(Any, self.apply_window),
             compute_fft=self.compute_fft,
+            spatial_axes=spatial_axes,
         )
         metadata = build_fft_metadata(
             method=2,
@@ -630,11 +666,13 @@ class FFTCompute:
             frequencies=execution.frequencies,
             fft_length=execution.fft_length,
             scaling_metadata=execution.scaling_metadata,
+            spatial_axes=spatial_axes,
+            component_axis=component_axis,
         )
         config = FFTComputeConfig(
             window_function=window,
             filter_type=filter_type,
-            fft_engine=execution.selected_engine,
+            fft_engine=cast(Any, execution.selected_engine),
             scaling=scaling,
             zero_padding=zero_padding,
             nfft=nfft,
@@ -651,8 +689,10 @@ class FFTCompute:
         zarr_path: str,
         dataset: str,
         z_layer: int = -1,
-        tmax: Optional[int] = None,
-        slice_info: Optional[Any] = None,
+        tmax: int | None = None,
+        slice_info: Any | None = None,
+        preloaded_data: np.ndarray | None = None,
+        time_step_scale: float = 1.0,
     ) -> tuple[np.ndarray, float]:
         """Load data from zarr file."""
         return load_fft_input_data(
@@ -661,6 +701,8 @@ class FFTCompute:
             z_layer=z_layer,
             tmax=tmax,
             slice_info=slice_info,
+            preloaded_data=preloaded_data,
+            time_step_scale=time_step_scale,
             pyzfn_available=PYZFN_AVAILABLE,
             pyzfn_cls=Pyzfn,
             psutil_module=(psutil if PSUTIL_AVAILABLE else None),
@@ -691,7 +733,7 @@ class FFTCompute:
 
     def load_existing_fft_data(
         self, zarr_path: str, dataset_name: str = "fft"
-    ) -> Optional[FFTComputeResult]:
+    ) -> FFTComputeResult | None:
         """Load existing FFT data from zarr file."""
         loaded = load_existing_fft_result(
             zarr_path=zarr_path,
@@ -736,10 +778,12 @@ class FFTCompute:
         method: int = 1,
         save: bool = False,
         force: bool = False,
-        save_dataset_name: Optional[str] = None,
-        slice_info: Optional[Any] = None,
-        slice_identifier: Optional[str] = None,
-        tmax: Optional[int] = None,
+        save_dataset_name: str | None = None,
+        slice_info: Any | None = None,
+        slice_identifier: str | None = None,
+        tmax: int | None = None,
+        preloaded_data: np.ndarray | None = None,
+        time_step_scale: float = 1.0,
         **kwargs,
     ) -> FFTComputeResult:
         """
@@ -781,7 +825,9 @@ class FFTCompute:
 
         # Validate z_layer parameter
         if z_layer is None:
-            raise ValueError("z_layer cannot be None. Use -1 for last layer or specify a valid layer index.")
+            raise ValueError(
+                "z_layer cannot be None. Use -1 for last layer or specify a valid layer index."
+            )
 
         # Normalize z_layer to actual index for consistent naming
         normalized_z_layer = normalize_z_layer_index(
@@ -797,7 +843,9 @@ class FFTCompute:
         if save_dataset_name is None:
             save_dataset_name = f"{dataset}_z{normalized_z_layer}_m{method}"
             if slice_identifier:
-                slice_hash = hashlib.md5(slice_identifier.encode("utf-8")).hexdigest()[:8]
+                slice_hash = hashlib.md5(slice_identifier.encode("utf-8")).hexdigest()[
+                    :8
+                ]
                 save_dataset_name = f"{save_dataset_name}_s{slice_hash}"
 
         # Try to load existing data if not forcing recalculation
@@ -816,19 +864,29 @@ class FFTCompute:
                     log.info(
                         f"✓ Loaded existing FFT data for {save_dataset_name} (parameters verified)"
                     )
-                    log.debug(f"Parameters: z_layer={z_layer}→{normalized_z_layer}, dataset={dataset}, method={method}")
+                    log.debug(
+                        f"Parameters: z_layer={z_layer}→{normalized_z_layer}, dataset={dataset}, method={method}"
+                    )
                     return existing_result
                 else:
                     log.warning(
-                        f"Existing FFT data found but parameters don't match, recalculating..."
+                        "Existing FFT data found but parameters don't match, recalculating..."
                     )
-                    log.debug(f"Mismatched parameters: z_layer={z_layer}→{normalized_z_layer}, dataset={dataset}")
+                    log.debug(
+                        f"Mismatched parameters: z_layer={z_layer}→{normalized_z_layer}, dataset={dataset}"
+                    )
                     force = True  # Force recalculation if parameters don't match
             else:
-                log.info(f"No existing FFT data found for {save_dataset_name}, calculating new FFT...")
+                log.info(
+                    f"No existing FFT data found for {save_dataset_name}, calculating new FFT..."
+                )
         else:
-            log.info(f"Force recalculation enabled for {save_dataset_name}, computing new FFT...")
-            log.debug(f"Parameters: z_layer={z_layer}→{normalized_z_layer}, dataset={dataset}, method={method}")
+            log.info(
+                f"Force recalculation enabled for {save_dataset_name}, computing new FFT..."
+            )
+            log.debug(
+                f"Parameters: z_layer={z_layer}→{normalized_z_layer}, dataset={dataset}, method={method}"
+            )
 
         # Load data
         log.info(f"Loading data from {dataset} (z_layer={z_layer})...")
@@ -838,6 +896,8 @@ class FFTCompute:
             z_layer=z_layer,
             tmax=tmax,
             slice_info=slice_info,
+            preloaded_data=preloaded_data,
+            time_step_scale=time_step_scale,
             pyzfn_available=PYZFN_AVAILABLE,
             pyzfn_cls=Pyzfn,
             psutil_module=(psutil if PSUTIL_AVAILABLE else None),
@@ -883,6 +943,8 @@ class FFTCompute:
                 scaling,
                 zero_padding=zero_padding,
                 nfft=nfft,
+                spatial_axes=getattr(load_metrics, "spatial_axes", None),
+                component_axis=getattr(load_metrics, "component_axis", None),
             )
         elif method == 2:
             result = self.calculate_fft_method2(
@@ -894,6 +956,8 @@ class FFTCompute:
                 scaling,
                 zero_padding=zero_padding,
                 nfft=nfft,
+                spatial_axes=getattr(load_metrics, "spatial_axes", None),
+                component_axis=getattr(load_metrics, "component_axis", None),
             )
         else:
             raise ValueError(f"Unsupported FFT method: {method}")
@@ -920,7 +984,10 @@ class FFTCompute:
                 result.save_to_zarr(zarr_path, save_dataset_name, force=force)
                 log.info(f"✓ Successfully saved FFT data to fft/{save_dataset_name}")
             except Exception as e:
-                log.warning(f"Could not save FFT data: {e}")
+                raise RuntimeError(
+                    f"FFT computation succeeded but save=True failed for "
+                    f"fft/{save_dataset_name}: {e}"
+                ) from e
         else:
             log.debug("FFT calculation completed (not saved)")
 

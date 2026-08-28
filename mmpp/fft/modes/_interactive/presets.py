@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -60,9 +60,7 @@ def collect_preset_state(explorer: Any) -> dict[str, Any]:
         "peak_prominence": float(explorer._peak_prominence),
         "peak_distance": int(explorer._peak_distance),
         "mode_view": (
-            "all"
-            if len(explorer._mode_row_types) > 1
-            else explorer._mode_row_types[0]
+            "all" if len(explorer._mode_row_types) > 1 else explorer._mode_row_types[0]
         ),
         "cmap_mag": (
             str(explorer._controls.get("cmap_mag").value)
@@ -95,8 +93,75 @@ def collect_preset_state(explorer: Any) -> dict[str, Any]:
 
 def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
     """Apply preset payload to widgets/state."""
+    if not isinstance(payload, dict):
+        raise TypeError("Preset payload must be a JSON object")
     if not explorer._controls:
         return
+
+    freq_unit = str(payload.get("freq_unit", explorer._freq_unit)).strip()
+    explorer._get_freq_scale(freq_unit)
+
+    integer_keys = {"z_layer", "smooth_window", "peak_distance"}
+    numeric_keys = integer_keys | {
+        "freq_min",
+        "freq_max",
+        "smooth_sigma",
+        "clip_percentile_low",
+        "clip_percentile_high",
+        "soft_threshold_percentile",
+        "peak_prominence",
+    }
+    for key in numeric_keys:
+        if key not in payload:
+            continue
+        value = payload[key]
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Preset field {key!r} must be numeric") from exc
+        if not np.isfinite(numeric):
+            raise ValueError(f"Preset field {key!r} must be finite")
+        if key in integer_keys and (
+            isinstance(value, (bool, np.bool_)) or int(numeric) != numeric
+        ):
+            raise ValueError(f"Preset field {key!r} must be an integer")
+
+    def _option_values(control_name: str) -> set[str]:
+        values: set[str] = set()
+        for option in explorer._controls[control_name].options:
+            raw = option[1] if isinstance(option, tuple) else option
+            values.add(str(raw))
+        return values
+
+    enum_fields = {
+        "smooth_filter": "smooth_filter",
+        "baseline_mode": "baseline_mode",
+        "mode_view": "mode_view",
+        "cmap_mag": "cmap_mag",
+        "cmap_phase": "cmap_phase",
+        "cmap_combined": "cmap_combined",
+        "aspect": "aspect",
+        "layout": "layout",
+    }
+    for payload_key, control_name in enum_fields.items():
+        if payload_key in payload and str(payload[payload_key]) not in _option_values(
+            control_name
+        ):
+            raise ValueError(
+                f"Preset field {payload_key!r} has unsupported value "
+                f"{payload[payload_key]!r}"
+            )
+
+    clip_low_value = float(
+        payload.get("clip_percentile_low", explorer._filter_state.clip_percentile_low)
+    )
+    clip_high_value = float(
+        payload.get("clip_percentile_high", explorer._filter_state.clip_percentile_high)
+    )
+    if clip_low_value > clip_high_value:
+        raise ValueError(
+            "Preset clip_percentile_low cannot exceed clip_percentile_high"
+        )
 
     explorer._internal_update = True
     try:
@@ -109,13 +174,19 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
             available=explorer._available_components,
         )
 
-        mode_key = "mode_components" if "mode_components" in explorer._controls else "components"
+        mode_key = (
+            "mode_components"
+            if "mode_components" in explorer._controls
+            else "components"
+        )
         explorer._controls[mode_key].value = tuple(mode_components)
         if "spectrum_components" in explorer._controls:
             explorer._controls["spectrum_components"].value = tuple(spectrum_components)
         z_control = explorer._controls["z_layer"]
         z_val = int(payload.get("z_layer", explorer._current_z_layer))
-        explorer._controls["z_layer"].value = int(np.clip(z_val, z_control.min, z_control.max))
+        explorer._controls["z_layer"].value = int(
+            np.clip(z_val, z_control.min, z_control.max)
+        )
 
         fmin_control = explorer._controls["fmin"]
         fmax_control = explorer._controls["fmax"]
@@ -128,9 +199,9 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
             np.clip(fmax, fmax_control.min, fmax_control.max)
         )
 
-        smooth_filter = str(payload.get("smooth_filter", explorer._filter_state.smooth_filter))
-        if smooth_filter not in [opt[1] for opt in explorer._controls["smooth_filter"].options]:
-            smooth_filter = "none"
+        smooth_filter = str(
+            payload.get("smooth_filter", explorer._filter_state.smooth_filter)
+        )
         explorer._controls["smooth_filter"].value = smooth_filter
 
         smooth_window = explorer._controls["smooth_window"]
@@ -151,9 +222,9 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
             )
         )
 
-        baseline_mode = str(payload.get("baseline_mode", explorer._filter_state.baseline_mode))
-        if baseline_mode not in [opt[1] for opt in explorer._controls["baseline_mode"].options]:
-            baseline_mode = "none"
+        baseline_mode = str(
+            payload.get("baseline_mode", explorer._filter_state.baseline_mode)
+        )
         explorer._controls["baseline_mode"].value = baseline_mode
         clip_low = explorer._controls["clip_low"]
         clip_high = explorer._controls["clip_high"]
@@ -162,7 +233,8 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
             np.clip(
                 float(
                     payload.get(
-                        "clip_percentile_low", explorer._filter_state.clip_percentile_low
+                        "clip_percentile_low",
+                        explorer._filter_state.clip_percentile_low,
                     )
                 ),
                 clip_low.min,
@@ -173,7 +245,8 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
             np.clip(
                 float(
                     payload.get(
-                        "clip_percentile_high", explorer._filter_state.clip_percentile_high
+                        "clip_percentile_high",
+                        explorer._filter_state.clip_percentile_high,
                     )
                 ),
                 clip_high.min,
@@ -220,34 +293,23 @@ def apply_preset_state(explorer: Any, payload: dict[str, Any]) -> None:
         )
 
         mode_view = str(payload.get("mode_view", "all"))
-        if mode_view not in [opt[1] for opt in explorer._controls["mode_view"].options]:
-            mode_view = "all"
         explorer._controls["mode_view"].value = mode_view
 
         cmap_mag = str(payload.get("cmap_mag", "viridis"))
-        if cmap_mag not in explorer._controls["cmap_mag"].options:
-            cmap_mag = "viridis"
         explorer._controls["cmap_mag"].value = cmap_mag
 
         cmap_phase = str(payload.get("cmap_phase", "twilight"))
-        if cmap_phase not in explorer._controls["cmap_phase"].options:
-            cmap_phase = "twilight"
         explorer._controls["cmap_phase"].value = cmap_phase
 
         cmap_combined = str(payload.get("cmap_combined", "RdBu_r"))
-        if cmap_combined not in explorer._controls["cmap_combined"].options:
-            cmap_combined = "RdBu_r"
         explorer._controls["cmap_combined"].value = cmap_combined
 
         aspect = str(payload.get("aspect", "equal"))
-        if aspect not in explorer._controls["aspect"].options:
-            aspect = "equal"
         explorer._controls["aspect"].value = aspect
 
         layout = str(payload.get("layout", "auto"))
-        if layout not in [opt[1] for opt in explorer._controls["layout"].options]:
-            layout = "auto"
         explorer._controls["layout"].value = layout
+        explorer._freq_unit = freq_unit
     finally:
         explorer._internal_update = False
 
@@ -323,7 +385,22 @@ def on_load_preset_changed(explorer: Any, change: Any) -> None:
         explorer._set_status(f"Failed to load preset: {exc}", color="crimson")
         return
 
-    apply_preset_state(explorer, payload)
+    if not isinstance(payload, dict):
+        explorer._set_status(
+            "Failed to load preset: root must be a JSON object", color="crimson"
+        )
+        return
+
+    previous = collect_preset_state(explorer)
+    try:
+        apply_preset_state(explorer, payload)
+    except Exception as exc:
+        try:
+            apply_preset_state(explorer, previous)
+        except Exception:
+            pass
+        explorer._set_status(f"Failed to apply preset: {exc}", color="crimson")
+        return
     explorer._set_status(f"Preset loaded: {name}", color="seagreen")
 
 

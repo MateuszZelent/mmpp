@@ -8,12 +8,16 @@ from typing import Any, Optional
 
 import numpy as np
 
+from .._method_helpers import InteractiveNodeMixin
 from ._core import detect_skyrmion
 from .models import SkyrmionTopologyResult
 
 
-class SkyrmionTopologyInterface:
+class SkyrmionTopologyInterface(InteractiveNodeMixin):
     """Detect topology for one snapshot of a dataset-backed field."""
+
+    _interactive_owner = "job[0].skyrmion.topology"
+    _interactive_nodes = frozenset({"detect", "topological_charge", "center"})
 
     def __init__(self, parent: Any):
         self._parent = parent

@@ -9,6 +9,8 @@ import numpy as np
 
 from .....ui.snapshot import (
     create_quiver_grid_and_scale as _create_quiver_grid_and_scale,
+)
+from .....ui.snapshot import (
     vector_field_to_rgb as _vector_field_to_rgb,
 )
 
@@ -78,7 +80,7 @@ class SnapshotCache:
                     frame = data.mean(axis=0)
                 else:
                     z_idx = int(np.clip(int(z_layer), 0, z_count - 1))
-                    frame = data[z_idx]   # (y, x, c)
+                    frame = data[z_idx]  # (y, x, c)
             elif ndim == 3:  # (y, x, c)
                 frame = data
             else:
@@ -92,7 +94,9 @@ class SnapshotCache:
 
         # ── standard mode: single dataset indexed by frame_idx ────────────
         dset_obj = self._job.get_raw(self._dset)
-        data_obj = dset_obj[self._slice_info] if self._slice_info is not None else dset_obj
+        data_obj = (
+            dset_obj[self._slice_info] if self._slice_info is not None else dset_obj
+        )
         shape = tuple(getattr(data_obj, "shape", ()))
         ndim = len(shape)
 
@@ -151,7 +155,12 @@ class SnapshotCache:
         z_layer: int | str,
         roi: tuple[int, int, int, int] | None,
     ) -> np.ndarray:
-        key = (int(frame_idx), str(component), str(z_layer), tuple(roi) if roi else None)
+        key = (
+            int(frame_idx),
+            str(component),
+            str(z_layer),
+            tuple(roi) if roi else None,
+        )
         if key in self._lru:
             self._lru.move_to_end(key)
             return self._lru[key]

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 import numpy as np
 
@@ -12,6 +12,20 @@ from .._field import select_snapshot
 from .._topology import topological_density_fd
 from .config import SizeFitConfig, SkyrmionTopologyConfig
 from .models import SkyrmionSizeResult, SkyrmionTopologyResult
+
+
+class _FitCandidate(TypedDict):
+    aicc: float
+    kind: str
+    params: dict[str, float]
+    predicted: np.ndarray
+    r50: float
+    r90: float | None
+    r10: float | None
+    width: float | None
+    scale: float
+
+    normalized_rmse: float
 
 
 def _y_axis(convention: Optional[XYConvention]) -> str:
@@ -214,7 +228,7 @@ def _profile(
     bin_width = float(config.radial_bin_m or 0.5 * cell)
     bin_width = max(bin_width, 0.25 * cell)
     max_radius = float(np.quantile(radius[valid], config.edge_fraction))
-    edges = np.arange(0.0, max_radius + bin_width, bin_width)
+    edges: np.ndarray = np.arange(0.0, max_radius + bin_width, bin_width)
     if edges.size < config.min_profile_bins + 1:
         edges = np.linspace(0.0, max_radius, config.min_profile_bins + 1)
     indices = np.digitize(radius, edges) - 1
@@ -284,7 +298,7 @@ def _grid_fit(
     weights = n / np.maximum(np.median(n), 1.0)
     rmax = max(float(np.max(r)), cell)
     if kind == "gaussian":
-        best = (float("inf"), {})
+        best: tuple[float, dict[str, float]] = (float("inf"), {})
         lower = max(cell * 0.25, rmax / 100.0)
         upper = max(rmax * 2.0, cell)
         for _ in range(5):
@@ -314,7 +328,7 @@ def _grid_fit(
     center = float(r_center if r_center is not None else np.median(r))
     span = max(0.5 * rmax, 4.0 * cell)
     scale_best = max(cell, 0.1 * rmax)
-    best = (float("inf"), {})
+    best_domain: tuple[float, dict[str, float]] = (float("inf"), {})
     for _ in range(4):
         r_grid = np.linspace(max(0.0, center - span), min(rmax, center + span), 24)
         s_grid = np.geomspace(
@@ -328,8 +342,8 @@ def _grid_fit(
                     shape = np.tanh((r - radius) / scale)
                 basis = np.column_stack((np.ones_like(r), shape))
                 params, loss = _linear_parameters(basis, z, weights)
-                if loss < best[0]:
-                    best = (
+                if loss < best_domain[0]:
+                    best_domain = (
                         loss,
                         {
                             "offset": float(params[0]),
@@ -338,10 +352,10 @@ def _grid_fit(
                             "scale": float(scale),
                         },
                     )
-        center = best[1]["radius"]
-        scale_best = best[1]["scale"]
+        center = best_domain[1]["radius"]
+        scale_best = best_domain[1]["scale"]
         span *= 0.35
-    return best[1], best[0], 4
+    return best_domain[1], best_domain[0], 4
 
 
 def _aicc(loss: float, n: int, k: int) -> float:
@@ -361,7 +375,8 @@ def _center_and_topology(
     config: SkyrmionTopologyConfig,
 ) -> dict[str, Any]:
     mz = field[..., 2]
-    x, y = _coordinates(mz.shape, dx, dy, convention)
+    spatial_shape = (int(mz.shape[-2]), int(mz.shape[-1]))
+    x, y = _coordinates(spatial_shape, dx, dy, convention)
     background, background_scatter = _background(mz, valid, x, y)
     contrast_field = mz - background
     minimum = float(np.min(contrast_field[valid]))
@@ -706,7 +721,7 @@ def fit_skyrmion_size(
     else:
         kinds = [selected]
 
-    candidates = []
+    candidates: list[_FitCandidate] = []
     candidate_diagnostics: dict[str, dict[str, Any]] = {}
     for kind in kinds:
         params, loss, k = _grid_fit(
@@ -722,6 +737,11 @@ def fit_skyrmion_size(
             candidate_diagnostics[kind] = {"success": False}
             continue
 
+        fit_r50: float
+        fit_r90: float | None
+        fit_r10: float | None
+        fit_width: float | None
+        fit_scale: float
         if kind == "gaussian":
             shape = np.exp(-0.5 * (r / params["sigma"]) ** 2)
             predicted = params["offset"] + params["amplitude"] * shape
@@ -740,9 +760,11 @@ def fit_skyrmion_size(
                 params["scale"],
             )
             fit_r90 = _levels(dense_r, dense_u, 0.9)
-            fit_r50 = _levels(dense_r, dense_u, 0.5)
+            fit_r50_level = _levels(dense_r, dense_u, 0.5)
             fit_r10 = _levels(dense_r, dense_u, 0.1)
-            fit_r50 = float(params["radius"] if fit_r50 is None else fit_r50)
+            fit_r50 = float(
+                params["radius"] if fit_r50_level is None else fit_r50_level
+            )
             fit_width = (
                 None if fit_r90 is None or fit_r10 is None else float(fit_r10 - fit_r90)
             )
@@ -789,7 +811,7 @@ def fit_skyrmion_size(
         return threshold
 
     candidates.sort(key=lambda item: item["aicc"])
-    selection_pool = candidates
+    selection_pool: list[_FitCandidate] = candidates
     if selected == "auto":
         acceptable = [
             candidate
@@ -836,10 +858,10 @@ def fit_skyrmion_size(
     )
     if threshold.radius_50_m is None:
         flags.append("radius_from_fit")
-    radius_90 = (
+    radius_90: float | None = (
         threshold.radius_90_m if threshold.radius_90_m is not None else winner["r90"]
     )
-    radius_10 = (
+    radius_10: float | None = (
         threshold.radius_10_m if threshold.radius_10_m is not None else winner["r10"]
     )
 
@@ -853,7 +875,7 @@ def fit_skyrmion_size(
         wall_width = (
             float(threshold.wall_width_m)
             if threshold.wall_width_m is not None
-            else float(winner["width"])
+            else (None if winner["width"] is None else float(winner["width"]))
         )
         if threshold.wall_width_m is None:
             flags.append("wall_width_from_fit")

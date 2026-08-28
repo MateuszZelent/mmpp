@@ -27,9 +27,7 @@ def _simple_peak_indices(values: np.ndarray, max_peaks: int = 8) -> np.ndarray:
     if values.size < 3:
         return np.array([], dtype=int)
 
-    local = np.where(
-        (values[1:-1] > values[:-2]) & (values[1:-1] >= values[2:])
-    )[0] + 1
+    local = np.where((values[1:-1] > values[:-2]) & (values[1:-1] >= values[2:]))[0] + 1
     if local.size == 0:
         return np.array([], dtype=int)
 
@@ -77,9 +75,13 @@ def _classify_mode_type(*, harmonic: float, source: str) -> tuple[str, float]:
 
     if source_norm == "gyration":
         if harmonic_abs <= 1.4:
-            return "gyration", float(np.clip(1.0 - abs(harmonic_abs - 1.0) / 0.4, 0.0, 1.0))
+            return "gyration", float(
+                np.clip(1.0 - abs(harmonic_abs - 1.0) / 0.4, 0.0, 1.0)
+            )
         if harmonic_abs <= 2.4:
-            return "azimuthal", float(np.clip(1.0 - abs(harmonic_abs - 2.0) / 0.6, 0.0, 1.0))
+            return "azimuthal", float(
+                np.clip(1.0 - abs(harmonic_abs - 2.0) / 0.6, 0.0, 1.0)
+            )
         return "azimuthal", 0.4
 
     if source_norm == "breathing":
@@ -129,11 +131,15 @@ def classify_modes_from_trajectory(
             harmonic = freq / base_freq
             mode_type, base_conf = _classify_mode_type(harmonic=harmonic, source=source)
 
-            m_idx = estimate_azimuthal_index(mode_type=mode_type, rotation_sense=rotation_sense)
+            m_idx = estimate_azimuthal_index(
+                mode_type=mode_type, rotation_sense=rotation_sense
+            )
             n_idx = estimate_radial_index(mode_type=mode_type, harmonic=harmonic)
 
             rel_power = pwr / max(base_power, 1e-30)
-            confidence = float(np.clip(0.7 * base_conf + 0.3 * min(rel_power, 1.0), 0.0, 1.0))
+            confidence = float(
+                np.clip(0.7 * base_conf + 0.3 * min(rel_power, 1.0), 0.0, 1.0)
+            )
 
             results.append(
                 VortexModeResult(
@@ -250,6 +256,8 @@ class VortexModesClassifier:
             source="fft_mode_data",
             metadata={
                 "legacy_notes": list(getattr(legacy, "notes", [])),
-                "legacy_core_position": tuple(getattr(legacy, "core_position", (0.0, 0.0))),
+                "legacy_core_position": tuple(
+                    getattr(legacy, "core_position", (0.0, 0.0))
+                ),
             },
         )

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import html
+from datetime import datetime
 from typing import Any
 
 
@@ -42,9 +42,9 @@ def set_status(
     """Set status message in toolbar or fallback logger."""
     safe_message = html.escape(str(message))
     if explorer._controls and "status" in explorer._controls:
-        explorer._controls["status"].value = (
-            f"<small style='color:{color}'>{safe_message}</small>"
-        )
+        explorer._controls[
+            "status"
+        ].value = f"<small style='color:{color}'>{safe_message}</small>"
         if persist:
             _append_status_history(explorer, message, color=color)
         return

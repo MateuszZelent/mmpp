@@ -17,99 +17,226 @@ Example
 >>> fig.savefig("Fig_STNO.png", dpi=300)
 """
 
-import numpy as np
+from typing import cast
+
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 class DashboardPlotter:
     """Renderer optyki mikromagnetycznej do zastosowań publikacyjnych (PRL/Nature)."""
-    
-    @staticmethod
-    def setup_publication_style(dpi=150):
-        plt.rcParams.update({
-            'font.family': 'serif',
-            'axes.labelsize': 12,
-            'axes.titlesize': 13,
-            'legend.fontsize': 9,
-            'xtick.labelsize': 11,
-            'ytick.labelsize': 11,
-            'figure.dpi': dpi,
-            'savefig.bbox': 'tight'
-        })
 
     @staticmethod
-    def plot_spectrogram(f_axis, sweep_axis, map_data, xlabel, title, theory=None, vmin=-75, vmax=5, cmap='magma'):
+    def setup_publication_style(dpi=150):
+        plt.rcParams.update(
+            {
+                "font.family": "serif",
+                "axes.labelsize": 12,
+                "axes.titlesize": 13,
+                "legend.fontsize": 9,
+                "xtick.labelsize": 11,
+                "ytick.labelsize": 11,
+                "figure.dpi": dpi,
+                "savefig.bbox": "tight",
+            }
+        )
+
+    @staticmethod
+    def plot_spectrogram(
+        f_axis,
+        sweep_axis,
+        map_data,
+        xlabel,
+        title,
+        theory=None,
+        vmin=-75,
+        vmax=5,
+        cmap="magma",
+    ):
         """Szybki helper dla pojedynczej mapy widmowej. Zwraca (fig, ax)."""
         DashboardPlotter.setup_publication_style()
         fig, ax = plt.subplots(figsize=(7, 5))
-        
-        extent = [sweep_axis[0], sweep_axis[-1], f_axis[0], f_axis[-1]]
-        im = ax.imshow(map_data.T, aspect='auto', origin='lower', extent=extent, cmap=cmap, vmin=vmin, vmax=vmax)
-        
-        ax.set_title(title, fontweight='bold')
+
+        extent = (sweep_axis[0], sweep_axis[-1], f_axis[0], f_axis[-1])
+        im = ax.imshow(
+            map_data.T,
+            aspect="auto",
+            origin="lower",
+            extent=extent,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+        )
+
+        ax.set_title(title, fontweight="bold")
         ax.set_xlabel(xlabel)
-        ax.set_ylabel('Frequency [GHz]')
-        
+        ax.set_ylabel("Frequency [GHz]")
+
         if theory is not None:
             for label, curve in theory.items():
                 if np.isscalar(curve):
-                    ax.axhline(curve, color='w', linestyle='--', alpha=0.8, lw=1.5, label=label)
+                    ax.axhline(
+                        float(cast(float, curve)),
+                        color="w",
+                        linestyle="--",
+                        alpha=0.8,
+                        lw=1.5,
+                        label=label,
+                    )
                 else:
-                    ax.plot(sweep_axis, curve, 'w--', lw=1.5, alpha=0.8, label=label)
-            ax.legend(loc='best', framealpha=0.2, labelcolor='white')
-            
-        fig.colorbar(im, ax=ax, label='PSD [dB]')
+                    ax.plot(sweep_axis, curve, "w--", lw=1.5, alpha=0.8, label=label)
+            ax.legend(loc="best", framealpha=0.2, labelcolor="white")
+
+        fig.colorbar(im, ax=ax, label="PSD [dB]")
         fig.tight_layout()
         return fig, ax
 
     @staticmethod
-    def plot_2x2(f_axis, map_Jac, map_fmod, map_Jdc, map_Field, sweeps, theory=None, vmin=-75, vmax=5, cmap='magma'):
+    def plot_2x2(
+        f_axis,
+        map_Jac,
+        map_fmod,
+        map_Jdc,
+        map_Field,
+        sweeps,
+        theory=None,
+        vmin=-75,
+        vmax=5,
+        cmap="magma",
+    ):
         """Generuje potężny, główny dashboard 4-panelowy. Zwraca obiekt (fig)."""
         DashboardPlotter.setup_publication_style()
         theory = theory or {}
         fig, axs = plt.subplots(2, 2, figsize=(13, 10))
 
         # (a)
-        ext1 = [sweeps['jac'][0]/1e10, sweeps['jac'][-1]/1e10, f_axis[0], f_axis[-1]]
-        im1 = axs[0,0].imshow(map_Jac, aspect='auto', origin='lower', extent=ext1, cmap=cmap, vmin=vmin, vmax=vmax)
-        axs[0,0].set_title(r'(a) Kinematic Mach Shock vs $J_{AC}$', fontweight='bold')
-        axs[0,0].set_xlabel(r'Modulation Amplitude $J_{AC}$ [$10^{10}$ A/m$^2$]')
-        axs[0,0].set_ylabel('Frequency [GHz]')
-        if 'f_sw_base' in theory:
-            axs[0,0].axhline(theory['f_sw_base'], color='cyan', linestyle=':', alpha=0.8, lw=1.5, label='Spin-Wave Band')
-            axs[0,0].legend(loc='lower right', framealpha=0.2)
+        ext1 = [
+            sweeps["jac"][0] / 1e10,
+            sweeps["jac"][-1] / 1e10,
+            f_axis[0],
+            f_axis[-1],
+        ]
+        im1 = axs[0, 0].imshow(
+            map_Jac,
+            aspect="auto",
+            origin="lower",
+            extent=ext1,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        axs[0, 0].set_title(r"(a) Kinematic Mach Shock vs $J_{AC}$", fontweight="bold")
+        axs[0, 0].set_xlabel(r"Modulation Amplitude $J_{AC}$ [$10^{10}$ A/m$^2$]")
+        axs[0, 0].set_ylabel("Frequency [GHz]")
+        if "f_sw_base" in theory:
+            axs[0, 0].axhline(
+                theory["f_sw_base"],
+                color="cyan",
+                linestyle=":",
+                alpha=0.8,
+                lw=1.5,
+                label="Spin-Wave Band",
+            )
+            axs[0, 0].legend(loc="lower right", framealpha=0.2)
 
         # (b)
-        ext2 = [sweeps['fmod'][0]/1e6, sweeps['fmod'][-1]/1e6, f_axis[0], f_axis[-1]]
-        axs[0,1].imshow(map_fmod, aspect='auto', origin='lower', extent=ext2, cmap=cmap, vmin=vmin, vmax=vmax)
-        axs[0,1].set_title(r'(b) Coherent Fractional Phase-Locking vs $f_{mod}$', fontweight='bold')
-        axs[0,1].set_xlabel(r'Modulation Frequency $f_{mod}$ [MHz]')
-        axs[0,1].set_ylabel('Frequency [GHz]')
-        if 'fG_static' in theory:
-            axs[0,1].axhline(theory['fG_static'], color='white', linestyle='--', alpha=0.8, lw=1.5, label='Static $f_G$')
-            axs[0,1].legend(loc='upper right', framealpha=0.2, labelcolor='white')
+        ext2 = [
+            sweeps["fmod"][0] / 1e6,
+            sweeps["fmod"][-1] / 1e6,
+            f_axis[0],
+            f_axis[-1],
+        ]
+        axs[0, 1].imshow(
+            map_fmod,
+            aspect="auto",
+            origin="lower",
+            extent=ext2,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        axs[0, 1].set_title(
+            r"(b) Coherent Fractional Phase-Locking vs $f_{mod}$", fontweight="bold"
+        )
+        axs[0, 1].set_xlabel(r"Modulation Frequency $f_{mod}$ [MHz]")
+        axs[0, 1].set_ylabel("Frequency [GHz]")
+        if "fG_static" in theory:
+            axs[0, 1].axhline(
+                theory["fG_static"],
+                color="white",
+                linestyle="--",
+                alpha=0.8,
+                lw=1.5,
+                label="Static $f_G$",
+            )
+            axs[0, 1].legend(loc="upper right", framealpha=0.2, labelcolor="white")
 
         # (c)
-        ext3 = [sweeps['jdc'][0]/1e10, sweeps['jdc'][-1]/1e10, f_axis[0], f_axis[-1]]
-        axs[1,0].imshow(map_Jdc, aspect='auto', origin='lower', extent=ext3, cmap=cmap, vmin=vmin, vmax=vmax)
-        axs[1,0].set_title(r'(c) Free-Running Core Tunability vs $J_{DC}$', fontweight='bold')
-        axs[1,0].set_xlabel(r'Base Current $J_{DC}$ [$10^{10}$ A/m$^2$]')
-        axs[1,0].set_ylabel('Frequency [GHz]')
+        ext3 = [
+            sweeps["jdc"][0] / 1e10,
+            sweeps["jdc"][-1] / 1e10,
+            f_axis[0],
+            f_axis[-1],
+        ]
+        axs[1, 0].imshow(
+            map_Jdc,
+            aspect="auto",
+            origin="lower",
+            extent=ext3,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        axs[1, 0].set_title(
+            r"(c) Free-Running Core Tunability vs $J_{DC}$", fontweight="bold"
+        )
+        axs[1, 0].set_xlabel(r"Base Current $J_{DC}$ [$10^{10}$ A/m$^2$]")
+        axs[1, 0].set_ylabel("Frequency [GHz]")
 
         # (d)
-        ext4 = [sweeps['field'][0]*1000, sweeps['field'][-1]*1000, f_axis[0], f_axis[-1]]
-        axs[1,1].imshow(map_Field, aspect='auto', origin='lower', extent=ext4, cmap=cmap, vmin=vmin, vmax=vmax)
-        axs[1,1].set_title(r'(d) Free-Running Topological Dispersion vs $\mu_0 H_z$', fontweight='bold')
-        axs[1,1].set_xlabel(r'External Magnetic Field $\mu_0 H_z$ [mT]')
-        axs[1,1].set_ylabel('Frequency [GHz]')
-        
-        if 'fG_field' in theory and 'fSW_field' in theory:
-            axs[1,1].plot(sweeps['field']*1000, theory['fG_field'], 'w--', lw=1.5, alpha=0.8, label='$f_G(H)$ FLT Theory')
-            axs[1,1].plot(sweeps['field']*1000, theory['fSW_field'], 'cyan', linestyle=':', lw=1.5, alpha=0.9, label='$f_{SW}(H)$ Theory')
-            axs[1,1].legend(loc='upper left', framealpha=0.2, labelcolor='white')
+        ext4 = [
+            sweeps["field"][0] * 1000,
+            sweeps["field"][-1] * 1000,
+            f_axis[0],
+            f_axis[-1],
+        ]
+        axs[1, 1].imshow(
+            map_Field,
+            aspect="auto",
+            origin="lower",
+            extent=ext4,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        axs[1, 1].set_title(
+            r"(d) Free-Running Topological Dispersion vs $\mu_0 H_z$", fontweight="bold"
+        )
+        axs[1, 1].set_xlabel(r"External Magnetic Field $\mu_0 H_z$ [mT]")
+        axs[1, 1].set_ylabel("Frequency [GHz]")
+
+        if "fG_field" in theory and "fSW_field" in theory:
+            axs[1, 1].plot(
+                sweeps["field"] * 1000,
+                theory["fG_field"],
+                "w--",
+                lw=1.5,
+                alpha=0.8,
+                label="$f_G(H)$ FLT Theory",
+            )
+            axs[1, 1].plot(
+                sweeps["field"] * 1000,
+                theory["fSW_field"],
+                "cyan",
+                linestyle=":",
+                lw=1.5,
+                alpha=0.9,
+                label="$f_{SW}(H)$ Theory",
+            )
+            axs[1, 1].legend(loc="upper left", framealpha=0.2, labelcolor="white")
 
         fig.tight_layout()
-        cbar_ax = fig.add_axes([1.01, 0.15, 0.02, 0.7])
-        fig.colorbar(im1, cax=cbar_ax, label='Power Spectral Density [dB]')
+        cbar_ax = fig.add_axes((1.01, 0.15, 0.02, 0.7))
+        fig.colorbar(im1, cax=cbar_ax, label="Power Spectral Density [dB]")
 
         return fig

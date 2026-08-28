@@ -185,7 +185,9 @@ def _extract_table_arrays(
     if not columns:
         raise ValueError("Table group exists, but no readable 1D columns were found")
 
-    field_col = _resolve_column_name(columns, field, _FIELD_ALIASES, component=component)
+    field_col = _resolve_column_name(
+        columns, field, _FIELD_ALIASES, component=component
+    )
     mag_col = _resolve_column_name(
         columns,
         magnetization,
@@ -250,6 +252,7 @@ def from_arrays(
     )
     if cloneflip:
         from .compute import build_cloneflip_result
+
         result = build_cloneflip_result(result)
     return result
 
@@ -308,6 +311,7 @@ def from_table(
     )
     if cloneflip:
         from .compute import build_cloneflip_result
+
         result = build_cloneflip_result(result)
     return result
 
@@ -333,10 +337,14 @@ def _extract_field_array(
             source_name = "index"
     elif isinstance(field, str):
         if "table" not in job_result:
-            raise ValueError("field was provided as column name but no table group exists")
+            raise ValueError(
+                "field was provided as column name but no table group exists"
+            )
         table = job_result["table"]
         columns = _available_table_arrays(table)
-        resolved = _resolve_column_name(columns, field, _FIELD_ALIASES, component=component)
+        resolved = _resolve_column_name(
+            columns, field, _FIELD_ALIASES, component=component
+        )
         if resolved is None:
             raise ValueError(
                 f"Could not find field column '{field}'. Available columns: {columns}"
@@ -406,16 +414,16 @@ def from_magnetization(
         else:
             z_idx = int(z_layer)
             if z_idx < 0 or z_idx >= z_count:
-                raise ValueError(f"z_layer out of range: {z_idx} (valid 0..{z_count - 1})")
+                raise ValueError(
+                    f"z_layer out of range: {z_idx} (valid 0..{z_count - 1})"
+                )
     else:
         # (t, y, x, c)
         t_count, ny, nx, c_count = shape
         if c_count < 1:
             raise ValueError(f"Dataset '{dset}' has no vector components")
         if z_layer != 0 and z_layer != "all":
-            raise ValueError(
-                "z_layer is not applicable for 4D dataset; use 0 or 'all'"
-            )
+            raise ValueError("z_layer is not applicable for 4D dataset; use 0 or 'all'")
         z_idx = None
 
     attrs = getattr(job_result, "attrs", {})
@@ -509,6 +517,7 @@ def from_magnetization(
     )
     if cloneflip:
         from .compute import build_cloneflip_result
+
         result = build_cloneflip_result(result)
     return result
 
@@ -612,10 +621,10 @@ def _extract_spatial_mean(
         # (t, z, y, x, c) — take last t, select z
         t_idx = raw.shape[0] - 1
         if z_layer == "all":
-            frame = raw[t_idx].mean(axis=0)          # (y, x, c)
+            frame = raw[t_idx].mean(axis=0)  # (y, x, c)
         else:
             z_idx = int(np.clip(int(z_layer), 0, raw.shape[1] - 1))
-            frame = raw[t_idx, z_idx]                # (y, x, c)
+            frame = raw[t_idx, z_idx]  # (y, x, c)
     elif raw.ndim == 4:
         # (z, y, x, c) — select z
         if z_layer == "all":
@@ -778,8 +787,12 @@ def from_zarr_keys(
         dy = float(attrs.get("dy", 1e-9)) if hasattr(attrs, "get") else 1e-9
 
         roi_idx = _resolve_roi_indices(
-            roi, roi_units=roi_units, nx=nx, ny=ny,
-            dx=dx, dy=dy,
+            roi,
+            roi_units=roi_units,
+            nx=nx,
+            ny=ny,
+            dx=dx,
+            dy=dy,
         )
 
     # ── average each snapshot ──────────────────────────────────────────────
@@ -797,6 +810,7 @@ def from_zarr_keys(
             )
         except Exception as exc:
             import warnings
+
             warnings.warn(
                 f"Skipping key '{key}' (field={fval:.6g}): {exc}",
                 stacklevel=2,
@@ -825,19 +839,21 @@ def from_zarr_keys(
     meta = dict(metadata or {})
     # frame_keys: {frame_idx_value -> zarr_key}  (frame_idx_value == candidate index)
     frame_keys = {fi: candidates[fi][1] for fi in frame_indices}
-    meta.update({
-        "source_type": "zarr_keys",
-        "key_prefix": key_prefix,
-        "component": component_key,
-        "component_requested": component,
-        "z_layer": z_layer,
-        "roi": roi_idx,
-        "n_keys_scanned": len(candidates),
-        "field_unit": meta.get("field_unit", inferred_field_unit),
-        "job_result": job_result,
-        "frame_keys": frame_keys,   # dict[int, str]: zarr key for each result frame
-        "zarr_group": zgroup,       # the zarr root group for snapshot loading
-    })
+    meta.update(
+        {
+            "source_type": "zarr_keys",
+            "key_prefix": key_prefix,
+            "component": component_key,
+            "component_requested": component,
+            "z_layer": z_layer,
+            "roi": roi_idx,
+            "n_keys_scanned": len(candidates),
+            "field_unit": meta.get("field_unit", inferred_field_unit),
+            "job_result": job_result,
+            "frame_keys": frame_keys,  # dict[int, str]: zarr key for each result frame
+            "zarr_group": zgroup,  # the zarr root group for snapshot loading
+        }
+    )
 
     result = HysteresisResult(
         field=field_arr,
@@ -849,6 +865,7 @@ def from_zarr_keys(
     )
     if cloneflip:
         from .compute import build_cloneflip_result
+
         result = build_cloneflip_result(result)
     return result
 

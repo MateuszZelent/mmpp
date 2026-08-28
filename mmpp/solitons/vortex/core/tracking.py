@@ -23,4 +23,5 @@ def track_core_lazy(*args, **kwargs):
     _sync_patchable_symbols()
     return _numerical_tracking.track_core_lazy(*args, **kwargs)
 
+
 __all__ = ["SCIPY_AVAILABLE", "curve_fit", "track_core", "track_core_lazy"]

@@ -4,7 +4,7 @@ FFT Plotting Module
 Specialized plotting functionality for FFT analysis results.
 """
 
-from typing import Any, Optional, Union
+from typing import Any, cast
 
 import numpy as np
 
@@ -16,7 +16,6 @@ log = get_mmpp_logger("mmpp.fft.plot")
 
 # Import dependencies with error handling
 try:
-    import matplotlib as mpl
     import matplotlib.pyplot as plt
 
     MATPLOTLIB_AVAILABLE = True
@@ -39,9 +38,7 @@ class FFTPlotter:
     Provides FFT-specific plotting capabilities.
     """
 
-    def __init__(
-        self, results: Union[list[Any], Any], mmpp_instance: Optional[Any] = None
-    ):
+    def __init__(self, results: list[Any] | Any, mmpp_instance: Any | None = None):
         """
         Initialize FFT plotter.
 
@@ -92,7 +89,7 @@ class FFTPlotter:
         return os.path.basename(result.path)
 
     @staticmethod
-    def _format_slice_identifier(slice_info: Optional[Any]) -> Optional[str]:
+    def _format_slice_identifier(slice_info: Any | None) -> str | None:
         """Create deterministic identifier for slice-aware FFT save/cache names."""
         if slice_info is None:
             return None
@@ -113,20 +110,20 @@ class FFTPlotter:
 
     def power_spectrum(
         self,
-        dataset_name: Optional[str] = None,
+        dataset_name: str | None = None,
         method: int = 1,
         z_layer: int = -1,
         log_scale: bool = True,
         normalize: bool = False,
         save: bool = True,
-        ax: Optional[Any] = None,
+        ax: Any | None = None,
         force: bool = False,
-        save_dataset_name: Optional[str] = None,
-        figsize: Optional[tuple[float, float]] = None,
-        save_path: Optional[str] = None,
-        tmax: Optional[int] = None,
-        slice_info: Optional[Any] = None,
-        slice_identifier: Optional[str] = None,
+        save_dataset_name: str | None = None,
+        figsize: tuple[float, float] | None = None,
+        save_path: str | None = None,
+        tmax: int | None = None,
+        slice_info: Any | None = None,
+        slice_identifier: str | None = None,
         **kwargs,
     ) -> tuple[Any, Any]:
         """
@@ -178,7 +175,7 @@ class FFTPlotter:
             dataset_name = self.results[0].get_largest_m_dataset()
 
         # Setup figure
-        figsize = figsize or self.config["figsize"]
+        figsize = cast(tuple[float, float], figsize or self.config["figsize"])
         fig, ax = plt.subplots(figsize=figsize, dpi=self.config["dpi"])
 
         # Extract FWHM/FWHH request before forwarding kwargs downstream
@@ -206,6 +203,8 @@ class FFTPlotter:
             )
 
         # Analyze all results
+        if dataset_name is None:
+            raise ValueError("No FFT dataset is available")
         for i, result in enumerate(self.results):
             try:
                 fft_result = self.fft_compute.calculate_fft_data(
@@ -225,18 +224,24 @@ class FFTPlotter:
                 power = np.abs(fft_result.spectrum) ** 2
 
                 # Debug: Check array shapes
-                log.debug(f"FFT result shapes: spectrum={fft_result.spectrum.shape}, frequencies={fft_result.frequencies.shape}")
+                log.debug(
+                    f"FFT result shapes: spectrum={fft_result.spectrum.shape}, frequencies={fft_result.frequencies.shape}"
+                )
 
                 # Handle multi-dimensional spectrum - average over components if needed
                 if power.ndim > 1:
-                    log.debug(f"Spectrum is {power.ndim}D, averaging over non-frequency dimensions")
+                    log.debug(
+                        f"Spectrum is {power.ndim}D, averaging over non-frequency dimensions"
+                    )
                     # Average over all dimensions except the first (frequency)
                     power = np.mean(power, axis=tuple(range(1, power.ndim)))
                     log.debug(f"After averaging: power shape={power.shape}")
 
                 # Verify array lengths match
                 if len(fft_result.frequencies) != len(power):
-                    log.error(f"Length mismatch after processing: frequencies={len(fft_result.frequencies)}, power={len(power)}")
+                    log.error(
+                        f"Length mismatch after processing: frequencies={len(fft_result.frequencies)}, power={len(power)}"
+                    )
                     continue
 
                 # Normalize if requested
@@ -293,7 +298,9 @@ class FFTPlotter:
                 if show_peak_width:
                     # Ensure arrays have same length before computing FWHM
                     if len(freqs_ghz) != len(power):
-                        log.warning(f"Array length mismatch: frequencies={len(freqs_ghz)}, power={len(power)}. Skipping FWHM calculation.")
+                        log.warning(
+                            f"Array length mismatch: frequencies={len(freqs_ghz)}, power={len(power)}. Skipping FWHM calculation."
+                        )
                         width_info = None
                     else:
                         width_info = compute_half_width_at_half_max(freqs_ghz, power)
@@ -336,7 +343,11 @@ class FFTPlotter:
                             ax.annotate(
                                 text,
                                 xy=(
-                                    (width_info.left_frequency + width_info.right_frequency) / 2.0,
+                                    (
+                                        width_info.left_frequency
+                                        + width_info.right_frequency
+                                    )
+                                    / 2.0,
                                     half_level_plot,
                                 ),
                                 xytext=(0, 8),

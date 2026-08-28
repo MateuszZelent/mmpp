@@ -5,23 +5,181 @@ Professional implementation for visualizing FMR modes with interactive spectrum.
 Provides both programmatic and interactive interfaces for mode analysis.
 """
 
+import hashlib
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
-import math
-
-import matplotlib.colors as mcolors
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import numpy as np
+
+if TYPE_CHECKING:
+    from ..vortex_classifier import VortexModeResult
 
 # Import shared logging configuration
 from ...cli.logging_config import get_mmpp_logger, setup_mmpp_logging
+from .material_mask import masked_spatial, resolve_material_mask
 
 # Get logger for FMR modes
 log = get_mmpp_logger("mmpp.fft.modes")
+
+
+def _mode_extent_nm(
+    geometry: Any,
+    *,
+    nx: int,
+    ny: int,
+    dx_nm: float,
+    dy_nm: float,
+) -> tuple[float, float, float, float]:
+    """Resolve the public mode extent, whose coordinate unit is nanometres."""
+    geometry_axes = getattr(geometry, "axes", {})
+    geometry_x = geometry_axes.get("x")
+    geometry_y = geometry_axes.get("y")
+    if geometry_x is not None and geometry_y is not None:
+        metres_to_nm = 1e9
+        return (
+            float(geometry_x.min_m) * metres_to_nm,
+            float(geometry_x.max_m) * metres_to_nm,
+            float(geometry_y.min_m) * metres_to_nm,
+            float(geometry_y.max_m) * metres_to_nm,
+        )
+    return (0.0, nx * dx_nm, 0.0, ny * dy_nm)
+
+
+def _select_mode_time_axis(
+    raw_time: Any,
+    *,
+    total_samples: int,
+    view_slice: Any,
+    time_slice: slice,
+    expected_samples: int,
+) -> np.ndarray | None:
+    """Select time metadata only when it exactly describes the active view."""
+    time_axis = np.asarray(raw_time, dtype=float).reshape(-1)
+    view_key = view_slice if isinstance(view_slice, tuple) else (view_slice,)
+    view_time = view_key[0] if view_key and view_key[0] is not None else None
+
+    if isinstance(view_time, slice):
+        candidate = time_axis[view_time]
+    elif view_time is None or view_time is Ellipsis:
+        candidate = time_axis
+    else:
+        return None
+
+    if candidate.size != total_samples:
+        if time_axis.size != total_samples:
+            return None
+        candidate = time_axis
+
+    selected = np.asarray(candidate[time_slice], dtype=float)
+    return selected if selected.size == expected_samples else None
+
+
+def _uniform_mode_dt(time_axis: np.ndarray) -> float:
+    """Return dt for a strictly increasing, uniformly sampled mode time axis."""
+    values = np.asarray(time_axis, dtype=float).reshape(-1)
+    if values.size < 2:
+        raise ValueError("Mode FFT requires at least two time-axis samples")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Mode time axis contains non-finite values")
+    deltas = np.diff(values)
+    if np.any(deltas <= 0):
+        raise ValueError("Mode time axis must be strictly increasing")
+    dt = float(np.mean(deltas))
+    tolerance = max(abs(dt) * 1e-6, np.finfo(float).eps * 10)
+    if np.max(np.abs(deltas - dt)) > tolerance:
+        raise ValueError(
+            "Mode FFT requires a uniformly sampled time axis; resample the data "
+            "before computing modes"
+        )
+    return dt
+
+
+def _normalize_mode_input_shape(
+    data: np.ndarray,
+    *,
+    component_index: int | None,
+) -> np.ndarray:
+    """Normalize selected magnetization to canonical ``(t,z,y,x,c)``."""
+    values = np.asarray(data)
+    if component_index is not None:
+        if component_index not in {0, 1, 2}:
+            raise ValueError(f"Invalid selected component index: {component_index}")
+        component_axis_is_present = values.ndim in {4, 5} and values.shape[-1] == 1
+        if not component_axis_is_present:
+            values = values[..., np.newaxis]
+    if values.ndim == 4:
+        values = values[:, np.newaxis, ...]
+    if values.ndim != 5 or values.shape[-1] not in {1, 3}:
+        raise ValueError(
+            "Mode input must resolve to (t,z,y,x,c) with one or three "
+            f"components, got shape {values.shape}"
+        )
+    return values
+
+
+def _mode_power_paths(
+    mode_group: str,
+    *,
+    dataset_name: str,
+    include_legacy: bool,
+) -> list[tuple[str, str]]:
+    """Return ordered, view-safe mode-spectrum cache candidates."""
+    candidates = [
+        (f"{mode_group}/power_sum", "power_sum"),
+        (f"{mode_group}/power_max", "power_max"),
+    ]
+    legacy_group = f"modes/{dataset_name}"
+    if include_legacy and legacy_group != mode_group:
+        candidates.extend(
+            [
+                (f"{legacy_group}/power_sum", "power_sum"),
+                (f"{legacy_group}/power_max", "power_max"),
+            ]
+        )
+    return candidates
+
+
+def _mode_power_summaries(fft_result: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return maximum and integrated squared FFT magnitude per frequency."""
+    power = np.abs(np.asarray(fft_result)) ** 2
+    reduction_axes = tuple(range(1, power.ndim)) if power.ndim > 1 else None
+    if reduction_axes:
+        return np.max(power, axis=reduction_axes), np.sum(power, axis=reduction_axes)
+    return power.copy(), power.copy()
+
+
+def _mode_power_cache_is_squared(group: Any) -> bool:
+    """Return whether a modes group declares the current power definition."""
+    attrs = getattr(group, "attrs", {})
+    return attrs.get("power_definition") == "abs_fft_squared"
+
+
+def _select_peak_spectrum_component(
+    spectrum: np.ndarray,
+    frequencies: np.ndarray,
+    component: int,
+) -> np.ndarray:
+    """Return one frequency trace from a scalar or component spectrum."""
+    values = np.asarray(spectrum)
+    freqs = np.asarray(frequencies)
+    if freqs.ndim != 1:
+        raise ValueError("Peak-detection frequencies must be one-dimensional")
+    if values.ndim not in {1, 2} or values.shape[0] != freqs.size:
+        raise ValueError(
+            "Peak spectrum must have shape (frequency,) or "
+            f"(frequency, component), got {values.shape} for {freqs.size} frequencies"
+        )
+    if values.ndim == 1:
+        return values
+    if not isinstance(component, (int, np.integer)):
+        raise TypeError("component must be an integer index")
+    if component < 0 or component >= values.shape[1]:
+        raise ValueError(
+            f"component {component} out of range for {values.shape[1]} traces"
+        )
+    return values[:, int(component)]
 
 
 def _write_zarr_array(
@@ -29,9 +187,9 @@ def _write_zarr_array(
     name: str,
     data: Any,
     *,
-    shape: Optional[tuple[int, ...]] = None,
+    shape: tuple[int, ...] | None = None,
     dtype: Any = None,
-    chunks: Optional[tuple[int, ...]] = None,
+    chunks: tuple[int, ...] | None = None,
     overwrite: bool = True,
 ) -> Any:
     """Write an array with a Zarr v2/v3 compatible group API."""
@@ -88,13 +246,28 @@ def _write_zarr_array(
 
 # Import electromagnetic analysis module
 
-from .ffmpeg_utils import (
-    _create_ffmpeg_writer,
-    _ensure_ffmpeg_available,
-    check_ffmpeg_available,
-    check_ffmpeg_installation,
-    install_ffmpeg,
-    install_ffmpeg_simple,
+from ..metrics import (
+    PeakWidth,
+    compute_half_width_at_half_max,
+    format_width_value,
+    normalize_peak_width_option,
+)
+from ..mode_characterization import (
+    ModeCharacterAnalyzer,
+    ModeCharacteristicConfig,
+    ModeCharacterizationResult,
+)
+from .analyzer.cache import ModeCache
+
+# Import mode analysis functions
+from .analyzer.mode_analysis import (
+    characterize_mode as _characterize_mode,
+)
+from .analyzer.mode_analysis import (
+    characterize_vortex_mode as _characterize_vortex_mode,
+)
+from .analyzer.mode_analysis import (
+    print_characterization_details as _print_characterization_details,
 )
 from .compat import (
     ANIMATION_AVAILABLE,
@@ -113,60 +286,66 @@ from .compat import (
     MouseEvent,
     PillowWriter,
     Pyzfn,
-    cmocean,
     cmc,
-    find_peaks,
+    cmocean,
     zarr,
+)
+from .ffmpeg_utils import (
+    _create_ffmpeg_writer,
+    _ensure_ffmpeg_available,
+    check_ffmpeg_available,
+    check_ffmpeg_installation,
+    install_ffmpeg,
+    install_ffmpeg_simple,
 )
 from .style import STYLING_AVAILABLE, MidpointNormalize, setup_animation_styling
 
 # Import refactored utilities
 from .utils.peak_detection import detect_peaks
 from .utils.scalebar import calculate_optimal_length, format_scalebar_label
-from .analyzer.cache import ModeCache
+from .visualization.animation import (
+    save_animated_view as _save_animated_view,
+)
 
 # Import animation functions
 from .visualization.animation import (
     save_modes_animation as _save_modes_animation,
-    toggle_mode_animation as _toggle_mode_animation,
-    stop_mode_animation as _stop_mode_animation,
-    save_animated_view as _save_animated_view,
-    start_mode_animation as _start_mode_animation,
+)
+from .visualization.animation import (
     start_column_animation as _start_column_animation,
+)
+from .visualization.animation import (
+    start_mode_animation as _start_mode_animation,
+)
+from .visualization.animation import (
     stop_column_animation as _stop_column_animation,
 )
-from .vortex_optics import VortexOptics, TopologicalAnimator
-
-# Import static plotting functions
-from .visualization.static_plots import (
-    plot_modes as _plot_modes,
-    update_single_mode_plot as _update_single_mode_plot,
+from .visualization.animation import (
+    stop_mode_animation as _stop_mode_animation,
+)
+from .visualization.animation import (
+    toggle_mode_animation as _toggle_mode_animation,
 )
 
 # Import interactive spectrum functions
 from .visualization.interactive import (
+    add_scale_bar as _add_scale_bar,
+)
+from .visualization.interactive import (
     interactive_spectrum as _interactive_spectrum,
+)
+from .visualization.interactive import (
     update_mode_plots as _update_mode_plots,
 )
 
-# Import mode analysis functions
-from .analyzer.mode_analysis import (
-    characterize_mode as _characterize_mode,
-    characterize_vortex_mode as _characterize_vortex_mode,
-    print_characterization_details as _print_characterization_details,
+# Import static plotting functions
+from .visualization.static_plots import (
+    plot_modes as _plot_modes,
 )
-
-from ..mode_characterization import (
-    ModeCharacterAnalyzer,
-    ModeCharacteristicConfig,
-    ModeCharacterizationResult,
+from .visualization.static_plots import (
+    update_single_mode_plot as _update_single_mode_plot,
 )
-from ..metrics import (
-    PeakWidth,
-    compute_half_width_at_half_max,
-    format_width_value,
-    normalize_peak_width_option,
-)
+from .vortex_optics import TopologicalAnimator, VortexOptics
 
 
 # FFmpeg installation utilities
@@ -199,7 +378,7 @@ class ModeVisualizationConfig:
 
     # Publication-style annotations
     show_scalebar: bool = True
-    scalebar_length_nm: Optional[float] = None  # Auto-computed when None
+    scalebar_length_nm: float | None = None  # Auto-computed when None
     scalebar_location: str = "lower right"
     scalebar_pad: float = 0.3
     scalebar_color: str = "white"
@@ -213,16 +392,16 @@ class ModeVisualizationConfig:
     colorbar_pad: float = 0.04
     colorbar_ticklabel_size: int = 9
     colorbar_label_size: int = 10
-    
+
     # Inset Colorbar configuration (Publication Ready)
     colorbar_inset: bool = True
-    colorbar_inset_width: str = "80%"   # User requested 80% width
+    colorbar_inset_width: str = "80%"  # User requested 80% width
     colorbar_inset_height: str = "22%"  # Taller for better spacing
     colorbar_inset_position: str = "lower center"
     colorbar_inset_bg_alpha: float = 0.7
-    colorbar_inset_fontsize: int = 11   # Larger fonts
+    colorbar_inset_fontsize: int = 11  # Larger fonts
     colorbar_inset_title_fontsize: int = 12
-    
+
     colorbar_labels: dict[str, str] = field(
         default_factory=lambda: {
             "magnitude": "Magnetization |m|",
@@ -331,8 +510,9 @@ class FMRModeData:
         self,
         frequency: float,
         mode_array: np.ndarray,
-        extent: Optional[tuple[float, float, float, float]] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        extent: tuple[float, float, float, float] | None = None,
+        metadata: dict[str, Any] | None = None,
+        material_mask: np.ndarray | None = None,
     ):
         """
         Initialize FMR mode data.
@@ -349,7 +529,7 @@ class FMRModeData:
             Additional metadata
         """
         self.frequency = frequency
-        self.mode_array = mode_array
+        self.mode_array = np.asarray(mode_array)
         self.extent = extent or (0, mode_array.shape[1], 0, mode_array.shape[0])
         self.metadata = metadata or {}
 
@@ -358,23 +538,38 @@ class FMRModeData:
             raise TypeError("mode_array must be numpy array")
         if mode_array.ndim != 3 or mode_array.shape[2] != 3:
             raise ValueError("mode_array must have shape (ny, nx, 3)")
+        self.material_mask: np.ndarray | None = None
+        if material_mask is not None:
+            mask = np.asarray(material_mask, dtype=bool)
+            if mask.shape != mode_array.shape[:2]:
+                raise ValueError(
+                    f"material_mask shape {mask.shape} must match mode spatial "
+                    f"shape {mode_array.shape[:2]}"
+                )
+            self.material_mask = mask
+            self.mode_array = np.where(mask[..., None], self.mode_array, 0)
+
+    @property
+    def masked_mode_array(self) -> np.ndarray:
+        """Complex mode with non-material cells masked for visualization."""
+        return masked_spatial(self.mode_array, self.material_mask)
 
     @property
     def magnitude(self) -> np.ndarray:
         """Get magnitude of mode for each component."""
-        return np.abs(self.mode_array)
+        return np.abs(self.masked_mode_array)
 
     @property
     def phase(self) -> np.ndarray:
         """Get phase of mode for each component."""
-        return np.angle(self.mode_array)
+        return np.angle(self.masked_mode_array)
 
     @property
     def total_magnitude(self) -> np.ndarray:
         """Get total magnitude across all components."""
         return np.sqrt(np.sum(self.magnitude**2, axis=2))
 
-    def get_component(self, component: Union[int, str]) -> np.ndarray:
+    def get_component(self, component: int | str) -> np.ndarray:
         """
         Get specific magnetization component.
 
@@ -400,7 +595,7 @@ class FMRModeData:
         if not 0 <= component <= 2:
             raise ValueError(f"Component index must be 0, 1, or 2, got {component}")
 
-        return self.mode_array[:, :, component]
+        return masked_spatial(self.mode_array[:, :, component], self.material_mask)
 
 
 class FMRModeAnalyzer:
@@ -414,11 +609,16 @@ class FMRModeAnalyzer:
     def __init__(
         self,
         zarr_path: str,
-        dataset_name: Optional[str] = None,
-        config: Optional[ModeVisualizationConfig] = None,
-        mode_character_config: Optional[ModeCharacteristicConfig] = None,
+        dataset_name: str | None = None,
+        config: ModeVisualizationConfig | None = None,
+        mode_character_config: ModeCharacteristicConfig | None = None,
         debug: bool = False,
-        log_level: Optional[Union[str, int]] = None,
+        log_level: str | int | None = None,
+        view_slice: Any | None = None,
+        preloaded_data: np.ndarray | None = None,
+        component_index: int | None = None,
+        time_step_scale: float = 1.0,
+        view_geometry=None,
     ):
         """
         Initialize FMR mode analyzer.
@@ -452,6 +652,27 @@ class FMRModeAnalyzer:
 
         self.zarr_path = zarr_path
         self.dataset_name = dataset_name
+        self.view_slice = view_slice
+        self.preloaded_data = preloaded_data
+        self.component_index = component_index
+        self.time_step_scale = float(time_step_scale)
+        self.view_geometry = view_geometry
+        view_identity = f"{view_slice!r};dt_scale={self.time_step_scale}"
+        if preloaded_data is not None:
+            materialized = np.ascontiguousarray(np.asarray(preloaded_data))
+            digest = hashlib.blake2b(materialized.tobytes(), digest_size=12).hexdigest()
+            view_identity = (
+                f"{materialized.dtype}:{materialized.shape}:{digest};"
+                f"dt_scale={self.time_step_scale}"
+            )
+        self.view_id = (
+            hashlib.blake2b(view_identity.encode(), digest_size=8).hexdigest()
+            if view_slice is not None or preloaded_data is not None
+            else None
+        )
+        self.mode_group = f"modes/{dataset_name}"
+        if self.view_id is not None:
+            self.mode_group = f"{self.mode_group}/views/{self.view_id}"
         self.config = config or ModeVisualizationConfig()
         self._character_analyzer = ModeCharacterAnalyzer(mode_character_config)
 
@@ -490,8 +711,10 @@ class FMRModeAnalyzer:
         self._last_fwhm = None
 
         # Animation state tracking
-        self._mode_animations = {}  # Dict to track active animations per axis
-        self._animated_axes = set()  # Set of axes currently being animated
+        self._mode_animations: dict[
+            Any, Any
+        ] = {}  # Dict to track active animations per axis
+        self._animated_axes: set[Any] = set()  # Set of axes currently being animated
 
         # Mode data cache using refactored ModeCache
         self._mode_cache = ModeCache(maxsize=128)
@@ -499,20 +722,20 @@ class FMRModeAnalyzer:
     @property
     def modes_available(self) -> bool:
         """Check if mode data is available.
-        
+
         Modes are considered available if we have the complex mode array and frequencies.
         The spectrum can be derived from modes power data (power_sum or power_max).
         """
         # Core requirement: modes and frequencies
         if self.modes_path is None or self.freqs_path is None:
             return False
-        
+
         # Spectrum can come from multiple sources, not required for modes_available
         # because we can compute it from modes/power_sum if needed
         return True
 
     @property
-    def last_fwhm(self) -> Optional[PeakWidth]:
+    def last_fwhm(self) -> PeakWidth | None:
         """Return the most recently computed half-width at half-maximum."""
 
         return getattr(self, "_last_fwhm", None)
@@ -528,7 +751,7 @@ class FMRModeAnalyzer:
             log.debug("Unable to list datasets in %s: %s", self.zarr_path, exc)
             return []
 
-    def _get_zarr_paths(self) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    def _get_zarr_paths(self) -> tuple[str | None, str | None, str | None]:
         """
         Unified path resolution for zarr datasets.
 
@@ -538,7 +761,9 @@ class FMRModeAnalyzer:
             (modes_path, freqs_path, spectrum_path) or None if not found
         """
         # Possible base paths for modes/frequencies - consistent order
-        base_paths = [f"modes/{self.dataset_name}", f"tmodes/{self.dataset_name}"]
+        base_paths = [self.mode_group]
+        if self.view_id is None:
+            base_paths.append(f"tmodes/{self.dataset_name}")
 
         modes_path = None
         freqs_path = None
@@ -568,17 +793,19 @@ class FMRModeAnalyzer:
 
         # Find spectrum - try multiple locations for consistency with plot_spectrum
         spectrum_path = None
-        spectrum_candidates = [
-            # Standard FFT locations (consistent with plot_spectrum)
-            f"fft/{self.dataset_name}_z-1_m1/spectrum",  # Most common case
-            f"fft/{self.dataset_name}_z0_m1/spectrum",
-            f"fft/{self.dataset_name}/spectrum",
-            # Legacy locations (from compute_modes)
-            f"fft/{self.dataset_name}/spec",
-            f"fft/{self.dataset_name}/sum",
-            # Try other z_layers and methods
-            *[f"fft/{self.dataset_name}_z{z}_m1/spectrum" for z in range(-5, 10)],
-        ]
+        spectrum_candidates = []
+        if self.view_id is None:
+            spectrum_candidates = [
+                # Standard FFT locations (consistent with plot_spectrum)
+                f"fft/{self.dataset_name}_z-1_m1/spectrum",  # Most common case
+                f"fft/{self.dataset_name}_z0_m1/spectrum",
+                f"fft/{self.dataset_name}/spectrum",
+                # Legacy locations (from compute_modes)
+                f"fft/{self.dataset_name}/spec",
+                f"fft/{self.dataset_name}/sum",
+                # Try other z_layers and methods
+                *[f"fft/{self.dataset_name}_z{z}_m1/spectrum" for z in range(-5, 10)],
+            ]
 
         for path in spectrum_candidates:
             if path in self.zarr_file:
@@ -619,6 +846,7 @@ class FMRModeAnalyzer:
             )
 
         # Load frequency array if available
+        self.frequencies: np.ndarray | None = None
         if self.freqs_path:
             self.frequencies = np.array(self.zarr_file[self.freqs_path])
             log.info(
@@ -630,34 +858,38 @@ class FMRModeAnalyzer:
             log.debug("No frequency data loaded - will be computed with modes")
 
         # Load spectrum - prioritize fresh modes data over potentially stale FFT data
-        self.spectrum = None
+        self.spectrum: np.ndarray | None = None
 
-        # First try modes data (most up-to-date)
-        modes_power_sum_path = f"modes/{self.dataset_name}/power_sum"
-        modes_power_max_path = f"modes/{self.dataset_name}/power_max"
+        # First try view-local modes data (most up-to-date).
+        for power_path, power_kind in _mode_power_paths(
+            self.mode_group,
+            dataset_name=self.dataset_name,
+            include_legacy=self.view_id is None,
+        ):
+            log.debug("Looking for fresh modes spectrum at: %s", power_path)
+            if power_path in self.zarr_file:
+                power_group_path = power_path.rsplit("/", 1)[0]
+                if not _mode_power_cache_is_squared(self.zarr_file[power_group_path]):
+                    log.warning(
+                        "Ignoring legacy mode summary %s because its power "
+                        "definition is unknown; recompute modes with force=True",
+                        power_path,
+                    )
+                    continue
+                self.spectrum = np.asarray(self.zarr_file[power_path])
+                if np.iscomplexobj(self.spectrum):
+                    self.spectrum = np.abs(self.spectrum)
+                log.info(
+                    "Using fresh modes %s as spectrum: shape %s",
+                    power_kind,
+                    self.spectrum.shape,
+                )
+                break
 
-        log.debug(f"Looking for fresh modes spectrum at: {modes_power_sum_path}")
-        if modes_power_sum_path in self.zarr_file:
-            self.spectrum = np.array(self.zarr_file[modes_power_sum_path])
-            if np.iscomplexobj(self.spectrum):
-                self.spectrum = np.abs(self.spectrum)
-            log.info(
-                f"Using fresh modes power_sum as spectrum: shape {self.spectrum.shape}"
-            )
-        elif modes_power_max_path in self.zarr_file:
-            log.debug(
-                f"power_sum not found, trying power_max at: {modes_power_max_path}"
-            )
-            self.spectrum = np.array(self.zarr_file[modes_power_max_path])
-            if np.iscomplexobj(self.spectrum):
-                self.spectrum = np.abs(self.spectrum)
-            log.info(
-                f"Using fresh modes power_max as spectrum: shape {self.spectrum.shape}"
-            )
-        elif self.spectrum_path:
+        if self.spectrum is None and self.spectrum_path:
             # Fallback to FFT spectrum (may be stale)
             log.warning(
-                f"No fresh modes spectrum found, falling back to FFT spectrum (may be outdated)"
+                "No fresh modes spectrum found, falling back to FFT spectrum (may be outdated)"
             )
             self.spectrum = np.array(self.zarr_file[self.spectrum_path])
             if self.spectrum.ndim > 1:
@@ -669,9 +901,11 @@ class FMRModeAnalyzer:
                 )
             if np.iscomplexobj(self.spectrum):
                 self.spectrum = np.abs(self.spectrum)
+            assert self.spectrum is not None
+            assert self.spectrum is not None
             log.info(f"Loaded FFT spectrum data: shape {self.spectrum.shape}")
-        else:
-            log.error(f"No spectrum data found - neither modes nor FFT data available")
+        elif self.spectrum is None:
+            log.error("No spectrum data found - neither modes nor FFT data available")
             self.spectrum = None
 
         # Get spatial information
@@ -702,7 +936,12 @@ class FMRModeAnalyzer:
         log.debug(f"Spatial resolution: dx={self.dx:.3f} nm, dy={self.dy:.3f} nm")
 
     def _detect_peaks(
-        self, spectrum: np.ndarray, frequencies: np.ndarray
+        self,
+        spectrum: np.ndarray,
+        frequencies: np.ndarray,
+        *,
+        threshold: float | None = None,
+        min_distance: int | None = None,
     ) -> list[Peak]:
         """
         Detect peaks in spectrum using refactored utilities.
@@ -720,13 +959,80 @@ class FMRModeAnalyzer:
             List of detected peaks
         """
         # Use refactored peak detection
-        return detect_peaks(
-            spectrum=spectrum,
-            frequencies=frequencies,
-            threshold=self.config.peak_threshold,
-            min_distance=self.config.peak_min_distance,
-            use_scipy=True,
+        return cast(
+            list[Peak],
+            detect_peaks(
+                spectrum=spectrum,
+                frequencies=frequencies,
+                threshold=(
+                    self.config.peak_threshold
+                    if threshold is None
+                    else float(threshold)
+                ),
+                min_distance=(
+                    self.config.peak_min_distance
+                    if min_distance is None
+                    else int(min_distance)
+                ),
+                use_scipy=True,
+            ),
         )
+
+    def _runtime_material_mask(
+        self, *, z_layer: int, ny: int, nx: int
+    ) -> np.ndarray | None:
+        """Resolve a 2D mask for new and legacy mode caches."""
+        mask_path = f"{self.mode_group}/material_mask"
+        if self.zarr_file is not None and mask_path in self.zarr_file:
+            stored = np.asarray(self.zarr_file[mask_path], dtype=bool)
+            if stored.ndim == 2:
+                candidate = stored
+            elif stored.ndim == 3 and 0 <= z_layer < stored.shape[0]:
+                candidate = stored[z_layer]
+            else:
+                candidate = None
+            if candidate is not None and candidate.shape == (ny, nx):
+                return np.asarray(candidate, dtype=bool)
+
+        try:
+            if self.preloaded_data is not None:
+                sample = np.asarray(self.preloaded_data)[:1]
+            else:
+                dset = self.zarr_file[self.dataset_name]
+                key = list(
+                    self.view_slice
+                    if isinstance(self.view_slice, tuple)
+                    else (slice(None),) * len(dset.shape)
+                )
+                if len(key) < len(dset.shape):
+                    key.extend([slice(None)] * (len(dset.shape) - len(key)))
+                time_token = key[0]
+                start = 0
+                if isinstance(time_token, slice):
+                    start, _, step = time_token.indices(int(dset.shape[0]))
+                    if step <= 0:
+                        return None
+                key[0] = slice(start, min(start + 1, int(dset.shape[0])))
+                if len(dset.shape) == 5 or (
+                    len(dset.shape) == 4 and int(dset.shape[-1]) in {1, 2, 3}
+                ):
+                    key[-1] = slice(None)
+                sample = np.asarray(dset[tuple(key)])
+
+            canonical = _normalize_mode_input_shape(sample, component_index=None)
+            mask3d, _source = resolve_material_mask(canonical)
+            mask_candidate: Any
+            if mask3d.shape[0] == 1:
+                mask_candidate = mask3d[0]
+            elif 0 <= z_layer < mask3d.shape[0]:
+                mask_candidate = mask3d[z_layer]
+            else:
+                return None
+            if mask_candidate.shape == (ny, nx):
+                return np.asarray(mask_candidate, dtype=bool)
+        except Exception as exc:
+            log.debug("Could not infer runtime material mask: %s", exc)
+        return None
 
     def get_mode(self, frequency: float, z_layer: int = 0) -> FMRModeData:
         """
@@ -769,9 +1075,15 @@ class FMRModeAnalyzer:
                 f"using closest: {actual_freq:.3f} GHz"
             )
 
-        # Validate and normalize z_layer bounds
+        # Validate and normalize z_layer bounds. New mode data is canonical 5D,
+        # but retain read compatibility with legacy single-layer 4D caches.
         mode_shape = self.zarr_file[self.modes_path].shape
-        n_layers = mode_shape[1]
+        if len(mode_shape) == 5:
+            n_layers = mode_shape[1]
+        elif len(mode_shape) == 4:
+            n_layers = 1
+        else:
+            raise ValueError(f"Unsupported mode array shape: {mode_shape}")
 
         # Handle negative indexing (like Python lists)
         if z_layer < 0:
@@ -783,17 +1095,47 @@ class FMRModeAnalyzer:
                 f"z_layer {z_layer} out of range. Available layers: 0-{n_layers - 1} (or negative: -{n_layers} to -1)"
             )
 
+        cache_frequency = float(actual_freq)
+        cached_mode = self._mode_cache.get(cache_frequency, z_layer)
+        if cached_mode is not None:
+            return cached_mode
+
         # Load mode data for this frequency with bounds checking
         try:
-            mode_data = self.zarr_file[self.modes_path][freq_idx, z_layer, :, :, :]
+            if len(mode_shape) == 5:
+                mode_data = self.zarr_file[self.modes_path][freq_idx, z_layer, :, :, :]
+            else:
+                mode_data = self.zarr_file[self.modes_path][freq_idx, :, :, :]
         except IndexError as e:
             raise ValueError(
                 f"Invalid indices: freq_idx={freq_idx}, z_layer={z_layer}. {e}"
-            )
+            ) from e
+
+        # A component-selected DatasetAwareWrapper keeps a singleton component
+        # axis for analysis. Restore it to the original Cartesian slot so mx/my
+        # are not silently mislabeled as mz by single-component renderers.
+        component_index = self.component_index
+        if component_index is None:
+            try:
+                group = self.zarr_file[self.mode_group]
+                stored_index = int(group.attrs.get("component_index", -1))
+                component_index = stored_index if stored_index in {0, 1, 2} else None
+            except Exception:
+                component_index = None
+        if mode_data.shape[-1] == 1 and component_index in {0, 1, 2}:
+            expanded = np.zeros(mode_data.shape[:-1] + (3,), dtype=mode_data.dtype)
+            expanded[..., component_index] = mode_data[..., 0]
+            mode_data = expanded
 
         # Create spatial extent
         ny, nx = mode_data.shape[:2]
-        extent = (0, nx * self.dx, 0, ny * self.dy)
+        extent = _mode_extent_nm(
+            self.view_geometry,
+            nx=nx,
+            ny=ny,
+            dx_nm=self.dx,
+            dy_nm=self.dy,
+        )
 
         # Metadata
         metadata = {
@@ -805,26 +1147,33 @@ class FMRModeAnalyzer:
             "mode_shape": mode_shape,
         }
 
-        # Update cache
-        self._update_cache(
-            frequency, z_layer, FMRModeData(actual_freq, mode_data, extent, metadata)
+        material_mask = self._runtime_material_mask(z_layer=z_layer, ny=ny, nx=nx)
+        metadata["material_mask_available"] = material_mask is not None
+        result = FMRModeData(
+            actual_freq,
+            mode_data,
+            extent,
+            metadata,
+            material_mask=material_mask,
         )
-
-        return FMRModeData(actual_freq, mode_data, extent, metadata)
+        self._update_cache(cache_frequency, z_layer, result)
+        return result
 
     def characterize_mode(
         self,
         frequency: float,
         z_layer: int = 0,
         *,
-        core_position: Optional[tuple[float, float]] = None,
-        analysis_radius: Optional[float] = None,
-        config: Optional[ModeCharacteristicConfig] = None,
+        core_position: tuple[float, float] | None = None,
+        analysis_radius: float | None = None,
+        config: ModeCharacteristicConfig | None = None,
         verbose: bool = False,
     ) -> ModeCharacterizationResult:
         """Classify the mode at ``frequency`` into gyration/breathing/azimuthal families - see analyzer.mode_analysis for details."""
         return _characterize_mode(
-            self, frequency, z_layer,
+            self,
+            frequency,
+            z_layer,
             core_position=core_position,
             analysis_radius=analysis_radius,
             config=config,
@@ -836,14 +1185,16 @@ class FMRModeAnalyzer:
         frequency: float,
         z_layer: int = 0,
         *,
-        core_position: Optional[tuple[float, float]] = None,
-        R_dot: Optional[float] = None,
-        config: Optional[ModeCharacteristicConfig] = None,
+        core_position: tuple[float, float] | None = None,
+        R_dot: float | None = None,
+        config: ModeCharacteristicConfig | None = None,
         verbose: bool = False,
     ) -> "VortexModeResult":
         """Advanced vortex/skyrmion mode classification - see analyzer.mode_analysis for details."""
         return _characterize_vortex_mode(
-            self, frequency, z_layer,
+            self,
+            frequency,
+            z_layer,
             core_position=core_position,
             R_dot=R_dot,
             config=config,
@@ -864,11 +1215,11 @@ class FMRModeAnalyzer:
 
     def find_peaks(
         self,
-        threshold: Optional[float] = None,
-        min_distance: Optional[int] = None,
+        threshold: float | None = None,
+        min_distance: int | None = None,
         component: int = 0,
-        spectrum: Optional[np.ndarray] = None,
-        frequencies: Optional[np.ndarray] = None,
+        spectrum: np.ndarray | None = None,
+        frequencies: np.ndarray | None = None,
     ) -> list[Peak]:
         """
         Find peaks in the spectrum.
@@ -895,17 +1246,35 @@ class FMRModeAnalyzer:
         spectrum_data = spectrum if spectrum is not None else self.spectrum
         freq_data = frequencies if frequencies is not None else self.frequencies
 
-        if spectrum_data is None:
+        if spectrum_data is None or freq_data is None:
             log.warning("No spectrum data available for peak detection")
             return []
 
-        threshold = threshold or self.config.peak_threshold
-        min_distance = min_distance or self.config.peak_min_distance
+        threshold = (
+            self.config.peak_threshold if threshold is None else float(threshold)
+        )
+        min_distance = (
+            self.config.peak_min_distance if min_distance is None else int(min_distance)
+        )
+        if not np.isfinite(threshold) or threshold < 0:
+            raise ValueError("threshold must be finite and non-negative")
+        if min_distance < 1:
+            raise ValueError("min_distance must be at least 1")
+
+        freq_data = np.asarray(freq_data, dtype=float)
+        spectrum_data = _select_peak_spectrum_component(
+            spectrum_data, freq_data, component
+        )
+        if not np.all(np.isfinite(freq_data)) or not np.all(np.isfinite(spectrum_data)):
+            raise ValueError("Peak spectrum and frequencies must be finite")
 
         # Normalize spectrum for peak detection
-        spectrum_work = spectrum_data.copy()
+        spectrum_work = np.asarray(spectrum_data, dtype=float).copy()
         if self.config.spectrum_normalize:
-            spectrum_work = spectrum_work / np.max(spectrum_work)
+            maximum = float(np.max(spectrum_work)) if spectrum_work.size else 0.0
+            if maximum <= 0:
+                return []
+            spectrum_work = spectrum_work / maximum
 
         # Filter frequency range
         freq_mask = (freq_data >= self.config.f_min) & (freq_data <= self.config.f_max)
@@ -913,7 +1282,12 @@ class FMRModeAnalyzer:
         spectrum_filtered = spectrum_work[freq_mask]
 
         # Detect peaks
-        peaks = self._detect_peaks(spectrum_filtered, freqs_filtered)
+        peaks = self._detect_peaks(
+            spectrum_filtered,
+            freqs_filtered,
+            threshold=threshold,
+            min_distance=min_distance,
+        )
 
         # Convert to Peak objects with proper index mapping
         peaks_converted = []
@@ -943,21 +1317,21 @@ class FMRModeAnalyzer:
         self,
         frequency: float,
         z_layer: int = 0,
-        components: Optional[list[Union[int, str]]] = None,
-        save_path: Optional[str] = None,
+        components: list[int | str] | None = None,
+        save_path: str | None = None,
     ) -> tuple[Figure, np.ndarray]:
         """Plot mode visualization for a specific frequency - see visualization.static_plots.plot_modes for details."""
         return _plot_modes(self, frequency, z_layer, components, save_path)
 
     def interactive_spectrum(
         self,
-        components: Optional[list[Union[int, str]]] = None,
+        components: list[int | str] | None = None,
         z_layer: int = 0,
         method: int = 1,
         show: bool = True,
         force: bool = False,
         use_fft_spectrum: bool = True,
-        saveanim: Union[bool, str, None] = None,
+        saveanim: bool | str | None = None,
         auto_animate: bool = False,
         auto_save: bool = False,
         spectrum_result: Any = None,  # NEW: Inject spectrum from FFT.spectrum()
@@ -979,12 +1353,10 @@ class FMRModeAnalyzer:
             **kwargs,
         )
 
-    def _update_mode_plots(
-        self, components: list[Union[int, str]], z_layer: int
-    ) -> None:
+    def _update_mode_plots(self, components: list[int | str], z_layer: int) -> None:
         """Update mode plots for current frequency."""
         _update_mode_plots(self, components, z_layer)
-    
+
     # Alias for backward compatibility
     interactive_spectrum_old = interactive_spectrum
 
@@ -993,7 +1365,7 @@ class FMRModeAnalyzer:
         ax: Any,
         row_idx: int,
         col_idx: int,
-        component: Union[str, int],
+        component: str | int,
         z_layer: int,
     ) -> None:
         """Toggle between static mode plot and in-place animation."""
@@ -1012,7 +1384,7 @@ class FMRModeAnalyzer:
         ax: Any,
         row_idx: int,
         col_idx: int,
-        component: Union[str, int],
+        component: str | int,
         z_layer: int,
     ) -> None:
         """Start in-place animation for specific mode axis."""
@@ -1023,7 +1395,7 @@ class FMRModeAnalyzer:
         ax: Any,
         row_idx: int,
         col_idx: int,
-        component: Union[str, int],
+        component: str | int,
         z_layer: int,
     ) -> None:
         """Update single mode plot (used when stopping animation)."""
@@ -1059,7 +1431,7 @@ class FMRModeAnalyzer:
         t_slice : slice
             Time slice to process (default: all timesteps)
         """
-        if not force and f"modes/{self.dataset_name}/arr" in self.zarr_file:
+        if not force and f"{self.mode_group}/arr" in self.zarr_file:
             log.info("Mode data already exists, use force=True to recompute")
             return
 
@@ -1070,10 +1442,10 @@ class FMRModeAnalyzer:
             try:
                 # Open in write mode for deletion
                 zarr_write = zarr.open(self.zarr_path, mode="a")
-                if f"modes/{self.dataset_name}" in zarr_write:
-                    del zarr_write[f"modes/{self.dataset_name}"]
+                if self.mode_group in zarr_write:
+                    del zarr_write[self.mode_group]
                     log.info(f"Removed existing modes data for {self.dataset_name}")
-                if f"fft/{self.dataset_name}" in zarr_write:
+                if self.view_id is None and f"fft/{self.dataset_name}" in zarr_write:
                     del zarr_write[f"fft/{self.dataset_name}"]
                     log.info(f"Removed existing FFT data for {self.dataset_name}")
                 zarr_write.close()
@@ -1097,13 +1469,18 @@ class FMRModeAnalyzer:
         dset = self.zarr_file[self.dataset_name]
 
         # Normalize time slice and determine number of selected samples.
-        total_samples = int(dset.shape[0])
+        source = (
+            np.asarray(self.preloaded_data)
+            if self.preloaded_data is not None
+            else dset[self.view_slice]
+            if self.view_slice is not None
+            else dset
+        )
+        total_samples = int(source.shape[0])
         if isinstance(t_slice, slice):
             t_slice_norm = t_slice
         else:
-            raise TypeError(
-                f"t_slice must be slice, got {type(t_slice).__name__}"
-            )
+            raise TypeError(f"t_slice must be slice, got {type(t_slice).__name__}")
 
         start, stop, step = t_slice_norm.indices(total_samples)
         if step <= 0:
@@ -1111,37 +1488,33 @@ class FMRModeAnalyzer:
         num_samples = len(range(start, stop, step))
 
         # Determine sampling interval dt
-        dt: Optional[float] = None
-        t_array: Optional[np.ndarray] = None
+        dt: float | None = None
+        t_array: np.ndarray | None = None
         try:
             raw_t = dset.attrs["t"][:]
-            t_full = np.asarray(raw_t, dtype=float)
-            if t_full.size == total_samples:
-                t_array = np.asarray(t_full[t_slice_norm], dtype=float)
-            else:
-                # Mismatched metadata length - fallback to full metadata array.
-                t_array = t_full
-            if t_array.size > 1:
-                diffs = np.diff(t_array)
-                positive_diffs = diffs[diffs > 0]
-                if positive_diffs.size:
-                    dt = float(np.mean(positive_diffs))
-                else:
-                    dt = float(np.median(np.abs(diffs)))
-                if not np.isfinite(dt) or dt <= 0:
-                    raise ValueError("Invalid timestep derived from t attribute")
-            else:
-                raise ValueError("Insufficient time samples in attribute")
-        except Exception as exc:
+        except (KeyError, TypeError, AttributeError, IndexError) as exc:
             log.debug(
-                "Falling back to alternative dt sources for dataset %s: %s",
+                "No usable explicit time axis for dataset %s: %s",
                 self.dataset_name,
                 exc,
             )
-            t_array = None
-            dt = None
+        else:
+            t_array = _select_mode_time_axis(
+                raw_t,
+                total_samples=total_samples,
+                view_slice=self.view_slice,
+                time_slice=t_slice_norm,
+                expected_samples=num_samples,
+            )
+            if t_array is not None:
+                dt = _uniform_mode_dt(t_array)
+            else:
+                log.debug(
+                    "Explicit time-axis length does not match active mode view; "
+                    "falling back to scalar dt metadata"
+                )
 
-        def _extract_dt(candidate: Any) -> Optional[float]:
+        def _extract_dt(candidate: Any) -> float | None:
             if candidate is None:
                 return None
             try:
@@ -1175,17 +1548,21 @@ class FMRModeAnalyzer:
                 log.debug("Could not retrieve t_sampl via Pyzfn: %s", exc)
 
         if dt is None:
-            dt = 1e-12
-            log.warning(
-                "Falling back to default timestep 1e-12 s for dataset %s."
-                " Check zarr metadata for t or t_sampl attributes.",
-                self.dataset_name,
+            raise ValueError(
+                "Could not determine the mode FFT timestep from the active time "
+                "axis, t_sampl, or dt metadata"
             )
 
         if t_array is None:
+            dt *= step
+            if not np.isfinite(self.time_step_scale) or self.time_step_scale <= 0:
+                raise ValueError(
+                    "time_step_scale must be finite and positive for mode FFT"
+                )
+            dt *= self.time_step_scale
+
+        if t_array is None:
             t_array = np.arange(num_samples, dtype=float) * dt
-        else:
-            num_samples = t_array.size
 
         # Calculate frequencies using number of time samples
         if num_samples < 2:
@@ -1202,8 +1579,46 @@ class FMRModeAnalyzer:
             t_slice_norm,
             z_slice,
         )
-        arr = np.asarray(dset[t_slice_norm, z_slice])
+        arr = _normalize_mode_input_shape(
+            np.asarray(source[t_slice_norm]),
+            component_index=self.component_index,
+        )
+        if not isinstance(z_slice, slice):
+            raise TypeError(f"z_slice must be slice, got {type(z_slice).__name__}")
+        z_start, z_stop, z_step = z_slice.indices(arr.shape[1])
+        if z_step <= 0:
+            raise ValueError("z_slice step must be positive")
+        if len(range(z_start, z_stop, z_step)) == 0:
+            raise ValueError("z_slice selects no mode layers")
+        arr = arr[:, z_slice, ...]
         log.info("Loading magnetization data finished")
+
+        geometry_candidates = []
+        for candidate_name in ("geom", "geometry", "Msat", "msat", "Ms"):
+            try:
+                if candidate_name in self.zarr_file:
+                    geometry_candidates.append(
+                        (candidate_name, np.asarray(self.zarr_file[candidate_name]))
+                    )
+            except Exception as exc:
+                log.debug(
+                    "Could not load material-mask candidate %s: %s",
+                    candidate_name,
+                    exc,
+                )
+        material_mask, material_mask_source = resolve_material_mask(
+            arr,
+            geometry_candidates=geometry_candidates,
+        )
+        arr = np.where(material_mask[None, ..., None], arr, 0)
+        active_fraction = float(np.mean(material_mask)) if material_mask.size else 0.0
+        log.info(
+            "Material mask resolved from %s: %d/%d active cells (%.1f%%)",
+            material_mask_source,
+            int(np.count_nonzero(material_mask)),
+            int(material_mask.size),
+            100.0 * active_fraction,
+        )
 
         # Remove DC component
         arr = arr - arr.mean(axis=0)[None, ...]
@@ -1230,13 +1645,13 @@ class FMRModeAnalyzer:
 
             # Remove existing data if force=True to avoid conflicts
             if force:
-                if f"modes/{self.dataset_name}" in zarr_write:
-                    del zarr_write[f"modes/{self.dataset_name}"]
-                if f"fft/{self.dataset_name}" in zarr_write:
+                if self.mode_group in zarr_write:
+                    del zarr_write[self.mode_group]
+                if self.view_id is None and f"fft/{self.dataset_name}" in zarr_write:
                     del zarr_write[f"fft/{self.dataset_name}"]
 
             # Create groups
-            modes_group = zarr_write.require_group(f"modes/{self.dataset_name}")
+            modes_group = zarr_write.require_group(self.mode_group)
             # Don't create fft_group here - let plot_spectrum/calculate_fft_data handle it
             # This avoids conflicts with standard FFT data format
 
@@ -1262,22 +1677,18 @@ class FMRModeAnalyzer:
                 chunks=chunks,
                 overwrite=True,
             )
+            _write_zarr_array(
+                modes_group,
+                "material_mask",
+                data=material_mask.astype(np.uint8, copy=False),
+                shape=material_mask.shape,
+                dtype=np.uint8,
+                chunks=material_mask.shape,
+                overwrite=True,
+            )
 
             # Save power spectrum summary in modes group
-            power_spec = np.abs(fft_result)
-            reduction_axes = (
-                tuple(range(1, power_spec.ndim)) if power_spec.ndim > 1 else None
-            )
-            power_max = (
-                np.max(power_spec, axis=reduction_axes)
-                if reduction_axes
-                else np.max(power_spec, keepdims=False)
-            )
-            power_sum = (
-                np.sum(power_spec, axis=reduction_axes)
-                if reduction_axes
-                else np.sum(power_spec, keepdims=False)
-            )
+            power_max, power_sum = _mode_power_summaries(fft_result)
             _write_zarr_array(
                 modes_group,
                 "power_max",
@@ -1303,6 +1714,15 @@ class FMRModeAnalyzer:
             modes_group.attrs["z_slice"] = str(z_slice)
             modes_group.attrs["t_slice"] = str(t_slice_norm)
             modes_group.attrs["dt"] = dt
+            modes_group.attrs["view_slice"] = repr(self.view_slice)
+            modes_group.attrs["view_id"] = self.view_id or "full"
+            modes_group.attrs["component_index"] = (
+                int(self.component_index) if self.component_index is not None else -1
+            )
+            modes_group.attrs["time_step_scale"] = self.time_step_scale
+            modes_group.attrs["power_definition"] = "abs_fft_squared"
+            modes_group.attrs["material_mask_source"] = material_mask_source
+            modes_group.attrs["material_mask_active_fraction"] = active_fraction
 
             # zarr groups don't have close() method, just let it go out of scope
             log.info("✅ Mode computation completed and saved")
@@ -1318,7 +1738,7 @@ class FMRModeAnalyzer:
         save_path: str = "mode_animation.gif",
         fps: int = 15,
         z_layer: int = 0,
-        component: Union[str, int] = "z",
+        component: str | int = "z",
         animation_type: str = "temporal",
         colormap: str = None,
         use_midpoint_norm: bool = None,
@@ -1339,7 +1759,7 @@ class FMRModeAnalyzer:
             figsize=figsize,
         )
 
-    def install_ffmpeg(self) -> Optional[str]:
+    def install_ffmpeg(self) -> str | None:
         """
         Install FFmpeg for MP4 animation support.
 
@@ -1372,7 +1792,7 @@ class FFTModeInterface:
         """Initialize mode interface for specific FFT result."""
         self.fft_result_index = fft_result_index
         self.parent_fft = parent_fft
-        self._mode_analyzer = None
+        self._mode_analyzer: FMRModeAnalyzer | None = None
 
     def __getitem__(self, frequency_index: int) -> "FrequencyModeInterface":
         """Get mode interface for specific frequency index."""
@@ -1411,6 +1831,7 @@ class FFTModeInterface:
         try:
             from rich.console import Console
             from rich.text import Text
+
             return self._rich_modes_display()
         except ImportError:
             return self._basic_modes_display()
@@ -1564,15 +1985,15 @@ MMPP FFT Mode Analyzer:
                 if self.parent_fft.mmpp
                 else None
             )
-            
+
             # Use injected dataset context from DatasetSpecificFFT if available
             dataset_name = getattr(self, "_dataset_context", None)
-            
+
             self._mode_analyzer = FMRModeAnalyzer(
-                zarr_path, 
+                zarr_path,
                 dataset_name=dataset_name,  # Use context if available, else auto-detect
-                debug=debug_mode, 
-                log_level=log_level
+                debug=debug_mode,
+                log_level=log_level,
             )
 
         return self._mode_analyzer
@@ -1581,7 +2002,7 @@ MMPP FFT Mode Analyzer:
         self, dset: str = None, force: bool = False, **kwargs
     ) -> Figure:
         """Create interactive spectrum plot (ORIGINAL IMPLEMENTATION).
-        
+
         This is the original, full-featured implementation with all capabilities:
         - Click to select frequency
         - Right-click to snap to peak
@@ -1589,7 +2010,7 @@ MMPP FFT Mode Analyzer:
         - Press 'c' to characterize mode
         - Press 's' to save animation
         - Press 'h' for help
-        
+
         Use this if the new interactive_spectrum() doesn't work properly.
         """
         # If dset is specified, create a new analyzer for that dataset
@@ -1625,12 +2046,12 @@ MMPP FFT Mode Analyzer:
                 self.mode_analyzer.compute_modes(save=True, force=force)
 
             return self.mode_analyzer.interactive_spectrum(**kwargs)
-    
+
     def interactive_spectrum(
         self, dset: str = None, force: bool = False, **kwargs
     ) -> Figure:
         """Create interactive spectrum plot.
-        
+
         This delegates to the original interactive_spectrum implementation.
         If you experience issues, try interactive_spectrum_old() directly.
         """
@@ -1704,7 +2125,7 @@ MMPP FFT Mode Analyzer:
         dset: str = None,
         fps: int = 15,
         z_layer: int = 0,
-        component: Union[str, int] = "z",
+        component: str | int = "z",
         animation_type: str = "temporal",
         **kwargs,
     ) -> None:
@@ -1784,7 +2205,7 @@ MMPP FFT Mode Analyzer:
                 **kwargs,
             )
 
-    def install_ffmpeg(self) -> str:
+    def install_ffmpeg(self) -> str | None:
         """
         Install FFmpeg for MP4 animation support.
 
@@ -1852,7 +2273,8 @@ class FrequencyModeInterface:
         from rich.table import Table
         from rich.text import Text
 
-        console = Console(file=io.StringIO(), width=100, force_terminal=True)
+        output = io.StringIO()
+        console = Console(file=output, width=100, force_terminal=True)
 
         # Main header
         header = Text("FrequencyModeInterface", style="bold cyan")
@@ -1919,7 +2341,7 @@ print(f"Frequency: {{freq_interface.frequency:.2e}} Hz")"""
         )
 
         console.print(panel)
-        return console.file.getvalue()
+        return output.getvalue()
 
     def _basic_frequency_display(self) -> str:
         """Basic fallback display without rich formatting."""

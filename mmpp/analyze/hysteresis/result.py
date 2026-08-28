@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from functools import cached_property
 from html import escape as _esc
 from typing import Any
@@ -52,8 +53,8 @@ class HysteresisResult:
     magnetization: np.ndarray
     branches: list[Branch]
     frame_index: np.ndarray | None
-    config: HysteresisConfig = field(default_factory=HysteresisConfig)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    config: HysteresisConfig = dc_field(default_factory=HysteresisConfig)
+    metadata: dict[str, Any] = dc_field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.field = np.asarray(self.field, dtype=float).reshape(-1)
@@ -107,7 +108,7 @@ class HysteresisResult:
             data["frame_index"] = self.frame_index
         return pd.DataFrame(data)
 
-    def cloneflip(self) -> "HysteresisResult":
+    def cloneflip(self) -> HysteresisResult:
         """Build a symmetric full loop from a single monotonic sweep.
 
         Applies the centrosymmetric constraint **M(−B) = −M(B)**, valid for

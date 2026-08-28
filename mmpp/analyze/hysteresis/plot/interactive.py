@@ -15,7 +15,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     matplotlib = None  # type: ignore[assignment]
     plt = None  # type: ignore[assignment]
-    GridSpec = Any  # type: ignore[assignment]
+    globals()["GridSpec"] = Any
     _HAS_MPL = False
 
 try:
@@ -83,6 +83,7 @@ class HysteresisInteractiveExplorer:
         self._canvas_mounted = False
 
         self._snapshot_job = self.result.metadata.get("job_result")
+        self._snapshot_cache: SnapshotCache | None = None
         self._snapshot_dset = str(self.result.metadata.get("dataset", "m"))
         self._snapshot_slice = self.result.metadata.get("slice_info")
         self._z_bounds = self._infer_z_bounds()
@@ -91,7 +92,11 @@ class HysteresisInteractiveExplorer:
         frame_keys: dict[int, str] | None = self.result.metadata.get("frame_keys")
         zarr_group = self.result.metadata.get("zarr_group")
 
-        if source_type == "zarr_keys" and frame_keys is not None and zarr_group is not None:
+        if (
+            source_type == "zarr_keys"
+            and frame_keys is not None
+            and zarr_group is not None
+        ):
             # Special mode: each point is a separate zarr array, not a time-series
             self._snapshot_cache = SnapshotCache(
                 self._snapshot_job,
@@ -162,7 +167,9 @@ class HysteresisInteractiveExplorer:
             return toolbar.lower() in {"1", "true", "yes", "on"}
         return bool(toolbar)
 
-    def _create_figure(self, figsize: tuple[float, float] | None = None, dpi: int | None = None) -> None:
+    def _create_figure(
+        self, figsize: tuple[float, float] | None = None, dpi: int | None = None
+    ) -> None:
         cfg = self.result.config
         plt.ioff()  # prevent InlineBackend from auto-displaying at cell end
         self._fig = plt.figure(
@@ -179,7 +186,9 @@ class HysteresisInteractiveExplorer:
 
         # Click events only work with interactive backends
         if self._is_interactive_mpl_backend():
-            self._click_connection = self._fig.canvas.mpl_connect("button_press_event", self._on_click)
+            self._click_connection = self._fig.canvas.mpl_connect(
+                "button_press_event", self._on_click
+            )
 
     def _apply_panel_widths(self, *, redraw: bool = True) -> None:
         """Apply loop/snapshot panel width proportions to the current axes."""
@@ -200,7 +209,9 @@ class HysteresisInteractiveExplorer:
         snap_width = width - loop_width
 
         self._ax_loop.set_position([left, bottom, loop_width, top - bottom])
-        self._ax_snapshot.set_position([left + loop_width + gap, bottom, snap_width, top - bottom])
+        self._ax_snapshot.set_position(
+            [left + loop_width + gap, bottom, snap_width, top - bottom]
+        )
 
         if redraw and self._fig is not None:
             if self._inline_mode:
@@ -208,7 +219,9 @@ class HysteresisInteractiveExplorer:
             else:
                 self._fig.canvas.draw_idle()
 
-    def _set_panel_widths(self, loop_width: float, snapshot_width: float, *, redraw: bool = True) -> None:
+    def _set_panel_widths(
+        self, loop_width: float, snapshot_width: float, *, redraw: bool = True
+    ) -> None:
         self.state.loop_panel_weight = float(max(0.2, loop_width))
         self.state.snapshot_panel_weight = float(max(0.2, snapshot_width))
         self._apply_panel_widths(redraw=redraw)
@@ -263,7 +276,11 @@ class HysteresisInteractiveExplorer:
         return int(self.result.frame_index[safe_idx])
 
     def _snapshot_spacing(self) -> tuple[float, float]:
-        attrs = getattr(self._snapshot_job, "attrs", {}) if self._snapshot_job is not None else {}
+        attrs = (
+            getattr(self._snapshot_job, "attrs", {})
+            if self._snapshot_job is not None
+            else {}
+        )
         dx = float(attrs.get("dx", 1e-9)) if hasattr(attrs, "get") else 1e-9
         dy = float(attrs.get("dy", 1e-9)) if hasattr(attrs, "get") else 1e-9
         return dx, dy
@@ -332,7 +349,9 @@ class HysteresisInteractiveExplorer:
             return
         output = self._controls["output"]
 
-        backend = str(matplotlib.get_backend()).lower() if matplotlib is not None else ""
+        backend = (
+            str(matplotlib.get_backend()).lower() if matplotlib is not None else ""
+        )
         is_widget_backend = any(kw in backend for kw in ("widget", "ipympl"))
         if is_widget_backend:
             if not self._canvas_mounted:
@@ -409,28 +428,40 @@ class HysteresisInteractiveExplorer:
             if "index" in self._controls:
                 self._controls["index"].value = int(self.state.current_idx)
             if "field" in self._controls:
-                self._controls["field"].value = float(self.result.field[int(self.state.current_idx)])
+                self._controls["field"].value = float(
+                    self.result.field[int(self.state.current_idx)]
+                )
             self._controls["component"].value = str(self.state.snapshot_component)
             if str(self.state.z_layer) != "all":
                 self._controls["z_layer"].value = int(self.state.z_layer)
             self._controls["roi"].value = (
-                "" if self.state.roi is None else ",".join(str(v) for v in self.state.roi)
+                ""
+                if self.state.roi is None
+                else ",".join(str(v) for v in self.state.roi)
             )
             if "animation_speed" in self._controls:
-                self._controls["animation_speed"].value = float(self.state.animation_speed)
+                self._controls["animation_speed"].value = float(
+                    self.state.animation_speed
+                )
             if "anim_fps" in self._controls:
                 self._controls["anim_fps"].value = int(self.result.config.animation_fps)
             if "anim_trail" in self._controls:
-                self._controls["anim_trail"].value = int(self.result.config.trail_length)
+                self._controls["anim_trail"].value = int(
+                    self.result.config.trail_length
+                )
             if "debug_clicks" in self._controls:
                 self._controls["debug_clicks"].value = bool(self._debug_clicks)
             if "loop_width" in self._controls:
                 self._controls["loop_width"].value = float(self.state.loop_panel_weight)
             if "snapshot_width" in self._controls:
-                self._controls["snapshot_width"].value = float(self.state.snapshot_panel_weight)
+                self._controls["snapshot_width"].value = float(
+                    self.state.snapshot_panel_weight
+                )
             for key in ["hc", "mr", "ms", "arrow", "branch_colors", "trail"]:
                 if key in self._controls:
-                    self._controls[key].value = bool(self.state.show_flags.get(key, False))
+                    self._controls[key].value = bool(
+                        self.state.show_flags.get(key, False)
+                    )
         finally:
             self._syncing_controls = False
 
@@ -469,7 +500,9 @@ class HysteresisInteractiveExplorer:
         self._inline_mode = not self._is_interactive_mpl_backend()
 
         if show and self._inline_mode:
-            backend = str(matplotlib.get_backend()) if matplotlib is not None else "unknown"
+            backend = (
+                str(matplotlib.get_backend()) if matplotlib is not None else "unknown"
+            )
             raise RuntimeError(
                 "Hysteresis interactive viewer is blocked on inline/static Matplotlib backend. "
                 "Use `%matplotlib widget` (ipympl), restart kernel, and rerun. "

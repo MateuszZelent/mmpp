@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 class DispersionHeatmapWidget:
     """Notebook explorer for ``DispersionResult1D`` using the shared toolbar pattern."""
 
-    def __init__(self, result: "DispersionResult1D", options: dict[str, Any]):
+    def __init__(self, result: DispersionResult1D, options: dict[str, Any]):
         self.result = result
         self.options = dict(options)
         self.state = self._initial_state()
@@ -30,7 +30,7 @@ class DispersionHeatmapWidget:
         self.controls: dict[str, Any] = {}
         self._status_history: list[str] = []
         self._presets_dir = None
-        self._click_connection = None
+        self._click_connection: Any = None
         self._image = None
         self.last_mode: Any = None
 
@@ -75,7 +75,9 @@ class DispersionHeatmapWidget:
         if hasattr(plt, "ioff"):
             plt.ioff()
         self.figure, self.axes = plt.subplots(figsize=figsize, dpi=dpi)
-        if hasattr(self.figure, "canvas") and hasattr(self.figure.canvas, "mpl_connect"):
+        if hasattr(self.figure, "canvas") and hasattr(
+            self.figure.canvas, "mpl_connect"
+        ):
             self._click_connection = self.figure.canvas.mpl_connect(
                 "button_press_event",
                 lambda event: on_canvas_click(self, event),
@@ -188,20 +190,14 @@ class DispersionHeatmapWidget:
             "filter_gaussian_enabled": bool(gaussian_cfg.get("enabled", False)),
             "filter_gaussian_sigma_f": float(gaussian_cfg.get("sigma_f", 1.0)),
             "filter_gaussian_sigma_k": float(gaussian_cfg.get("sigma_k", 1.0)),
-            "filter_gaussian_threshold": float(
-                gaussian_cfg.get("threshold_std", 1.5)
-            ),
+            "filter_gaussian_threshold": float(gaussian_cfg.get("threshold_std", 1.5)),
             "filter_percentile_enabled": bool(percentile_cfg.get("enabled", False)),
-            "filter_percentile_low": float(
-                percentile_cfg.get("low_percentile", 2.0)
-            ),
+            "filter_percentile_low": float(percentile_cfg.get("low_percentile", 2.0)),
             "filter_percentile_high": float(
                 percentile_cfg.get("high_percentile", 99.0)
             ),
             "filter_soft_enabled": bool(soft_cfg.get("enabled", False)),
-            "filter_soft_percentile": float(
-                soft_cfg.get("threshold_percentile", 50.0)
-            ),
+            "filter_soft_percentile": float(soft_cfg.get("threshold_percentile", 50.0)),
             "filter_soft_smoothness": float(soft_cfg.get("smoothness", 5.0)),
             "filter_log_enabled": bool(log_cfg.get("enabled", False)),
             "filter_log_method": str(log_cfg.get("method", "log1p")),
@@ -232,9 +228,7 @@ class DispersionHeatmapWidget:
         notes = list(getattr(self.result, "notes", None) or [])
         rows = "".join(f"<li>{escape(str(note))}</li>" for note in notes[:6])
         notes_html = (
-            f"<ul style='margin:4px 0 0 16px;padding:0;'>{rows}</ul>"
-            if rows
-            else ""
+            f"<ul style='margin:4px 0 0 16px;padding:0;'>{rows}</ul>" if rows else ""
         )
         diagnostics = self.diagnostics()
         backend = escape(str(diagnostics.get("backend", "unknown")))
@@ -292,7 +286,9 @@ class DispersionHeatmapWidget:
         raw = self.options.get("analytical", False)
         raw_options = dict(raw) if isinstance(raw, dict) else {}
         enabled = bool(raw)
-        sw_config = raw_options.get("sw_config") or self.options.get("analytical_sw_config")
+        sw_config = raw_options.get("sw_config") or self.options.get(
+            "analytical_sw_config"
+        )
         if sw_config is None and isinstance(raw, str):
             sw_config = raw
         if sw_config is None:

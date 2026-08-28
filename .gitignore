@@ -24,6 +24,7 @@ lib64/
 parts/
 *.md
 !README.md
+!RELEASING.md
 !docs/**/*.md
 sdist/
 var/
@@ -216,6 +217,8 @@ mmpp/fft/transmission/experiment/
 docs/HYSTERESIS_IMPLEMENTATION_AUDIT.md
 *.md
 !docs/analysis/RAPORT_AUDYT_FFT_DISPERSION_INTERACTIVE_2026-06-28.md
+!RELEASING.md
+!docs/analysis/AUDYT_MMPP_FFT_MODES_DISPERSION_2026-07-21.md
 !docs/development/VORTEX_ANALYTICAL_AUTOFIT_IMPLEMENTATION_PLAN.md
 !docs/api/solitons.md
 !docs/tutorials/soliton_analysis.md

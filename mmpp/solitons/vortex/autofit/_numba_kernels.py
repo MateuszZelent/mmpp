@@ -46,9 +46,9 @@ except ImportError:
 # CPP Thiele RHS kernel (Guslienko 2014)
 # =====================================================================
 
+
 @njit(fastmath=True)
-def _cpp_rhs(sx, sy, chi_val, omega0_eff, N, d0, d1, polarity,
-             seq_x, seq_y):
+def _cpp_rhs(sx, sy, chi_val, omega0_eff, N, d0, d1, polarity, seq_x, seq_y):
     """CPP Thiele RHS — pure scalar, no allocations.
 
     Parameters (all pre-computed scalars):
@@ -77,9 +77,20 @@ def _cpp_rhs(sx, sy, chi_val, omega0_eff, N, d0, d1, polarity,
 
 @njit(fastmath=True)
 def integrate_cpp_rk4(
-    t0, t1, dt_out, sx0, sy0,
-    chi_val, omega0_eff, N, d0, d1, polarity,
-    seq_x, seq_y, substeps,
+    t0,
+    t1,
+    dt_out,
+    sx0,
+    sy0,
+    chi_val,
+    omega0_eff,
+    N,
+    d0,
+    d1,
+    polarity,
+    seq_x,
+    seq_y,
+    substeps,
 ):
     """Fixed-step RK4 integration of CPP Thiele equation.
 
@@ -122,22 +133,47 @@ def integrate_cpp_rk4(
         sy_out[i] = sy
 
         for _s in range(substeps):
-            k1x, k1y = _cpp_rhs(sx, sy, chi_val, omega0_eff, N, d0, d1,
-                                 polarity, seq_x, seq_y)
+            k1x, k1y = _cpp_rhs(
+                sx, sy, chi_val, omega0_eff, N, d0, d1, polarity, seq_x, seq_y
+            )
 
             k2x, k2y = _cpp_rhs(
-                sx + 0.5 * dt_sub * k1x, sy + 0.5 * dt_sub * k1y,
-                chi_val, omega0_eff, N, d0, d1, polarity, seq_x, seq_y,
+                sx + 0.5 * dt_sub * k1x,
+                sy + 0.5 * dt_sub * k1y,
+                chi_val,
+                omega0_eff,
+                N,
+                d0,
+                d1,
+                polarity,
+                seq_x,
+                seq_y,
             )
 
             k3x, k3y = _cpp_rhs(
-                sx + 0.5 * dt_sub * k2x, sy + 0.5 * dt_sub * k2y,
-                chi_val, omega0_eff, N, d0, d1, polarity, seq_x, seq_y,
+                sx + 0.5 * dt_sub * k2x,
+                sy + 0.5 * dt_sub * k2y,
+                chi_val,
+                omega0_eff,
+                N,
+                d0,
+                d1,
+                polarity,
+                seq_x,
+                seq_y,
             )
 
             k4x, k4y = _cpp_rhs(
-                sx + dt_sub * k3x, sy + dt_sub * k3y,
-                chi_val, omega0_eff, N, d0, d1, polarity, seq_x, seq_y,
+                sx + dt_sub * k3x,
+                sy + dt_sub * k3y,
+                chi_val,
+                omega0_eff,
+                N,
+                d0,
+                d1,
+                polarity,
+                seq_x,
+                seq_y,
             )
 
             sx += (dt_sub / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x)
@@ -152,9 +188,9 @@ def integrate_cpp_rk4(
 # CIP Thiele RHS kernel (Moon et al.)
 # =====================================================================
 
+
 @njit(fastmath=True)
-def _cip_rhs(X, Y, w0, u0_cx, u0_cy, alpha, beta, dG, polarity,
-             X_eq, Y_eq):
+def _cip_rhs(X, Y, w0, u0_cx, u0_cy, alpha, beta, dG, polarity, X_eq, Y_eq):
     """CIP Thiele RHS — pure scalar.
 
     Parameters:
@@ -183,9 +219,21 @@ def _cip_rhs(X, Y, w0, u0_cx, u0_cy, alpha, beta, dG, polarity,
 
 @njit(fastmath=True)
 def integrate_cip_rk4(
-    t0, t1, dt_out, X0, Y0,
-    w0, u0_cx, u0_cy, alpha, beta, dG, polarity,
-    X_eq, Y_eq, substeps,
+    t0,
+    t1,
+    dt_out,
+    X0,
+    Y0,
+    w0,
+    u0_cx,
+    u0_cy,
+    alpha,
+    beta,
+    dG,
+    polarity,
+    X_eq,
+    Y_eq,
+    substeps,
 ):
     """Fixed-step RK4 integration of CIP Thiele equation.
 
@@ -210,22 +258,50 @@ def integrate_cip_rk4(
         Y_out[i] = Y
 
         for _s in range(substeps):
-            k1x, k1y = _cip_rhs(X, Y, w0, u0_cx, u0_cy, alpha, beta, dG,
-                                 polarity, X_eq, Y_eq)
+            k1x, k1y = _cip_rhs(
+                X, Y, w0, u0_cx, u0_cy, alpha, beta, dG, polarity, X_eq, Y_eq
+            )
 
             k2x, k2y = _cip_rhs(
-                X + 0.5 * dt_sub * k1x, Y + 0.5 * dt_sub * k1y,
-                w0, u0_cx, u0_cy, alpha, beta, dG, polarity, X_eq, Y_eq,
+                X + 0.5 * dt_sub * k1x,
+                Y + 0.5 * dt_sub * k1y,
+                w0,
+                u0_cx,
+                u0_cy,
+                alpha,
+                beta,
+                dG,
+                polarity,
+                X_eq,
+                Y_eq,
             )
 
             k3x, k3y = _cip_rhs(
-                X + 0.5 * dt_sub * k2x, Y + 0.5 * dt_sub * k2y,
-                w0, u0_cx, u0_cy, alpha, beta, dG, polarity, X_eq, Y_eq,
+                X + 0.5 * dt_sub * k2x,
+                Y + 0.5 * dt_sub * k2y,
+                w0,
+                u0_cx,
+                u0_cy,
+                alpha,
+                beta,
+                dG,
+                polarity,
+                X_eq,
+                Y_eq,
             )
 
             k4x, k4y = _cip_rhs(
-                X + dt_sub * k3x, Y + dt_sub * k3y,
-                w0, u0_cx, u0_cy, alpha, beta, dG, polarity, X_eq, Y_eq,
+                X + dt_sub * k3x,
+                Y + dt_sub * k3y,
+                w0,
+                u0_cx,
+                u0_cy,
+                alpha,
+                beta,
+                dG,
+                polarity,
+                X_eq,
+                Y_eq,
             )
 
             X += (dt_sub / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x)
@@ -240,16 +316,19 @@ def integrate_cip_rk4(
 # Warm-up helper (trigger JIT compilation before timing-critical code)
 # =====================================================================
 
+
 def warmup():
     """Trigger Numba compilation for both kernels (called once at import)."""
     if not HAS_NUMBA:
         return
     # CPP — tiny integration to trigger compilation
-    integrate_cpp_rk4(0.0, 1e-10, 1e-11, 0.01, 0.0,
-                      1e8, 5e9, 0.25, 0.01, 0.018, 1, 0.0, 0.0, 2)
+    integrate_cpp_rk4(
+        0.0, 1e-10, 1e-11, 0.01, 0.0, 1e8, 5e9, 0.25, 0.01, 0.018, 1, 0.0, 0.0, 2
+    )
     # CIP
-    integrate_cip_rk4(0.0, 1e-10, 1e-11, 1e-9, 0.0,
-                      5e9, 1.0, 0.0, 0.01, 0.005, 0.5, 1, 0.0, 0.0, 2)
+    integrate_cip_rk4(
+        0.0, 1e-10, 1e-11, 1e-9, 0.0, 5e9, 1.0, 0.0, 0.01, 0.005, 0.5, 1, 0.0, 0.0, 2
+    )
 
 
 __all__ = [

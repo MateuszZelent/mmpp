@@ -10,6 +10,7 @@ import mmpp
 from mmpp.batch_operations import BatchOperations
 from mmpp.core.job import ZarrJobResult
 from mmpp.solitons import XYConvention
+from mmpp.solitons._method_helpers import CallableNodeHelper
 from mmpp.solitons.skyrmion import (
     BatchSkyrmionInterface,
     SizeFitConfig,
@@ -393,6 +394,38 @@ def test_skyrmion_html_helpers_use_canonical_cards(tmp_path):
     topology = namespace.detect()
     size = namespace.fit_size()
 
+    callable_nodes = [
+        namespace.detect,
+        namespace.measure_size,
+        namespace.fit_size,
+        namespace.available_analyses,
+        namespace.analyze,
+        namespace.interactive,
+        namespace.interactive_spectrum,
+        namespace.interactive_modes,
+        namespace.topology.detect,
+        namespace.topology.topological_charge,
+        namespace.topology.center,
+        namespace.size.fit,
+        namespace.size.measure,
+        BatchSkyrmionInterface([job]).parameter_candidates,
+        BatchSkyrmionInterface([job]).available_analyses,
+        BatchSkyrmionInterface([job]).detect,
+        BatchSkyrmionInterface([job]).measure_size,
+        BatchSkyrmionInterface([job]).size_vs_parameter,
+        BatchSkyrmionInterface([job]).fit_size,
+        BatchSkyrmionInterface([job]).analyze,
+        BatchSkyrmionInterface([job]).interactive,
+    ]
+    for node in callable_nodes:
+        assert isinstance(node, CallableNodeHelper)
+        assert callable(node)
+        helper_html = node._repr_html_()
+        assert ">Overview</button>" in helper_html
+        assert ">API</button>" in helper_html
+        assert "box-shadow" in helper_html
+        assert "<h3" not in helper_html
+
     cards = [
         job.solitons._repr_html_(),
         namespace._repr_html_(),
@@ -437,3 +470,124 @@ def test_skyrmion_html_helpers_use_canonical_cards(tmp_path):
     second_batch_id = re.search(r"id='([^']+-tab-0)'", batch_namespace._repr_html_())
     assert first_batch_id is not None and second_batch_id is not None
     assert first_batch_id.group(1) != second_batch_id.group(1)
+
+
+def test_skyrmion_interactive_dashboard_renders_three_panel_result(tmp_path):
+    pytest.importorskip("ipywidgets")
+    field = generate_synthetic_skyrmion(Nx=64, Ny=64, radius=14e-9)
+    job = _create_job(tmp_path, "skyrmion_interactive", field[np.newaxis, ...])
+
+    dashboard = job.skyrmion.interactive(
+        show=False,
+        initial_frame=0,
+        z_layer=-1,
+        topology_method="berg_luscher",
+        size_method="threshold",
+    )
+    topology, size = dashboard.run()
+
+    assert topology.valid
+    assert size.radius_nm == pytest.approx(14.0, abs=1.2)
+    assert dashboard.last_topology is topology
+    assert dashboard.last_size is size
+    assert len(dashboard.image.value) > 1000
+    assert "Done" in dashboard.status.value
+    assert "interactive" in job.skyrmion._repr_html_()
+
+
+def test_skyrmion_spectrum_and_modes_preserve_dataset_slice():
+    calls = []
+    explorer = object()
+
+    class _Modes:
+        def interactive_spectrum(self, **kwargs):
+            calls.append(kwargs)
+            return explorer
+
+    class _FFT:
+        modes = _Modes()
+
+    class _Data:
+        fft = _FFT()
+
+        def __getitem__(self, key):
+            calls.append(("slice", key))
+            return self
+
+    class _Job:
+        m = _Data()
+
+    selection = (slice(0, 10), Ellipsis)
+    interface = SkyrmionInterface(_Job(), dataset_name="m", slice_info=selection)
+
+    assert interface.interactive_spectrum(dpi=140) is explorer
+    assert interface.interactive_modes(dpi=160) is explorer
+    assert calls == [
+        ("slice", selection),
+        {"dpi": 140},
+        ("slice", selection),
+        {"dpi": 160},
+    ]
+
+
+def test_soliton_spectral_viewer_keeps_bound_dataset_wrapper(tmp_path):
+    from mmpp.solitons._spectral_ui import dataset_view
+
+    field = generate_synthetic_skyrmion(Nx=32, Ny=32, radius=8e-9)
+    data = np.stack([field, field], axis=0)
+    job = _create_job(tmp_path, "bound_spectral_view", data)
+    view = job.m[:1]
+
+    assert dataset_view(view.skyrmion) is view
+    assert dataset_view(view.vortex) is view
+
+
+def test_skyrmion_dashboard_selects_spectrum_and_modes(tmp_path):
+    pytest.importorskip("ipywidgets")
+    field = generate_synthetic_skyrmion(Nx=48, Ny=48, radius=11e-9)
+    job = _create_job(tmp_path, "skyrmion_spectral_dashboard", field[np.newaxis, ...])
+    dashboard = job.skyrmion.interactive(show=False, initial_module="spectrum")
+    calls = []
+    spectrum_viewer = object()
+    mode_viewer = object()
+    dashboard._interface.interactive_spectrum = lambda **kwargs: (
+        calls.append(("spectrum", kwargs)) or spectrum_viewer
+    )
+    dashboard._interface.interactive_modes = lambda **kwargs: (
+        calls.append(("modes", kwargs)) or mode_viewer
+    )
+
+    assert dashboard.module.value == "spectrum"
+    assert dashboard.run_selected() is spectrum_viewer
+    dashboard.module.value = "modes"
+    assert dashboard.run_selected() is mode_viewer
+    assert dashboard.last_spectral_viewer is mode_viewer
+    assert calls == [
+        ("spectrum", {"z_layer": -1, "dpi": 110}),
+        ("modes", {"z_layer": -1, "dpi": 110}),
+    ]
+
+
+def test_batch_skyrmion_interactive_selects_sorted_result(tmp_path):
+    pytest.importorskip("ipywidgets")
+    field = generate_synthetic_skyrmion(Nx=48, Ny=48, radius=11e-9)
+    high = _create_job(
+        tmp_path,
+        "interactive_high",
+        field[np.newaxis, ...],
+        attrs={"Dind": 3.0e-3},
+    )
+    low = _create_job(
+        tmp_path,
+        "interactive_low",
+        field[np.newaxis, ...],
+        attrs={"Dind": 1.0e-3},
+    )
+
+    dashboard = BatchOperations([high, low], None).skyrmion.interactive(
+        index=0,
+        sort_by="Dind",
+        show=False,
+    )
+
+    assert dashboard._interface._job is low

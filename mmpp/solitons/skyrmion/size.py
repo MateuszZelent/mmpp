@@ -8,12 +8,16 @@ from typing import Any, Optional
 
 import numpy as np
 
+from .._method_helpers import InteractiveNodeMixin
 from ._core import fit_skyrmion_size
 from .models import SkyrmionSizeResult, SkyrmionTopologyResult
 
 
-class SkyrmionSizeInterface:
+class SkyrmionSizeInterface(InteractiveNodeMixin):
     """Measure a skyrmion radial profile and fit an effective size model."""
+
+    _interactive_owner = "job[0].skyrmion.size"
+    _interactive_nodes = frozenset({"fit", "measure"})
 
     def __init__(self, parent: Any):
         self._parent = parent

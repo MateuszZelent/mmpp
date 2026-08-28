@@ -7,8 +7,9 @@ from typing import Any
 
 import numpy as np
 
-from ...config import VortexConfig
+from ...._method_helpers import InteractiveNodeMixin
 from ..._shared.models import TrajectoryResult
+from ...config import VortexConfig
 from .magnetoresistance import compute_magnetoresistance
 from .models import MagnetoresistanceResult, SignalSpectrumResult, VoltageResult
 from .power_spectrum import compute_signal_power_spectrum
@@ -45,8 +46,30 @@ def _resolve_column_name(
     return None
 
 
-class SignalsInterface:
+class SignalsInterface(InteractiveNodeMixin):
     """Signals namespace: magnetoresistance, voltage and power spectrum."""
+
+    _interactive_owner = "job[0].vortex.signals"
+    _interactive_nodes = frozenset({"magnetoresistance", "voltage", "power_spectrum"})
+    _interactive_descriptions = {
+        "magnetoresistance": "Reconstruct the magnetoresistance trace from the vortex trajectory.",
+        "voltage": "Convert the reconstructed resistance trace into a voltage signal.",
+        "power_spectrum": "Compute the power spectrum of a voltage or resistance signal.",
+    }
+    _interactive_examples = {
+        "magnetoresistance": [
+            "mr = job[0].vortex.signals.magnetoresistance()",
+            "mr.plt.time_trace()",
+        ],
+        "voltage": [
+            "voltage = job[0].vortex.signals.voltage(current_a=1e-3)",
+            "voltage.plt.time_trace()",
+        ],
+        "power_spectrum": [
+            "psd = job[0].vortex.signals.power_spectrum(signal='voltage')",
+            "psd.plt.power_spectrum()",
+        ],
+    }
 
     def __init__(
         self,
@@ -298,6 +321,7 @@ class SignalsInterface:
             return self._last_spectrum
 
         signal_norm = str(signal).lower()
+        source: Any
         if signal_norm in {"voltage", "v"}:
             source = self.voltage(current_a=current_a, trajectory=trajectory)
             values = source.voltage_v
@@ -313,7 +337,9 @@ class SignalsInterface:
                 "signal must be one of {'voltage', 'v', 'resistance', 'mr', 'tmr'}"
             )
 
-        method_eff = method or getattr(self._config.signals, "spectrum_method", "welch")
+        method_eff = str(
+            method or getattr(self._config.signals, "spectrum_method", "welch")
+        )
         result = compute_signal_power_spectrum(
             time,
             values,
@@ -340,20 +366,8 @@ class SignalsInterface:
             examples_section_html,
             metrics_section_html,
             node_card_html,
-            plot_accessor_html,
         )
 
-        methods = [
-            (
-                ".magnetoresistance(...)",
-                "MR/TMR proxy from trajectory or table fallback",
-            ),
-            (".voltage(current_a=...)", "Voltage trace V(t)=I(t)R(t)"),
-            (".power_spectrum(signal='voltage')", "Signal PSD (Welch/periodogram)"),
-            (".plt.magnetoresistance()", "Compute + plot resistance trace"),
-            (".plt.voltage()", "Compute + plot voltage trace"),
-            (".plt.power_spectrum()", "Compute + plot electrical PSD"),
-        ]
         sections = [
             metrics_section_html(
                 [
@@ -426,8 +440,11 @@ class SignalsInterface:
         )
 
 
-class SignalsPlotAccessor:
+class SignalsPlotAccessor(InteractiveNodeMixin):
     """Plotting facade for :class:`SignalsInterface`."""
+
+    _interactive_owner = "job[0].vortex.signals.plt"
+    _interactive_nodes = frozenset({"magnetoresistance", "voltage", "power_spectrum"})
 
     def __init__(self, interface: SignalsInterface):
         self._interface = interface

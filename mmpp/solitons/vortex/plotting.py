@@ -181,6 +181,7 @@ def _resolve_plot_trajectory(
     method_token = (
         None if tracking_method is None else str(tracking_method).strip().lower()
     )
+    resolved_tracking_method: str | None
     if source_token == "table":
         resolved_tracking_method = "table"
     elif source_token == "magnetization":
@@ -938,7 +939,9 @@ class VortexAnalyticalComparisonPlotAccessor:
             ("N [rad/s]", float(st.numerical.N), float(st.analytical.N)),
         ]
         flat_axes = axes.reshape(-1)
-        for axis, (title, numerical_value, analytical_value) in zip(flat_axes, entries):
+        for axis, (title, numerical_value, analytical_value) in zip(
+            flat_axes, entries, strict=False
+        ):
             axis.bar(
                 ["numerical", "analytical"],
                 [numerical_value, analytical_value],

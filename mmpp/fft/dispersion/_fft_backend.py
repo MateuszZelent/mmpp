@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _BACKEND: str = "numpy"  # effective backend name
-_WORKERS: int = -1        # -1 = all cores
+_WORKERS: int = -1  # -1 = all cores
 # FFTW planner effort: FFTW_ESTIMATE (fast, default) or FFTW_MEASURE (slow planning, faster execution)
 # FFTW_MEASURE benchmarks hundreds of algorithm variants per array shape — can take MINUTES for large arrays.
 # Only use FFTW_MEASURE if you're running the same transform shape many times and can amortize the planning cost.
@@ -44,6 +44,7 @@ _PLANNER_EFFORT: str = os.environ.get("MMPP_FFT_PLANNER", "FFTW_ESTIMATE").strip
 # scipy.fft
 try:
     import scipy.fft as _sp_fft  # type: ignore[import-untyped]
+
     _HAS_SCIPY = True
 except ImportError:
     _sp_fft = None  # type: ignore[assignment]
@@ -53,6 +54,7 @@ except ImportError:
 try:
     import pyfftw  # type: ignore[import-untyped]
     import pyfftw.interfaces.numpy_fft as _pw_fft  # type: ignore[import-untyped]
+
     _HAS_PYFFTW = True
     # Enable pyfftw cache for repeated transforms of the same size
     pyfftw.interfaces.cache.enable()
@@ -97,12 +99,15 @@ def _resolve_default_workers() -> int:
 _BACKEND = _resolve_default_backend()
 _WORKERS = _resolve_default_workers()
 
-logger.info("FFT backend: %s (workers=%s, cpu_count=%s)", _BACKEND, _WORKERS, os.cpu_count())
+logger.info(
+    "FFT backend: %s (workers=%s, cpu_count=%s)", _BACKEND, _WORKERS, os.cpu_count()
+)
 
 
 # ---------------------------------------------------------------------------
 # Public API for runtime configuration
 # ---------------------------------------------------------------------------
+
 
 def set_backend(name: str) -> None:
     """Switch FFT backend at runtime.
@@ -146,11 +151,12 @@ def get_info() -> dict[str, Any]:
 # Dispatch helpers
 # ---------------------------------------------------------------------------
 
+
 def fft(
     a: np.ndarray,
-    n: Optional[int] = None,
+    n: int | None = None,
     axis: int = -1,
-    workers: Optional[int] = None,
+    workers: int | None = None,
 ) -> np.ndarray:
     """Forward 1-D FFT, multi-threaded when possible."""
     w = workers if workers is not None else _WORKERS
@@ -160,16 +166,18 @@ def fft(
         return _sp_fft.fft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
         logger.debug("fft: pyfftw threads=%d shape=%s axis=%d", _threads, a.shape, axis)
-        return _pw_fft.fft(a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
+        return _pw_fft.fft(
+            a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT
+        )  # type: ignore[union-attr]
     logger.debug("fft: numpy (single-thread) shape=%s axis=%d", a.shape, axis)
     return np.fft.fft(a, n=n, axis=axis)
 
 
 def ifft(
     a: np.ndarray,
-    n: Optional[int] = None,
+    n: int | None = None,
     axis: int = -1,
-    workers: Optional[int] = None,
+    workers: int | None = None,
 ) -> np.ndarray:
     """Inverse 1-D FFT."""
     w = workers if workers is not None else _WORKERS
@@ -177,7 +185,9 @@ def ifft(
     if _BACKEND == "scipy":
         return _sp_fft.ifft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.ifft(a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
+        return _pw_fft.ifft(
+            a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT
+        )  # type: ignore[union-attr]
     return np.fft.ifft(a, n=n, axis=axis)
 
 
@@ -185,7 +195,7 @@ def fft2(
     a: np.ndarray,
     s: Any = None,
     axes: Any = (-2, -1),
-    workers: Optional[int] = None,
+    workers: int | None = None,
 ) -> np.ndarray:
     """Forward 2-D FFT."""
     w = workers if workers is not None else _WORKERS
@@ -193,15 +203,17 @@ def fft2(
     if _BACKEND == "scipy":
         return _sp_fft.fft2(a, s=s, axes=axes, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.fft2(a, s=s, axes=axes, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
+        return _pw_fft.fft2(
+            a, s=s, axes=axes, threads=_threads, planner_effort=_PLANNER_EFFORT
+        )  # type: ignore[union-attr]
     return np.fft.fft2(a, s=s, axes=axes)
 
 
 def rfft(
     a: np.ndarray,
-    n: Optional[int] = None,
+    n: int | None = None,
     axis: int = -1,
-    workers: Optional[int] = None,
+    workers: int | None = None,
 ) -> np.ndarray:
     """Forward real-input 1-D FFT."""
     w = workers if workers is not None else _WORKERS
@@ -209,13 +221,16 @@ def rfft(
     if _BACKEND == "scipy":
         return _sp_fft.rfft(a, n=n, axis=axis, workers=w)  # type: ignore[union-attr]
     if _BACKEND == "pyfftw":
-        return _pw_fft.rfft(a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT)  # type: ignore[union-attr]
+        return _pw_fft.rfft(
+            a, n=n, axis=axis, threads=_threads, planner_effort=_PLANNER_EFFORT
+        )  # type: ignore[union-attr]
     return np.fft.rfft(a, n=n, axis=axis)
 
 
 # ---------------------------------------------------------------------------
 # Frequency / shift helpers (pure arithmetic — no workers needed)
 # ---------------------------------------------------------------------------
+
 
 def fftfreq(n: int, d: float = 1.0) -> np.ndarray:
     """Frequency axis for length *n* and sample spacing *d*."""

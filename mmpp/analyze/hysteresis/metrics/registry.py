@@ -6,8 +6,14 @@ from collections.abc import Callable
 
 from ...._shared.registry import (
     get_registered_metric as _get_registered_metric,
+)
+from ...._shared.registry import (
     get_registry,
+)
+from ...._shared.registry import (
     iter_registered_metrics as _iter_registered_metrics,
+)
+from ...._shared.registry import (
     register_metric as _register_metric,
 )
 

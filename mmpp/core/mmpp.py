@@ -1,20 +1,17 @@
 import logging
 import os
-import json
 import pickle
 import re
 import sys
-import threading
-import warnings
-import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING, Any, Union
+
 import numpy as np
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..cli.logging_config import get_mmpp_logger
-from .job import ScanResult, ZarrJobResult
 from .constants import FFT_AVAILABLE
+from .job import ScanResult, ZarrJobResult
 
 if TYPE_CHECKING:
     from ..batch_operations import BatchOperations
@@ -57,7 +54,7 @@ class MMPP:
         max_workers: int = 8,
         database_name: str = "mmpy_database",
         debug: bool = False,
-        log_level: Optional[Union[str, int]] = None,
+        log_level: str | int | None = None,
         force_rescan: bool = False,
     ):
         """
@@ -162,7 +159,7 @@ class MMPP:
         return len(self.zarr_results)
 
     def __getitem__(
-        self, index: Union[int, slice]
+        self, index: int | slice
     ) -> Union[ZarrJobResult, "BatchOperations"]:
         """
         Get zarr result by index or batch operations by slice.
