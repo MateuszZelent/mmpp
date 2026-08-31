@@ -25,7 +25,6 @@ def cpp_linear_threshold_metrics_from_params(
 
     _HBAR = 1.054571817e-34
     _E_CHARGE = 1.602176634e-19
-    _GAMMA_E = 1.76085963023e11
     MU0 = 4e-7 * math.pi
 
     Ms = float(params["Ms"])
@@ -38,12 +37,13 @@ def cpp_linear_threshold_metrics_from_params(
     domega0_dJ = float(params.get("domega0_dJ", 0.0))
     d0_scale = float(params.get("d0_scale", 1.0))
     polarity = int(np.sign(float(params.get("polarity", 1))) or 1)
+    gamma = float(params.get("gamma", 1.76085963023e11))
 
-    if Ms <= 0.0 or R <= 0.0 or L <= 0.0:
+    if Ms <= 0.0 or R <= 0.0 or L <= 0.0 or gamma <= 0.0:
         return None
 
     sigma_per_p = _HBAR / (2.0 * _E_CHARGE * L * Ms)
-    chi_prefactor_per_p = _GAMMA_E * sigma_per_p / 2.0
+    chi_prefactor_per_p = gamma * sigma_per_p / 2.0
     chi = chi_scale * (-float(polarity)) * chi_prefactor_per_p * P_model * J
 
     lex = math.sqrt(2.0 * A / (MU0 * Ms * Ms))
@@ -51,15 +51,21 @@ def cpp_linear_threshold_metrics_from_params(
     ratio = R / max(Rc, 1e-10)
     d0 = alpha * (5.0 + 4.0 * math.log(max(ratio, 1.1))) / 8.0
     omega0_eff = omega0 + domega0_dJ * J
-    threshold = d0 * d0_scale * omega0_eff
-    chi_ratio = chi / max(threshold, 1e-30)
+    linear_loss = d0 * d0_scale * omega0_eff
+    if not np.isfinite(linear_loss) or linear_loss <= 0.0:
+        return None
+    chi_ratio = chi / linear_loss
 
     return {
         "chi": float(chi),
-        "threshold": float(threshold),
+        # Backward-compatible key: this is the linear loss rate at the
+        # requested current, not a current-density threshold.
+        "threshold": float(linear_loss),
+        "linear_loss_rate": float(linear_loss),
         "chi_ratio": float(chi_ratio),
         "omega0_eff": float(omega0_eff),
         "P_model": float(P_model),
+        "gamma_rad_s_T": float(gamma),
     }
 
 

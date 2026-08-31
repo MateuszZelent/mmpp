@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, cast
 
 from mmpp.analytical import FieldResolvedCalibration, FieldResolvedCPPThieleModel
@@ -81,12 +82,14 @@ def field_resolved_cpp(
     chirality: int | str | None = 1,
     omega0: float | None = None,
     N: float = 0.25,
+    domega0_dJ: float = 0.0,
     polarizer: tuple[float, float, float] | tuple[float, float] | None = None,
     calibration: FieldResolvedCalibration | None = None,
     torque_thickness: float | None = None,
     fixed_layer_position: str | None = None,
     Lambda: float | None = None,
     epsilonprime: float | None = None,
+    mean_m_dot_p: float = 0.0,
     job_result=None,
     dataset_name: str | None = None,
     slice_info=None,
@@ -102,6 +105,7 @@ def field_resolved_cpp(
     spin_ctx = resolve_cpp_spin_torque_context(
         material=mat_raw,
         geometry=geo,
+        domega0_dJ=float(domega0_dJ),
         torque_thickness=(
             torque_thickness
             if torque_thickness is not None
@@ -127,20 +131,50 @@ def field_resolved_cpp(
             if epsilonprime is not None
             else _resolve_optional_value(material, "epsilonprime")
         ),
+        mean_m_dot_p=float(mean_m_dot_p),
     )
     resolved_polarizer = spin_ctx.metadata.get(
         "polarizer", polarizer or (0.0, 0.0, 1.0)
     )
 
+    resolved_calibration = (
+        calibration if calibration is not None else FieldResolvedCalibration()
+    )
+    resolved_calibration = replace(
+        resolved_calibration,
+        domega_dJ=float(resolved_calibration.domega_dJ)
+        + float(spin_ctx.domega0_dJ_total),
+    )
+
+    # FieldResolvedCPPThieleModel projects p_z explicitly and its G uses the
+    # physical magnetic thickness.  The reduced CPP material already contains
+    # p_z and uses L_stt, so undo that projection once and rescale thickness.
+    if spin_ctx.metadata:
+        p_z = float(spin_ctx.metadata.get("p_z", 0.0))
+        p_model = float(spin_ctx.material.P)
+        if abs(p_z) > 1e-15:
+            p_field_model = (
+                -p_model * float(geo.L) / (float(spin_ctx.torque_thickness) * p_z)
+            )
+        else:
+            p_field_model = 0.0
+        convention = "mumax_reduced_to_dussaux"
+    else:
+        p_field_model = (
+            float(mat_raw.P) * float(geo.L) / float(spin_ctx.torque_thickness)
+        )
+        convention = "direct_dussaux"
+
+    field_material = replace(mat_raw, P=float(p_field_model))
     model = FieldResolvedCPPThieleModel(
-        material=spin_ctx.material,
+        material=field_material,
         geom=geo,
         omega0=omega0_value,
         N=float(N),
         polarity=p,
         chirality=c,
         polarizer=resolved_polarizer,
-        calibration=calibration,
+        calibration=resolved_calibration,
     )
     return FieldResolvedCPPModelAdapter(
         model,
@@ -150,6 +184,9 @@ def field_resolved_cpp(
             "omega0": float(omega0_value),
             "N": float(N),
             "chirality": c,
+            "P_field_model": float(p_field_model),
+            "field_cpp_convention": convention,
+            "torque_thickness": float(spin_ctx.torque_thickness),
             **spin_ctx.metadata,
         },
     )

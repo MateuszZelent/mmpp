@@ -73,6 +73,7 @@ tests/**
 !tests/notebooks/vortex/vortex_dynamics.ipynb
 !tests/test_dispersion_mode_extraction.py
 !tests/test_dispersion_benchmark.py
+!tests/test_vortex_thiele_audit.py
 !tests/test_dispersion_release_gate.py
 !tests/test_vortex_topology.py
 !tests/test_vortex_tracking.py

@@ -1,5 +1,11 @@
 # 🔬 FFT Analysis Documentation
 
+## Vortex dynamics audit
+
+- **[VORTEX_CURRENT_DRIVEN_THIELE_AUDIT_2026-08-31.md](VORTEX_CURRENT_DRIVEN_THIELE_AUDIT_2026-08-31.md)**
+  - physical and numerical qualification of current-driven CPP/CIP Thiele models
+  - MuMax3 convention mapping, stochastic dynamics, autofit, and validity limits
+
 This directory contains detailed technical documentation for MMPP's FFT (Fast Fourier Transform) functionality.
 
 ## 📋 Available Documents

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from . import seeds as _seeds
 from .config import AutofitConfig
 from .diagnostics import (
     assess_fit_success as _assess_fit_success,
@@ -31,8 +32,10 @@ from .features import TrajectoryFeatures, extract_features
 from .losses import compute_loss
 from .optimizers import run_optimization
 from .result import VortexAutofitResult
-from .seeds import select_threshold_aware_seed as _select_threshold_aware_seed
 from .simulation import SimulationContext as _SimulationContext
+
+_build_cpp_threshold_seed_candidates = _seeds.build_cpp_threshold_seed_candidates
+_select_threshold_aware_seed = _seeds.select_threshold_aware_seed
 
 if TYPE_CHECKING:
     from ..interface import VortexInterface

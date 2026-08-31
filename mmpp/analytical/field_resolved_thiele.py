@@ -42,6 +42,7 @@ micromagnetic calibration sweeps.
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
@@ -76,9 +77,12 @@ PolarizerFunc: TypeAlias = Callable[
 
 def current_dc(J_dc: float) -> CurrentFunc:
     """Return a constant current-density waveform J(t) = J_dc [A/m^2]."""
+    value = float(J_dc)
+    if not np.isfinite(value):
+        raise ValueError("J_dc must be finite [A/m^2]")
 
     def _j(_t: float) -> float:
-        return float(J_dc)
+        return value
 
     return _j
 
@@ -218,6 +222,26 @@ class FieldResolvedCalibration:
     Bz_saturation_T: float | None = None
     Bz_mode: Literal["polynomial", "saturation_field"] = "polynomial"
 
+    def __post_init__(self) -> None:
+        nested = {"saturation", "oersted", "thermal", "current_drive", "Bz_mode"}
+        for name, value in vars(self).items():
+            if name in nested or value is None:
+                continue
+            if not np.isfinite(float(value)):
+                raise ValueError(f"calibration coefficient {name} must be finite")
+        if self.d0 is not None and self.d0 < 0.0:
+            raise ValueError("calibration d0 must be non-negative")
+        if self.stt_z_efficiency < 0.0:
+            raise ValueError("stt_z_efficiency must be non-negative")
+        if self.stt_z_sign == 0.0:
+            raise ValueError("stt_z_sign must be non-zero")
+        if self.min_omega_factor < 0.0:
+            raise ValueError("min_omega_factor must be non-negative")
+        if self.Bz_saturation_T is not None and self.Bz_saturation_T <= 0.0:
+            raise ValueError("Bz_saturation_T must be positive when provided")
+        if self.Bz_mode not in {"polynomial", "saturation_field"}:
+            raise ValueError("Bz_mode must be 'polynomial' or 'saturation_field'")
+
 
 @dataclass(frozen=True)
 class CurrentDrive:
@@ -226,6 +250,16 @@ class CurrentDrive:
     area_m2: float | None = None
     current_sign: float = 1.0
     name: str = "CPP uniform"
+
+    def __post_init__(self) -> None:
+        if self.area_m2 is not None and (
+            not np.isfinite(float(self.area_m2)) or self.area_m2 <= 0.0
+        ):
+            raise ValueError("area_m2 must be finite and positive when provided")
+        if not np.isfinite(float(self.current_sign)) or self.current_sign == 0.0:
+            raise ValueError("current_sign must be finite and non-zero")
+        if not str(self.name).strip():
+            raise ValueError("current-drive name must be non-empty")
 
     def area(self, geom: DiskGeometry) -> float:
         """Return effective current area [m^2]."""
@@ -254,6 +288,19 @@ class SaturationCalibration:
     u_edge_max: float = 0.90
     N4: float = 0.0
 
+    def __post_init__(self) -> None:
+        for name, value in vars(self).items():
+            if value is not None and not np.isfinite(float(value)):
+                raise ValueError(f"saturation coefficient {name} must be finite")
+        if self.u_damp_max <= 0.0:
+            raise ValueError("u_damp_max must be positive")
+        if not 0.0 < self.edge_epsilon < 1.0:
+            raise ValueError("edge_epsilon must lie in (0, 1)")
+        if self.K_edge < 0.0:
+            raise ValueError("K_edge must be non-negative")
+        if not 0.0 < self.u_edge_max <= 1.0:
+            raise ValueError("u_edge_max must lie in (0, 1]")
+
 
 @dataclass(frozen=True)
 class OerstedCalibration:
@@ -265,6 +312,13 @@ class OerstedCalibration:
     direct_omega_per_J: float = 0.0
     direct_omega_sat_J: float | None = None
 
+    def __post_init__(self) -> None:
+        for name, value in vars(self).items():
+            if value is not None and not np.isfinite(float(value)):
+                raise ValueError(f"Oersted coefficient {name} must be finite")
+        if self.direct_omega_sat_J is not None and self.direct_omega_sat_J <= 0.0:
+            raise ValueError("direct_omega_sat_J must be positive when provided")
+
 
 @dataclass(frozen=True)
 class ThermalCalibration:
@@ -275,6 +329,15 @@ class ThermalCalibration:
     dMs_dT_over_Ms: float = 0.0
     thermal_sat_I: float | None = None
 
+    def __post_init__(self) -> None:
+        for name, value in vars(self).items():
+            if value is not None and not np.isfinite(float(value)):
+                raise ValueError(f"thermal coefficient {name} must be finite")
+        if self.dT_dI2 < 0.0:
+            raise ValueError("dT_dI2 must be non-negative")
+        if self.thermal_sat_I is not None and self.thermal_sat_I <= 0.0:
+            raise ValueError("thermal_sat_I must be positive when provided")
+
 
 @dataclass(frozen=True)
 class FrequencyExtractionConfig:
@@ -284,6 +347,18 @@ class FrequencyExtractionConfig:
     center: Literal["mean", "conservative_equilibrium", "given"] = "mean"
     method: Literal["geometric", "fft_resistance", "fft_x", "fft_y"] = "geometric"
     window: Literal["hann", "none"] = "hann"
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(float(self.transient_fraction)) or not (
+            0.0 <= self.transient_fraction < 1.0
+        ):
+            raise ValueError("transient_fraction must lie in [0, 1)")
+        if self.center not in {"mean", "conservative_equilibrium", "given"}:
+            raise ValueError("unsupported orbit-center mode")
+        if self.method not in {"geometric", "fft_resistance", "fft_x", "fft_y"}:
+            raise ValueError("unsupported frequency-extraction method")
+        if self.window not in {"hann", "none"}:
+            raise ValueError("window must be 'hann' or 'none'")
 
 
 @dataclass
@@ -421,6 +496,10 @@ class FieldResolvedCPPThieleModel:
         self.d0 = d0_default if self.cal.d0 is None else float(self.cal.d0)
         self.d1 = d1_default if self.cal.d1 is None else float(self.cal.d1)
         self.current_drive = self.cal.current_drive
+        if not np.isfinite(self.d0) or self.d0 < 0.0:
+            raise ValueError("calibrated d0 must be finite and non-negative")
+        if not np.isfinite(self.d1):
+            raise ValueError("calibrated d1 must be finite")
 
         self.kappa0 = self.G0 * self.omega0
         """Zero-field linear stiffness [N/m]."""
@@ -500,7 +579,21 @@ class FieldResolvedCPPThieleModel:
         """Linear angular frequency response ``omega0(J,Bz)`` [rad/s]."""
         omega = self.omega0_Bz(B) + self.direct_current_omega_shift(J, I_A, B)
         floor = max(float(self.cal.min_omega_factor), 0.0) * self.omega0
-        return float(max(omega, floor))
+        if omega < floor:
+            if floor <= 0.0:
+                raise ValueError(
+                    "calibration produced a non-positive gyrotropic frequency"
+                )
+            if not getattr(self, "_omega_floor_warned", False):
+                warnings.warn(
+                    "calibration produced omega0 below its configured validity "
+                    f"floor; clipping to {self.cal.min_omega_factor:g}*omega0",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                self._omega_floor_warned = True
+            return float(floor)
+        return float(omega)
 
     def N_eff(self, B: ExternalFieldLike | ExternalField = 0.0) -> float:
         """Effective nonlinear frequency shift ``N(B)`` [dimensionless]."""
@@ -525,7 +618,13 @@ class FieldResolvedCPPThieleModel:
             + self.polarity * float(self.cal.G_Bz) * bf.Bz_T
             + float(self.cal.G_Bz2) * bf.Bz_T * bf.Bz_T
         )
-        return float(max(self.G0 * scale, 1e-30))
+        value = self.G0 * scale
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(
+                "gyro calibration produced a non-positive G; "
+                "the requested state is outside its valid range"
+            )
+        return float(value)
 
     def damping_ratio(
         self, X: np.ndarray, J: float, B: ExternalFieldLike | ExternalField = 0.0
@@ -547,13 +646,19 @@ class FieldResolvedCPPThieleModel:
             + self.polarity * float(self.cal.D_Bz) * bf.Bz_T
             + float(self.cal.D_ip2) * b2
         )
-        return float(max(d * field_scale, 0.0))
+        value = d * field_scale
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError(
+                "damping calibration produced D/G < 0; "
+                "the requested state is outside its valid range"
+            )
+        return float(value)
 
     def D_coeff(
         self, X: np.ndarray, J: float, B: ExternalFieldLike | ExternalField = 0.0
     ) -> float:  # noqa: ARG002
         """Damping coefficient ``D`` [kg/s]."""
-        return float(max(self.G_mag(X, J, B) * self.damping_ratio(X, J, B), 0.0))
+        return float(self.G_mag(X, J, B) * self.damping_ratio(X, J, B))
 
     # ------------------------------------------------------------------
     # Conservative potential and force terms
@@ -578,8 +683,10 @@ class FieldResolvedCPPThieleModel:
     ) -> np.ndarray:  # noqa: ARG002
         """Linear stiffness tensor ``K2`` [N/m]."""
         bf = self._field(B)
-        G = self.G_mag(X, J, bf)
-        kappa = G * self.omega0_eff(J, bf, I_A)
+        # The potential energy is independent of the kinetic gyrocoefficient.
+        # G0 converts the calibrated angular-frequency law to stiffness; any
+        # G(X,B) correction then acts only in the Thiele kinetic matrix.
+        kappa = self.G0 * self.omega0_eff(J, bf, I_A)
 
         bvec = np.array([bf.Bx_T, bf.By_T], dtype=float)
         b2 = float(np.dot(bvec, bvec))
@@ -604,9 +711,8 @@ class FieldResolvedCPPThieleModel:
         I_A: float | None = None,
     ) -> float:  # noqa: ARG002
         """Quartic stiffness coefficient ``K4`` [N/m]."""
-        G = self.G_mag(X, J, B)
         _, K4_oe, _ = self.oersted_stiffness_terms(J)
-        return float(G * self.omega0_eff(J, B, I_A) * self.N_eff(B) + K4_oe)
+        return float(self.G0 * self.omega0_eff(J, B, I_A) * self.N_eff(B) + K4_oe)
 
     def K6_scalar(
         self,
@@ -616,10 +722,9 @@ class FieldResolvedCPPThieleModel:
         I_A: float | None = None,
     ) -> float:  # noqa: ARG002
         """Sixth-order stiffness coefficient ``K6`` [N/m]."""
-        G = self.G_mag(X, J, B)
         _, _, K6_oe = self.oersted_stiffness_terms(J)
         return float(
-            G * self.omega0_eff(J, B, I_A) * float(self.cal.saturation.N4) + K6_oe
+            self.G0 * self.omega0_eff(J, B, I_A) * float(self.cal.saturation.N4) + K6_oe
         )
 
     def lambda_H(self, J: float, B: ExternalFieldLike | ExternalField = 0.0) -> float:  # noqa: ARG002
@@ -662,8 +767,22 @@ class FieldResolvedCPPThieleModel:
         r2 = float(np.dot(x, x))
         umax2 = max(float(sat.u_edge_max) * float(sat.u_edge_max), 1e-12)
         u2 = r2 / max(self.geom.R * self.geom.R, 1e-30)
-        denom = max(1.0 - u2 / umax2, float(sat.edge_epsilon))
-        return float(0.5 * float(sat.K_edge) * r2 / denom)
+        epsilon = float(sat.edge_epsilon)
+        if not np.isfinite(epsilon) or not 0.0 < epsilon < 1.0:
+            raise ValueError("saturation.edge_epsilon must lie in (0, 1)")
+        raw_denom = 1.0 - u2 / umax2
+        if raw_denom >= epsilon:
+            return float(0.5 * float(sat.K_edge) * r2 / raw_denom)
+
+        # Continue U linearly in r^2 beyond the regularisation point.  This
+        # preserves both U and dU/d(r^2), so grad_edge_potential remains the
+        # exact gradient instead of disagreeing by a factor epsilon.
+        radius2_limit = self.geom.R**2 * umax2 * (1.0 - epsilon)
+        potential_limit = 0.5 * float(sat.K_edge) * radius2_limit / epsilon
+        continuation = (
+            0.5 * float(sat.K_edge) * (r2 - radius2_limit) / (epsilon * epsilon)
+        )
+        return float(potential_limit + continuation)
 
     def grad_edge_potential(self, X: np.ndarray) -> np.ndarray:
         """Gradient of conservative edge barrier [N]."""
@@ -674,7 +793,10 @@ class FieldResolvedCPPThieleModel:
         r2 = float(np.dot(x, x))
         umax2 = max(float(sat.u_edge_max) * float(sat.u_edge_max), 1e-12)
         u2 = r2 / max(self.geom.R * self.geom.R, 1e-30)
-        denom = max(1.0 - u2 / umax2, float(sat.edge_epsilon))
+        epsilon = float(sat.edge_epsilon)
+        if not np.isfinite(epsilon) or not 0.0 < epsilon < 1.0:
+            raise ValueError("saturation.edge_epsilon must lie in (0, 1)")
+        denom = max(1.0 - u2 / umax2, epsilon)
         return float(sat.K_edge) * x / (denom * denom)
 
     def grad_potential(
@@ -772,6 +894,8 @@ class FieldResolvedCPPThieleModel:
         else:
             J = 0.0
             I_A = 0.0
+        if not np.isfinite(J) or (I_A is not None and not np.isfinite(I_A)):
+            raise ValueError("current waveform returned a non-finite value")
         B = (
             ExternalField()
             if B_func is None
@@ -806,7 +930,7 @@ class FieldResolvedCPPThieleModel:
         pvec = self.polarizer if polarizer is None else normalize_polarizer(polarizer)
         G = self.G_mag(x, J, bf)
         D = self.D_coeff(x, J, bf)
-        kappa = G * self.omega0_eff(J, bf)
+        kappa = float(self.K2_tensor(x, J, bf)[0, 0])
         pz = float(pvec[2])
         lam = self.lambda_stt_z * float(J) * pz
         return float((-D * kappa + self.polarity * G * lam) / (D * D + G * G))
@@ -823,7 +947,7 @@ class FieldResolvedCPPThieleModel:
         pvec = self.polarizer if polarizer is None else normalize_polarizer(polarizer)
         G = self.G_mag(x, J, bf)
         D = self.D_coeff(x, J, bf)
-        kappa = G * self.omega0_eff(J, bf)
+        kappa = float(self.K2_tensor(x, J, bf)[0, 0])
         pz = float(pvec[2])
         lam = self.lambda_stt_z * float(J) * pz
         return float((self.polarity * G * kappa + D * lam) / (D * D + G * G))
@@ -902,10 +1026,11 @@ class FieldResolvedCPPThieleModel:
             solve_ivp = None
 
         t0, t1 = float(t_span[0]), float(t_span[1])
-        if not t1 > t0:
-            raise ValueError("t_span must satisfy t_end > t_start")
-        if dt <= 0.0:
-            raise ValueError("dt must be positive")
+        step = float(dt)
+        if not np.isfinite(t0) or not np.isfinite(t1) or not t1 > t0:
+            raise ValueError("t_span must contain finite values with t_end > t_start")
+        if not np.isfinite(step) or step <= 0.0:
+            raise ValueError("dt must be positive and finite")
         if X0 is not None and s0 is not None:
             raise ValueError("provide only one of X0 or s0")
         if X0 is None:
@@ -917,6 +1042,10 @@ class FieldResolvedCPPThieleModel:
             x_init = s_init * self.geom.R
         else:
             x_init = np.asarray(X0, dtype=float).reshape(2)
+        if not np.all(np.isfinite(x_init)):
+            raise ValueError("initial position must contain finite coordinates")
+        if float(np.linalg.norm(x_init)) >= self.geom.R:
+            raise ValueError("initial vortex position must lie inside the disk")
 
         if callable(I_func):
             resolved_I_func = I_func
@@ -928,17 +1057,19 @@ class FieldResolvedCPPThieleModel:
             def resolved_I_func(_t: float) -> float:
                 return I_value
 
-        t_eval: np.ndarray = np.arange(t0, t1 + 0.5 * dt, dt, dtype=float)
+        t_eval: np.ndarray = np.arange(t0, t1 + 0.5 * step, step, dtype=float)
         if t_eval.size and t_eval[-1] > t1:
             t_eval = t_eval[:-1]
         if t_eval.size == 0 or t_eval[0] != t0:
             t_eval = np.insert(t_eval, 0, t0)
+        if t_eval[-1] < t1:
+            t_eval = np.append(t_eval, t1)
 
         events: list[Callable] = []
         if clamp_u is not None:
             clamp = float(clamp_u)
-            if clamp <= 0.0:
-                raise ValueError("clamp_u must be positive when provided")
+            if not np.isfinite(clamp) or not 0.0 < clamp <= 1.0:
+                raise ValueError("clamp_u must lie in (0, 1] when provided")
 
             def _edge_event(_t: float, y: np.ndarray) -> float:
                 return float(np.linalg.norm(y) / self.geom.R - clamp)
@@ -958,7 +1089,7 @@ class FieldResolvedCPPThieleModel:
                 t_eval=t_eval,
                 events=events if events else None,
                 method=method,
-                max_step=ivp_kwargs.pop("max_step", dt),
+                max_step=ivp_kwargs.pop("max_step", step),
                 rtol=ivp_kwargs.pop("rtol", 1e-8),
                 atol=ivp_kwargs.pop("atol", 1e-13),
                 **ivp_kwargs,
@@ -1134,8 +1265,17 @@ class FieldResolvedCPPThieleModel:
         if np.nanmax(np.abs(z)) <= 0.0:
             return float("nan")
         phase = np.unwrap(np.angle(z))
-        omega = np.gradient(phase, t[mask])
-        freq = float(np.mean(omega) / (2.0 * math.pi))
+        selected_t = np.asarray(t[mask], dtype=float)
+        if not np.all(np.isfinite(selected_t)) or np.any(np.diff(selected_t) <= 0.0):
+            return float("nan")
+        # A least-squares phase slope is less sensitive than averaging a
+        # numerical derivative at the two endpoints.
+        centered_t = selected_t - float(np.mean(selected_t))
+        denom = float(np.dot(centered_t, centered_t))
+        if denom <= 0.0:
+            return float("nan")
+        omega = float(np.dot(centered_t, phase - float(np.mean(phase))) / denom)
+        freq = omega / (2.0 * math.pi)
         return freq if signed else abs(freq)
 
     def _fft_peak_hz(
@@ -1149,12 +1289,22 @@ class FieldResolvedCPPThieleModel:
         t = np.asarray(time, dtype=float).reshape(-1)
         if x.size < 3 or t.size != x.size:
             return float("nan")
-        dt = float(np.median(np.diff(t)))
+        diffs = np.diff(t)
+        if not np.all(np.isfinite(diffs)) or np.any(diffs <= 0.0):
+            return float("nan")
+        dt = float(np.median(diffs))
         if not np.isfinite(dt) or dt <= 0.0:
             return float("nan")
+        if float(np.max(np.abs(diffs - dt))) > 1e-3 * dt:
+            uniform_t = np.linspace(float(t[0]), float(t[-1]), int(t.size))
+            x = np.interp(uniform_t, t, x)
+            t = uniform_t
+            dt = float(t[1] - t[0])
         centered = x - float(np.mean(x))
         if window == "hann":
             centered = centered * np.hanning(centered.size)
+        elif window != "none":
+            raise ValueError("window must be 'hann' or 'none'")
         spectrum = np.fft.rfft(centered)
         freqs = np.fft.rfftfreq(centered.size, d=dt)
         power = np.abs(spectrum) ** 2

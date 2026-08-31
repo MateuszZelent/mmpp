@@ -102,6 +102,7 @@ def cpp(
     fixed_layer_position: str | None = None,
     Lambda: float | None = None,
     epsilonprime: float | None = None,
+    mean_m_dot_p: float = 0.0,
     job_result=None,
     dataset_name: str | None = None,
     slice_info=None,
@@ -143,6 +144,7 @@ def cpp(
             if epsilonprime is not None
             else _resolve_optional_value(material, "epsilonprime")
         ),
+        mean_m_dot_p=float(mean_m_dot_p),
     )
 
     model = CPPThieleModel(

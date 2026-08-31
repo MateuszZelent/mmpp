@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -47,6 +49,23 @@ def _attr_float(attrs: Any, keys: tuple[str, ...], default: float) -> float:
         except (TypeError, ValueError):
             continue
     return float(default)
+
+
+def _attr_optional_float(attrs: Any, keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        try:
+            value = attrs.get(key, None)
+        except Exception:  # pragma: no cover - attrs backend-specific
+            value = None
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(number):
+            return number
+    return None
 
 
 def _infer_dataset_nx_ny(
@@ -188,6 +207,12 @@ class ThieleAnalyzer(InteractiveNodeMixin):
             "P": _attr_float(attrs, ("P", "pol", "polarization"), 0.35),
             "A": _attr_float(attrs, ("Aex", "A"), 1.3e-11),
         }
+        gamma = _attr_optional_float(attrs, ("gamma", "Gamma"))
+        beta = _attr_optional_float(attrs, ("beta_nonadiabatic", "beta"))
+        if gamma is not None:
+            payload["gamma"] = gamma
+        if beta is not None:
+            payload["beta_nonadiabatic"] = beta
         if material is not None:
             payload.update({key: float(value) for key, value in material.items()})
         return MaterialParams(**payload)
@@ -200,14 +225,42 @@ class ThieleAnalyzer(InteractiveNodeMixin):
             return geometry
 
         attrs = getattr(self._job, "attrs", {})
+        geometry_payload = dict(geometry or {})
         dx = _attr_float(attrs, ("dx",), 1.0e-9)
         dy = _attr_float(attrs, ("dy",), dx)
+        est_r = geometry_payload.get("R")
+        if est_r is None:
+            est_r = _attr_optional_float(attrs, ("R", "radius"))
+        if est_r is None:
+            diameter = _attr_optional_float(
+                attrs, ("D", "diameter", "disk_diameter", "pillar_diameter")
+            )
+            if diameter is not None:
+                est_r = 0.5 * diameter
+        if est_r is None:
+            area = _attr_optional_float(attrs, ("Area", "area"))
+            if area is not None and area > 0.0:
+                est_r = math.sqrt(area / math.pi)
+
         dims = _infer_dataset_nx_ny(self._job, self._dataset_name)
-        if dims is None:
-            est_r = 50.0e-9
-        else:
+        if est_r is None and dims is not None:
             nx, ny = dims
-            est_r = 0.45 * min(nx * dx, ny * dy)
+            est_r = 0.5 * min(nx * dx, ny * dy)
+            warnings.warn(
+                "Disk radius is absent from metadata; assuming the disk fills "
+                "the smaller simulation-box dimension. Pass geometry={'R': ...} "
+                "for quantitative Thiele predictions.",
+                UserWarning,
+                stacklevel=2,
+            )
+        if est_r is None:
+            est_r = 50.0e-9
+            warnings.warn(
+                "Disk radius is unavailable; using the 50 nm convenience default. "
+                "Pass geometry={'R': ...} for quantitative Thiele predictions.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         dz = _attr_float(attrs, ("dz",), 1.0e-9)
         nz = _attr_float(attrs, ("Nz",), 1.0)
@@ -217,8 +270,13 @@ class ThieleAnalyzer(InteractiveNodeMixin):
             "R": est_r,
             "L": est_l,
         }
-        if geometry is not None:
-            payload.update({key: float(value) for key, value in geometry.items()})
+        payload.update(
+            {
+                key: float(value)
+                for key, value in geometry_payload.items()
+                if key in {"R", "L", "core_diameter"}
+            }
+        )
         return DiskGeometry(**payload)
 
     def _build_cpp_model(
@@ -261,6 +319,7 @@ class ThieleAnalyzer(InteractiveNodeMixin):
         thickness: float | None = None,
         alpha: float | None = None,
         eta: float = 1.0,
+        gamma: float | None = None,
         gamma0: float | None = None,
         kappa: float | None = None,
         center: tuple[float, float] | None = None,
@@ -299,9 +358,28 @@ class ThieleAnalyzer(InteractiveNodeMixin):
         alpha_val = (
             float(alpha) if alpha is not None else _attr_float(attrs, ("alpha",), 0.01)
         )
-        gamma0_val = float(gamma0) if gamma0 is not None else float(GAMMA_E * MU0)
+        if gamma is not None and gamma0 is not None:
+            raise ValueError("provide only one of gamma or gamma0")
+        if gamma is not None:
+            gamma_b = float(gamma)
+        elif gamma0 is not None:
+            # gamma0 is the H-field convention [m/(A s)]; the SI
+            # gyrocoefficient G=2*pi*Ms*L/gamma uses gamma [rad/(s T)].
+            gamma_b = float(gamma0) / MU0
+        else:
+            gamma_b = float(GAMMA_E)
+        if not np.isfinite(gamma_b) or gamma_b <= 0.0:
+            raise ValueError("gamma must be positive and finite [rad/(s T)]")
+        if not np.isfinite(ms) or ms <= 0.0:
+            raise ValueError("Ms must be positive and finite [A/m]")
+        if not np.isfinite(l_thick) or l_thick <= 0.0:
+            raise ValueError("thickness must be positive and finite [m]")
+        if not np.isfinite(alpha_val) or alpha_val < 0.0:
+            raise ValueError("alpha must be finite and non-negative")
+        if not np.isfinite(float(eta)) or float(eta) < 0.0:
+            raise ValueError("eta must be finite and non-negative")
 
-        G = float(2.0 * np.pi * p * w * ms * l_thick / max(gamma0_val, 1e-30))
+        G = float(2.0 * np.pi * p * w * ms * l_thick / gamma_b)
         D = float(abs(alpha_val * eta * G))
 
         if center is None:
@@ -356,7 +434,8 @@ class ThieleAnalyzer(InteractiveNodeMixin):
                 "alpha": alpha_val,
                 "Ms": ms,
                 "thickness": l_thick,
-                "gamma0": gamma0_val,
+                "gamma_rad_s_T": gamma_b,
+                "gamma0_m_A_s": gamma_b * MU0,
                 "dataset_name": self._dataset_name,
             },
         )

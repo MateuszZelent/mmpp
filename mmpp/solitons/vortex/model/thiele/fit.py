@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,7 +15,7 @@ from ..._shared.models import TrajectoryResult
 
 @dataclass
 class ThieleTrajectoryFitResult:
-    """Lightweight fit result for trajectory -> Thiele proxy model."""
+    """Kinematic trajectory summary; not a physical Thiele-parameter fit."""
 
     omega0_rad_s: float
     radius_m: float
@@ -22,6 +23,7 @@ class ThieleTrajectoryFitResult:
     damping: float
     nonlinear_coeff_N: float
     simulated_trajectory: TrajectoryResult
+    is_physical_parameter_fit: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def _repr_html_(self) -> str:
@@ -31,6 +33,7 @@ class ThieleTrajectoryFitResult:
             ("center", f"({self.center[0]:.6g}, {self.center[1]:.6g})"),
             ("damping", f"{self.damping:.6g}"),
             ("nonlinear_coeff_N", f"{self.nonlinear_coeff_N:.6g}"),
+            ("physical parameter fit", "no - kinematic proxy only"),
             (".simulated_trajectory", "TrajectoryResult usable in compare/plot"),
         ]
         return make_simple_card(
@@ -51,19 +54,22 @@ def _estimate_omega_from_trajectory(time: np.ndarray, z: np.ndarray) -> float:
     return float(np.median(omega[finite]))
 
 
-def fit_from_trajectory(*args, **kwargs):
-    """Fit a minimal Thiele-like proxy and return simulated trajectory.
+def summarize_trajectory_kinematics(*args, **kwargs):
+    """Summarize orbit kinematics and synthesize a circular proxy trajectory.
 
-    This is a pragmatic stage-3 fit: it captures orbit center, average radius
-    and angular frequency from the numerical trajectory, then synthesizes a
-    damped circular proxy trajectory for side-by-side comparison.
+    This routine does not identify physical Thiele parameters.  A trajectory
+    alone generally cannot separate spin torque, damping, stiffness, and
+    nonlinear frequency shift.  It only measures orbit center, average radius,
+    and angular rate before synthesizing a damped circular comparison curve.
     """
     if not args:
-        raise TypeError("fit_from_trajectory requires a TrajectoryResult argument")
+        raise TypeError(
+            "summarize_trajectory_kinematics requires a TrajectoryResult argument"
+        )
     trajectory = args[0]
     if not isinstance(trajectory, TrajectoryResult):
         raise TypeError(
-            "fit_from_trajectory expects TrajectoryResult as first argument"
+            "summarize_trajectory_kinematics expects TrajectoryResult as first argument"
         )
 
     damping = float(kwargs.pop("damping", 0.0))
@@ -123,8 +129,17 @@ def fit_from_trajectory(*args, **kwargs):
         damping=float(damping_eff),
         nonlinear_coeff_N=0.0,
         simulated_trajectory=sim_traj,
+        is_physical_parameter_fit=False,
         metadata={
-            "fit_kind": "trajectory_proxy",
+            "fit_kind": "kinematic_trajectory_proxy",
+            "is_physical_parameter_fit": False,
+            "identifiable_quantities": ("center", "mean_radius", "angular_rate"),
+            "non_identifiable_quantities": (
+                "Gilbert damping",
+                "spin-torque efficiency",
+                "stiffness",
+                "nonlinear frequency coefficient",
+            ),
             "source_method": trajectory.method,
             "radius_mean_m": float(radius_mean),
             "radius_initial_m": float(radius_initial),
@@ -132,4 +147,24 @@ def fit_from_trajectory(*args, **kwargs):
     )
 
 
-__all__ = ["ThieleTrajectoryFitResult", "fit_from_trajectory"]
+def fit_from_trajectory(*args, **kwargs):
+    """Deprecated alias for :func:`summarize_trajectory_kinematics`.
+
+    The historical name implied that physical Thiele coefficients were
+    identifiable from one trajectory.  Use the explicit kinematic name, or the
+    multi-current ``fit_omega0_N_to_fJ``/autofit workflow for parameter fitting.
+    """
+    warnings.warn(
+        "fit_from_trajectory returns a kinematic proxy, not fitted physical "
+        "Thiele parameters; use summarize_trajectory_kinematics for clarity",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return summarize_trajectory_kinematics(*args, **kwargs)
+
+
+__all__ = [
+    "ThieleTrajectoryFitResult",
+    "fit_from_trajectory",
+    "summarize_trajectory_kinematics",
+]

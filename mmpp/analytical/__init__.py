@@ -136,7 +136,7 @@ __all__ = [
     "OerstedCalibration",
     "ThermalCalibration",
     "FrequencyExtractionConfig",
-    # Nonlinear STNO dynamics (DBAT 2.0)
+    # Experimental, uncalibrated nonlinear STNO extension
     "nonlinear_stno",
     "STNOParameters",
     "run_all_sweeps_parallel",

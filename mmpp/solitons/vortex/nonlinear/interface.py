@@ -439,6 +439,7 @@ class NonlinearInterfacePlotAccessor(InteractiveNodeMixin):
             "Ms",
             "thickness",
             "eta",
+            "gamma",
             "gamma0",
             "kappa",
             "center",

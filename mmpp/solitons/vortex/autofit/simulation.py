@@ -69,7 +69,7 @@ class SimulationContext:
         self._R = R
 
         nominal_end = self._t0 + self._dt * max(int(time.size) - 1, 1)
-        self._sim_t1 = max(self._t1, nominal_end) + self._dt
+        self._sim_t1 = max(self._t1, nominal_end)
 
         self._current_density = base_params.get("current_density")
         self._current_density_is_callable = callable(self._current_density)
@@ -87,7 +87,7 @@ class SimulationContext:
         """Pre-compute CPP model constants from base params."""
         _hbar = 1.054571817e-34
         _e_charge = 1.602176634e-19
-        _gamma_e = 1.76085963023e11
+        gamma = float(params.get("gamma", 1.76085963023e11))
 
         Ms = float(params["Ms"])
         alpha = float(params["alpha"])
@@ -95,7 +95,15 @@ class SimulationContext:
         R = float(params["R"])
         L = float(params.get("L_stt", params["L"]))
 
-        self._chi_prefactor_per_p = _gamma_e * _hbar / (4.0 * _e_charge * L * Ms)
+        positive = {"Ms": Ms, "A": A, "R": R, "L_stt": L, "gamma": gamma}
+        if any(not np.isfinite(value) or value <= 0.0 for value in positive.values()):
+            raise ValueError(
+                "CPP material and geometry scales must be finite and positive"
+            )
+        if not np.isfinite(alpha) or alpha < 0.0:
+            raise ValueError("alpha must be finite and non-negative")
+
+        self._chi_prefactor_per_p = gamma * _hbar / (4.0 * _e_charge * L * Ms)
 
         mu0 = 4e-7 * math.pi
         lex = math.sqrt(2.0 * A / (mu0 * Ms * Ms))
@@ -106,8 +114,14 @@ class SimulationContext:
         self._d1 = (11.0 / 6.0) * alpha
 
         self._polarity = int(np.sign(float(params.get("polarity", 1))) or 1)
-        self._p_model_base = float(params.get("P_model", params["P"]))
+        self._p_model_base = float(
+            params["P_model"] if "P_model" in params else params["P"]
+        )
         self._domega0_dJ_base = float(params.get("domega0_dJ", 0.0))
+        if not np.isfinite(self._p_model_base) or not np.isfinite(
+            self._domega0_dJ_base
+        ):
+            raise ValueError("P_model and domega0_dJ must be finite")
 
         J = self._current_density
         if callable(J):
@@ -145,13 +159,24 @@ class SimulationContext:
         A = float(params.get("A", 1.3e-11))
         R = float(params["R"])
 
+        positive = {"Ms": Ms, "A": A, "R": R}
+        if any(not np.isfinite(value) or value <= 0.0 for value in positive.values()):
+            raise ValueError(
+                "CIP material and geometry scales must be finite and positive"
+            )
+        if not np.isfinite(alpha) or alpha < 0.0:
+            raise ValueError("alpha must be finite and non-negative")
+        if not np.isfinite(P):
+            raise ValueError("P must be finite")
+
         self._alpha_cip = alpha
-        self._beta_cip = float(
-            params.get("beta_nonadiabatic", params.get("beta", alpha))
-        )
+        beta_value = params.get("beta_nonadiabatic", params.get("beta", alpha))
+        self._beta_cip = alpha if beta_value is None else float(beta_value)
+        if not np.isfinite(self._beta_cip):
+            raise ValueError("beta_nonadiabatic must be finite")
         self._polarity = int(np.sign(float(params.get("polarity", 1))) or 1)
 
-        self._u0_prefactor = -_mu_b * P / (_e_charge * Ms)
+        self._u0_prefactor_per_p = -_mu_b / (_e_charge * Ms)
 
         mu0 = 4e-7 * math.pi
         lex = math.sqrt(2.0 * A / (mu0 * Ms * Ms))
@@ -159,9 +184,18 @@ class SimulationContext:
         ratio = R / max(core_diam, 1e-10)
         self._dG_cip = 0.5 * math.log(max(ratio, 1.1))
 
-        current_dir = tuple(params.get("current_dir", (1.0, 0.0)))
-        norm = math.sqrt(current_dir[0] ** 2 + current_dir[1] ** 2)
-        self._current_dir = (current_dir[0] / norm, current_dir[1] / norm)
+        current_dir = np.asarray(
+            params.get("current_dir", (1.0, 0.0)), dtype=float
+        ).reshape(-1)
+        if current_dir.size != 2 or not np.all(np.isfinite(current_dir)):
+            raise ValueError("current_dir must contain exactly two finite components")
+        norm = float(np.linalg.norm(current_dir))
+        if norm <= 0.0:
+            raise ValueError("current_dir must be non-zero")
+        self._current_dir = (
+            float(current_dir[0] / norm),
+            float(current_dir[1] / norm),
+        )
 
         J = self._current_density
         if callable(J):
@@ -259,6 +293,16 @@ class SimulationContext:
         d0_scale = float(params.get("d0_scale", 1.0))
         clamp_u = float(params.get("clamp_u", 0.999))
 
+        coefficients = (omega0, N, chi_scale, p_model, domega0_dJ, d0_scale)
+        if not all(np.isfinite(value) for value in coefficients):
+            raise ValueError("CPP autofit coefficients must be finite")
+        if omega0 <= 0.0:
+            raise ValueError("omega0 must be positive")
+        if chi_scale <= 0.0 or d0_scale <= 0.0:
+            raise ValueError("chi_scale and d0_scale must be positive")
+        if not 0.0 < clamp_u <= 1.0:
+            raise ValueError("clamp_u must lie in (0, 1]")
+
         J = self._J_const
         chi_val = (
             chi_scale
@@ -268,6 +312,8 @@ class SimulationContext:
             * J
         )
         omega0_eff = omega0 + domega0_dJ * J
+        if omega0_eff <= 0.0:
+            raise ValueError("omega0_eff must remain positive on the fast path")
 
         t_out, sx_out, sy_out = integrate_cpp_rk4(
             self._t0,
@@ -336,9 +382,16 @@ class SimulationContext:
         from ._numba_kernels import integrate_cip_rk4
 
         omega0 = float(params["omega0"])
+        if not np.isfinite(omega0) or omega0 <= 0.0:
+            raise ValueError("omega0 must be finite and positive")
 
         J = self._J_const
-        u0 = self._u0_prefactor * J
+        polarization = float(params.get("P", 0.0))
+        beta_value = params.get("beta_nonadiabatic", params.get("beta", self._beta_cip))
+        beta = self._beta_cip if beta_value is None else float(beta_value)
+        if not np.isfinite(polarization) or not np.isfinite(beta):
+            raise ValueError("P and beta_nonadiabatic must be finite")
+        u0 = self._u0_prefactor_per_p * polarization * J
         u0_cx = u0 * self._current_dir[0]
         u0_cy = u0 * self._current_dir[1]
 
@@ -352,7 +405,7 @@ class SimulationContext:
             u0_cx,
             u0_cy,
             self._alpha_cip,
-            self._beta_cip,
+            beta,
             self._dG_cip,
             float(self._polarity),
             0.0,
@@ -385,8 +438,9 @@ class SimulationContext:
         mat = MaterialParams(
             Ms=float(params["Ms"]),
             alpha=float(params["alpha"]),
-            P=float(params.get("P_model", params["P"])),
+            P=float(params["P_model"] if "P_model" in params else params["P"]),
             A=float(params.get("A", 1.3e-11)),
+            gamma=float(params.get("gamma", 1.76085963023e11)),
         )
         geo = DiskGeometry(R=float(params["R"]), L=float(params["L"]))
         polarity = int(np.sign(float(params.get("polarity", 1))) or 1)
@@ -433,6 +487,8 @@ class SimulationContext:
             alpha=float(params["alpha"]),
             P=float(params["P"]),
             A=float(params.get("A", 1.3e-11)),
+            beta_nonadiabatic=params.get("beta_nonadiabatic", params.get("beta", None)),
+            gamma=float(params.get("gamma", 1.76085963023e11)),
         )
         geo = DiskGeometry(R=float(params["R"]), L=float(params["L"]))
         polarity = int(np.sign(float(params.get("polarity", 1))) or 1)
@@ -443,6 +499,7 @@ class SimulationContext:
             geom=geo,
             omega0=float(params["omega0"]),
             polarity=polarity,
+            current_dir=current_dir,
             field=coerce_field_for_autofit(self._field),
         )
         return model.simulate(
@@ -452,7 +509,6 @@ class SimulationContext:
             if callable(self._current_density)
             else current_dc(float(self._J_const)),
             dt=self._dt,
-            current_dir=current_dir,
             rtol=1e-6,
             atol=1e-9,
         )

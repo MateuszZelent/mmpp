@@ -6,7 +6,7 @@ from ..model.thiele.fit import fit_from_trajectory
 
 
 def fit_thiele_from_trajectory(*args, **kwargs):
-    """Fit Thiele proxy parameters directly from a numerical trajectory."""
+    """Return a kinematic proxy; this does not identify physical coefficients."""
     return fit_from_trajectory(*args, **kwargs)
 
 

@@ -8,7 +8,7 @@ core trajectory calculation in two geometries:
 - **CIP** (Current-In-Plane): adiabatic + non-adiabatic STT (Zhang–Li),
   following Moon et al., arXiv:0809.0952.
 - **CPP** (Current-Perpendicular-to-Plane): Slonczewski STT for vortex STNO,
-  following Guslienko et al., Phys. Rev. B 89, 044412 (2014) / PMC 4134337.
+  following Guslienko et al., Nanoscale Research Letters 9, 386 (2014).
 
 Both models reduce the full micromagnetic dynamics to an ODE for the vortex
 core position **r**(t) = (X(t), Y(t)), which can be integrated numerically
@@ -29,7 +29,7 @@ References
 ----------
 1. A.A. Thiele, Phys. Rev. Lett. 30, 230 (1973).
 2. J.-H. Moon et al., arXiv:0809.0952 — CIP Thiele + STT (Zhang–Li).
-3. K.Y. Guslienko et al., Phys. Rev. B 89 (2014) / PMC 4134337 —
+3. K.Y. Guslienko et al., Nanoscale Research Letters 9, 386 (2014) —
    CPP nonlinear Thiele / vortex STNO auto-oscillator.
 4. V. Novosad et al., arXiv:cond-mat/0503632 — gyrotropic eigenfrequency.
 5. K.Y. Guslienko et al., J. Appl. Phys. 91, 8037 (2002) — eigenfrequencies.
@@ -93,7 +93,9 @@ class MaterialParams:
     alpha : float
         Gilbert damping constant (dimensionless).  Typical Py: 0.005–0.01.
     P : float
-        Spin polarization of the current (dimensionless, 0 < P ≤ 1).
+        Spin polarization of the current (dimensionless).  A signed value is
+        accepted because adapter layers use the sign to encode the effective
+        CPP pumping convention after reducing a MuMax3 torque.
     A : float, optional
         Exchange stiffness [J/m].  Default 1.3×10⁻¹¹ (Permalloy).
         Used only for estimating the exchange length / core radius.
@@ -110,6 +112,29 @@ class MaterialParams:
     A: float = 1.3e-11
     beta_nonadiabatic: float | None = None
     gamma: float = GAMMA_E  # noqa: RUF009
+
+    def __post_init__(self) -> None:
+        values = {
+            "Ms": self.Ms,
+            "alpha": self.alpha,
+            "P": self.P,
+            "A": self.A,
+            "gamma": self.gamma,
+        }
+        if not all(np.isfinite(float(value)) for value in values.values()):
+            raise ValueError("material parameters must be finite")
+        if self.Ms <= 0.0:
+            raise ValueError("Ms must be positive [A/m]")
+        if self.alpha < 0.0:
+            raise ValueError("alpha must be non-negative")
+        if self.A <= 0.0:
+            raise ValueError("A must be positive [J/m]")
+        if self.gamma <= 0.0:
+            raise ValueError("gamma must be positive [rad/(s T)]")
+        if self.beta_nonadiabatic is not None and not np.isfinite(
+            float(self.beta_nonadiabatic)
+        ):
+            raise ValueError("beta_nonadiabatic must be finite when provided")
 
     @property
     def beta(self) -> float:
@@ -144,6 +169,7 @@ class SlonczewskiCPPReduction:
 
     polarizer: tuple[float, float, float]
     p_z: float
+    mean_m_dot_p: float
     Lambda: float
     epsilonprime: float
     fixed_layer_position: str
@@ -177,6 +203,16 @@ class DiskGeometry:
     L: float
     core_diameter: float | None = None
 
+    def __post_init__(self) -> None:
+        if not np.isfinite(float(self.R)) or self.R <= 0.0:
+            raise ValueError("R must be positive and finite [m]")
+        if not np.isfinite(float(self.L)) or self.L <= 0.0:
+            raise ValueError("L must be positive and finite [m]")
+        if self.core_diameter is not None and (
+            not np.isfinite(float(self.core_diameter)) or self.core_diameter <= 0.0
+        ):
+            raise ValueError("core_diameter must be positive and finite [m]")
+
     def Rc(self, mat: MaterialParams | None = None) -> float:
         """Core radius [m].  Uses ``core_diameter/2`` if set, else ``exchange_length``."""
         if self.core_diameter is not None:
@@ -198,6 +234,12 @@ class ExternalField:
     Bx_T: float = 0.0
     By_T: float = 0.0
     Bz_T: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not all(
+            np.isfinite(float(value)) for value in (self.Bx_T, self.By_T, self.Bz_T)
+        ):
+            raise ValueError("magnetic-field components must be finite [T]")
 
     @staticmethod
     def from_any(value: object) -> ExternalField:
@@ -254,6 +296,14 @@ class FieldCalibration:
     seq_per_T: float = 0.0
     chirality: int = 1
 
+    def __post_init__(self) -> None:
+        if not np.isfinite(float(self.domega0_dBz)):
+            raise ValueError("domega0_dBz must be finite")
+        if not np.isfinite(float(self.seq_per_T)):
+            raise ValueError("seq_per_T must be finite")
+        if int(self.chirality) not in (-1, 1):
+            raise ValueError("chirality must be +1 or -1")
+
     def omega0_shift(self, *, field_state: ExternalField, polarity: int) -> float:
         """Polarity-dependent Bz → ω₀ shift:  Δω₀ = p · (dω₀/dBz) · Bz."""
         p = 1 if int(polarity) >= 0 else -1
@@ -305,10 +355,16 @@ def field_ac(
     """Sinusoidal field:  ``B(t) = B_offset + B_amp · sin(2π f t + φ)``."""
     amp = ExternalField.from_any(B_amp)
     off = ExternalField.from_any(B_offset)
-    omega = 2.0 * math.pi * float(f_hz)
+    frequency = float(f_hz)
+    phase_value = float(phase)
+    if not np.isfinite(frequency) or frequency < 0.0:
+        raise ValueError("f_hz must be finite and non-negative")
+    if not np.isfinite(phase_value):
+        raise ValueError("phase must be finite")
+    omega = 2.0 * math.pi * frequency
 
     def _b(t: float) -> ExternalField:
-        s = math.sin(omega * t + float(phase))
+        s = math.sin(omega * t + phase_value)
         return ExternalField(
             off.Bx_T + amp.Bx_T * s,
             off.By_T + amp.By_T * s,
@@ -331,7 +387,12 @@ def field_ac_vector(
     ph = np.asarray(phase, dtype=float).reshape(-1)
     if ph.size < 3:
         raise ValueError("phase must provide three components")
-    omega = 2.0 * math.pi * float(f_hz)
+    frequency = float(f_hz)
+    if not np.all(np.isfinite(ph[:3])):
+        raise ValueError("phase components must be finite")
+    if not np.isfinite(frequency) or frequency < 0.0:
+        raise ValueError("f_hz must be finite and non-negative")
+    omega = 2.0 * math.pi * frequency
 
     def _b(t: float) -> ExternalField:
         arg = omega * float(t)
@@ -354,15 +415,22 @@ def field_rotating_inplane(
 ) -> FieldFunc:
     """Circularly rotating in-plane field ``(Bx, By)`` with optional Bz offset."""
     amp = float(B_amp)
-    omega = 2.0 * math.pi * float(f_hz)
+    frequency = float(f_hz)
+    phase_value = float(phase)
+    bz = float(Bz_offset)
+    if not all(np.isfinite(value) for value in (amp, frequency, phase_value, bz)):
+        raise ValueError("rotating-field parameters must be finite")
+    if frequency < 0.0:
+        raise ValueError("f_hz must be non-negative")
+    omega = 2.0 * math.pi * frequency
     handedness = -1.0 if clockwise else 1.0
 
     def _b(t: float) -> ExternalField:
-        arg = omega * float(t) + float(phase)
+        arg = omega * float(t) + phase_value
         return ExternalField(
             amp * math.cos(arg),
             handedness * amp * math.sin(arg),
-            float(Bz_offset),
+            bz,
         )
 
     return _b
@@ -472,6 +540,72 @@ class ThieleTrajectoryResult(AnalyticalResult):
 
     # ── spectrum properties ────────────────────────────────────
 
+    def compute_spectrum(
+        self,
+        *,
+        transient_fraction: float = 0.0,
+        t_min: float | None = None,
+        signal: Literal["x", "y", "radius"] = "x",
+        window: Literal["hann", "none"] = "hann",
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Compute one-sided FFT power after optional transient rejection.
+
+        Non-uniform samples are resampled to an equidistant time grid.  The
+        returned tuple contains frequency [Hz] and relative FFT power; it is
+        not a calibrated electrical PSD in V²/Hz.
+        """
+        fraction = float(transient_fraction)
+        if not np.isfinite(fraction) or not 0.0 <= fraction < 1.0:
+            raise ValueError("transient_fraction must lie in [0, 1)")
+        if t_min is not None and not np.isfinite(float(t_min)):
+            raise ValueError("t_min must be finite when provided")
+        if signal not in {"x", "y", "radius"}:
+            raise ValueError("signal must be one of {'x', 'y', 'radius'}")
+        if window not in {"hann", "none"}:
+            raise ValueError("window must be 'hann' or 'none'")
+
+        time = np.asarray(self.t, dtype=float)
+        values = {
+            "x": np.asarray(self.x, dtype=float),
+            "y": np.asarray(self.y, dtype=float),
+            "radius": np.asarray(self.r, dtype=float),
+        }[signal]
+        if time.shape != values.shape or not np.all(np.isfinite(time)):
+            raise ValueError(
+                "trajectory time and signal arrays must be finite and aligned"
+            )
+        if not np.all(np.isfinite(values)):
+            raise ValueError("trajectory signal contains non-finite values")
+        if time.size < 4:
+            return np.array([], dtype=float), np.array([], dtype=float)
+        if np.any(np.diff(time) <= 0.0):
+            raise ValueError("trajectory time samples must be strictly increasing")
+
+        start_time = (
+            float(t_min)
+            if t_min is not None
+            else float(time[0] + fraction * (time[-1] - time[0]))
+        )
+        mask = time >= start_time
+        time = time[mask]
+        values = values[mask]
+        n = int(time.size)
+        if n < 4:
+            raise ValueError("spectral window must contain at least four samples")
+
+        dt = float((time[-1] - time[0]) / (n - 1))
+        if not np.allclose(np.diff(time), dt, rtol=1e-6, atol=1e-15 * dt):
+            uniform_time = np.linspace(time[0], time[-1], n)
+            values = np.interp(uniform_time, time, values)
+
+        weights = np.hanning(n) if window == "hann" else np.ones(n, dtype=float)
+        centered = values - np.mean(values)
+        fft_values = np.fft.rfft(centered * weights)
+        frequencies = np.fft.rfftfreq(n, d=dt)
+        power = (np.abs(fft_values) ** 2) / max(float(n), 1.0)
+        power *= 2.0 / max(float(np.mean(weights**2)), 1e-30)
+        return frequencies, power
+
     @property
     def _spectrum_cache(self) -> tuple[np.ndarray, np.ndarray]:
         """Cached (frequencies_hz, power) from windowed FFT of x(t)."""
@@ -480,23 +614,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
 
         cached_result = getattr(self, cache_attr, None)
         if cached_result is None:
-            n = len(self.t)
-            if n < 4:
-                result = (np.array([]), np.array([]))
-            else:
-                dt = float(self.t[1] - self.t[0]) if n > 1 else 1e-11
-                # Use Hann window for spectral leakage reduction
-                window = np.hanning(n)
-                sig = self.x - np.mean(self.x)
-                sig_windowed = sig * window
-                fft_vals = np.fft.rfft(sig_windowed)
-                freqs = np.fft.rfftfreq(n, d=dt)
-
-                # Normalised one-sided power spectrum
-                power = (np.abs(fft_vals) ** 2) / max(float(n), 1.0)
-                power *= 2.0 / max(float(np.mean(window**2)), 1e-30)
-
-                result = (freqs, power)
+            result = self.compute_spectrum()
 
             object.__setattr__(self, cache_attr, result)
             return result
@@ -884,15 +1002,20 @@ def slonczewski_mtj_efficiency(
     Uses:
     ``epsilon = Pol * Lambda^2 / ((Lambda^2 + 1) + (Lambda^2 - 1) * cos_theta)``.
     """
+    pol = float(Pol)
     lam = float(Lambda)
-    if lam <= 0.0:
-        raise ValueError("Lambda must be positive")
-    cth = float(np.clip(cos_theta, -1.0, 1.0))
+    cth = float(cos_theta)
+    if not np.isfinite(pol):
+        raise ValueError("Pol must be finite")
+    if not np.isfinite(lam) or lam <= 0.0:
+        raise ValueError("Lambda must be positive and finite")
+    if not np.isfinite(cth) or not -1.0 <= cth <= 1.0:
+        raise ValueError("cos_theta must be finite and lie in [-1, 1]")
     lam2 = lam * lam
     denom = (lam2 + 1.0) + (lam2 - 1.0) * cth
     if abs(denom) < 1e-30:
         raise ValueError("Degenerate denominator in Slonczewski efficiency")
-    return float(Pol) * lam2 / denom
+    return pol * lam2 / denom
 
 
 def reduce_mumax_slonczewski_cpp(
@@ -903,16 +1026,23 @@ def reduce_mumax_slonczewski_cpp(
     fixed_layer_position: str = "top",
     Lambda: float = 1.0,
     epsilonprime: float = 0.0,
+    mean_m_dot_p: float = 0.0,
 ) -> SlonczewskiCPPReduction:
     """
     Reduce MuMax3 Slonczewski CPP inputs to vortex-CPP effective coefficients.
 
     Notes
     -----
-    The full MuMax3 cell-wise torque depends on ``m·p``.  For the reduced
-    vortex-CPP model we follow the convention already used by the nonlinear
-    dashboard and collapse the polarizer dependence to its out-of-plane
-    component ``p_z``.
+    The full MuMax3 cell-wise efficiency depends on ``m·p``.  Its spatial
+    projection is not determined by the polarizer's ``p_z`` component.  The
+    reduced model therefore takes an explicit representative
+    ``mean_m_dot_p`` (zero by default for a centred circular vortex) and uses
+    ``p_z`` only for the perpendicular pumping projection.
+
+    MuMax3 defines ``epsilon=P/2`` when ``Lambda=1``.  The Guslienko CPP
+    amplitude equation instead uses ``P`` in
+    ``chi=-p*gamma*hbar*P*J/(4*e*L*Ms)``.  Consequently the projected
+    polarization below contains the required factor of two.
     """
     vec: Any = np.asarray(polarizer, dtype=float).reshape(-1)
     if vec.size == 2:
@@ -920,8 +1050,8 @@ def reduce_mumax_slonczewski_cpp(
     if vec.size < 3:
         raise ValueError("polarizer must provide at least 2 or 3 components")
     norm = float(np.linalg.norm(vec[:3]))
-    if norm <= 0.0:
-        raise ValueError("polarizer cannot be a zero vector")
+    if not np.isfinite(norm) or norm <= 0.0:
+        raise ValueError("polarizer must be finite and non-zero")
     p = cast(tuple[float, float, float], tuple(float(v) for v in (vec[:3] / norm)))
 
     pos_token = str(fixed_layer_position).strip().lower()
@@ -935,17 +1065,22 @@ def reduce_mumax_slonczewski_cpp(
         raise ValueError("fixed_layer_position must be 'top' or 'bottom'")
 
     thickness = float(torque_thickness)
-    if thickness <= 0.0:
-        raise ValueError("torque_thickness must be positive")
+    if not np.isfinite(thickness) or thickness <= 0.0:
+        raise ValueError("torque_thickness must be positive and finite")
 
-    epsilon = slonczewski_mtj_efficiency(material.P, float(Lambda), p[2])
+    mean_dot = float(mean_m_dot_p)
+    if not np.isfinite(mean_dot) or not -1.0 <= mean_dot <= 1.0:
+        raise ValueError("mean_m_dot_p must be finite and lie in [-1, 1]")
+    epsilon = slonczewski_mtj_efficiency(material.P, float(Lambda), mean_dot)
     alpha = float(material.alpha)
     eps_prime = float(epsilonprime)
+    if not np.isfinite(eps_prime):
+        raise ValueError("epsilonprime must be finite")
     gilb = 1.0 / (1.0 + alpha * alpha)
     p_z = float(p[2])
 
-    pump_p = current_sign * p_z * gilb * (epsilon + alpha * eps_prime)
-    phase_p = current_sign * p_z * gilb * (eps_prime - alpha * epsilon)
+    pump_p = 2.0 * current_sign * p_z * gilb * (epsilon + alpha * eps_prime)
+    phase_p = 2.0 * current_sign * p_z * gilb * (eps_prime - alpha * epsilon)
     prefactor = (
         float(material.gamma)
         * _HBAR
@@ -965,6 +1100,7 @@ def reduce_mumax_slonczewski_cpp(
     return SlonczewskiCPPReduction(
         polarizer=p,
         p_z=p_z,
+        mean_m_dot_p=mean_dot,
         Lambda=float(Lambda),
         epsilonprime=eps_prime,
         fixed_layer_position=pos_name,
@@ -994,8 +1130,12 @@ def current_dc(J_dc: float) -> Callable[[float], float]:
         ``J_func(t) -> J_dc``
     """
 
+    value = float(J_dc)
+    if not np.isfinite(value):
+        raise ValueError("J_dc must be finite [A/m^2]")
+
     def _j(t: float) -> float:  # noqa: ARG001
-        return J_dc
+        return value
 
     return _j
 
@@ -1025,10 +1165,20 @@ def current_ac(
     callable
         ``J_func(t) -> J_offset + J_amp · sin(2πf·t + phase)``
     """
-    omega = 2.0 * math.pi * f_hz
+    amplitude = float(J_amp)
+    frequency = float(f_hz)
+    offset = float(J_offset)
+    phase_value = float(phase)
+    if not all(
+        np.isfinite(value) for value in (amplitude, frequency, offset, phase_value)
+    ):
+        raise ValueError("AC-current parameters must be finite")
+    if frequency < 0.0:
+        raise ValueError("f_hz must be non-negative")
+    omega = 2.0 * math.pi * frequency
 
     def _j(t: float) -> float:
-        return J_offset + J_amp * math.sin(omega * t + phase)
+        return offset + amplitude * math.sin(omega * t + phase_value)
 
     return _j
 
@@ -1059,8 +1209,17 @@ def current_pulse(
         ``J_func(t) -> J_on`` if ``t_on ≤ t < t_off``, else ``J_base``
     """
 
+    on_value = float(J_on)
+    start = float(t_on)
+    stop = float(t_off)
+    base = float(J_base)
+    if not all(np.isfinite(value) for value in (on_value, start, stop, base)):
+        raise ValueError("pulse parameters must be finite")
+    if stop <= start:
+        raise ValueError("t_off must be greater than t_on")
+
     def _j(t: float) -> float:
-        return J_on if t_on <= t < t_off else J_base
+        return on_value if start <= t < stop else base
 
     return _j
 
@@ -1074,16 +1233,19 @@ def omega0_novosad(mat: MaterialParams, geo: DiskGeometry) -> float:
     r"""
     Estimate the gyrotropic eigenfrequency ω₀ for a vortex in a thin disk.
 
-    Uses the two-vortex (rigid-vortex) analytical result of
-    Guslienko & Metlov / Novosad et al. for the translational mode:
+    Uses the leading thin-disk asymptote of the side-charge-free vortex
+    result used by Novosad et al. for the translational mode:
 
     .. math::
 
-        \omega_0 = \frac{5}{9\pi} \gamma_0 M_s \frac{L}{R}
-                   F_1\!\left(\frac{L}{R}\right)
+        \omega_0 = \frac{5}{9\pi} \gamma \mu_0 M_s \frac{L}{R}.
 
-    where :math:`F_1(\beta) \approx 1 - 3\beta/(8\pi)` for thin disks
-    and :math:`\gamma_0 = \gamma \mu_0`.
+    This is not the full finite-aspect-ratio expression in Eq. (3) of
+    Novosad et al., which contains the magnetostatic integral
+    :math:`F_v(L/R)` and an exchange correction.  In particular, no ad-hoc
+    first-order thickness factor is applied here.  Use a micromagnetically
+    calibrated ``omega0`` whenever quantitative finite-thickness accuracy is
+    required.
 
     Parameters
     ----------
@@ -1103,13 +1265,16 @@ def omega0_novosad(mat: MaterialParams, geo: DiskGeometry) -> float:
     K.Y. Guslienko et al., J. Appl. Phys. 91, 8037 (2002).
     """
     beta = geo.L / geo.R
-    # F_1(β) ≈ 1 − (3/8π)β  for thin disks  (leading-order)
-    F1 = 1.0 - 3.0 * beta / (8.0 * math.pi)
-    if F1 < 0.1:
-        F1 = 0.1  # guard for thick disks where expansion breaks down
+    if beta > 0.2:
+        warnings.warn(
+            "omega0_novosad uses the thin-disk asymptote but L/R "
+            f"is {beta:.3g}; supply a calibrated omega0 for quantitative use.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     gamma0 = mat.gamma * MU0  # rad/(s·T) → rad·m/(s·A)
-    omega0 = (5.0 / (9.0 * math.pi)) * gamma0 * mat.Ms * (geo.L / geo.R) * F1
+    omega0 = (5.0 / (9.0 * math.pi)) * gamma0 * mat.Ms * beta
     return omega0
 
 
@@ -1183,15 +1348,20 @@ class CIPThieleModel:
     ) -> None:
         self.material = material
         self.geom = geom
-        self.omega0 = omega0
+        self.omega0 = float(omega0)
         self.polarity = int(polarity)
         self.field = field if field is not None else ExternalField()
         self.field_cal = field_cal if field_cal is not None else FieldCalibration()
-        assert self.polarity in (1, -1), "polarity must be +1 or -1"
+        if self.polarity not in (1, -1):
+            raise ValueError("polarity must be +1 or -1")
+        if not np.isfinite(self.omega0) or self.omega0 <= 0.0:
+            raise ValueError("omega0 must be a positive finite angular frequency")
 
         # normalise current direction
-        cx, cy = current_dir
+        cx, cy = float(current_dir[0]), float(current_dir[1])
         norm = math.sqrt(cx**2 + cy**2)
+        if not np.isfinite(norm) or norm <= 0.0:
+            raise ValueError("current_dir must be a finite non-zero vector")
         self.current_dir = (cx / norm, cy / norm)
 
         # derived quantities
@@ -1235,7 +1405,9 @@ class CIPThieleModel:
     ) -> np.ndarray:
         """Right-hand side of the CIP Thiele ODE for solve_ivp."""
         X, Y = state
-        J = J_func(t)
+        J = float(J_func(t))
+        if not np.isfinite(J):
+            raise ValueError("J_func returned a non-finite current density")
         u0 = self._u0_prefactor * J
         ux = u0 * self.current_dir[0]
         uy = u0 * self.current_dir[1]
@@ -1245,6 +1417,10 @@ class CIPThieleModel:
         w0 = self._omega0_base + self.field_cal.omega0_shift(
             field_state=B, polarity=self._p
         )
+        if not np.isfinite(w0) or w0 <= 0.0:
+            raise ValueError(
+                "field calibration produced a non-positive gyrotropic frequency"
+            )
         # In-plane equilibrium shift (in real-space coords)
         sx_eq, sy_eq = self.field_cal.s_eq(field_state=B)
         X_eq = sx_eq * self.geom.R
@@ -1311,15 +1487,24 @@ class CIPThieleModel:
         if J_func is None:
             J_func = current_dc(0.0)
 
-        t_eval: np.ndarray = np.arange(t_span[0], t_span[1], dt)
-        # Guard against floating-point overshoot in np.arange
-        if t_eval.size and t_eval[-1] > t_span[1]:
-            t_eval = t_eval[:-1]
+        t0, t1 = float(t_span[0]), float(t_span[1])
+        step = float(dt)
+        initial = np.asarray(r0, dtype=float).reshape(2)
+        if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
+            raise ValueError("t_span must contain finite values with t_end > t_start")
+        if not np.isfinite(step) or step <= 0.0:
+            raise ValueError("dt must be positive and finite")
+        if not np.all(np.isfinite(initial)):
+            raise ValueError("r0 must contain finite coordinates")
+
+        t_eval: np.ndarray = np.arange(t0, t1, step, dtype=float)
+        if t_eval.size == 0 or t_eval[-1] < t1:
+            t_eval = np.append(t_eval, t1)
 
         sol = solve_ivp(
             fun=lambda t, y: self._rhs(t, y, J_func, B_func),
-            t_span=t_span,
-            y0=np.array(r0, dtype=float),
+            t_span=(t0, t1),
+            y0=initial,
             t_eval=t_eval,
             method=method,
             rtol=ivp_kwargs.pop("rtol", 1e-9),
@@ -1413,7 +1598,7 @@ class CPPThieleModel:
 
     References
     ----------
-    K.Y. Guslienko et al., Phys. Rev. B 89, 044412 (2014) / PMC 4134337.
+    K.Y. Guslienko et al., Nanoscale Research Letters 9, 386 (2014).
     """
 
     def __init__(
@@ -1428,20 +1613,41 @@ class CPPThieleModel:
         field_cal: FieldCalibration | None = None,
         chi_scale: float = 1.0,
         torque_thickness: float | None = None,
+        omega0_Oe_per_J: float | None = None,
     ) -> None:
         self.material = material
         self.geom = geom
         self.omega0 = float(omega0)
         self.N = float(N)
         self.polarity = int(polarity)
-        self.domega0_dJ = float(domega0_dJ)
+        if omega0_Oe_per_J is not None and float(domega0_dJ) != 0.0:
+            raise ValueError("provide only one of domega0_dJ or legacy omega0_Oe_per_J")
+        self.domega0_dJ = float(
+            domega0_dJ if omega0_Oe_per_J is None else omega0_Oe_per_J
+        )
         self.field = field if field is not None else ExternalField()
         self.field_cal = field_cal if field_cal is not None else FieldCalibration()
         self.chi_scale = float(chi_scale)
         self.torque_thickness = float(
             geom.L if torque_thickness is None else torque_thickness
         )
-        assert self.polarity in (1, -1), "polarity must be +1 or -1"
+        if self.polarity not in (1, -1):
+            raise ValueError("polarity must be +1 or -1")
+        scalar_values = {
+            "omega0": self.omega0,
+            "N": self.N,
+            "domega0_dJ": self.domega0_dJ,
+            "chi_scale": self.chi_scale,
+            "torque_thickness": self.torque_thickness,
+        }
+        if not all(np.isfinite(value) for value in scalar_values.values()):
+            raise ValueError("CPP model coefficients must be finite")
+        if self.omega0 <= 0.0:
+            raise ValueError("omega0 must be positive [rad/s]")
+        if self.chi_scale <= 0.0:
+            raise ValueError("chi_scale must be positive")
+        if self.torque_thickness <= 0.0:
+            raise ValueError("torque_thickness must be positive [m]")
 
         self._setup()
 
@@ -1560,10 +1766,12 @@ class CPPThieleModel:
     @property
     def J_threshold(self) -> float:
         """Threshold current density for self-oscillation [A/m²]."""
-        # χ(J_th) = d₀ · ω₀_eff(0)  →  J_th = d₀ ω₀_eff / (-p γ σ chi_scale / 2)
-        denom = -float(self.polarity) * self.chi_scale * self._chi_prefactor
+        # For omega0_eff(J)=omega0_eff(0)+domega0_dJ*J, solve the complete
+        # linear-growth condition chi(J_th)-d0*omega0_eff(J_th)=0.
+        pump_slope = -float(self.polarity) * self.chi_scale * self._chi_prefactor
+        denom = pump_slope - self._d0 * self.domega0_dJ
         if abs(denom) < 1e-30:
-            return float("inf")  # Brak STT (P=0) oznacza nieskończony próg wzbudzenia
+            return float("inf")
         return self._d0 * self.omega0_eff(0.0) / denom
 
     def threshold_current_dc(self) -> float:
@@ -1618,10 +1826,12 @@ class CPPThieleModel:
             raise ValueError("target_frequency_hz must be a positive finite value")
 
         if J_bounds is None:
-            j_min = 1.01 * self.threshold_current_dc()
-            j_max = 6.0 * self.threshold_current_dc()
+            threshold = self.threshold_current_dc()
+            candidates = (1.01 * threshold, 6.0 * threshold)
+            j_min, j_max = min(candidates), max(candidates)
         else:
-            j_min, j_max = float(J_bounds[0]), float(J_bounds[1])
+            candidates = (float(J_bounds[0]), float(J_bounds[1]))
+            j_min, j_max = min(candidates), max(candidates)
         if not (np.isfinite(j_min) and np.isfinite(j_max) and j_max > j_min):
             raise ValueError("J_bounds must satisfy finite values with j_max > j_min")
 
@@ -1768,6 +1978,8 @@ class CPPThieleModel:
         u = max(u, 1e-15)  # avoid division by zero
 
         J = float(J_func(t))
+        if not np.isfinite(J):
+            raise ValueError("J_func returned a non-finite current density")
         chi_val = self.chi(J)
         omega0_eff = self.omega0_eff(J, field_state=B)
         if omega0_eff <= 0.0 and not getattr(self, "_omega0_eff_warned", False):
@@ -1809,17 +2021,33 @@ class CPPThieleModel:
 
         clamp_u_value = None if clamp_u is None else float(clamp_u)
         if clamp_u_value is not None and (
-            not np.isfinite(clamp_u_value) or clamp_u_value <= 0.0
+            not np.isfinite(clamp_u_value)
+            or clamp_u_value <= 0.0
+            or clamp_u_value > 1.0
         ):
-            clamp_u_value = None
+            raise ValueError("clamp_u must lie in (0, 1] when provided")
         edge_behavior_token = str(edge_behavior).strip().lower()
         if edge_behavior_token not in {"freeze", "truncate"}:
             raise ValueError("edge_behavior must be one of {'freeze', 'truncate'}")
 
-        t_eval: np.ndarray = np.arange(t_span[0], t_span[1] + 0.5 * dt, dt)
+        t0, t1 = float(t_span[0]), float(t_span[1])
+        step = float(dt)
+        initial = np.asarray(s0, dtype=float).reshape(2)
+        if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
+            raise ValueError("t_span must contain finite values with t_end > t_start")
+        if not np.isfinite(step) or step <= 0.0:
+            raise ValueError("dt must be positive and finite")
+        if not np.all(np.isfinite(initial)):
+            raise ValueError("s0 must contain finite coordinates")
+        if float(np.linalg.norm(initial)) >= 1.0:
+            raise ValueError("s0 must start inside the physical disk (|s0| < 1)")
+
+        t_eval: np.ndarray = np.arange(t0, t1 + 0.5 * step, step)
         # Guard against floating-point overshoot in np.arange
-        if t_eval.size and t_eval[-1] > t_span[1]:
+        if t_eval.size and t_eval[-1] > t1:
             t_eval = t_eval[:-1]
+        if t_eval.size == 0 or t_eval[-1] < t1:
+            t_eval = np.append(t_eval, t1)
 
         user_events = ivp_kwargs.pop("events", None)
         event_registry: list[Any] = []
@@ -1857,8 +2085,8 @@ class CPPThieleModel:
 
         sol = solve_ivp(
             fun=lambda t, y: self._rhs(t, y, J_func, B_func),
-            t_span=t_span,
-            y0=np.array(s0, dtype=float),
+            t_span=(t0, t1),
+            y0=initial,
             t_eval=t_eval,
             events=event_registry if event_registry else None,
             method=method,
@@ -1974,7 +2202,7 @@ class CPPThieleModel:
             },
             metadata={
                 "mode": "CPP",
-                "reference": "Guslienko et al., Phys. Rev. B 89 (2014) / PMC 4134337",
+                "reference": "Guslienko et al., Nanoscale Research Letters 9:386 (2014)",
                 "edge_limited": bool(edge_limited),
                 "edge_hit_time": edge_hit_time,
                 "edge_hit_kind": edge_hit_kind,
@@ -2003,30 +2231,69 @@ class CPPThieleModel:
             J_func = current_dc(0.0)
 
         t0, t1 = float(t_span[0]), float(t_span[1])
-        if t1 <= t0:
-            raise ValueError("t_span must satisfy t_end > t_start")
-        if dt <= 0.0:
-            raise ValueError("dt must be positive")
+        step = float(dt)
+        initial = np.asarray(s0, dtype=float).reshape(2)
+        if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
+            raise ValueError("t_span must contain finite values with t_end > t_start")
+        if not np.isfinite(step) or step <= 0.0:
+            raise ValueError("dt must be positive and finite")
+        if not np.all(np.isfinite(initial)):
+            raise ValueError("s0 must contain finite coordinates")
+        if float(np.linalg.norm(initial)) >= 1.0:
+            raise ValueError("s0 must start inside the physical disk (|s0| < 1)")
+        temperature = float(temperature_k)
+        amplitude_scale = float(noise_scale)
+        clamp = float(clamp_u)
+        if not np.isfinite(temperature) or temperature < 0.0:
+            raise ValueError("temperature_k must be finite and non-negative")
+        if not np.isfinite(amplitude_scale) or amplitude_scale < 0.0:
+            raise ValueError("noise_scale must be finite and non-negative")
+        if not np.isfinite(clamp) or not 0.0 < clamp <= 1.0:
+            raise ValueError("clamp_u must lie in (0, 1]")
 
-        t_eval: np.ndarray = np.arange(t0, t1, dt, dtype=float)
+        t_eval: np.ndarray = np.arange(t0, t1, step, dtype=float)
         if t_eval.size == 0 or t_eval[-1] < t1:
             t_eval = np.append(t_eval, t1)
 
         if diffusion is None:
-            thermal_factor = max(float(temperature_k), 0.0) / 300.0
-            base = abs(self.omega0) * max(float(self.material.alpha), 1e-9) * 1e-4
-            diffusion_eff = max(float(noise_scale), 0.0) * thermal_factor * base
+            gyro = (
+                2.0
+                * math.pi
+                * float(self.material.Ms)
+                * float(self.geom.L)
+                / float(self.material.gamma)
+            )
+            # From <xi_i(t)xi_j(t')>=2*kBT*D*delta_ij*delta(t-t')
+            # and inversion of D*I+p*G*J2, converted to s=X/R.
+            base_diffusion = (
+                _K_B
+                * temperature
+                * self._d0
+                / (gyro * (1.0 + self._d0**2) * self.geom.R**2)
+            )
+            diffusion_eff = amplitude_scale**2 * base_diffusion
+            diffusion_model = "thiele_fdt"
         else:
-            diffusion_eff = max(float(diffusion), 0.0)
+            diffusion_eff = float(diffusion)
+            if not np.isfinite(diffusion_eff) or diffusion_eff < 0.0:
+                raise ValueError("diffusion must be finite and non-negative")
+            gyro = (
+                2.0
+                * math.pi
+                * float(self.material.Ms)
+                * float(self.geom.L)
+                / float(self.material.gamma)
+            )
+            diffusion_model = "explicit"
 
         rng = np.random.default_rng(seed)
-        sigma = math.sqrt(max(2.0 * diffusion_eff * dt, 0.0))
 
         state = np.zeros((t_eval.size, 2), dtype=float)
-        state[0, :] = np.asarray(s0, dtype=float)
+        state[0, :] = initial
 
         for idx in range(1, t_eval.size):
             t_prev = float(t_eval[idx - 1])
+            h = float(t_eval[idx] - t_eval[idx - 1])
             prev = state[idx - 1, :]
 
             # Resolve field at this time-step
@@ -2044,8 +2311,8 @@ class CPPThieleModel:
             omega_val = w0_eff * (1.0 + self.N * u_eff**2)
             radial = chi_val - self.d(u_eff) * omega_val
 
-            theta = float(self.polarity) * omega_val * dt
-            grow = math.exp(radial * dt)
+            theta = float(self.polarity) * omega_val * h
+            grow = math.exp(radial * h)
             cth = math.cos(theta)
             sth = math.sin(theta)
 
@@ -2054,13 +2321,14 @@ class CPPThieleModel:
             y_rot = sth * s_rel[0] + cth * s_rel[1]
             deterministic = s_eq + grow * np.array([x_rot, y_rot], dtype=float)
 
+            sigma = math.sqrt(2.0 * diffusion_eff * h)
             noise = sigma * rng.standard_normal(2)
             proposal = deterministic + noise
 
             # Clamp: w bezwzględnym układzie dysku
             u_abs = float(np.linalg.norm(proposal))
-            if u_abs >= float(clamp_u):
-                proposal = proposal * (float(clamp_u) / max(u_abs, 1e-30))
+            if u_abs >= clamp:
+                proposal = proposal * (clamp / max(u_abs, 1e-30))
 
             state[idx, :] = proposal
 
@@ -2095,10 +2363,13 @@ class CPPThieleModel:
                 "mode": "CPP-SDE",
                 "reference": "Guslienko et al. + Langevin reduction",
                 "diffusion": float(diffusion_eff),
-                "temperature_k": float(temperature_k),
-                "noise_scale": float(noise_scale),
+                "diffusion_units": "normalized_coordinate^2/s",
+                "diffusion_model": diffusion_model,
+                "gyrocoefficient_kg_per_s": float(gyro),
+                "temperature_k": temperature,
+                "noise_scale": amplitude_scale,
                 "seed": seed,
-                "dt": float(dt),
+                "dt": step,
             },
         )
 
@@ -2154,6 +2425,7 @@ def fit_omega0_N_to_fJ(
     fit_chi_scale: bool = False,
     initial_chi_scale: float = 1.0,
     allow_edge: bool = False,
+    domega0_dJ_bounds: tuple[float, float] = (-0.1, 0.1),
 ) -> ThieleFJFitResult:
     """
     Fit ``omega0``, ``N`` (optionally ``chi_scale``) of CPP Thiele model to measured ``f(J)`` points.
@@ -2162,14 +2434,28 @@ def fit_omega0_N_to_fJ(
     f = np.asarray(f_data_hz, dtype=float).ravel()
     if j.size != f.size:
         raise ValueError("J_data and f_data_hz must have the same length")
-    if j.size < 3:
-        raise ValueError("At least 3 points are required for fitting")
+    n_parameters = 2 + int(fit_domega0_dJ) + int(fit_chi_scale)
+    min_points = max(3, n_parameters + 1)
+    if j.size < min_points:
+        raise ValueError(
+            f"At least {min_points} points are required for {n_parameters} fitted "
+            "parameters"
+        )
 
     finite = np.isfinite(j) & np.isfinite(f)
     j = j[finite]
     f = f[finite]
-    if j.size < 3:
-        raise ValueError("At least 3 finite points are required for fitting")
+    if j.size < min_points:
+        raise ValueError(
+            f"At least {min_points} finite points are required for "
+            f"{n_parameters} fitted parameters"
+        )
+    if np.any(f <= 0.0):
+        raise ValueError("f_data_hz must contain positive frequencies")
+    if np.unique(j).size < min_points:
+        raise ValueError(
+            f"At least {min_points} distinct current-density values are required"
+        )
 
     omega0_init = float(
         omega0_novosad(material, geom) if initial_omega0 is None else initial_omega0
@@ -2177,6 +2463,13 @@ def fit_omega0_N_to_fJ(
     n_init = float(initial_N)
     dj_init = float(initial_domega0_dJ)
     chi_init = float(initial_chi_scale)
+    if not all(
+        np.isfinite(value) for value in (omega0_init, n_init, dj_init, chi_init)
+    ):
+        raise ValueError("initial fit parameters must be finite")
+    if omega0_init <= 0.0 or chi_init <= 0.0:
+        raise ValueError("initial_omega0 and initial_chi_scale must be positive")
+    frequency_scale = max(float(np.median(np.abs(f))), 1.0)
 
     def _objective(params: np.ndarray) -> float:
         omega0_val = max(float(params[0]), 1e6)
@@ -2202,64 +2495,104 @@ def fit_omega0_N_to_fJ(
             chi_val,
             allow_edge=allow_edge,
         )
-        mask = np.isfinite(f_pred)
-        if np.count_nonzero(mask) < 2:
+        if not np.all(np.isfinite(f_pred)):
             return 1e30
-        residual = f_pred[mask] - f[mask]
+        residual = (f_pred - f) / frequency_scale
         return float(np.mean(residual**2))
 
     x0 = np.array([omega0_init, n_init], dtype=float)
     bounds = [(1e6, 1e14), (-5.0, 5.0)]
     if fit_domega0_dJ:
+        dj_lower, dj_upper = sorted(
+            (float(domega0_dJ_bounds[0]), float(domega0_dJ_bounds[1]))
+        )
+        if not (
+            np.isfinite(dj_lower) and np.isfinite(dj_upper) and dj_upper > dj_lower
+        ):
+            raise ValueError("domega0_dJ_bounds must be finite and non-degenerate")
+        if not dj_lower <= dj_init <= dj_upper:
+            raise ValueError("initial_domega0_dJ must lie within domega0_dJ_bounds")
         x0 = np.append(x0, dj_init)
-        bounds.append((-1e-6, 1e-6))
+        bounds.append((dj_lower, dj_upper))
     if fit_chi_scale:
         x0 = np.append(x0, chi_init)
         bounds.append((0.1, 20.0))
 
-    # Coarse global scan to avoid poor local minima.
+    # Deterministic bounded search to avoid poor local minima without the
+    # combinatorial 1.4M-evaluation grid used by the historical four-parameter
+    # path.  The budget stays bounded when optional parameters are enabled.
     omega_low = max(1e6, 0.2 * omega0_init)
     omega_high = max(omega_low * 1.01, 2.5 * omega0_init)
-    omega_grid = np.geomspace(omega_low, omega_high, 55)
-    n_grid = np.linspace(-2.0, 2.0, 81)
-    dj_grid = np.array([dj_init], dtype=float)
-    chi_grid = np.array([chi_init], dtype=float)
-    if fit_domega0_dJ:
-        dj_grid = np.linspace(-3e-7, 3e-7, 13)
-    if fit_chi_scale:
-        chi_grid = np.linspace(0.5, 10.0, 25)
+    omega_grid = np.geomspace(omega_low, omega_high, 25)
+    n_grid = np.linspace(-2.0, 2.0, 31)
 
     best = x0.copy()
     best_cost = float(_objective(best))
+    n_evaluations = 1
     for omega_val in omega_grid:
         for n_val in n_grid:
-            for dj_val in dj_grid:
-                for chi_val in chi_grid:
-                    candidate = np.array([omega_val, n_val], dtype=float)
-                    if fit_domega0_dJ:
-                        candidate = np.append(candidate, dj_val)
-                    if fit_chi_scale:
-                        candidate = np.append(candidate, chi_val)
-                    score = float(_objective(candidate))
-                    if score < best_cost:
-                        best_cost = score
-                        best = candidate
+            candidate = x0.copy()
+            candidate[0] = omega_val
+            candidate[1] = n_val
+            score = float(_objective(candidate))
+            n_evaluations += 1
+            if score < best_cost:
+                best_cost = score
+                best = candidate
 
-    success = False
-    status = "coarse_grid"
+    if fit_domega0_dJ or fit_chi_scale:
+        rng = np.random.default_rng(0)
+        for _ in range(2048):
+            candidate = x0.copy()
+            candidate[0] = math.exp(
+                rng.uniform(math.log(omega_low), math.log(omega_high))
+            )
+            candidate[1] = rng.uniform(-2.0, 2.0)
+            idx = 2
+            if fit_domega0_dJ:
+                candidate[idx] = rng.uniform(dj_lower, dj_upper)
+                idx += 1
+            if fit_chi_scale:
+                candidate[idx] = math.exp(rng.uniform(math.log(0.1), math.log(20.0)))
+            score = float(_objective(candidate))
+            n_evaluations += 1
+            if score < best_cost:
+                best_cost = score
+                best = candidate
+
+    success = bool(np.isfinite(best_cost) and best_cost < 1e30)
+    status = "bounded_deterministic_search"
     try:
         from scipy.optimize import minimize
 
-        opt = minimize(_objective, best, method="L-BFGS-B", bounds=bounds)
+        scales = np.array(
+            [
+                max(omega0_init, 1e6),
+                1.0,
+                *([max(abs(dj_lower), abs(dj_upper), 1e-6)] if fit_domega0_dJ else []),
+                *([1.0] if fit_chi_scale else []),
+            ],
+            dtype=float,
+        )
+        scaled_bounds = [
+            (lower / scale, upper / scale)
+            for (lower, upper), scale in zip(bounds, scales)
+        ]
+        opt = minimize(
+            lambda scaled: _objective(np.asarray(scaled, dtype=float) * scales),
+            best / scales,
+            method="L-BFGS-B",
+            bounds=scaled_bounds,
+        )
         if opt.success and np.isfinite(opt.fun):
-            best = np.asarray(opt.x, dtype=float)
+            best = np.asarray(opt.x, dtype=float) * scales
             best_cost = float(opt.fun)
             success = True
             status = str(opt.message)
         else:
-            status = f"scipy_local_failed: {opt.message}"
+            status = f"{status}; scipy_local_failed: {opt.message}"
     except Exception:
-        status = "scipy_unavailable"
+        status = f"{status}; scipy_unavailable"
 
     omega0_fit = max(float(best[0]), 1e6)
     n_fit = float(best[1])
@@ -2285,10 +2618,12 @@ def fit_omega0_N_to_fJ(
     )
 
     valid_mask = np.isfinite(f_fit)
-    if np.count_nonzero(valid_mask) >= 1:
-        rmse = float(np.sqrt(np.mean((f_fit[valid_mask] - f[valid_mask]) ** 2)))
+    if np.all(valid_mask):
+        rmse = float(np.sqrt(np.mean((f_fit - f) ** 2)))
     else:
         rmse = float("nan")
+        success = False
+        status = f"{status}; invalid_predictions"
 
     return ThieleFJFitResult(
         model_name="CPP Thiele f(J) fit",
@@ -2309,11 +2644,15 @@ def fit_omega0_N_to_fJ(
             "initial_N": n_init,
             "fit_domega0_dJ": bool(fit_domega0_dJ),
             "fit_chi_scale": bool(fit_chi_scale),
+            "domega0_dJ_bounds": tuple(float(value) for value in domega0_dJ_bounds),
         },
         metadata={
             "allow_edge": bool(allow_edge),
             "n_points": int(j.size),
-            "best_cost": float(best_cost),
+            "n_fitted_parameters": int(n_parameters),
+            "normalized_mean_square_cost": float(best_cost),
+            "frequency_scale_hz": float(frequency_scale),
+            "search_evaluations": int(n_evaluations),
         },
     )
 

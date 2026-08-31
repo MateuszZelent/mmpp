@@ -1,6 +1,8 @@
 """
-Nonlinear Spin-Torque Nano-Oscillator (STNO) Module
-Implements the Dual Back-Action Theory (DBAT 2.0) for broadband dynamics.
+Experimental nonlinear Spin-Torque Nano-Oscillator (STNO) extension.
+
+The additional 4D back-action terms are phenomenological and uncalibrated;
+they are not the validated rigid-vortex Thiele baseline.
 """
 
 from .analyzer import SpectrumAnalyzer

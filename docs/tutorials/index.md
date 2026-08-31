@@ -7,6 +7,7 @@ Task-oriented guides for everyday `mmpp` usage.
 
 getting_started
 soliton_analysis
+vortex_thiele_dynamics
 fft_spectrum_analysis
 dispersion_analysis
 batch_operations

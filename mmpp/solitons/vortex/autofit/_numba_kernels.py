@@ -116,8 +116,18 @@ def integrate_cpp_rk4(
     t_out : ndarray (n_steps,)
     sx_out, sy_out : ndarray (n_steps,)
     """
-    n_steps = int((t1 - t0) / dt_out) + 1
-    dt_sub = dt_out / float(substeps)
+    if not math.isfinite(t0) or not math.isfinite(t1) or t1 <= t0:
+        raise ValueError("t1 must be finite and greater than t0")
+    if not math.isfinite(dt_out) or dt_out <= 0.0:
+        raise ValueError("dt_out must be finite and positive")
+    if substeps < 1:
+        raise ValueError("substeps must be at least 1")
+
+    duration = t1 - t0
+    n_full = int(math.floor(duration / dt_out))
+    remainder = duration - float(n_full) * dt_out
+    n_intervals = n_full if remainder <= 1e-12 * dt_out else n_full + 1
+    n_steps = n_intervals + 1
 
     t_out = np.empty(n_steps, dtype=np.float64)
     sx_out = np.empty(n_steps, dtype=np.float64)
@@ -131,6 +141,14 @@ def integrate_cpp_rk4(
         t_out[i] = t
         sx_out[i] = sx
         sy_out[i] = sy
+
+        if i == n_steps - 1:
+            break
+
+        t_next = t0 + float(i + 1) * dt_out
+        if i == n_steps - 2 or t_next > t1:
+            t_next = t1
+        dt_sub = (t_next - t) / float(substeps)
 
         for _s in range(substeps):
             k1x, k1y = _cpp_rhs(
@@ -178,8 +196,7 @@ def integrate_cpp_rk4(
 
             sx += (dt_sub / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x)
             sy += (dt_sub / 6.0) * (k1y + 2.0 * k2y + 2.0 * k3y + k4y)
-
-            t += dt_sub
+        t = t_next
 
     return t_out, sx_out, sy_out
 
@@ -241,8 +258,18 @@ def integrate_cip_rk4(
     -------
     t_out, X_out, Y_out : ndarray (n_steps,)
     """
-    n_steps = int((t1 - t0) / dt_out) + 1
-    dt_sub = dt_out / float(substeps)
+    if not math.isfinite(t0) or not math.isfinite(t1) or t1 <= t0:
+        raise ValueError("t1 must be finite and greater than t0")
+    if not math.isfinite(dt_out) or dt_out <= 0.0:
+        raise ValueError("dt_out must be finite and positive")
+    if substeps < 1:
+        raise ValueError("substeps must be at least 1")
+
+    duration = t1 - t0
+    n_full = int(math.floor(duration / dt_out))
+    remainder = duration - float(n_full) * dt_out
+    n_intervals = n_full if remainder <= 1e-12 * dt_out else n_full + 1
+    n_steps = n_intervals + 1
 
     t_out = np.empty(n_steps, dtype=np.float64)
     X_out = np.empty(n_steps, dtype=np.float64)
@@ -256,6 +283,14 @@ def integrate_cip_rk4(
         t_out[i] = t
         X_out[i] = X
         Y_out[i] = Y
+
+        if i == n_steps - 1:
+            break
+
+        t_next = t0 + float(i + 1) * dt_out
+        if i == n_steps - 2 or t_next > t1:
+            t_next = t1
+        dt_sub = (t_next - t) / float(substeps)
 
         for _s in range(substeps):
             k1x, k1y = _cip_rhs(
@@ -306,8 +341,7 @@ def integrate_cip_rk4(
 
             X += (dt_sub / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x)
             Y += (dt_sub / 6.0) * (k1y + 2.0 * k2y + 2.0 * k3y + k4y)
-
-            t += dt_sub
+        t = t_next
 
     return t_out, X_out, Y_out
 

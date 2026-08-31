@@ -7,6 +7,7 @@ import glob
 import math
 import os
 import re
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -70,6 +71,11 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "FreeLayerThickness": ("FreeLayerThickness", "free_layer_thickness"),
     "polarizer": ("polarizer", "fixed_layer_vector"),
     "p_z": ("p_z", "pz", "polarizer_z"),
+    "mean_m_dot_p": (
+        "mean_m_dot_p",
+        "slonczewski_cos_theta",
+        "mean_cos_theta",
+    ),
     "x0": ("x0", "x0_m", "initial_x", "x_init", "core_x0"),
     "y0": ("y0", "y0_m", "initial_y", "y_init", "core_y0"),
     "x0_nm": ("x0_nm", "initial_x_nm"),
@@ -379,8 +385,15 @@ def _derive_geometry(
                     if len(shape) >= 4:
                         nx = int(shape[-2])
                         ny = int(shape[-3])
-                        resolved["R"] = 0.45 * min(float(dx) * nx, float(dy) * ny)
-                        sources["R"] = "dataset_shape+cell"
+                        resolved["R"] = 0.5 * min(float(dx) * nx, float(dy) * ny)
+                        sources["R"] = "dataset_shape+cell (full-box assumption)"
+                        warnings.warn(
+                            "Disk radius is absent from resolved metadata; assuming "
+                            "the disk fills the smaller simulation-box dimension. "
+                            "Provide R, D, or Area for quantitative Thiele predictions.",
+                            UserWarning,
+                            stacklevel=2,
+                        )
                 except Exception:
                     pass
 
@@ -841,6 +854,7 @@ def _resolve_cpp_spin_torque_terms(
         "Lambda",
         "epsilonprime",
         "FixedLayerPosition",
+        "mean_m_dot_p",
     )
     explicit_manual_p = sources.get("P", "").startswith("params:")
     explicit_manual_slonczewski = any(
@@ -853,8 +867,8 @@ def _resolve_cpp_spin_torque_terms(
         # Check whether any Slonczewski-specific parameter was explicitly
         # provided from any source (params/attrs/mx3, not from a default).
         # If none were provided, the user intends P as the direct Guslienko
-        # spin-polarization — skip the full Slonczewski reduction which would
-        # halve P via ε(Λ=1, p_z=1) = P/2.
+        # spin-polarization.  Skip the MuMax reduction because its angle,
+        # fixed-layer position and field-like term are otherwise undefined.
         has_explicit_slonczewski = any(
             key in resolved and not sources.get(key, "").startswith("default")
             for key in _SLON_KEYS
@@ -883,6 +897,8 @@ def _resolve_cpp_spin_torque_terms(
         sources["Lambda"] = "default"
         resolved["epsilonprime"] = 0.0
         sources["epsilonprime"] = "default"
+        resolved["mean_m_dot_p"] = 0.0
+        sources["mean_m_dot_p"] = "default:centered_vortex"
         if "domega0_dJ" not in resolved:
             resolved["domega0_dJ"] = 0.0
             sources["domega0_dJ"] = "default:0.0"
@@ -936,6 +952,9 @@ def _resolve_cpp_spin_torque_terms(
     if "epsilonprime" not in resolved:
         resolved["epsilonprime"] = 0.0
         sources["epsilonprime"] = "default"
+    if "mean_m_dot_p" not in resolved:
+        resolved["mean_m_dot_p"] = 0.0
+        sources["mean_m_dot_p"] = "default:centered_vortex"
 
     resolved["P_raw"] = float(_coerce_scalar(resolved["P"]))
     sources["P_raw"] = sources.get("P", "resolved:P")
@@ -953,10 +972,13 @@ def _resolve_cpp_spin_torque_terms(
         fixed_layer_position=fixed_layer_position,
         Lambda=float(_coerce_scalar(resolved["Lambda"])),
         epsilonprime=float(_coerce_scalar(resolved["epsilonprime"])),
+        mean_m_dot_p=float(_coerce_scalar(resolved["mean_m_dot_p"])),
     )
 
     resolved["P_eff"] = reduction.epsilon
-    sources["P_eff"] = f"{sources['P']}+{sources['Lambda']}+{sources['p_z']} -> P_eff"
+    sources["P_eff"] = (
+        f"{sources['P']}+{sources['Lambda']}+{sources['mean_m_dot_p']} -> P_eff"
+    )
     resolved["P_model"] = reduction.pump_polarization
     sources["P_model"] = (
         f"{sources['P_eff']}+{sources['alpha']}+{sources['epsilonprime']}+"

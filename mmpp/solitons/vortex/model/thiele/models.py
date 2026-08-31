@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -51,6 +53,23 @@ def _attr_float(attrs: Any, keys: tuple[str, ...], default: float) -> float:
         except (TypeError, ValueError):
             continue
     return float(default)
+
+
+def _attr_optional_float(attrs: Any, keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        try:
+            value = attrs.get(key, None)
+        except Exception:
+            value = None
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(number):
+            return number
+    return None
 
 
 def _payload_float(source: Any, keys: tuple[str, ...], default: float) -> float:
@@ -116,31 +135,74 @@ def infer_disk_geometry(
         return geom
 
     attrs = getattr(job_result, "attrs", {}) if job_result is not None else {}
+    geometry_payload = dict(geom or {})
     dx = _attr_float(attrs, ("dx",), 1e-9)
     dy = _attr_float(attrs, ("dy",), dx)
 
-    radius_guess = 50e-9
-    if job_result is not None and dataset_name:
+    radius_guess = geometry_payload.get("R")
+    if radius_guess is None:
+        radius_guess = _attr_optional_float(attrs, ("R", "radius"))
+    if radius_guess is None:
+        diameter = _attr_optional_float(
+            attrs, ("D", "diameter", "disk_diameter", "pillar_diameter")
+        )
+        if diameter is not None:
+            radius_guess = 0.5 * diameter
+    if radius_guess is None:
+        area = _attr_optional_float(attrs, ("Area", "area"))
+        if area is not None and area > 0.0:
+            radius_guess = math.sqrt(area / math.pi)
+
+    if radius_guess is None and job_result is not None and dataset_name:
         try:
             dataset = getattr(job_result, dataset_name)
             shape = tuple(getattr(dataset, "shape", ()))
             if len(shape) >= 4:
                 nx = int(shape[-2])
                 ny = int(shape[-3])
-                radius_guess = 0.45 * min(nx * dx, ny * dy)
+                radius_guess = 0.5 * min(nx * dx, ny * dy)
+                warnings.warn(
+                    "Disk radius is absent from metadata; assuming the disk "
+                    "fills the smaller simulation-box dimension. Pass geom={'R': ...} "
+                    "for quantitative Thiele predictions.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         except Exception:
             pass
+    if radius_guess is None:
+        radius_guess = 50e-9
+        warnings.warn(
+            "Disk radius is unavailable; using the 50 nm convenience default. "
+            "Pass geom={'R': ...} for quantitative Thiele predictions.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     dz = _attr_float(attrs, ("dz",), 1e-9)
     nz = _attr_float(attrs, ("Nz",), 1.0)
-    thickness_guess = _attr_float(attrs, ("thickness", "L", "d"), dz * max(nz, 1.0))
+    thickness_guess = float(
+        geometry_payload.get(
+            "L",
+            _attr_float(
+                attrs,
+                ("thickness", "L", "d", "FreeLayerThickness"),
+                dz * max(nz, 1.0),
+            ),
+        )
+    )
 
     payload = {
         "R": radius_guess,
         "L": thickness_guess,
     }
-    if geom is not None:
-        payload.update({key: float(value) for key, value in geom.items()})
+    payload.update(
+        {
+            key: float(value)
+            for key, value in geometry_payload.items()
+            if key in {"R", "L", "core_diameter"}
+        }
+    )
     return DiskGeometry(**payload)
 
 
@@ -200,7 +262,10 @@ def resolve_current_waveform(
                                 return current_dc(float(np.mean(values)))
                 except Exception:
                     pass
-            return current_dc(0.0)
+            raise ValueError(
+                "J_func='auto_from_table' could not resolve a current-density "
+                "column; pass J_func explicitly instead of silently using zero."
+            )
         raise ValueError(
             "Unsupported J_func string value. Use callable, float, or 'auto_from_table'."
         )
@@ -217,6 +282,7 @@ def resolve_cpp_spin_torque_context(
     fixed_layer_position: str | None = None,
     Lambda: float | None = None,
     epsilonprime: float | None = None,
+    mean_m_dot_p: float = 0.0,
 ) -> CPPSpinTorqueContext:
     """Resolve effective MuMax-style CPP Slonczewski coefficients for the adapter."""
     if (
@@ -245,6 +311,7 @@ def resolve_cpp_spin_torque_context(
         else fixed_layer_position,
         Lambda=1.0 if Lambda is None else float(Lambda),
         epsilonprime=0.0 if epsilonprime is None else float(epsilonprime),
+        mean_m_dot_p=float(mean_m_dot_p),
     )
 
     return CPPSpinTorqueContext(
@@ -257,6 +324,7 @@ def resolve_cpp_spin_torque_context(
             "P_model": float(reduction.pump_polarization),
             "phase_polarization": float(reduction.phase_polarization),
             "p_z": float(reduction.p_z),
+            "mean_m_dot_p": float(reduction.mean_m_dot_p),
             "polarizer": tuple(float(v) for v in reduction.polarizer),
             "fixed_layer_position": reduction.fixed_layer_position,
             "Lambda": float(reduction.Lambda),
