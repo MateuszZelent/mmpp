@@ -27,6 +27,8 @@ api/index
 
 - New users: start with `tutorials/getting_started`.
 - Skyrmion topology and size: `tutorials/soliton_analysis`.
+- Current-driven vortex trajectories and spectra:
+  `tutorials/vortex_thiele_dynamics`.
 - FMR spectrum and modes: `tutorials/fft_spectrum_analysis`.
 - Dispersion and folded-mode extraction: `tutorials/dispersion_analysis`.
 - Batch processing across many jobs: `tutorials/batch_operations`.

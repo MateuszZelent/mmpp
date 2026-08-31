@@ -20,6 +20,7 @@ hysteresis_analysis
 
 1. `getting_started`
 2. `soliton_analysis`
-3. `fft_spectrum_analysis`
-4. `dispersion_analysis`
-5. `batch_operations`
+3. `vortex_thiele_dynamics`
+4. `fft_spectrum_analysis`
+5. `dispersion_analysis`
+6. `batch_operations`

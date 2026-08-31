@@ -27,7 +27,7 @@ The implemented equation is
 where p is the vortex core polarity (+1 or -1), G > 0 is the magnitude of the
 B-convention gyrocoefficient 2*pi*Ms*L/gamma, D > 0 is the damping coefficient,
 and J2 is the in-plane operator z_hat x v = (-v_y, v_x).  With J = 0,
-B = 0, D << G and U = kappa |X|^2/2, the model gives
+B = 0, D << G and U = kappa (X dot X)/2, the model gives
 
     Xdot ~= p * (kappa/G) * J2 X - (D/G) * (kappa/G) * X,
 
@@ -155,7 +155,8 @@ class FieldResolvedCalibration:
         ``lambda_H_per_T = chirality*pi*xi_H*Ms*L*R``.
     k_ip_iso_per_T2, k_ip_aniso_per_T2:
         In-plane-field-induced stiffness changes.  The isotropic term scales
-        ``K`` by ``1 + k_ip_iso_per_T2*|B_parallel|^2``.  The anisotropic term
+        ``K`` by ``1 + k_ip_iso_per_T2*(B_parallel dot B_parallel)``. The
+        anisotropic term
         adds opposite curvature along and perpendicular to ``B_parallel``.
     stt_z_efficiency:
         Dimensionless multiplier of the analytical perpendicular Slonczewski
@@ -384,12 +385,12 @@ class FieldResolvedTrajectoryResult(AnalyticalResult):
 
     @property
     def r(self) -> np.ndarray:
-        """Radial distance |X| [m]."""
+        """Magnitude of the core position [m]."""
         return np.hypot(self.x, self.y)
 
     @property
     def u(self) -> np.ndarray:
-        """Normalized radius u = |X|/R."""
+        """Normalized core-position magnitude divided by disk radius."""
         return self.r / self.disk_radius if self.disk_radius > 0.0 else self.r
 
     @property
@@ -424,9 +425,15 @@ class FieldResolvedTrajectoryResult(AnalyticalResult):
 
     @property
     def speed(self) -> np.ndarray:
-        """Speed |dX/dt| [m/s]."""
+        """Magnitude of the core velocity [m/s]."""
         vx, vy = self.velocity
         return np.hypot(vx, vy)
+
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this trajectory."""
+        from ._thiele_html import field_trajectory_result_html
+
+        return field_trajectory_result_html(self)
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +481,12 @@ class FieldResolvedCPPThieleModel:
             raise ValueError("geom.R and geom.L must be positive")
 
         self._setup()
+
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this model."""
+        from ._thiele_html import model_repr_html
+
+        return model_repr_html(self, variant="field_resolved_cpp")
 
     # ------------------------------------------------------------------
     # Base coefficients and unitful derived quantities

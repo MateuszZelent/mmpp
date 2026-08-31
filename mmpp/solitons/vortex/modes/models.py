@@ -49,7 +49,7 @@ class VortexModeResult:
         )
 
         return node_card_html(
-            "Vortex Mode Result",
+            "Vortex Mode Result (VortexModeResult)",
             icon="🎵",
             subtitle="Single classified vortex dynamical mode with spectral label and confidence.",
             sections=[

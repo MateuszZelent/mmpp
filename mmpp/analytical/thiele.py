@@ -11,7 +11,7 @@ core trajectory calculation in two geometries:
   following Guslienko et al., Nanoscale Research Letters 9, 386 (2014).
 
 Both models reduce the full micromagnetic dynamics to an ODE for the vortex
-core position **r**(t) = (X(t), Y(t)), which can be integrated numerically
+core position ``r(t) = (X(t), Y(t))``, which can be integrated numerically
 with ``scipy.integrate.solve_ivp``.
 
 Units
@@ -284,7 +284,8 @@ class FieldCalibration:
         ω₀(Bz) sweeps in MuMax3.
     seq_per_T : float
         Equilibrium-position shift of the normalized core coordinate per unit
-        in-plane field [1/T].  Maps |B_∥| to |s_eq| via
+        in-plane field [1/T].  Maps the magnitude of ``B_parallel`` to the
+        magnitude of ``s_eq`` via
         ``s_eq = chirality · seq_per_T · ẑ × B_∥``.
     chirality : int
         Sign convention for the in-plane equilibrium shift direction (±1).
@@ -517,7 +518,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
 
     @property
     def speed(self) -> np.ndarray:
-        """Speed |v| [m/s]."""
+        """Magnitude of the core velocity [m/s]."""
         vx, vy = self.velocity
         return np.sqrt(vx**2 + vy**2)
 
@@ -629,7 +630,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
 
     @property
     def power_spectrum(self) -> np.ndarray:
-        """Power spectrum |FFT(x(t))|² (Hann-windowed, normalised)."""
+        """Squared FFT magnitude of x(t) (Hann-windowed, normalised)."""
         _, power = self._spectrum_cache
         return power
 
@@ -746,7 +747,7 @@ class ThieleTrajectoryResult(AnalyticalResult):
     def __repr__(self) -> str:
         n = len(self.t)
         r_ss = self.steady_state_radius_m * 1e9 if n > 0 else 0.0
-        f_ss = self.steady_state_frequency_ghz if n > 0 else 0.0
+        f_ss = self.steady_state_frequency_ghz if n > 1 else 0.0
         return (
             f"ThieleTrajectoryResult(model={self.model_name!r}, "
             f"n_points={n}, "
@@ -755,106 +756,10 @@ class ThieleTrajectoryResult(AnalyticalResult):
         )
 
     def _repr_html_(self) -> str:
-        from html import escape as _esc
+        """Render the canonical tabbed notebook helper for this trajectory."""
+        from ._thiele_html import trajectory_result_html
 
-        n = len(self.t)
-        r_ss = self.steady_state_radius_m * 1e9 if n > 0 else 0.0
-        f_ss = self.steady_state_frequency_ghz if n > 0 else 0.0
-        t_ns = self.t[-1] * 1e9 if n > 0 else 0.0
-        rot = self.rotation_sense if n > 0 else "N/A"
-        model = _esc(str(self.model_name))
-
-        summary_items = [
-            ("Points", str(n)),
-            ("Duration", f"{t_ns:.1f} ns"),
-            ("Steady-state radius", f"{r_ss:.1f} nm"),
-            ("Steady-state freq", f"{f_ss:.3f} GHz"),
-            ("Rotation", str(rot)),
-        ]
-        summary_row = "".join(
-            f"<div><span style='color:#94a3b8;'>{k}:</span> "
-            f"<span style='color:#cbd5e1;'>{v}</span></div>"
-            for k, v in summary_items
-        )
-
-        properties = [
-            (".z", "Complex trajectory z(t) = x + i·y [m]"),
-            (".r", "Radial distance from disk centre [m]"),
-            (".u", "Normalized radius u = r/R ∈ [0, 1)"),
-            (".phi", "Azimuthal angle φ(t) [rad]"),
-            (".phi_unwrapped", "Unwrapped azimuthal angle [rad]"),
-            (".velocity", "Velocity (vx, vy) [m/s]"),
-            (".speed", "Speed |v| [m/s]"),
-            (".instantaneous_frequency_ghz", "Instantaneous frequency [GHz]"),
-            (".dominant_frequency_ghz", "Peak frequency from power spectrum [GHz]"),
-            (".linewidth_ghz", "Estimated linewidth (FWHM) [GHz]"),
-            (".power_spectrum", "Power spectrum |FFT(x(t))|²"),
-        ]
-        prop_rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(p)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
-            for p, d in properties
-        )
-        plot_methods = [
-            (".plt.trajectory()", "Plot x,y trajectory"),
-            (".plt.spectrum()", "Plot power spectrum"),
-            (".plt.radius()", "Plot radius vs time"),
-            (".plt.phase()", "Plot azimuthal angle vs time"),
-        ]
-        plot_rows = "".join(
-            f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(m)}</td>"
-            f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(d)}</td></tr>"
-            for m, d in plot_methods
-        )
-        example = (
-            "# Inspect trajectory\n"
-            "result.plt.trajectory()\n"
-            "result.plt.spectrum()\n"
-            "\n"
-            "# Access properties\n"
-            "print(f'Frequency: {result.dominant_frequency_ghz:.3f} GHz')\n"
-            "print(f'Linewidth: {result.linewidth_ghz:.3f} GHz')\n"
-            "print(f'Rotation: {result.rotation_sense}')"
-        )
-        return (
-            "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "border:2px solid #334155;border-radius:12px;padding:16px;margin:8px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            'color:#e2e8f0;box-shadow:0 8px 20px rgba(0,0,0,0.25);">'
-            f"<div style='font-size:1.1em;font-weight:600;color:#f1f5f9;margin-bottom:4px;'>"
-            f"🌀 Thiele Trajectory — {model}</div>"
-            "<div style='font-size:0.85em;color:#94a3b8;margin-bottom:10px;'>"
-            "Vortex core trajectory from Thiele equation integration</div>"
-            # Summary
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Results</div>"
-            f"<div style='display:flex;flex-wrap:wrap;gap:12px;font-size:0.9em;'>"
-            f"{summary_row}</div></div>"
-            # Properties
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Properties</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
-            "<thead><tr style='text-align:left;background:rgba(51,65,85,0.6);'>"
-            "<th style='padding:4px 8px;color:#e2e8f0;'>Accessor</th>"
-            "<th style='padding:4px 8px;color:#e2e8f0;'>Description</th></tr></thead>"
-            f"<tbody>{prop_rows}</tbody></table></div>"
-            # Plotting
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "margin-bottom:10px;border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Plotting</div>"
-            "<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>"
-            f"{plot_rows}</table></div>"
-            # Examples
-            "<div style='background:rgba(15,23,42,0.6);padding:10px;border-radius:8px;"
-            "border:1px solid rgba(148,163,184,0.2);'>"
-            "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px;'>Examples</div>"
-            "<pre style='margin:0;background:rgba(15,23,42,0.85);padding:10px;"
-            "border-radius:6px;color:#e2e8f0;overflow-x:auto;font-size:0.85em;'>"
-            f"<code>{example}</code></pre></div>"
-            "</div>"
-        )
+        return trajectory_result_html(self)
 
 
 @dataclass
@@ -888,6 +793,12 @@ class ThieleFJFitResult(AnalyticalResult):
         """Access plotting methods for ``f(J)`` fit."""
         return ThieleFJFitPlotAccessor(self)
 
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this fit."""
+        from ._thiele_html import fj_fit_result_html
+
+        return fj_fit_result_html(self)
+
 
 @dataclass
 class ThieleOptimizationResult(AnalyticalResult):
@@ -910,6 +821,12 @@ class ThieleOptimizationResult(AnalyticalResult):
     def predicted_frequency_ghz(self) -> float:
         """Predicted frequency in GHz."""
         return float(self.predicted_frequency_hz) * 1e-9
+
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this optimization."""
+        from ._thiele_html import optimization_result_html
+
+        return optimization_result_html(self)
 
 
 class ThieleFJFitPlotAccessor:
@@ -1367,6 +1284,12 @@ class CIPThieleModel:
         # derived quantities
         self._setup()
 
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this CIP model."""
+        from ._thiele_html import model_repr_html
+
+        return model_repr_html(self, variant="cip")
+
     def _setup(self) -> None:
         mat = self.material
         geo = self.geom
@@ -1563,7 +1486,7 @@ class CPPThieleModel:
         \dot{\mathbf{s}} = \bigl[\chi(J) - d(u)\,\omega(u)\bigr]\,\mathbf{s}
                            + \omega(u)\,(\hat{\mathbf{z}} \times \mathbf{s})
 
-    where *u* = |**s**| ∈ [0, 1).
+    where *u* is the magnitude of **s** and lies in [0, 1).
 
     Components:
 
@@ -1650,6 +1573,12 @@ class CPPThieleModel:
             raise ValueError("torque_thickness must be positive [m]")
 
         self._setup()
+
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this CPP model."""
+        from ._thiele_html import model_repr_html
+
+        return model_repr_html(self, variant="cpp")
 
     def _setup(self) -> None:
         mat = self.material

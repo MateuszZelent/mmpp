@@ -69,6 +69,12 @@ class CIPModelAdapter(InteractiveNodeMixin):
             },
         )
 
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this adapter."""
+        from ._html import adapter_repr_html
+
+        return adapter_repr_html(self, variant="cip")
+
 
 def cip(
     *,

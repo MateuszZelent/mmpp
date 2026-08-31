@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from types import SimpleNamespace
 
 import numpy as np
@@ -12,6 +13,7 @@ from mmpp.analytical.constants import GAMMA_E, MU0
 from mmpp.analytical.field_resolved_thiele import (
     FieldResolvedCalibration,
     FieldResolvedCPPThieleModel,
+    FieldResolvedTrajectoryResult,
     SaturationCalibration,
 )
 from mmpp.analytical.nonlinear_stno import (
@@ -24,6 +26,8 @@ from mmpp.analytical.thiele import (
     CPPThieleModel,
     DiskGeometry,
     MaterialParams,
+    ThieleFJFitResult,
+    ThieleOptimizationResult,
     ThieleTrajectoryResult,
     current_ac,
     current_dc,
@@ -40,9 +44,11 @@ from mmpp.solitons.vortex.autofit.diagnostics import (
     cpp_linear_threshold_metrics_from_params,
 )
 from mmpp.solitons.vortex.autofit.simulation import SimulationContext
+from mmpp.solitons.vortex.model.thiele.cip import cip
 from mmpp.solitons.vortex.model.thiele.cpp import cpp
 from mmpp.solitons.vortex.model.thiele.field_resolved_cpp import field_resolved_cpp
 from mmpp.solitons.vortex.model.thiele.fit import summarize_trajectory_kinematics
+from mmpp.solitons.vortex.model.thiele.interface import ThieleModelNamespace
 from mmpp.solitons.vortex.model.thiele.models import (
     infer_disk_geometry,
     resolve_current_waveform,
@@ -722,3 +728,145 @@ def test_experimental_spectrum_analyzer_does_not_mutate_input() -> None:
     np.testing.assert_array_equal(values, original)
     assert frequency.ndim == 1
     assert relative_power_db.shape == (2, frequency.size)
+
+
+def _assert_canonical_thiele_helper(html: str, title: str) -> None:
+    assert title in html
+    assert ">Overview</button>" in html
+    assert ">Validity</button>" in html
+    assert ">API</button>" in html
+    assert "box-shadow" in html
+    assert "ACCESSORS &amp; METHODS" in html
+    assert "<h3" not in html
+
+
+def test_thiele_namespace_and_adapters_have_canonical_interactive_helpers() -> None:
+    namespace = ThieleModelNamespace(dataset_name="<script>bad</script>")
+    namespace_html = namespace._repr_html_()
+    _assert_canonical_thiele_helper(
+        namespace_html,
+        "Current-driven Thiele Models",
+    )
+    assert "<script>bad</script>" not in namespace_html
+    assert "&lt;script&gt;bad&lt;/script&gt;" in namespace_html
+    second_html = namespace._repr_html_()
+    first_id = re.search(r"id='([^']+-tab-0)'", namespace_html)
+    second_id = re.search(r"id='([^']+-tab-0)'", second_html)
+    assert first_id is not None and second_id is not None
+    assert first_id.group(1) != second_id.group(1)
+
+    omega0 = 2.0 * math.pi * 0.55e9
+    adapters = [
+        (
+            cpp(
+                material=_material(P=0.4),
+                geom=_geometry(),
+                omega0=omega0,
+                polarity=-1,
+            ),
+            "Dataset-aware CPP Thiele Adapter",
+        ),
+        (
+            cip(
+                material=_material(P=0.4),
+                geom=_geometry(),
+                omega0=omega0,
+                polarity=1,
+            ),
+            "Dataset-aware CIP Thiele Adapter",
+        ),
+        (
+            field_resolved_cpp(
+                material=_material(P=0.4),
+                geom=_geometry(),
+                omega0=omega0,
+                polarity=-1,
+            ),
+            "Dataset-aware Field-resolved CPP Adapter",
+        ),
+    ]
+    for adapter, title in adapters:
+        _assert_canonical_thiele_helper(adapter._repr_html_(), title)
+
+
+def test_direct_thiele_models_and_results_have_tabbed_validity_helpers() -> None:
+    material = _material(P=0.4)
+    geometry = _geometry()
+    omega0 = 2.0 * math.pi * 0.55e9
+    models = [
+        (
+            CPPThieleModel(material, geometry, omega0, polarity=-1),
+            "CPP Thiele Model",
+        ),
+        (CIPThieleModel(material, geometry, omega0), "CIP Thiele Model"),
+        (
+            FieldResolvedCPPThieleModel(material, geometry, omega0),
+            "Field-resolved CPP Thiele Model",
+        ),
+    ]
+    for model, title in models:
+        _assert_canonical_thiele_helper(model._repr_html_(), title)
+
+    time = np.linspace(0.0, 5e-9, 101)
+    phase = 2.0 * math.pi * 0.55e9 * time
+    x = 5e-9 * np.cos(phase)
+    y = 5e-9 * np.sin(phase)
+    result = ThieleTrajectoryResult(
+        model_name="<b>untrusted model</b>",
+        t=time,
+        x=x,
+        y=y,
+        sx=x / geometry.R,
+        sy=y / geometry.R,
+        disk_radius=geometry.R,
+    )
+    result_html = result._repr_html_()
+    _assert_canonical_thiele_helper(result_html, "Thiele Trajectory Result")
+    assert "<b>untrusted model</b>" not in result_html
+    assert "&lt;b&gt;untrusted model&lt;/b&gt;" in result_html
+    assert "spatial spin-wave" in result_html
+
+    field_result = FieldResolvedTrajectoryResult(
+        model_name="field trajectory",
+        t=time,
+        x=x,
+        y=y,
+        sx=x / geometry.R,
+        sy=y / geometry.R,
+        disk_radius=geometry.R,
+    )
+    field_html = field_result._repr_html_()
+    _assert_canonical_thiele_helper(
+        field_html,
+        "Field-resolved Thiele Trajectory",
+    )
+
+    fit = ThieleFJFitResult(
+        omega0=omega0,
+        N=0.3,
+        J_data=np.array([1.0e10, 2.0e10, 3.0e10]),
+        f_data_hz=np.array([0.50e9, 0.55e9, 0.60e9]),
+        f_fit_hz=np.array([0.51e9, 0.55e9, 0.59e9]),
+        valid_mask=np.ones(3, dtype=bool),
+        rmse_hz=8.0e6,
+        success=True,
+        status="converged",
+    )
+    _assert_canonical_thiele_helper(
+        fit._repr_html_(),
+        "Thiele f(J) Fit Result",
+    )
+
+    optimum = ThieleOptimizationResult(
+        target_frequency_hz=0.60e9,
+        current_density_a_per_m2=2.5e10,
+        predicted_frequency_hz=0.599e9,
+        objective_value_hz=1.0e6,
+        success=True,
+        status="converged",
+        J_bounds=(1.0e10, 4.0e10),
+    )
+    _assert_canonical_thiele_helper(
+        optimum._repr_html_(),
+        "Thiele Current Optimization Result",
+    )

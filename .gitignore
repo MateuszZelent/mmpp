@@ -221,8 +221,12 @@ docs/HYSTERESIS_IMPLEMENTATION_AUDIT.md
 !RELEASING.md
 !docs/analysis/AUDYT_MMPP_FFT_MODES_DISPERSION_2026-07-21.md
 !docs/development/VORTEX_ANALYTICAL_AUTOFIT_IMPLEMENTATION_PLAN.md
+!docs/development/STNO_VORTEX_CURRENT_SWEEP_TEMPLATE.md
 !docs/api/solitons.md
+!docs/api/vortex_thiele.md
 !docs/tutorials/soliton_analysis.md
+!docs/tutorials/vortex_thiele_dynamics.md
+!docs/analysis/VORTEX_CURRENT_DRIVEN_THIELE_AUDIT_2026-08-31.md
 tests/notebooks/vortex/vortex_dynamics.ipynb
 tests/test.ipynb
 vortex_analytical_model.zip

@@ -48,5 +48,11 @@ class ThieleModelNamespace(InteractiveNodeMixin):
             **kwargs,
         )
 
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this namespace."""
+        from ._html import namespace_repr_html
+
+        return namespace_repr_html(self)
+
 
 __all__ = ["ThieleModelNamespace"]

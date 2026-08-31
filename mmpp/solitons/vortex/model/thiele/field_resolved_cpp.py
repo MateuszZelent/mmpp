@@ -73,6 +73,12 @@ class FieldResolvedCPPModelAdapter(InteractiveNodeMixin):
         """Delegate to the field-resolved model DC sweep helper."""
         return self._model.simulate_dc_sweep(*args, **kwargs)
 
+    def _repr_html_(self) -> str:
+        """Render the canonical tabbed notebook helper for this adapter."""
+        from ._html import adapter_repr_html
+
+        return adapter_repr_html(self, variant="field_resolved_cpp")
+
 
 def field_resolved_cpp(
     *,

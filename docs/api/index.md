@@ -9,6 +9,7 @@ core
 batch_operations
 plotting
 solitons
+vortex_thiele
 fft/index
 analyze
 simulation

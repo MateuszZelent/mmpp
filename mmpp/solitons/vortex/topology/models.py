@@ -47,7 +47,7 @@ class TopologyResult:
         )
 
         return node_card_html(
-            "Topology Result",
+            "Topology Result (TopologyResult)",
             icon="🧲",
             subtitle="Detected topology invariants for a single magnetization snapshot.",
             sections=[

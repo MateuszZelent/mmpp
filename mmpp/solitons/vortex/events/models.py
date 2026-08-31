@@ -39,7 +39,7 @@ class PolaritySwitchEvent:
         )
 
         return node_card_html(
-            "Polarity Switch Event",
+            "Polarity Switch Event (PolaritySwitchEvent)",
             icon="↕️",
             subtitle="Detected transition of the vortex core polarity.",
             sections=[
@@ -107,7 +107,7 @@ class StateSwitchEvent:
         )
 
         return node_card_html(
-            "State Switch Event",
+            "State Switch Event (StateSwitchEvent)",
             icon="🔄",
             subtitle="Detected transition between vortex dynamical states.",
             sections=[
@@ -176,7 +176,7 @@ class CoreExpulsionEvent:
         )
 
         return node_card_html(
-            "Core Expulsion Event",
+            "Core Expulsion Event (CoreExpulsionEvent)",
             icon="🧨",
             subtitle="Detected approach to or expulsion across the disk boundary.",
             sections=[
@@ -287,7 +287,7 @@ class DwellTimeResult:
         )
 
         return node_card_html(
-            "Dwell Time Result",
+            "Dwell Time Result (DwellTimeResult)",
             icon="⏱️",
             subtitle="State dwell-time statistics and histogram plotting support.",
             sections=[
