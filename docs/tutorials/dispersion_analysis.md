@@ -222,6 +222,7 @@ viewer = disp.plot.interactive(
 mode = viewer.mode_at_selection(k_rad_um=2.3, f_ghz=1.1, component="z")
 mode.plot.imshow(mode_type="abs")
 mode_viewer = mode.plot.interactive(show=False, mode_type="phase")
+animation_viewer = viewer.result.modes.plot.animation(peaks=[0], show=False)
 ```
 
 ## Legacy Folded-Mode Workflow

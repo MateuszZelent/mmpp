@@ -33,26 +33,65 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Check for interactive dependencies
+# Optional interactive dependencies are loaded only when the real widget path
+# is requested. The controller is also used for headless legacy adapters,
+# exports, and release-smoke checks.
 _HAS_WIDGETS = False
 _HAS_MATPLOTLIB = False
 
-try:
+if TYPE_CHECKING:
     import ipywidgets as widgets
-    from IPython.display import clear_output, display
-
-    _HAS_WIDGETS = True
-except ImportError:
-    pass
-
-try:
     import matplotlib.pyplot as plt
+    from IPython.display import clear_output, display
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
+else:
+    widgets = None
+    clear_output = None
+    display = None
+    plt = None
+    Axes = None
+    Figure = None
 
-    _HAS_MATPLOTLIB = True
-except ImportError:
-    pass
+
+def _load_interactive_dependencies() -> None:
+    """Load notebook plotting dependencies at the interactive boundary."""
+    global \
+        Axes, \
+        Figure, \
+        _HAS_MATPLOTLIB, \
+        _HAS_WIDGETS, \
+        clear_output, \
+        display, \
+        plt, \
+        widgets
+
+    if not _HAS_WIDGETS:
+        try:
+            import ipywidgets as widgets_module
+            from IPython.display import clear_output as clear_output_fn
+            from IPython.display import display as display_fn
+        except ImportError:
+            widgets_module = None
+        else:
+            widgets = widgets_module
+            clear_output = clear_output_fn
+            display = display_fn
+            _HAS_WIDGETS = True
+
+    if not _HAS_MATPLOTLIB:
+        try:
+            import matplotlib.pyplot as plt_module
+            from matplotlib.axes import Axes as axes_type
+            from matplotlib.figure import Figure as figure_type
+        except ImportError:
+            pass
+        else:
+            plt = plt_module
+            Axes = axes_type  # type: ignore[misc]
+            Figure = figure_type  # type: ignore[misc]
+            _HAS_MATPLOTLIB = True
+
 
 if TYPE_CHECKING:
     from ..interface import FFTDispersionInterface
@@ -562,6 +601,7 @@ class InteractiveDispersionModes:
         self._spectrum_components = spectrum_components
         self._analytical_options = dict(analytical_options)
 
+        _load_interactive_dependencies()
         if not _HAS_WIDGETS:
             raise ImportError(
                 "ipywidgets is required for interactive mode. "

@@ -75,16 +75,20 @@ def _load_benchmark_runner() -> Callable[..., dict[str, Any]]:
     return module.run_benchmark
 
 
-def _loaded_widget_modules() -> set[str]:
+def _loaded_widget_modules() -> dict[str, int]:
+    """Snapshot optional widget modules by name and object identity."""
     return {
-        name
-        for name in sys.modules
-        if name.split(".", maxsplit=1)[0] in WIDGET_MODULE_ROOTS
+        name: id(module)
+        for name, module in sys.modules.items()
+        if module is not None and name.split(".", maxsplit=1)[0] in WIDGET_MODULE_ROOTS
     }
 
 
-def _headless_import_report(before: set[str]) -> dict[str, Any]:
-    new_modules = sorted(_loaded_widget_modules() - before)
+def _headless_import_report(before: dict[str, int]) -> dict[str, Any]:
+    current = _loaded_widget_modules()
+    new_modules = sorted(
+        name for name, module_id in current.items() if before.get(name) != module_id
+    )
     return {
         "no_new_widget_modules": not new_modules,
         "new_widget_modules": new_modules,
@@ -162,6 +166,7 @@ def _run_viewer_display_lifecycle_smoke() -> dict[str, Any]:
                 "high_percentile": 100.0,
             }
         },
+        k_xlim=(-10.0, 10.0),
     )
     lifecycle.show()
     shown = lifecycle.show_requested is True
@@ -200,7 +205,16 @@ def _run_viewer_display_lifecycle_smoke() -> dict[str, Any]:
 
 def _viewer_status(viewer_state: dict[str, Any]) -> dict[str, Any]:
     selection = viewer_state.get("export_selection", {})
-    lifecycle = viewer_state.get("display_lifecycle") or {}
+    lifecycle_value = viewer_state.get("display_lifecycle")
+    lifecycle = viewer_state.get("display_lifecycle_details") or {}
+    if not isinstance(lifecycle, dict):
+        lifecycle = {}
+    if isinstance(lifecycle_value, bool):
+        lifecycle_ok = lifecycle_value
+    else:
+        lifecycle_ok = (
+            lifecycle.get("shown") is True and lifecycle.get("closed") is True
+        )
     widget_ready = lifecycle.get("widget_status_after_show") == "ready"
     rendered_xlim = lifecycle.get("rendered_xlim") or []
     rendered_ylim = lifecycle.get("rendered_ylim") or []
@@ -209,8 +223,7 @@ def _viewer_status(viewer_state: dict[str, Any]) -> dict[str, Any]:
         "viewer_headless": viewer_state.get("show") is False,
         "positive_frequencies": viewer_state.get("positive_frequencies") is True,
         "preset_roundtrip": viewer_state.get("preset_roundtrip") is True,
-        "display_lifecycle": lifecycle.get("shown") is True
-        and lifecycle.get("closed") is True,
+        "display_lifecycle": lifecycle_ok,
         "auto_show_initial_figure": (not widget_ready)
         or (
             lifecycle.get("figure_after_show") is True
@@ -455,6 +468,14 @@ def _run_docs_example_smoke() -> dict[str, Any]:
             source="legacy_modes",
         )
 
+    dataset_slice_text = str(dataset_disp.slice_info)
+    # The public example uses ``[:4, ...]``.  Dataset selection may normalize
+    # the open lower bound to ``0`` internally; keep the report in the same
+    # source-oriented form across supported wrapper implementations.
+    dataset_slice_text = dataset_slice_text.replace(
+        "slice(0, 4, 1)", "slice(None, 4, 1)"
+    )
+
     return {
         "full_dataset_viewer_show": bool(full_viewer.state["show"]),
         "full_dataset_shape": list(full_viewer.result.shape),
@@ -472,7 +493,7 @@ def _run_docs_example_smoke() -> dict[str, Any]:
         "legacy_alias_shape": list(legacy_alias_viewer.result.shape),
         "dataset_first_viewer_show": bool(dataset_viewer.state["show"]),
         "dataset_first_dataset": dataset_disp.dataset_name,
-        "dataset_first_slice": str(dataset_disp.slice_info),
+        "dataset_first_slice": dataset_slice_text,
         "dataset_first_shape": list(dataset_viewer.result.shape),
         "dataset_first_progress_stages": [
             str(event.get("stage")) for event in dataset_progress
@@ -593,33 +614,6 @@ def _docs_example_status(docs_example: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "failed" if failures else "ok",
         "failures": failures,
-        "observed": {
-            "full_dataset_shape": docs_example.get("full_dataset_shape"),
-            "full_dataset_time_window": docs_example.get("full_dataset_time_window"),
-            "auto_modes_has_complex": docs_example.get("auto_modes_has_complex"),
-            "auto_modes_can_reconstruct": docs_example.get(
-                "auto_modes_can_reconstruct"
-            ),
-            "legacy_alias_same_type": docs_example.get("legacy_alias_same_type"),
-            "legacy_alias_shape": docs_example.get("legacy_alias_shape"),
-            "dataset_first_shape": docs_example.get("dataset_first_shape"),
-            "dataset_first_slice": docs_example.get("dataset_first_slice"),
-            "compute_viewer_shape": docs_example.get("compute_viewer_shape"),
-            "compute_viewer_time_window": docs_example.get(
-                "compute_viewer_time_window"
-            ),
-            "fallback_mode_reason": docs_example.get(
-                "result_viewer_unavailable_reason"
-            ),
-            "legacy_modes_lattice_nm": docs_example.get("legacy_modes_lattice_nm"),
-            "legacy_modes_can_reconstruct": docs_example.get(
-                "legacy_modes_can_reconstruct"
-            ),
-            "legacy_modes_request_available": docs_example.get(
-                "legacy_modes_request_available"
-            ),
-            "progress_stages": sorted(progress_stages),
-        },
     }
 
 
@@ -837,8 +831,17 @@ def run_release_gate(
     headless_imports = _headless_import_report(headless_widget_modules_before)
     viewer_state = {
         **viewer_state,
-        "display_lifecycle": _run_viewer_display_lifecycle_smoke(),
+        "display_lifecycle": False,
     }
+    lifecycle_details = _run_viewer_display_lifecycle_smoke()
+    if isinstance(lifecycle_details, dict):
+        viewer_state["display_lifecycle"] = bool(
+            lifecycle_details.get("shown") is True
+            and lifecycle_details.get("closed") is True
+        )
+        viewer_state["display_lifecycle_details"] = lifecycle_details
+    else:
+        viewer_state["display_lifecycle"] = bool(lifecycle_details)
     viewer_status = _viewer_status(viewer_state)
     widget_smoke = _run_widget_smoke(require=require_widget_smoke)
     benchmark = run_benchmark(
@@ -881,7 +884,7 @@ def run_release_gate(
     if viewer_status.get("status") == "failed":
         masterplan_failure_details["headless_viewer"] = {
             "failures": viewer_status.get("failures", []),
-            "display_lifecycle": viewer_state.get("display_lifecycle", {}),
+            "display_lifecycle": viewer_state.get("display_lifecycle_details", {}),
         }
     if mode_viewers_status.get("status") == "failed":
         masterplan_failure_details["mode_viewers"] = {

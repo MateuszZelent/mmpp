@@ -1130,7 +1130,7 @@ class FMRModeAnalyzer:
         # Create spatial extent
         ny, nx = mode_data.shape[:2]
         extent = _mode_extent_nm(
-            self.view_geometry,
+            getattr(self, "view_geometry", None),
             nx=nx,
             ny=ny,
             dx_nm=self.dx,

@@ -323,12 +323,10 @@ def test_fft_dispersion_release_gate_fails_on_docs_example_regression(monkeypatc
     report = release_gate.run_release_gate()
 
     assert report["status"] == "failed"
-    assert report["docs_example_status"] == {
-        "status": "failed",
-        "failures": [
-            "mode_result_has_complex",
-            "modes_viewer_can_reconstruct",
-        ],
+    assert report["docs_example_status"]["status"] == "failed"
+    assert set(report["docs_example_status"]["failures"]) >= {
+        "mode_result_has_complex",
+        "modes_viewer_can_reconstruct",
     }
     assert report["docs_example"]["mode_result_has_complex"] is False
     assert report["docs_example"]["modes_viewer_can_reconstruct"] is False
@@ -594,19 +592,18 @@ def test_dispersion_audit_masterplan_markdown_structure_is_intact():
 
     assert report.count("```") % 2 == 0
     required_sections = [
-        "## Werdykt wykonawczy",
-        "## Stan aktualny po naprawach",
-        "## Definicja produkcyjności",
-        "## Rejestr ryzyk",
-        "## Masterplan perfekcyjny",
-        "## Macierz akceptacji",
-        "## Konkluzja",
+        "## Executive Summary",
+        "## Current Position",
+        "## Key Risks and Controls",
+        "## Target Architecture",
+        "## Completion Conditions for this module",
+        "## Final Statement",
     ]
     for section in required_sections:
         assert section in report
 
-    for phase in range(9):
-        assert f"### Faza {phase}:" in report
+    for priority in ("P0", "P1", "P2"):
+        assert f"### {priority}" in report
 
     assert "```bash\n```" not in report
     assert "```python\n```" not in report

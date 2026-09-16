@@ -377,17 +377,25 @@ class DatasetPlotK3DMixin(DatasetPlotCoreMixin):
         except ImportError:
             return
 
+        def _snap(value: float, *, upper: bool) -> float:
+            nearest = round(value)
+            if np.isclose(value, nearest, rtol=0.0, atol=1e-6):
+                return float(nearest)
+            return float(math.ceil(value) if upper else math.floor(value))
+
         snapped = [
-            math.floor(bounds[0]),  # x_min
-            math.ceil(bounds[1]),  # x_max
-            math.floor(bounds[2]),  # y_min
-            math.ceil(bounds[3]),  # y_max
-            math.floor(bounds[4]),  # z_min
-            math.ceil(bounds[5]),  # z_max
+            _snap(bounds[0], upper=False),  # x_min
+            _snap(bounds[1], upper=True),  # x_max
+            _snap(bounds[2], upper=False),  # y_min
+            _snap(bounds[3], upper=True),  # y_max
+            _snap(bounds[4], upper=False),  # z_min
+            _snap(bounds[5], upper=True),  # z_max
         ]
 
-        # Only add anchors if snapping actually changed any bound
-        if snapped == [float(b) for b in bounds]:
+        # Only add anchors if snapping changed a bound beyond float noise.
+        # Geometry derived from float32 cell sizes can be within a few ulps of
+        # an integer even when the physical extent is already grid-aligned.
+        if np.allclose(snapped, bounds, rtol=0.0, atol=1e-6):
             return
 
         anchor = np.array(
@@ -417,11 +425,12 @@ class DatasetPlotK3DMixin(DatasetPlotCoreMixin):
     ) -> None:
         """Adjust scene for thin (single-cell) spatial slices.
 
-        Instead of disabling ``grid_auto_fit`` (which breaks grid rendering
-        in K3D ≤ 2.14), we expand the thin dimension's bounds to a visible
-        fraction of the largest in-plane extent.  This makes thin-film data
-        visible in 3D without losing the grid.
+        Expand the thin dimension's bounds to a visible fraction of the
+        largest in-plane extent and pin the grid to those scene bounds. This
+        makes thin-film data visible in 3D without letting K3D auto-fit the
+        grid to a misleading near-zero thickness.
         """
+        grid_bounds = list(bounds)
         nz, ny, nx = (max(int(v), 1) for v in shape_zyx)
         extent_x = abs(bounds[1] - bounds[0])
         extent_y = abs(bounds[3] - bounds[2])
@@ -444,6 +453,11 @@ class DatasetPlotK3DMixin(DatasetPlotCoreMixin):
 
         try:
             plot_obj.camera_up_axis = "z"
+        except Exception:
+            pass
+        try:
+            plot_obj.grid_auto_fit = False
+            plot_obj.grid = grid_bounds
         except Exception:
             pass
 
@@ -674,7 +688,7 @@ class DatasetPlotK3DMixin(DatasetPlotCoreMixin):
             plot_obj += k3d.voxels(
                 np.ones((1, 1, 1), dtype=np.uint8),
                 color_map=0x4C72B0,
-                bounds=bounds,
+                bounds=list(bounds),
                 outlines=False,
                 name="total_region",
                 opacity=0.025,
@@ -773,12 +787,12 @@ class DatasetPlotK3DMixin(DatasetPlotCoreMixin):
             plot_obj += k3d.voxels(
                 voxels,
                 color_map=cmap_int,
-                bounds=bounds,
+                bounds=list(bounds),
                 **voxel_kwargs,
             )
         except Exception:
             plot_obj += k3d.voxels(
-                voxels, color_map=cmap_int, bounds=bounds, **voxel_kwargs
+                voxels, color_map=cmap_int, bounds=list(bounds), **voxel_kwargs
             )
 
         self._k3d_set_axes(plot_obj, axes)
@@ -856,12 +870,12 @@ class DatasetPlotK3DMixin(DatasetPlotCoreMixin):
             plot_obj += k3d.voxels(
                 voxels,
                 color_map=int(color),
-                bounds=bounds,
+                bounds=list(bounds),
                 **voxel_kwargs,
             )
         except Exception:
             plot_obj += k3d.voxels(
-                voxels, color_map=int(color), bounds=bounds, **voxel_kwargs
+                voxels, color_map=int(color), bounds=list(bounds), **voxel_kwargs
             )
 
         self._k3d_set_axes(plot_obj, axes)

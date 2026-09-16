@@ -235,7 +235,12 @@ class DatasetPlotCoreMixin:
         zero: int | None = None,
         dataset_obj=None,
     ) -> np.ndarray:
-        """Extract 3d (scalar) or 4d (vector) volume for volumetric plotting."""
+        """Extract a volume for volumetric plotting.
+
+        Two-dimensional scalar selections are represented as a singleton-z
+        volume so that K3D can preserve their source geometry and camera
+        semantics.
+        """
         dataset = self._dataset if dataset_obj is None else dataset_obj
         data = dataset.numpy(copy=False, squeeze=False)
         arr = np.asarray(data, dtype=np.float32)
@@ -263,6 +268,9 @@ class DatasetPlotCoreMixin:
 
         if arr.ndim == 3:
             return np.asarray(arr, dtype=np.float32)
+
+        if arr.ndim == 2:
+            return np.asarray(arr[np.newaxis, ...], dtype=np.float32)
 
         raise ValueError(
             f"Dataset '{self._dataset.dataset_name}' has unsupported shape {arr.shape} for volumetric plotting"

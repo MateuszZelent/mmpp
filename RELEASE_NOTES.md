@@ -1,3 +1,17 @@
+# MMPP Library Release v0.6.3
+
+## Release and installation hardening
+
+- Removed the unused Git submodule dependency from the source tree and release
+  artifacts, so fresh checkouts and package installs are independent of the
+  former external libraries.
+- Kept compute-only FFT and dispersion imports free of Matplotlib, IPython, and
+  ipywidgets until an interactive plotting path is requested.
+- Fixed release-gate reporting, dataset plotting edge cases, and current
+  toolchain validation for Ruff, mypy, docs, wheel, and sdist installs.
+
+---
+
 # MMPP Library Release v0.6.2
 
 ## Packaging and installation fix

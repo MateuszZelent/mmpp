@@ -24,6 +24,8 @@ from .spectrum.compute import (
 from .transmission.interface import FFTTransmissionInterface
 
 if TYPE_CHECKING:
+    from .modes import FFTModeInterface
+    from .modes.interface import FFTModeInterfaceNew
     from .plot import FFTPlotter
 
 # Get logger for FFT core
@@ -43,14 +45,11 @@ def _spectral_power_trace(spectrum: Any) -> np.ndarray:
     return np.asarray(power, dtype=float)
 
 
-# Import mode visualization capabilities
-try:
-    from .modes import FFTModeInterface, FMRModeAnalyzer
-    from .modes.interface import FFTModeInterfaceNew  # New refactored interface
-
-    MODES_AVAILABLE = True
-except ImportError:
-    MODES_AVAILABLE = False
+# Mode visualization is an optional, heavyweight boundary.  Do not import it
+# while constructing the compute-only FFT interface: its legacy package also
+# exposes Matplotlib-backed plotting helpers.  Concrete classes are loaded in
+# the individual mode methods below.
+MODES_AVAILABLE = True
 
 try:
     from .dispersion import (
@@ -1596,6 +1595,8 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
                 "Mode visualization not available. Check modes module import."
             )
 
+        from .modes.interface import FFTModeInterfaceNew
+
         if not hasattr(self, "_mode_interface_new"):
             self._mode_interface_new = FFTModeInterfaceNew(0, self)
         return self._mode_interface_new
@@ -1649,6 +1650,8 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
                 "Mode visualization not available. Check modes module import."
             )
 
+        from .modes import FFTModeInterface
+
         return FFTModeInterface(index, self)
 
     def plot_modes(
@@ -1677,6 +1680,8 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
             raise ImportError(
                 "Mode visualization not available. Check modes module import."
             )
+
+        from .modes import FMRModeAnalyzer
 
         # Create temporary mode analyzer
         debug_mode = getattr(self.mmpp, "debug", False) if self.mmpp else False
@@ -1709,6 +1714,8 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
             raise ImportError(
                 "Mode visualization not available. Check modes module import."
             )
+
+        from .modes import FMRModeAnalyzer
 
         # Create temporary mode analyzer
         debug_mode = getattr(self.mmpp, "debug", False) if self.mmpp else False

@@ -106,6 +106,7 @@ viewer = disp.plot.interactive(
 )
 mode = viewer.mode_at_selection(k_rad_um=2.3, f_ghz=1.1, component="z")
 mode_viewer = mode.plot.interactive(show=False, mode_type="abs")
+animation_viewer = viewer.result.modes.plot.animation(peaks=[0], show=False)
 ```
 
 `DispersionResult1D.S_raw` is the analysis source. `S_display` is the current
