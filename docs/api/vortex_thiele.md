@@ -443,6 +443,15 @@ auto-oscillation pumping by the reduced model. A warning makes that projection
 explicit. The field-resolved adapter uses the same reduction and then restores
 the field-model polarization/thickness convention exactly once.
 
+For an MTJ, the electrical input is usually a total tunnel current `I`, whereas
+the analytical API uses `J` in A/m². Convert with `J = I / A_pillar` before
+calling the model. A circular pillar uses `A_pillar = pi*R**2`; an elliptical
+pillar can use `ellipse_area(size_x, size_y)`. The `torque_thickness`/`L_stt`
+parameter is the free magnetic layer thickness, not the tunnel-barrier
+thickness. The barrier current, fixed-layer position, polarity, and polarizer
+direction determine the signed damping-like pumping branch. This reduced model
+does not calculate MTJ resistance, TMR voltage, or barrier heating.
+
 Geometry resolution prefers explicit `R`, `D`, or `Area`. Box-size inference
 assumes the disk fills the smaller in-plane dimension and emits a warning.
 

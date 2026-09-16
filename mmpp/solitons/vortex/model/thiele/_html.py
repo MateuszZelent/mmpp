@@ -127,6 +127,11 @@ def adapter_repr_html(adapter: Any, *, variant: str) -> str:
             [
                 ("N", f"{float(model.N):.6g}", None),
                 (
+                    "torque thickness",
+                    f"{float(getattr(model, 'torque_thickness', geometry.L)) * 1e9:.6g} nm",
+                    None,
+                ),
+                (
                     "threshold current",
                     f"{threshold:.6g} A/m²" if np.isfinite(threshold) else "not finite",
                     NODE_COLOR_COMPUTE,
@@ -138,6 +143,20 @@ def adapter_repr_html(adapter: Any, *, variant: str) -> str:
                 ),
             ]
         )
+        if "P_raw" in metadata:
+            metrics.extend(
+                [
+                    ("P raw", f"{float(metadata['P_raw']):.6g}", None),
+                    ("P effective", f"{float(metadata['P_eff']):.6g}", None),
+                    ("P model", f"{float(metadata['P_model']):.6g}", None),
+                    ("polarizer p_z", f"{float(metadata['p_z']):.6g}", None),
+                    (
+                        "fixed layer",
+                        metadata.get("fixed_layer_position", "unknown"),
+                        None,
+                    ),
+                ]
+            )
         methods = ["simulate"]
         actions = [
             (".simulate(...)", NODE_COLOR_COMPUTE),

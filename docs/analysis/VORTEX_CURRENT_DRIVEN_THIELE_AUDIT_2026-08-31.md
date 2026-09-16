@@ -237,6 +237,25 @@ All new model/result cards use the shared `node_card_html` structure:
 user/job-derived values are escaped, UUID suffixes prevent collisions, and no
 `h3` heading is emitted.
 
+## Executed MTJ frequency-current sweep
+
+The reproducible sweep helper is
+`scripts/analysis/plot_vortex_mtj_frequency_current.py`. It covers total MTJ
+current from -10 mA to +10 mA, evaluates both signed core-polarity branches,
+and inserts 801 points in a 0.5 mA window around each threshold. With the
+illustrative circular pillar (`R=128 nm`, `L=9 nm`, `Ms=800 kA/m`,
+`alpha=0.013`, `P=0.45`, `N=0.30`, perpendicular polarizer, and no independently
+calibrated Oersted slope), the signed thresholds are:
+
+- `p=-1`: `I_threshold = +1.82755 mA`;
+- `p=+1`: `I_threshold = -1.82894 mA`.
+
+The PNG output is `docs/analysis/vortex_mtj_frequency_current.png`; the
+corresponding CSV was written to `/tmp/vortex_mtj_frequency_current.csv` during
+validation. Solid lines are valid rigid steady orbits, while dashed lines are
+edge-clamped reduced-model values and must not be interpreted as post-expulsion
+dynamics.
+
 ## Numerical qualification
 
 The audit adds `tests/test_vortex_thiele_audit.py` as a tracked regression gate.
@@ -264,15 +283,23 @@ It verifies:
   helper tests also verify escaping, tab structure, unique styling, and the
   absence of `h3`.
 
-The final validation section must distinguish four states:
+### Final validation snapshot (2026-08-31)
 
-1. source implemented;
-2. code can execute in the current environment;
-3. synthetic/unit behavior is validated;
-4. independent micromagnetic or experimental agreement is validated.
+| State | Evidence | Status |
+|---|---|---|
+| Source implemented | CPP/CIP/field-resolved fixes, MTJ/MuMax reduction, SDE/spectrum paths, adapters, docs, and canonical helper cards are present in the audited source and current worktree. | **Established** |
+| Code executes here | Changed-file `ruff format --check`, changed-file `ruff check`, and `py_compile` pass; the focused physics/helper bundle reaches 100%; Sphinx `just docs` completes; `python -m build` produces sdist and wheel. | **Established** |
+| Synthetic/unit behavior | `tests/test_vortex_thiele_audit.py` (28 tests) and `tests/test_vortex_html_helpers.py` (3 tests) pass, together with the broader Thiele/field/CIP/CPP/autofit/nonlinear/import bundle. | **Established** |
+| Independent micromagnetic/experimental agreement | No held-out LLGS/MuMax3 or measurement data were supplied or executed by this audit. | **Open qualification** |
 
-Only states 1–3 are established by this repository audit. State 4 requires a
-separate qualification data set.
+The complete-repository Ruff run still reports 151 pre-existing findings in
+unrelated modules, and the repository-wide mypy run is blocked by the existing
+duplicate `mmpp.pyzfn`/`pyzfn` package discovery. A full `pytest tests/` run was
+not used as a release gate because collection does not complete in the current
+environment; the focused physics and integration gate above is the reproducible
+evidence for this change. The Sphinx build succeeds with 95 repository-wide
+warnings (mostly legacy docstrings, optional dependencies, and intersphinx
+network resolution); no new page parse error was observed.
 
 ## Required independent qualification for a device study
 

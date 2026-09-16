@@ -788,6 +788,23 @@ def test_thiele_namespace_and_adapters_have_canonical_interactive_helpers() -> N
     for adapter, title in adapters:
         _assert_canonical_thiele_helper(adapter._repr_html_(), title)
 
+    mtj_adapter = cpp(
+        material=_material(P=0.45),
+        geom=_geometry(),
+        omega0=omega0,
+        polarity=-1,
+        torque_thickness=7e-9,
+        polarizer=(0.0, 0.0, 1.0),
+        fixed_layer_position="top",
+        Lambda=2.0,
+        epsilonprime=0.1,
+        mean_m_dot_p=0.0,
+    )
+    mtj_html = mtj_adapter._repr_html_()
+    assert "MuMax3/MTJ Slonczewski" in mtj_html
+    assert "torque thickness" in mtj_html
+    assert "P effective" in mtj_html
+
 
 def test_direct_thiele_models_and_results_have_tabbed_validity_helpers() -> None:
     material = _material(P=0.4)

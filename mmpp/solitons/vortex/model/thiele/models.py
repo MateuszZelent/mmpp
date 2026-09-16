@@ -319,6 +319,7 @@ def resolve_cpp_spin_torque_context(
         torque_thickness=float(reduction.torque_thickness),
         domega0_dJ_total=float(domega0_dJ) + float(reduction.phase_omega_per_J),
         metadata={
+            "slonczewski_mapping": "MuMax3/MTJ Slonczewski",
             "P_raw": float(material.P),
             "P_eff": float(reduction.epsilon),
             "P_model": float(reduction.pump_polarization),
@@ -329,6 +330,7 @@ def resolve_cpp_spin_torque_context(
             "fixed_layer_position": reduction.fixed_layer_position,
             "Lambda": float(reduction.Lambda),
             "epsilonprime": float(reduction.epsilonprime),
+            "torque_thickness": float(reduction.torque_thickness),
             "domega0_dJ_stt": float(reduction.phase_omega_per_J),
         },
     )

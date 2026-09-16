@@ -304,6 +304,34 @@ position, torque thickness, and polarizer direction. For `Lambda != 1`, pass a
 representative `mean_m_dot_p`; the full cell-wise angular efficiency cannot be
 recovered from `p_z` alone.
 
+### MTJ current versus current density
+
+An MTJ supplies a total tunnel current \(I\), while the Thiele API takes the
+current density \(J\) in A/m². Convert using the magnetic-pillar area before
+calling `steady_state_u`, `simulate`, or a current sweep:
+
+```python
+from mmpp.analytical import ellipse_area
+
+I_A = 0.8e-3                       # measured/electrical current [A]
+A_pillar = np.pi * geometry.R**2   # circular MTJ pillar [m²]
+J_A_m2 = I_A / A_pillar
+
+u0 = adapter.model.steady_state_u(J_A_m2)
+radius_m = None if u0 is None else geometry.R * u0
+```
+
+For an elliptical pillar use `ellipse_area(size_x, size_y)`. The tunnel
+barrier carries the current, but `torque_thickness`/`L_stt` is the thickness of
+the free magnetic layer on which the Slonczewski torque is normalized; it is
+not the barrier thickness. `fixed_layer_position` controls the current-sign
+mapping, and the signed result must be compared with `J_threshold` for the
+chosen core polarity. `Pol`, `Lambda`, `epsilonprime`, polarizer direction, and
+`mean_m_dot_p` determine the effective damping-like and field-like torque. The
+reduced model predicts core motion and its spectrum, not junction resistance,
+TMR voltage, or barrier heating; add a readout/thermal model for those
+observables.
+
 Geometry and current density are quantitative inputs. MMPP prefers explicit
 `R`, `D`, or `Area` metadata and refuses to turn a failed automatic current
 lookup into silent zero current. A radius inferred from the mesh is marked by a
