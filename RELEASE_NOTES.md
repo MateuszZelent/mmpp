@@ -1,4 +1,4 @@
-# MMPP Library Release v0.6.1
+# MMPP Library Release v0.6.2
 
 ## Packaging and installation fix
 

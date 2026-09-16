@@ -155,7 +155,8 @@ ignore = [
     "B905",  # preserve zip behavior in legacy analysis paths
     "C901",  # too complex
     "UP007", # retain Optional annotations in the public compatibility layer
-    "UP038", # retain tuple-based isinstance checks across legacy code
+    "UP045", # retain Optional annotations across the established public API
+    "C420",  # preserve explicit parameter dictionaries in legacy exports
 ]
 
 [tool.ruff.lint.per-file-ignores]

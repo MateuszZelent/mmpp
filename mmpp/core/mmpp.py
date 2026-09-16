@@ -971,8 +971,9 @@ class MMPP:
                 )
                 self.df = self.df[
                     self.df["path"].apply(
-                        lambda p: os.path.exists(p)
-                        or os.path.exists(self._translate_path(p))
+                        lambda p: (
+                            os.path.exists(p) or os.path.exists(self._translate_path(p))
+                        )
                     )
                 ]
                 # Update paths in DataFrame to translated versions
