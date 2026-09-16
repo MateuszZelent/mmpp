@@ -376,9 +376,15 @@ class DwellTimePlotAccessor:
             xlabel = "Dwell time [s]"
 
         if values.size:
-            ax.hist(
-                values, bins=min(max(int(bins), 1), max(values.size, 1)), **hist_kwargs
-            )
+            histogram_bins = min(max(int(bins), 1), max(values.size, 1))
+            # Newer NumPy rejects more than one bin when floating-point
+            # rounding makes an otherwise constant dwell-time sample have a
+            # zero-width representable range.
+            value_span = float(np.ptp(values))
+            value_scale = max(float(np.max(np.abs(values))), 1.0)
+            if value_span <= 8.0 * np.finfo(float).eps * value_scale:
+                histogram_bins = 1
+            ax.hist(values, bins=histogram_bins, **hist_kwargs)
         else:
             ax.hist([], bins=1, **hist_kwargs)
 

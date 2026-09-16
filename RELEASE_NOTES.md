@@ -1,3 +1,15 @@
+# MMPP Library Release v0.6.5
+
+## Dependency compatibility follow-up
+- Constrained `numcodecs` below 0.16 while the package uses the Zarr 2 API;
+  fresh installs no longer resolve a codec version incompatible with Zarr 2.18.
+- Hardened dwell-time histogram rendering for constant or nearly constant
+  samples under current NumPy.
+- Added a Matplotlib layout fallback for the skyrmion dashboard after colorbar
+  creation.
+
+---
+
 # MMPP Library Release v0.6.4
 
 ## Clean-runner compatibility follow-up

@@ -462,6 +462,25 @@ def test_release_gate_installed_import_mode_removes_checkout_from_sys_path(monke
     assert sys.path == ["/tmp/site-packages"]
 
 
+def test_installed_import_mode_preserves_live_mmpp_module_identity(monkeypatch):
+    import mmpp.solitons._method_helpers as helpers
+    from scripts.analysis.verify_fft_dispersion_release_gate import (
+        REPO_ROOT,
+        _prepare_import_path,
+    )
+
+    original_path = list(sys.path)
+    monkeypatch.setattr(sys, "path", [str(REPO_ROOT), "", "/tmp/site-packages"])
+
+    _prepare_import_path("installed")
+
+    assert (
+        helpers.CallableNodeHelper
+        is sys.modules["mmpp.solitons._method_helpers"].CallableNodeHelper
+    )
+    monkeypatch.setattr(sys, "path", original_path)
+
+
 def test_release_workflow_installs_built_artifacts_before_publish():
     workflow = Path(".github/workflows/release.yml").read_text()
     extras_smoke = workflow.split("  extras-smoke:", 1)[1].split("  build:", 1)[0]

@@ -24,6 +24,14 @@ def _zarr_requirements(requirements: list[str]) -> list[Requirement]:
     ]
 
 
+def _numcodecs_requirements(requirements: list[str]) -> list[Requirement]:
+    return [
+        requirement
+        for requirement in (Requirement(value) for value in requirements)
+        if requirement.name == "numcodecs"
+    ]
+
+
 def _applies_to_python(requirement: Requirement, python_version: str) -> bool:
     if requirement.marker is None:
         return True
@@ -65,6 +73,14 @@ def _assert_zarr_python_markers(requirements: list[str]) -> None:
     assert not any(
         requirement.specifier.contains("3.0.0", prereleases=True)
         for requirement in python311
+    )
+
+    numcodecs_requirements = _numcodecs_requirements(requirements)
+    assert numcodecs_requirements
+    assert all(
+        requirement.specifier.contains("0.15.1", prereleases=True)
+        and not requirement.specifier.contains("0.16.0", prereleases=True)
+        for requirement in numcodecs_requirements
     )
 
 

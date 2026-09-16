@@ -32,6 +32,8 @@ dependencies = [
     # Keep one compatible storage dependency across the supported Python versions
     # until the Zarr 3 API migration is complete.
     "zarr>=2.18.0,<3.0.0",
+    # Zarr 2.18.x imports codec helpers removed by numcodecs 0.16.
+    "numcodecs>=0.12.1,<0.16",
     "h5py>=3.0.0",
     "rich",
     "tqdm",

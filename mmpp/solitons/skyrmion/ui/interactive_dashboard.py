@@ -262,7 +262,16 @@ class SkyrmionInteractiveDashboard:
             axes[2].grid(alpha=0.25)
             axes[2].legend(fontsize=8)
 
-            fig.tight_layout()
+            try:
+                fig.tight_layout()
+            except RuntimeError as exc:
+                # Matplotlib 3.10 rejects switching to tight layout after a
+                # colorbar has installed a different layout engine.  The
+                # dashboard is still renderable with the explicit subplot
+                # spacing used as a compatibility fallback.
+                if "Colorbar layout" not in str(exc):
+                    raise
+                fig.subplots_adjust(wspace=0.35)
             buffer = BytesIO()
             fig.savefig(buffer, format="png", bbox_inches="tight")
             plt.close(fig)

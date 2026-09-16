@@ -55,9 +55,12 @@ def _prepare_import_path(import_mode: str) -> dict[str, str]:
         sys.path[:] = [
             entry for entry in sys.path if not _path_points_to_repo_root(entry)
         ]
-        for module_name in list(sys.modules):
-            if module_name == "mmpp" or module_name.startswith("mmpp."):
-                del sys.modules[module_name]
+        # Do not evict an already imported package from sys.modules.  A
+        # release-gate call embedded in a pytest process or notebook can have
+        # live class references; evicting the package would reload duplicate
+        # class objects and break isinstance checks and multiprocessing
+        # pickling.  The command-line installed smoke is run in a fresh
+        # interpreter, where there is no module to evict.
 
     return {"import_mode": import_mode, "repo_root": repo_root}
 
