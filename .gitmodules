@@ -1,6 +1,0 @@
-[submodule "external_libraries/discretisedfield"]
-	path = external_libraries/discretisedfield
-	url = https://github.com/ubermag/discretisedfield
-[submodule "external_libraries/spinwavetoolkit"]
-	path = external_libraries/spinwavetoolkit
-	url = https://github.com/CEITECmagnonics/SpinWaveToolkit

@@ -8,7 +8,7 @@ Provides both programmatic and interactive interfaces for mode analysis.
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any
 
 import matplotlib.colors as mcolors
 import matplotlib.font_manager as fm
@@ -271,7 +271,7 @@ def _install_ffmpeg_automatic():
                 if attempt == 2:  # Last attempt
                     raise RuntimeError(
                         f"Failed to download FFmpeg after 3 attempts: {e}"
-                    )
+                    ) from e
                 log.warning(f"Download attempt {attempt + 1} failed: {e}, retrying...")
 
         # Extract archive
@@ -366,7 +366,7 @@ def install_ffmpeg(force: bool = False, verbose: bool = True) -> str | None:
                             f"✅ FFmpeg already available in cache: {cached_ffmpeg}"
                         )
                     return str(cached_ffmpeg)
-            except:
+            except Exception:
                 pass
 
     # Detect platform
@@ -749,7 +749,7 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
                 else:
                     # Some expect a direct assignment
                     writer.bin_path = ffmpeg_path
-        except:
+        except Exception:
             pass
 
         # Method 2: Command args modification
@@ -763,7 +763,7 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
                         writer._args[0] = ffmpeg_path
                     else:
                         writer._args.append(ffmpeg_path)
-        except:
+        except Exception:
             pass
 
         # Method 3: Set via class attribute
@@ -771,14 +771,14 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
             writer.__class__.bin_path = staticmethod(
                 lambda *args, **kwargs: ffmpeg_path
             )
-        except:
+        except Exception:
             pass
 
         # Method 4: Direct attribute assignment
         try:
             writer._ffmpeg_path = ffmpeg_path
             writer.executable = ffmpeg_path
-        except:
+        except Exception:
             pass
 
         return writer
@@ -794,20 +794,20 @@ def _create_ffmpeg_writer(ffmpeg_path: str, fps: int = 20, bitrate: int = 1800):
             # Apply path setting methods
             try:
                 writer.bin_path = lambda *args, **kwargs: ffmpeg_path
-            except:
+            except Exception:
                 pass
 
             try:
                 if hasattr(writer, "_args") and isinstance(writer._args, dict):
                     writer._args["executable"] = ffmpeg_path
-            except:
+            except Exception:
                 pass
 
             try:
                 writer.__class__.bin_path = staticmethod(
                     lambda *args, **kwargs: ffmpeg_path
                 )
-            except:
+            except Exception:
                 pass
 
             return writer
@@ -1518,7 +1518,7 @@ class FMRModeAnalyzer:
         except IndexError as e:
             raise ValueError(
                 f"Invalid indices: freq_idx={freq_idx}, z_layer={z_layer}. {e}"
-            )
+            ) from e
 
         # Create spatial extent
         ny, nx = mode_data.shape[:2]
@@ -2716,8 +2716,8 @@ Interactive Spectrum Controls:
         # Import required modules
         try:
             from matplotlib.animation import FuncAnimation, PillowWriter
-        except ImportError:
-            raise ImportError("Animation saving requires matplotlib.animation")
+        except ImportError as exc:
+            raise ImportError("Animation saving requires matplotlib.animation") from exc
 
         log.info(f"Creating animation with {len(self._mode_animations)} animated modes")
 
@@ -2885,7 +2885,7 @@ Interactive Spectrum Controls:
             log.info(f"Saved static frames to {base_name}_frame_*.png")
             raise RuntimeError(
                 f"Could not save as {file_ext}, saved static frames instead"
-            )
+            ) from e
 
     def _start_mode_animation(
         self,
@@ -3831,9 +3831,9 @@ Interactive Spectrum Controls:
                         log.info(f"✅ Animation saved as GIF: {fallback_path}")
                     except Exception as gif_error:
                         log.error(f"Fallback to GIF also failed: {gif_error}")
-                        raise save_error
+                        raise save_error from gif_error
                 else:
-                    raise save_error
+                    raise save_error from None
 
             plt.close(fig)
 

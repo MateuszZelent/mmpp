@@ -13,8 +13,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    import matplotlib.pyplot as plt
-
     from mmpp.plotting import MMPPlotter
 
     print("🎯 Testing mmpp Smart Legend Functionality")

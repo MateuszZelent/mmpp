@@ -2,7 +2,6 @@
 Basic tests for mmpp library.
 """
 
-import ast
 import os
 import sys
 from pathlib import Path
@@ -66,18 +65,8 @@ def _assert_zarr_python_markers(requirements: list[str]) -> None:
 
 
 def _setup_install_requires() -> list[str]:
-    tree = ast.parse((ROOT / "setup.py").read_text(encoding="utf-8"))
-
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not isinstance(node.func, ast.Name) or node.func.id != "setup":
-            continue
-        for keyword in node.keywords:
-            if keyword.arg == "install_requires":
-                return ast.literal_eval(keyword.value)
-
-    raise AssertionError("setup.py does not declare install_requires")
+    configuration = read_configuration(str(ROOT / "pyproject.toml"))
+    return configuration["project"]["dependencies"]
 
 
 def test_import():

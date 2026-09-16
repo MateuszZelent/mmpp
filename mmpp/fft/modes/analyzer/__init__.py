@@ -23,7 +23,11 @@ print_characterization_details: Any = None
 try:
     from .mode_analysis import (
         characterize_mode as _characterize_mode,
+    )
+    from .mode_analysis import (
         characterize_vortex_mode as _characterize_vortex_mode,
+    )
+    from .mode_analysis import (
         print_characterization_details as _print_characterization_details,
     )
 

@@ -23,7 +23,7 @@ from .style import MidpointNormalize, setup_animation_styling
 
 # Import analyzer components when available
 try:
-    from . import FMRModeAnalyzer
+    from . import FMRModeAnalyzer  # noqa: F401
 
     ANALYZER_AVAILABLE = True
 except ImportError:
@@ -31,7 +31,10 @@ except ImportError:
 
 # Import interfaces when available
 try:
-    from .interfaces import FFTModeInterface, FrequencyModeInterface
+    from .interfaces import (  # noqa: F401
+        FFTModeInterface,
+        FrequencyModeInterface,
+    )
 
     INTERFACES_AVAILABLE = True
 except ImportError:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -23,7 +23,7 @@ from mmpp._repr_helpers import (
 
 def _frequency_ghz(omega_rad_s: object) -> str:
     try:
-        value = float(omega_rad_s)
+        value = float(cast(Any, omega_rad_s))
     except (TypeError, ValueError):
         return "unknown"
     if not np.isfinite(value):

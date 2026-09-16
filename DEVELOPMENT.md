@@ -3,7 +3,7 @@
 This guide describes the current local workflow for developing `mmpp`.
 
 ## Prerequisites
-- Python 3.9+
+- Python 3.10+
 - `pip`
 - `git`
 - Optional: `just` command runner (`cargo install just` or `pip install just-install`)

@@ -1311,7 +1311,7 @@ class FieldResolvedCPPThieleModel:
         if float(np.max(np.abs(diffs - dt))) > 1e-3 * dt:
             uniform_t = np.linspace(float(t[0]), float(t[-1]), int(t.size))
             x = np.interp(uniform_t, t, x)
-            t = uniform_t
+            t = np.asarray(uniform_t, dtype=float)  # type: ignore[assignment]
             dt = float(t[1] - t[0])
         centered = x - float(np.mean(x))
         if window == "hann":

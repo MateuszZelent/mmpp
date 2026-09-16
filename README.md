@@ -50,7 +50,7 @@ uv add "mmpp[fft]"
 ```
 
 For development from a checkout, use `uv sync --extra dev` or the equivalent
-`python -m pip install -e ".[dev]"`. The supported Python range is 3.9–3.12.
+`python -m pip install -e ".[dev]"`. The supported Python range is 3.10–3.12.
 
 Optional extras are available for optional workflows:
 
@@ -678,7 +678,7 @@ print("batch specs:", len(batch))
 
 ## Contributing and maintainability notes
 
-The library supports practical workflows across Python 3.9+ and documents interfaces in
+The library supports practical workflows across Python 3.10+ and documents interfaces in
 `mmpp/api` and `docs/`. If you contribute examples, prefer:
 
 - one concise path per snippet,

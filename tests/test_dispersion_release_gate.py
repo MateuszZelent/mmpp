@@ -1,39 +1,32 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
 import types
 from pathlib import Path
 
+from setuptools.config.pyprojecttoml import read_configuration
+
 
 def test_declared_python_versions_match_ci_matrix():
     pyproject = Path("pyproject.toml").read_text()
-    setup_py = Path("setup.py").read_text()
     ci_workflow = Path(".github/workflows/ci.yml").read_text()
-    expected = ["3.9", "3.10", "3.11", "3.12"]
+    expected = ["3.10", "3.11", "3.12"]
 
-    assert 'python-version: ["3.9", "3.10", "3.11", "3.12"]' in ci_workflow
+    assert 'python-version: ["3.10", "3.11", "3.12"]' in ci_workflow
     for version in expected:
         classifier = f"Programming Language :: Python :: {version}"
         assert classifier in pyproject
-        assert classifier in setup_py
 
 
 def test_dev_extra_declares_docs_linkify_dependency():
-    pyproject = Path("pyproject.toml").read_text()
-    setup_py = Path("setup.py").read_text()
     docs_conf = Path("docs/conf.py").read_text()
-    pyproject_dev = re.search(r"dev = \[(.*?)\n\]", pyproject, re.S)
-    setup_dev = re.search(r'"dev": \[(.*?)\n        \]', setup_py, re.S)
+    project = read_configuration("pyproject.toml")["project"]
+    dev_extra = project["optional-dependencies"]["dev"]
 
     assert '"linkify"' in docs_conf
-    assert '"linkify-it-py",' in pyproject
-    assert '"linkify-it-py",' in setup_py
-    assert pyproject_dev is not None
-    assert setup_dev is not None
-    assert '"scipy",' in pyproject_dev.group(1)
-    assert '"scipy",' in setup_dev.group(1)
+    assert "linkify-it-py" in dev_extra
+    assert "scipy" in dev_extra
 
 
 def test_sphinx_static_path_exists():
@@ -86,15 +79,10 @@ def test_docs_workflows_use_dev_extra_for_linkify_dependency():
 
 
 def test_full_extra_includes_fft_backend_dependencies():
-    pyproject = Path("pyproject.toml").read_text()
-    setup_py = Path("setup.py").read_text()
-    pyproject_full = re.search(r"full = \[(.*?)\n\]", pyproject, re.S)
-    setup_full = re.search(r'"full": \[(.*?)\n        \]', setup_py, re.S)
+    project = read_configuration("pyproject.toml")["project"]
+    full_extra = project["optional-dependencies"]["full"]
 
-    assert pyproject_full is not None
-    assert setup_full is not None
-    assert '"pyfftw",' in pyproject_full.group(1)
-    assert '"pyfftw",' in setup_full.group(1)
+    assert "pyfftw" in full_extra
 
 
 def test_fft_dispersion_release_gate_reports_core_api_and_benchmark(tmp_path):

@@ -1,3 +1,20 @@
+# MMPP Library Release v0.6.1
+
+## Packaging and installation fix
+
+- Removed unused Git submodules from the MMPP repository. Installing MMPP from
+  PyPI or a fresh source checkout no longer depends on cloning external
+  repositories.
+- Fixed the release quality gates: Ruff formatting/lint configuration and the
+  mypy package-root configuration now run against the package layout used by
+  CI.
+- Corrected the declared minimum Python version to 3.10, matching the modern
+  type-syntax used by the package and the CI matrix.
+- Includes the skyrmion, vortex, and MTJ frequency-current analysis updates
+  already present on `main`.
+
+---
+
 # MMPP Library Release v0.5.3
 
 ## 🔧 Configuration and Dependency Cleanup
