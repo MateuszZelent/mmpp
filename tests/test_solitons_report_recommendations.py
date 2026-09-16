@@ -1245,6 +1245,7 @@ def test_vortex_interface_interactive_passes_dashboard_flags(monkeypatch) -> Non
             "dpi": 130,
             "trajectory_source": "compare",
             "center_mode": "orbit",
+            "initial_module": "core",
         },
         {"show": True},
     ]

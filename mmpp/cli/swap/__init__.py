@@ -200,8 +200,9 @@ def show_config_info(config_file: str) -> None:
         print(f"  • Last parameter: {config_opts['last_param_name']}")
         print(f"  • SBATCH: {config_opts['sbatch']}")
         print(f"  • Pairs mode: {config_opts['pairs']}")
-        print(f"  • Template: {config_opts['template']}")
-        print(f"  • Main path: {config_opts['main_path']}")
+        template = config_opts.get("template_name", config_opts.get("template"))
+        print(f"  • Template: {template or 'template.mx3'}")
+        print(f"  • Main path: {config_opts.get('main_path', 'current directory')}")
 
         # Show validation issues
         issues = info["validation_issues"]

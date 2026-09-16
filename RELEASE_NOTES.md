@@ -1,3 +1,17 @@
+# MMPP Library Release v0.6.4
+
+## Clean-runner compatibility follow-up
+- Pinned the package to the Zarr 2 API used by the current storage and test
+  paths, so Python 3.10--3.12 resolve the same compatible dependency.
+- Added the missing `python -m mmpp` entry point and made swap configuration
+  reporting compatible with the generated `template_name` key.
+- Included IPython and ipywidgets in the development validation environment;
+  hardened optional dashboard and result-card fallbacks.
+- Marked the untracked manual dispersion diagnostic as optional in tests so a
+  fresh checkout validates only repository content.
+
+---
+
 # MMPP Library Release v0.6.3
 
 ## Release and installation hardening

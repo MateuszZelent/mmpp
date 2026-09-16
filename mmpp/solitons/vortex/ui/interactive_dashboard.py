@@ -490,7 +490,7 @@ class VortexInteractiveDashboard:
         }
         _module_names = [name for name, _ in _module_defs]
 
-        requested_module = self._initial_module.strip().lower()
+        requested_module = str(getattr(self, "_initial_module", "core")).strip().lower()
         selected_module = _module_names[0]
         for module_name in _module_names:
             plain_name = module_name.split(" ", 1)[-1].lower()

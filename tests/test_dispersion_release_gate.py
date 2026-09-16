@@ -51,11 +51,12 @@ def test_sphinx_suppresses_intentional_archive_toctree_warnings():
 
 def test_known_docs_warning_regressions_are_fixed():
     development_readme = Path("docs/development/README.md").read_text()
-    refactor_plan = Path("docs/raports/10.05.2025/refacktor/plan.md").read_text()
+    refactor_plan_path = Path("docs/raports/10.05.2025/refacktor/plan.md")
     hysteresis_result = Path("mmpp/analyze/hysteresis/result.py").read_text()
 
     assert "../../DEVELOPMENT.md" not in development_readme
-    assert "```toml\nzarr>=3\nh5py\n```" not in refactor_plan
+    if refactor_plan_path.exists():
+        assert "```toml\nzarr>=3\nh5py\n```" not in refactor_plan_path.read_text()
     assert "same |B| range" not in hysteresis_result
 
 

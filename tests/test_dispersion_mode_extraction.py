@@ -1086,7 +1086,8 @@ def test_dispersion_interactive_viewer_show_and_close_update_display_state(monke
     assert viewer.show_requested is False
     assert viewer.show() is viewer
     assert viewer.show_requested is True
-    assert calls == [{"obj": viewer, "display_id": True}]
+    expected_display = viewer._widget if viewer._widget is not None else viewer
+    assert calls == [{"obj": expected_display, "display_id": True}]
     assert viewer._display_handle is display_handle
 
     viewer.close()
@@ -5381,7 +5382,7 @@ def test_legacy_modes_init_exports_only_defined_names():
 def test_manual_dispersion_diagnostic_is_silent_on_import(capsys):
     import importlib
 
-    import mmpp.fft.dispersion.test_dispersion_models as diagnostic
+    diagnostic = pytest.importorskip("mmpp.fft.dispersion.test_dispersion_models")
 
     importlib.reload(diagnostic)
     captured = capsys.readouterr()

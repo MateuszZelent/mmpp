@@ -59,6 +59,10 @@ def _assert_zarr_python_markers(requirements: list[str]) -> None:
 
     assert python311
     assert any(
+        requirement.specifier.contains("2.18.3", prereleases=True)
+        for requirement in python311
+    )
+    assert not any(
         requirement.specifier.contains("3.0.0", prereleases=True)
         for requirement in python311
     )

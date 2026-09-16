@@ -663,7 +663,16 @@ def api_help_html(
     The card is generated from the live object, so it stays aligned with method
     signatures as the API evolves.
     """
-    title = title or obj.__class__.__name__
+    object_name = obj.__class__.__name__
+    title = title or object_name
+    object_badge = (
+        ""
+        if object_name in title
+        else (
+            f"<span style='font-size:.75em;color:{_HELPER_MUTED_COLOR};"
+            f"margin-left:8px;font-weight:400;'>({_esc(object_name)})</span>"
+        )
+    )
     callables = _public_callables(obj, methods)
     if max_methods is not None:
         callables = callables[: int(max_methods)]
@@ -709,7 +718,7 @@ def api_help_html(
         else ""
     )
     inner = (
-        f"<div style='font-size:1.1em;font-weight:600;color:{_HELPER_TITLE_COLOR};margin-bottom:4px;'>{_esc(title)}</div>"
+        f"<div style='font-size:1.1em;font-weight:600;color:{_HELPER_TITLE_COLOR};margin-bottom:4px;'>{_esc(title)}{object_badge}</div>"
         f"{subtitle_html}"
         f"{props_block}"
         f"<div style='{_HELPER_SECTION_CHROME}'>"

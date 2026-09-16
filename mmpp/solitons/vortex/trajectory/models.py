@@ -104,7 +104,7 @@ class OrbitFitResult:
             ],
             api=api_help_html(
                 self,
-                title="Orbit fit result API help",
+                title="OrbitFitResult API help",
                 prefix="jobs[-1].solitons.vortex.trajectory.orbit.fit()",
                 properties=[
                     ("center", "Ellipse center (x, y)"),

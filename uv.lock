@@ -4488,10 +4488,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "tqdm" },
-    { name = "zarr", version = "2.18.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
-    { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
-    { name = "zarr", version = "3.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "zarr", version = "3.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
 ]
 
 [package.optional-dependencies]
@@ -4500,6 +4497,9 @@ dev = [
     { name = "build", version = "1.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "linkify-it-py", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "linkify-it-py", version = "2.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "ipython", version = "9.16.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "ipywidgets" },
     { name = "mypy", version = "1.19.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "mypy", version = "2.3.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "myst-parser", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -4629,8 +4629,10 @@ requires-dist = [
     { name = "holoviews", marker = "extra == 'plotting'" },
     { name = "imageio", marker = "extra == 'full'" },
     { name = "imageio", marker = "extra == 'image'" },
+    { name = "ipython", marker = "extra == 'dev'" },
     { name = "ipython", marker = "extra == 'full'" },
     { name = "ipython", marker = "extra == 'interactive'" },
+    { name = "ipywidgets", marker = "extra == 'dev'" },
     { name = "ipywidgets", marker = "extra == 'full'" },
     { name = "ipywidgets", marker = "extra == 'interactive'" },
     { name = "itables", marker = "extra == 'full'" },
@@ -4676,8 +4678,7 @@ requires-dist = [
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.40.0" },
     { name = "tqdm" },
     { name = "twine", marker = "extra == 'dev'" },
-    { name = "zarr", marker = "python_full_version < '3.11'", specifier = ">=2.18.0,<3.0.0" },
-    { name = "zarr", marker = "python_full_version >= '3.11'", specifier = ">=3.0.0" },
+    { name = "zarr", specifier = ">=2.18.0,<3.0.0" },
 ]
 provides-extras = ["dev", "interactive", "plotting", "fft", "wavelets", "image", "ml", "tui", "full"]
 
