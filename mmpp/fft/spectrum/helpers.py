@@ -69,7 +69,12 @@ class _SpectrumQuickPlot:
 
         # ── compute params (forwarded to spectrum()) ─────────────
         compute_params = [
-            ("method", "1", "1: avg signal → FFT; 2: per-pixel FFT → avg |FFT|²"),
+            (
+                "method",
+                "1",
+                "1: average magnetization over cells, then FFT; "
+                "2: FFT each cell, then average power |FFT|²",
+            ),
             ("dset", "'m'", "Dataset name"),
             ("z_layer", "-1", "Z-layer index"),
             ("tmin / tmax", "None", "Time range (indices)"),
@@ -110,8 +115,8 @@ class _SpectrumQuickPlot:
             "# Compare methods on same axes\n"
             "import matplotlib.pyplot as plt\n"
             "fig, ax = plt.subplots()\n"
-            "data.fft.spectrum.plot.spectrum(method=1, force=True, ax=ax, label='avg signal → FFT')\n"
-            "data.fft.spectrum.plot.spectrum(method=2, force=True, ax=ax, label='per-pixel FFT → avg |FFT|²')\n"
+            "data.fft.spectrum.plot.spectrum(method=1, force=True, ax=ax, label='average m → FFT')\n"
+            "data.fft.spectrum.plot.spectrum(method=2, force=True, ax=ax, label='cell FFT → average |FFT|²')\n"
             "ax.legend()\n"
             "\n"
             "# Interactive explorer\n"
@@ -235,7 +240,7 @@ class SpectrumHelper:
                 [
                     (
                         "method",
-                        "1: avg signal → FFT;  2: per-pixel FFT → avg |FFT|² (default: 1)",
+                        "1: average magnetization over cells, then FFT;  2: FFT each cell, then average |FFT|² (default: 1)",
                     ),
                     ("dset", "Dataset name (default: 'm')"),
                     ("z_layer", "Z-layer index (default: -1, last layer)"),
@@ -319,15 +324,15 @@ class SpectrumHelper:
                 "# Basic spectrum",
                 "result = data.fft.spectrum()",
                 "",
-                "# Method comparison (per-pixel power avg vs avg-then-FFT)",
+                "# Method comparison (average magnetization first vs average per-cell power)",
                 "r1 = data.fft.spectrum(method=1, force=True)",
                 "r2 = data.fft.spectrum(method=2, force=True)",
                 "",
                 "# Plot both on same axes",
                 "import matplotlib.pyplot as plt",
                 "fig, ax = plt.subplots()",
-                "r1.plot.spectrum(ax=ax, log_scale=True, label='method 1 (avg signal → FFT)')",
-                "r2.plot.spectrum(ax=ax, log_scale=True, label='method 2 (per-pixel FFT → avg |FFT|²)')",
+                "r1.plot.spectrum(ax=ax, log_scale=True, label='method 1 (average m → FFT)')",
+                "r2.plot.spectrum(ax=ax, log_scale=True, label='method 2 (cell FFT → average |FFT|²)')",
                 "ax.legend()",
                 "",
                 "# Quick one-liner plot",

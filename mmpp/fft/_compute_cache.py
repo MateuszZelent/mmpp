@@ -99,6 +99,7 @@ def verify_fft_parameters(
         "z_layer",
         "source_dataset",
         "slice_identifier",
+        "resample_nonuniform",
     ),
 ) -> bool:
     """Verify whether request parameters match an existing cached FFT result."""

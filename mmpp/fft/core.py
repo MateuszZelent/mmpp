@@ -322,7 +322,8 @@ class FFT:
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
-            FFT method (default: 1)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space (default: 1).
         use_cache : bool, optional
             Use memory cache (default: True)
         save : bool, optional
@@ -406,7 +407,8 @@ class FFT:
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
-            FFT method (default: 1)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space (default: 1).
         save : bool, optional
             Save result to zarr file (default: False)
         force : bool, optional
@@ -591,7 +593,8 @@ class FFT:
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
-            FFT method (default: 1)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space (default: 1).
         save : bool, optional
             Save result to zarr file (default: False)
         force : bool, optional
@@ -827,7 +830,8 @@ class FFT:
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
-            FFT method (default: 1)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space (default: 1).
         save : bool, optional
             Save result to zarr file (default: False)
         force : bool, optional
@@ -872,7 +876,8 @@ class FFT:
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
-            FFT method (default: 1)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space (default: 1).
         **kwargs : Any
             Additional FFT configuration options
 
@@ -902,7 +907,8 @@ class FFT:
         z_layer : int, optional
             Z-layer (default: -1)
         method : int, optional
-            FFT method (default: 1)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space (default: 1).
         slice_info : Any, optional
             Optional slicing applied before FFT
         \\*\\*kwargs : Any
@@ -941,7 +947,8 @@ class FFT:
         ax : matplotlib.axes.Axes, optional
             Existing axes to plot on. If None, creates new figure.
         method : int, optional
-            FFT method (default: 1)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space (default: 1).
         z_layer : int, optional
             Z-layer (default: -1)
         log_scale : bool, optional
@@ -1095,6 +1102,7 @@ class FFT:
                     "",
                     "# Job-level FFT (auto-selects largest m dataset)",
                     "result = job[0].fft.spectrum()",
+                    "result_per_cell = job[0].fft.spectrum(method=2)",
                     "",
                     "# Fluent filter chain",
                     "job[0].fft.filters(remove_static=True).spectrum()",
@@ -1273,7 +1281,11 @@ class FFT:
                     "Auto-selected or explicit: 'm', 'm_x11', 'm_y11'",
                 ),
                 ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
-                ("method", "FFT method", "1 (default), 2"),
+                (
+                    "method",
+                    "FFT spatial reduction",
+                    "1: average magnetization then FFT (default); 2: per-cell FFT then average |FFT|²",
+                ),
                 ("ax", "Existing matplotlib axes", "None (create new) or Axes"),
                 ("fmin/fmax", "Frequency range filter", "None or float (Hz)"),
                 ("tmin/tmax", "Time index range", "None or int (start:stop)"),
@@ -1323,6 +1335,7 @@ job[0].fft.spectrum(filter_type="savgol_smooth")
 
 # Batch spectrum
 batch = job[:].fft.spectrum.compute_all(
+    method=2,
     extract_parameters=["B0"],
 )
 batch[0].plot()                    # Plot single spectrum
@@ -1525,7 +1538,11 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
         params = [
             ("dset", "Dataset name", "'m', 'm_x11', 'm_y11'"),
             ("z_layer", "Z-layer index", "-1 (top), 0 (bottom), 1, 2, ..."),
-            ("method", "FFT method", "1 (default), 2"),
+            (
+                "method",
+                "FFT spatial reduction",
+                "1: average magnetization then FFT (default); 2: per-cell FFT then average |FFT|²",
+            ),
             ("save", "Save to zarr", "True/False"),
             ("force", "Force recalculation", "True/False"),
             ("zero_padding", "Pad to power-of-two length", "True/False"),
@@ -1545,6 +1562,7 @@ batch.plot_heatmap("B0")           # 2D heatmap vs B0"""
             "power = job[0].fft.power('m')",
             "freqs = job[0].fft.frequencies()",
             "freqs_fft, spectrum = job[0].fft.spectrum(save=True, force=True)",
+            "freqs_2, spectrum_2 = job[0].fft.spectrum(method=2)",
             "",
             "# Plotting",
             "fig, ax = job[0].fft.plot_spectrum(log_scale=True)",

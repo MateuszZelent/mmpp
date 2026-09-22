@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pytest
 import zarr
 from matplotlib import animation as mpl_animation
 
@@ -56,9 +57,11 @@ def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(
         def __init__(self):
             self.job_result = SimpleNamespace(path="/tmp/dummy.zarr")
             self.calls = 0
+            self.last_kwargs = None
 
-        def _spectrum_impl(self, **_kwargs):
+        def _spectrum_impl(self, **kwargs):
             self.calls += 1
+            self.last_kwargs = kwargs
             return _DummySpectrumResult()
 
     class _ViewerStub:
@@ -83,6 +86,28 @@ def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(
 
     assert out is provided
     assert fft.calls == 0
+
+    computed = interface._interactive_spectrum_impl(
+        toolbar=True,
+        show=False,
+        method=2,
+    )
+
+    assert isinstance(computed, _DummySpectrumResult)
+    assert fft.calls == 1
+    assert fft.last_kwargs["method"] == 2
+
+
+def test_interactive_spectrum_helper_documents_fft_reduction_methods():
+    pytest.importorskip("rich")
+    fft = SimpleNamespace(job_result=SimpleNamespace(path="/tmp/dummy.zarr"))
+    helper = FFTModeInterfaceNew(0, fft).interactive_spectrum
+
+    rendered = repr(helper)
+
+    assert "method" in rendered
+    assert "per-cell FFT" in rendered
+    assert "method=2" in rendered
 
 
 def _create_fft_job(tmp_path):

@@ -134,7 +134,8 @@ class FFTPlotter:
         dataset_name : str, optional
             Dataset name (default: auto-select largest m dataset)
         method : int, optional
-            FFT method (default: 1)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space (default: 1).
         z_layer : int, optional
             Z-layer (default: -1)
         log_scale : bool, optional

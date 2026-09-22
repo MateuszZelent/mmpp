@@ -1,8 +1,13 @@
 """Batch spectrum namespace (refactor shim)."""
 
-from .result import BatchSpectrumResult, SpectrumEntry
+from .result import BatchSpectrumAnalysis, BatchSpectrumResult, SpectrumEntry
 
-__all__ = ["BatchSpectrum", "BatchSpectrumResult", "SpectrumEntry"]
+__all__ = [
+    "BatchSpectrum",
+    "BatchSpectrumAnalysis",
+    "BatchSpectrumResult",
+    "SpectrumEntry",
+]
 
 
 def __getattr__(name: str):

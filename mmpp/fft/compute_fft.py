@@ -693,6 +693,7 @@ class FFTCompute:
         slice_info: Any | None = None,
         preloaded_data: np.ndarray | None = None,
         time_step_scale: float = 1.0,
+        resample_nonuniform: bool = False,
     ) -> tuple[np.ndarray, float]:
         """Load data from zarr file."""
         return load_fft_input_data(
@@ -703,6 +704,7 @@ class FFTCompute:
             slice_info=slice_info,
             preloaded_data=preloaded_data,
             time_step_scale=time_step_scale,
+            resample_nonuniform=resample_nonuniform,
             pyzfn_available=PYZFN_AVAILABLE,
             pyzfn_cls=Pyzfn,
             psutil_module=(psutil if PSUTIL_AVAILABLE else None),
@@ -784,6 +786,7 @@ class FFTCompute:
         tmax: int | None = None,
         preloaded_data: np.ndarray | None = None,
         time_step_scale: float = 1.0,
+        resample_nonuniform: bool = False,
         **kwargs,
     ) -> FFTComputeResult:
         """
@@ -798,7 +801,8 @@ class FFTCompute:
         z_layer : int
             Z-layer index (-1 for last layer)
         method : int
-            FFT method (1 or 2)
+            Spatial reduction: 1 averages magnetization before FFT; 2 computes
+            per-cell FFT power and averages it over space.
         save : bool, optional
             Save result to zarr file (default: False)
         force : bool, optional
@@ -811,6 +815,8 @@ class FFTCompute:
             Deterministic identifier for cache/save naming (derived from slice_info)
         tmax : int, optional
             Maximum number of time steps to use for FFT calculation (default: None, use all)
+        resample_nonuniform : bool, optional
+            Resample nonuniform timestamps to an endpoint-preserving uniform time grid.
         **kwargs : Any
             Additional FFT configuration options
 
@@ -859,6 +865,7 @@ class FFTCompute:
                     z_layer=z_layer,
                     source_dataset=dataset,
                     slice_identifier=slice_identifier,
+                    resample_nonuniform=bool(resample_nonuniform),
                     **kwargs,
                 ):
                     log.info(
@@ -898,6 +905,7 @@ class FFTCompute:
             slice_info=slice_info,
             preloaded_data=preloaded_data,
             time_step_scale=time_step_scale,
+            resample_nonuniform=resample_nonuniform,
             pyzfn_available=PYZFN_AVAILABLE,
             pyzfn_cls=Pyzfn,
             psutil_module=(psutil if PSUTIL_AVAILABLE else None),
@@ -974,6 +982,7 @@ class FFTCompute:
                 "z_layer": z_layer,
                 "save_dataset_name": save_dataset_name,
                 "slice_identifier": slice_identifier,
+                "resample_nonuniform": bool(resample_nonuniform),
             }
         )
 

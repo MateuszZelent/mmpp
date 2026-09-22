@@ -343,7 +343,12 @@ def _coerce_dt(value: Any) -> float | None:
     return dt if dt > 0 else None
 
 
-def _uniform_dt_from_time_axis(value: Any, *, slice_info: Any | None = None) -> float:
+def _uniform_dt_from_time_axis(
+    value: Any,
+    *,
+    slice_info: Any | None = None,
+    allow_nonuniform: bool = False,
+) -> float:
     """Resolve dt from the active, uniformly sampled portion of a time axis."""
     axis: Any = np.asarray(value, dtype=float).reshape(-1)
     if slice_info is not None:
@@ -359,7 +364,7 @@ def _uniform_dt_from_time_axis(value: Any, *, slice_info: Any | None = None) -> 
         raise ValueError("Time axis must be strictly increasing")
     dt = float(np.mean(deltas))
     tolerance = max(abs(dt) * 1e-6, np.finfo(float).eps * 10)
-    if np.max(np.abs(deltas - dt)) > tolerance:
+    if np.max(np.abs(deltas - dt)) > tolerance and not allow_nonuniform:
         raise ValueError(
             "FFT requires a uniformly sampled time axis; resample the data first"
         )
@@ -367,7 +372,12 @@ def _uniform_dt_from_time_axis(value: Any, *, slice_info: Any | None = None) -> 
 
 
 def resolve_dt_from_metadata(
-    *, data_set: Any, job: Any, logger: Any, slice_info: Any | None = None
+    *,
+    data_set: Any,
+    job: Any,
+    logger: Any,
+    slice_info: Any | None = None,
+    allow_nonuniform: bool = False,
 ) -> float:
     """Resolve timestep with dataset-specific attributes first."""
     dt = None
@@ -376,7 +386,11 @@ def resolve_dt_from_metadata(
         if hasattr(data_set, "attrs") and "t" in data_set.attrs:
             t_attr = data_set.attrs["t"]
             if hasattr(t_attr, "__len__") and len(t_attr) >= 2:
-                dt = _uniform_dt_from_time_axis(t_attr, slice_info=slice_info)
+                dt = _uniform_dt_from_time_axis(
+                    t_attr,
+                    slice_info=slice_info,
+                    allow_nonuniform=allow_nonuniform,
+                )
                 dt_from_time_axis = True
                 logger.debug("Using dt from data_set.attrs['t']: %s", dt)
 
@@ -437,6 +451,69 @@ def resolve_dt_from_metadata(
     return dt
 
 
+def _time_axis_for_view(
+    value: Any,
+    *,
+    slice_info: Any | None,
+    tmax: int | None,
+    apply_tmax: bool,
+) -> np.ndarray:
+    """Apply the same time selection used for the data to its time axis."""
+    axis = np.asarray(value, dtype=float).reshape(-1)
+    if slice_info is not None:
+        key = slice_info if isinstance(slice_info, tuple) else (slice_info,)
+        if key:
+            first = key[0]
+            if isinstance(first, slice):
+                axis = axis[first]
+            elif isinstance(first, (int, np.integer)):
+                axis = axis[int(first) : int(first) + 1]
+    if apply_tmax and tmax is not None and tmax > 0:
+        axis = axis[:tmax]
+    return axis
+
+
+def _time_axis_requires_resampling(time_axis: np.ndarray) -> bool:
+    """Return whether an increasing time axis differs materially from uniform."""
+    time_axis = np.asarray(time_axis, dtype=float).reshape(-1)
+    if time_axis.size < 2 or not np.isfinite(time_axis).all():
+        raise ValueError("Resampling requires at least two finite time samples")
+    deltas = np.diff(time_axis)
+    if np.any(deltas <= 0):
+        raise ValueError("Resampling requires a strictly increasing time axis")
+    dt = float(np.mean(deltas))
+    tolerance = max(abs(dt) * 1e-6, np.finfo(float).eps * 10)
+    return bool(np.max(np.abs(deltas - dt)) > tolerance)
+
+
+def _resample_nonuniform_time_data(
+    data: np.ndarray, time_axis: np.ndarray
+) -> tuple[np.ndarray, bool]:
+    """Linearly interpolate time-first data onto an endpoint-preserving grid."""
+    data = np.asarray(data)
+    time_axis = np.asarray(time_axis, dtype=float).reshape(-1)
+    if data.ndim == 0 or data.shape[0] != time_axis.size:
+        raise ValueError(
+            "The time axis length must match the first data dimension before resampling"
+        )
+    if not _time_axis_requires_resampling(time_axis):
+        return data, False
+
+    uniform_time = np.linspace(time_axis[0], time_axis[-1], time_axis.size)
+    flat_data = data.reshape(data.shape[0], -1)
+    output_dtype = np.result_type(data.dtype, np.float32)
+    resampled = np.empty(flat_data.shape, dtype=output_dtype)
+    for column in range(flat_data.shape[1]):
+        values = flat_data[:, column]
+        if np.iscomplexobj(values):
+            resampled[:, column] = np.interp(
+                uniform_time, time_axis, values.real
+            ) + 1j * np.interp(uniform_time, time_axis, values.imag)
+        else:
+            resampled[:, column] = np.interp(uniform_time, time_axis, values)
+    return resampled.reshape(data.shape), True
+
+
 def load_fft_input_data(
     *,
     zarr_path: str,
@@ -450,6 +527,7 @@ def load_fft_input_data(
     logger: Any,
     preloaded_data: np.ndarray | None = None,
     time_step_scale: float = 1.0,
+    resample_nonuniform: bool = False,
     _layout_out: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, float]:
     """Load FFT input data from zarr with slicing, z-layer handling, and dt detection.
@@ -460,6 +538,9 @@ def load_fft_input_data(
     so that the FFT operates on the correct materialized view.
     """
     start_time = time.time()
+
+    if not isinstance(resample_nonuniform, (bool, np.bool_)):
+        raise TypeError("resample_nonuniform must be boolean")
 
     if not pyzfn_available:
         raise ImportError(
@@ -482,6 +563,7 @@ def load_fft_input_data(
     # ------------------------------------------------------------------
     # Use preloaded (materialized) data when available
     # ------------------------------------------------------------------
+    apply_tmax = False
     if preloaded_data is not None:
         logger.info(
             "Using preloaded data with shape %s (skipping zarr read)",
@@ -490,6 +572,7 @@ def load_fft_input_data(
         data = np.asarray(preloaded_data)
         if tmax is not None:
             data = data[:tmax]
+            apply_tmax = tmax > 0
         # The materialized array already represents the selected view. z_layer
         # is consequently local to that view and must never reload source data.
         data = _select_z_layer(
@@ -524,9 +607,55 @@ def load_fft_input_data(
             logger=logger,
         )
 
+    resampled_dt = None
+    if resample_nonuniform:
+        data_attrs = getattr(data_set, "attrs", {})
+        raw_time_axis = data_attrs.get("t") if hasattr(data_attrs, "get") else None
+        if raw_time_axis is not None:
+            if preloaded_data is None:
+                time_axis = _time_axis_for_view(
+                    raw_time_axis,
+                    slice_info=slice_info,
+                    tmax=tmax,
+                    apply_tmax=apply_tmax,
+                )
+                data, did_resample = _resample_nonuniform_time_data(data, time_axis)
+            else:
+                source_time_axis = np.asarray(raw_time_axis, dtype=float).reshape(-1)
+                if _time_axis_requires_resampling(source_time_axis):
+                    if (
+                        slice_info is not None
+                        or float(time_step_scale) != 1.0
+                        or source_time_axis.size != preloaded_data.shape[0]
+                    ):
+                        raise ValueError(
+                            "Cannot resample nonuniform timestamps for preloaded data "
+                            "without a matching, unmodified time axis; run the FFT "
+                            "on the source dataset instead."
+                        )
+                    time_axis = source_time_axis
+                    if apply_tmax and tmax is not None and tmax > 0:
+                        time_axis = time_axis[:tmax]
+                    data, did_resample = _resample_nonuniform_time_data(data, time_axis)
+                else:
+                    time_axis = source_time_axis
+                    did_resample = False
+            if did_resample:
+                resampled_dt = float(np.mean(np.diff(time_axis)))
+                logger.info(
+                    "Resampled nonuniform time axis to %s uniform samples",
+                    time_axis.size,
+                )
+
     dt = resolve_dt_from_metadata(
-        data_set=data_set, job=job, logger=logger, slice_info=slice_info
+        data_set=data_set,
+        job=job,
+        logger=logger,
+        slice_info=slice_info,
+        allow_nonuniform=resample_nonuniform,
     )
+    if resampled_dt is not None:
+        dt = resampled_dt
     if preloaded_data is not None:
         if not np.isfinite(time_step_scale) or time_step_scale <= 0:
             raise ValueError(
@@ -553,6 +682,7 @@ def load_fft_input_data_profiled(
     logger: Any,
     preloaded_data: np.ndarray | None = None,
     time_step_scale: float = 1.0,
+    resample_nonuniform: bool = False,
 ) -> tuple[np.ndarray, float, InputLoadMetrics]:
     """Load FFT input data and collect timing/memory metrics."""
     process = None
@@ -579,6 +709,7 @@ def load_fft_input_data_profiled(
         logger=logger,
         preloaded_data=preloaded_data,
         time_step_scale=time_step_scale,
+        resample_nonuniform=resample_nonuniform,
         _layout_out=layout_info,
     )
     load_time = time.time() - load_start_time

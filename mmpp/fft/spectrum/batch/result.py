@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import pickle
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
@@ -644,6 +645,27 @@ class BatchSpectrumResult:
             **kwargs,
         )
 
+    def plot_sweeps(
+        self,
+        parameters: list[str] | tuple[str, ...] | str | None = None,
+        **kwargs,
+    ) -> dict[str, tuple[Any, np.ndarray]]:
+        """Plot a faceted spectrum map for each varying sweep parameter.
+
+        Panels are grouped by every other varying parameter, keeping each
+        spectrum associated with its complete sweep coordinate.
+
+        Examples
+        --------
+        >>> batch = jobs[:].fft.spectrum.compute_all()
+        >>> figures = batch.plot_sweeps()
+        >>> fig, axes = figures["theta"]
+        >>> figures = batch.plot_sweeps(parameters=["theta", "phi"])
+        """
+        from .sweep import plot_sweeps
+
+        return plot_sweeps(self, parameters=parameters, **kwargs)
+
     def plot_experimental_data(
         self,
         peaks: str,
@@ -715,7 +737,56 @@ class BatchSpectrumResult:
         )
 
 
+class BatchSpectrumAnalysis:
+    """Fluent view of a computed batch spectrum for selected sweep axes."""
+
+    def __init__(
+        self,
+        result: BatchSpectrumResult,
+        sweep_parameters: str | Sequence[str] | None = None,
+    ) -> None:
+        self.result = result
+        if isinstance(sweep_parameters, str) or sweep_parameters is None:
+            self.sweep_parameters = sweep_parameters
+        else:
+            self.sweep_parameters = tuple(sweep_parameters)
+
+    def plot_sweeps(
+        self,
+        parameters: str | Sequence[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, tuple[Any, np.ndarray]]:
+        """Plot this analysis' selected sweep axes.
+
+        An explicit ``parameters`` argument overrides the selection supplied to
+        ``BatchSpectrum.analyze``. With no selection, all varying numeric axes
+        in the batch are plotted.
+        """
+        selected_parameters = (
+            self.sweep_parameters if parameters is None else parameters
+        )
+        return self.result.plot_sweeps(parameters=selected_parameters, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        """Expose the underlying batch result's data and plotting methods."""
+        try:
+            result = object.__getattribute__(self, "result")
+        except AttributeError:
+            raise AttributeError(name) from None
+        return getattr(result, name)
+
+    def __len__(self) -> int:
+        return len(self.result)
+
+    def __repr__(self) -> str:
+        return (
+            f"BatchSpectrumAnalysis({len(self)} spectra, "
+            f"sweep_parameters={self.sweep_parameters!r})"
+        )
+
+
 __all__ = [
+    "BatchSpectrumAnalysis",
     "BatchSpectrumResult",
     "SpectrumEntry",
 ]

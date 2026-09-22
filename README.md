@@ -315,14 +315,34 @@ stack = pc_batch.get.m[:]         # shape: [n_jobs, ...]
 stack_small = pc_batch.get.m[0:100, :, :, :, 0]
 
 pc_batch.fft.compute_all()        # compute FFT pipeline for all results
-specs = pc_batch.fft.spectrum.compute_all(dset="m", fmin=5e9, fmax=25e9)
+specs = pc_batch.fft.spectrum.compute_all(dataset_name="m", fmin=5e9, fmax=25e9)
 specs.plot_heatmap(parameter="Bext")
+
+# method=1 averages magnetization over cells before FFT; method=2 computes
+# per-cell FFT power and averages it over space.
+per_cell_batch = pc_batch.fft.spectrum.compute_all(dataset_name="m", method=2)
+
+# Analyze one sweep axis, with panels for the other varying parameters.
+theta_plots = pc_batch.fft.spectrum.analyze(
+    "theta",
+    method=2,
+    fmin=5e9,
+    fmax=25e9,
+).plot_sweeps()
+fig, axes = theta_plots["theta"]
+
+# Omit the parameter to generate plots for every detected sweep axis.
+all_sweep_plots = pc_batch.fft.spectrum.analyze().plot_sweeps()
 
 pc_batch.fft.modes.compute_modes()
 pc_batch.fft.modes.analyze_all()
 
 pc_batch.fft.transmission.compute_all()
 ```
+
+Batch spectrum computation linearly resamples a nonuniform timestamp axis onto
+an endpoint-preserving uniform grid by default. Set `resample_nonuniform=False`
+to keep the FFT's strict uniform-sampling check.
 
 Legacy-compatible mixed forms are still supported in many places:
 

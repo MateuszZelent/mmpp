@@ -527,6 +527,12 @@ class InteractiveSpectrumHelper:
             param_data = [
                 ("components", "list", "auto", "['x','y','z'] or [0,1,2]"),
                 ("z_layer", "int", "-1", "Z-layer for modes (top layer)"),
+                (
+                    "method",
+                    "int",
+                    "1",
+                    "1: average magnetization then FFT; 2: per-cell FFT then average |FFT|² for the spectrum curve",
+                ),
                 ("dpi", "int", "100", "Figure resolution"),
                 ("figsize", "tuple", "(16,10)", "Figure size (width, height)"),
                 ("toolbar", "bool", "True", "Toolbar UI with live filtering"),
@@ -569,6 +575,7 @@ job[0].m[:200,...,1].fft.modes.interactive_spectrum(dpi=150)
 job[0].fft.modes.interactive_spectrum(
     components=['x', 'y'],
     z_layer=-1,
+    method=2,  # average per-cell FFT power in the spectrum curve
     dpi=200,
     log_scale=True,
     show_peaks=True,
@@ -1144,6 +1151,11 @@ class FFTModeInterfaceNew:
             If component was selected via slicing, defaults to that component.
         z_layer : int
             Z-layer for mode visualization (default: -1 = top)
+        method : int
+            Method used for the spectrum curve: 1 averages magnetization over
+            cells before the FFT; 2 computes an FFT per cell then averages
+            power (|FFT|²). Defaults to 1. The mode maps remain spatially
+            resolved in either case.
         dpi : int
             Figure resolution (default: 100)
         figsize : tuple
@@ -1178,6 +1190,9 @@ class FFTModeInterfaceNew:
 
         >>> # Start at specific frequency
         >>> job[0].fft.modes.interactive_spectrum(initial_frequency=9.5)
+
+        >>> # Average per-cell FFT power in the displayed spectrum curve
+        >>> job[0].fft.modes.interactive_spectrum(method=2)
         """
         method = _validate_interactive_integer("method", method)
         if method not in {1, 2}:

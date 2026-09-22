@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -12,7 +13,8 @@ import numpy as np
 
 from ....cache import CacheKey
 from ....cli.logging_config import get_mmpp_logger
-from .result import BatchSpectrumResult, SpectrumEntry
+from .result import BatchSpectrumAnalysis, BatchSpectrumResult, SpectrumEntry
+from .sweep import discover_sweep_parameters, get_sweep_parameter_value
 
 if TYPE_CHECKING:
     from ..multi import MultiSpectrumResult
@@ -50,7 +52,9 @@ def _batch_trace(
     return freqs, np.asarray(complex_spectrum), np.asarray(spectral_power, dtype=float)
 
 
-def _compatible_frequency_mask(frequency_axes: list[np.ndarray]) -> np.ndarray:
+def _compatible_frequency_mask(
+    frequency_axes: list[np.ndarray], *, rtol: float = 1e-10
+) -> np.ndarray:
     """Compare all grids with the first grid in input order."""
     if not frequency_axes:
         return np.array([], dtype=bool)
@@ -58,11 +62,50 @@ def _compatible_frequency_mask(frequency_axes: list[np.ndarray]) -> np.ndarray:
     return np.asarray(
         [
             np.asarray(axis).shape == reference.shape
-            and np.allclose(axis, reference, rtol=1e-10, atol=0.0)
+            and np.allclose(axis, reference, rtol=rtol, atol=0.0)
             for axis in frequency_axes
         ],
         dtype=bool,
     )
+
+
+def _harmonize_frequency_axes(
+    frequency_axes: list[np.ndarray],
+    spectra: list[np.ndarray],
+    powers: list[np.ndarray],
+) -> tuple[np.ndarray, list[np.ndarray], list[np.ndarray]]:
+    """Interpolate nearly matching traces onto the shared frequency interval."""
+    reference = np.asarray(frequency_axes[0], dtype=float)
+    lower = max(float(axis[0]) for axis in frequency_axes)
+    upper = min(float(axis[-1]) for axis in frequency_axes)
+    common_mask = (reference >= lower) & (reference <= upper)
+    common_frequencies = reference[common_mask]
+    if common_frequencies.size == 0:
+        raise ValueError("Batch spectra have no common frequency interval")
+
+    aligned_spectra = []
+    aligned_powers = []
+    for axis, spectrum, power in zip(frequency_axes, spectra, powers, strict=False):
+        axis = np.asarray(axis, dtype=float)
+        spectrum = np.asarray(spectrum)
+        power = np.asarray(power, dtype=float)
+        if axis.shape == reference.shape and np.allclose(
+            axis, reference, rtol=1e-10, atol=0.0
+        ):
+            aligned_spectra.append(spectrum[common_mask])
+            aligned_powers.append(power[common_mask])
+            continue
+
+        if np.iscomplexobj(spectrum):
+            aligned_spectra.append(
+                np.interp(common_frequencies, axis, spectrum.real)
+                + 1j * np.interp(common_frequencies, axis, spectrum.imag)
+            )
+        else:
+            aligned_spectra.append(np.interp(common_frequencies, axis, spectrum))
+        aligned_powers.append(np.interp(common_frequencies, axis, power))
+
+    return common_frequencies, aligned_spectra, aligned_powers
 
 
 class BatchSpectrum:
@@ -82,6 +125,79 @@ class BatchSpectrum:
 
     def __call__(self, **kwargs) -> BatchSpectrumResult:
         return self.compute_all(**kwargs)
+
+    def analyze(
+        self,
+        parameter: str | Sequence[str] | None = None,
+        **kwargs: Any,
+    ) -> BatchSpectrumAnalysis:
+        """Compute the batch spectrum and bind selected sweep axes for plotting.
+
+        When omitted, all varying numeric sweep axes are available to
+        ``plot_sweeps``. Pass one axis, such as ``"theta"``, to limit the plot
+        result to that sweep while retaining all other axes as facets.
+
+        Examples
+        --------
+        >>> analysis = jobs[:].fft.spectrum.analyze(
+        ...     "theta", method=2, fmax=25e9
+        ... )
+        >>> sweep_plots = analysis.plot_sweeps()
+        >>> fig, axes = sweep_plots["theta"]
+        >>> all_plots = jobs[:].fft.spectrum.analyze().plot_sweeps()
+        """
+        if isinstance(parameter, str):
+            parameter_name = parameter.strip()
+            if not parameter_name:
+                raise ValueError("parameter must be a non-empty sweep name")
+            selected: str | tuple[str, ...] | None = (
+                None if parameter_name.casefold() in {"auto", "all"} else parameter_name
+            )
+        elif parameter is None:
+            selected = None
+        elif isinstance(parameter, Sequence):
+            names = tuple(parameter)
+            if not names or any(
+                not isinstance(name, str) or not name for name in names
+            ):
+                raise ValueError("parameter must contain one or more sweep names")
+            selected = tuple(dict.fromkeys(names))
+        else:
+            raise TypeError("parameter must be a sweep name, a sequence, or None")
+
+        requested_names = (
+            [selected]
+            if isinstance(selected, str)
+            else list(selected)
+            if selected is not None
+            else []
+        )
+        extraction = kwargs.get("extract_parameters")
+        if requested_names:
+            if extraction is None or (
+                isinstance(extraction, str) and extraction.casefold() == "auto"
+            ):
+                available = discover_sweep_parameters(self.results, self.mmpp_ref)
+            elif not isinstance(extraction, str):
+                available = list(extraction)
+            else:
+                available = []  # compute_all will report an invalid string value
+            unavailable = [name for name in requested_names if name not in available]
+            if unavailable and available:
+                raise KeyError(
+                    f"Unknown sweep parameter(s) {unavailable}; available: {available}"
+                )
+
+        result = self.compute_all(**kwargs)
+        unavailable = [
+            name for name in requested_names if name not in result.parameters
+        ]
+        if unavailable:
+            raise KeyError(
+                f"Sweep parameter(s) {unavailable} were not extracted; "
+                f"available: {list(result.parameters)}"
+            )
+        return BatchSpectrumAnalysis(result, sweep_parameters=selected)
 
     def overlay(
         self,
@@ -131,8 +247,8 @@ class BatchSpectrum:
         z_layer: int = -1,
         method: int = 1,
         slice_info: Any | None = None,
-        filter_type: list[str] | None = None,
-        window_function: str = "none",
+        filter_type: str | list[str] | None = "remove_mean",
+        window_function: str = "hann",
         component_weights: tuple = (1, 0, 0),
         normalize: str = "none",
         engine: str = "auto",
@@ -141,16 +257,28 @@ class BatchSpectrum:
         tmax: int | None = None,
         fmin: float | None = None,
         fmax: float | None = None,
+        resample_nonuniform: bool = True,
         parallel: bool = True,
         max_workers: int | None = None,
         use_cache: bool = True,
         save: bool = True,
         force: bool = False,
-        extract_parameters: list[str] | None = None,
+        extract_parameters: list[str] | str | None = None,
         save_batch: bool = True,
         batch_cache_dir: str | Path | None = None,
         **kwargs,
     ) -> BatchSpectrumResult:
+        """Compute spectra for the batch and attach each result's sweep values.
+
+        When ``extract_parameters`` is omitted or ``"auto"``, sweep axes are
+        read from project ``*_metadata.json`` files or inferred from result paths.
+        Nonuniform time axes are linearly resampled to a uniform grid by default;
+        set ``resample_nonuniform=False`` to retain strict rejection behavior.
+
+        ``method=1`` averages the spatial magnetization before the FFT.
+        ``method=2`` computes FFT power for every cell and averages that power
+        over space. The setting is part of the batch cache key.
+        """
         from ...core import FFT
 
         active_dataset = dataset_name or self.dataset_name
@@ -159,6 +287,8 @@ class BatchSpectrum:
             raise ValueError("Batch spectrum requires at least one result")
         if not isinstance(parallel, (bool, np.bool_)):
             raise TypeError("parallel must be boolean")
+        if not isinstance(resample_nonuniform, (bool, np.bool_)):
+            raise TypeError("resample_nonuniform must be boolean")
         if max_workers is not None:
             if isinstance(max_workers, (bool, np.bool_)) or not isinstance(
                 max_workers, (int, np.integer)
@@ -168,22 +298,15 @@ class BatchSpectrum:
                 raise ValueError("max_workers must be a positive integer or None")
             max_workers = int(max_workers)
 
-        if extract_parameters is None:
-            extract_parameters = [
-                "B0",
-                "Bext",
-                "bex",
-                "bias_field",
-                "applied_field",
-                "d",
-                "p",
-                "thickness",
-                "period",
-                "latticeconst",
-                "phi",
-                "theta",
-                "angle",
-            ]
+        if extract_parameters is None or (
+            isinstance(extract_parameters, str)
+            and extract_parameters.casefold() == "auto"
+        ):
+            extract_parameters = discover_sweep_parameters(self.results, self.mmpp_ref)
+        elif isinstance(extract_parameters, str):
+            raise ValueError("extract_parameters must be a list, None, or 'auto'")
+        else:
+            extract_parameters = list(dict.fromkeys(extract_parameters))
 
         config_for_cache = {
             "filter_type": filter_type,
@@ -196,6 +319,7 @@ class BatchSpectrum:
             "tmax": tmax,
             "fmin": fmin,
             "fmax": fmax,
+            "resample_nonuniform": bool(resample_nonuniform),
             "z_layer": z_layer,
             "method": method,
             **kwargs,
@@ -268,6 +392,7 @@ class BatchSpectrum:
                     method=method,
                     slice_info=active_slice,
                     save=save,
+                    use_cache=use_cache,
                     force=force,
                     filter_type=filter_type,
                     window=window_function,
@@ -279,6 +404,7 @@ class BatchSpectrum:
                     tmax=tmax,
                     fmin=fmin,
                     fmax=fmax,
+                    resample_nonuniform=resample_nonuniform,
                     **kwargs,
                 )
                 freqs = np.asarray(spectrum_result.frequencies)
@@ -286,14 +412,10 @@ class BatchSpectrum:
                 power = np.asarray(spectrum_result.spectral_quantity)
                 freqs, spectrum, power = _batch_trace(freqs, spectrum, power)
 
-                extracted = {}
-                for param in extract_parameters:
-                    if hasattr(result, "attributes") and isinstance(
-                        result.attributes, dict
-                    ):
-                        extracted[param] = result.attributes.get(param)
-                    else:
-                        extracted[param] = None
+                extracted = {
+                    param: get_sweep_parameter_value(result, param)
+                    for param in extract_parameters
+                }
 
                 return {
                     "success": True,
@@ -422,7 +544,10 @@ class BatchSpectrum:
         # The first successful job in input order, not the fastest thread, owns
         # the canonical grid. This makes parallel and sequential results identical.
         computed_frequencies = np.asarray(computed_frequency_axes[0])
-        compatible = _compatible_frequency_mask(computed_frequency_axes)
+        frequency_rtol = 1e-6 if resample_nonuniform else 1e-10
+        compatible = _compatible_frequency_mask(
+            computed_frequency_axes, rtol=frequency_rtol
+        )
         for idx, is_compatible in enumerate(compatible):
             if not bool(is_compatible):
                 errors.append(
@@ -460,6 +585,16 @@ class BatchSpectrum:
                 ]
                 for key, values in parameters.items()
             }
+        elif resample_nonuniform:
+            (
+                computed_frequencies,
+                computed_spectra,
+                computed_powers,
+            ) = _harmonize_frequency_axes(
+                computed_frequency_axes,
+                computed_spectra,
+                computed_powers,
+            )
 
         successful = len(computed_spectra)
         failed = len(errors)
@@ -491,4 +626,9 @@ class BatchSpectrum:
         return batch_result
 
 
-__all__ = ["BatchSpectrum", "BatchSpectrumResult", "SpectrumEntry"]
+__all__ = [
+    "BatchSpectrum",
+    "BatchSpectrumAnalysis",
+    "BatchSpectrumResult",
+    "SpectrumEntry",
+]

@@ -96,13 +96,14 @@ class BatchFFT:
 
         Examples
         --------
-        >>> # Compute batch spectrum
-        >>> batch = job[:].fft.spectrum.compute_all(
-        ...     extract_parameters=["B0", "d"],
+        >>> # Compute and plot one sweep axis, faceted by the others
+        >>> sweep_plots = job[:].fft.spectrum.analyze(
+        ...     "theta",
         ...     fmin=5e9,
         ...     fmax=25e9,
-        ... )
-        >>> batch.plot_heatmap("B0")
+        ... ).plot_sweeps()
+        >>> fig, axes = sweep_plots["theta"]
+        >>> all_sweeps = job[:].fft.spectrum.analyze().plot_sweeps()
         """
         from .fft.spectrum_batch import BatchSpectrum
 
@@ -136,12 +137,16 @@ class BatchFFT:
             )
         return records
 
-    def compute_all(self, **kwargs) -> dict[str, Any]:
+    def compute_all(self, method: int = 1, **kwargs) -> dict[str, Any]:
         """
         Compute FFT for all results in batch.
 
         Parameters:
         -----------
+        method : int, optional
+            Spatial FFT reduction method: 1 averages magnetization over space
+            before the FFT; 2 computes an FFT per cell and averages power
+            (default: 1).
         **kwargs : dict
             Arguments to pass to FFT computation
 
@@ -164,7 +169,7 @@ class BatchFFT:
                     f"Computing FFT for result {i + 1}/{len(self.results)}: {result.path}"
                 )
                 fft_analyzer = FFT(result, self.mmpp_ref)
-                fft_analyzer._compute_fft(**kwargs)
+                fft_analyzer._compute_fft(method=method, **kwargs)
                 successful += 1
 
             except Exception as e:
@@ -191,141 +196,114 @@ class BatchFFT:
         """Return rich HTML representation for Jupyter notebooks."""
         import uuid as _uuid
 
-        n = len(self.results)
         uid = str(_uuid.uuid4())[:8]
-
-        # ── header ──────────────────────────────────────────────
-        html = (
-            '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;'
-            "border:2px solid #334155;border-radius:12px;padding:18px;margin:10px 0;"
-            "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);"
-            "color:#e2e8f0;box-shadow:0 10px 25px rgba(0,0,0,0.3),"
-            '0 0 0 1px rgba(148,163,184,0.1) inset;">'
-        )
-        html += (
-            '<h3 style="margin:0 0 12px 0;color:#f1f5f9;font-weight:600;'
-            'letter-spacing:0.5px;text-shadow:0 2px 4px rgba(0,0,0,0.3);">'
-            f"🔬 Batch FFT Interface &nbsp;"
-            f'<span style="color:#60a5fa;font-weight:700;">{n}</span>'
-            f'<span style="color:#cbd5e1;font-weight:400;font-size:0.9em;"> result{"s" if n != 1 else ""}</span>'
-            "</h3>"
+        from mmpp._repr_helpers import (
+            NODE_COLOR_ANALYSIS,
+            NODE_COLOR_COMPUTE,
+            NODE_COLOR_PLOT,
+            NODE_COLOR_UTIL,
+            accessors_section_html,
+            api_help_html,
+            examples_section_html,
+            metrics_section_html,
+            node_card_html,
         )
 
-        # ── info section ────────────────────────────────────────
-        html += (
-            '<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
-            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;margin-bottom:12px;"
-            'border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);">'
+        result_count = len(self.results)
+        dataset_name = getattr(self, "_dataset_name", None) or "auto"
+        slice_info = getattr(self, "_slice_info", None)
+        api_card = api_help_html(
+            self,
+            title="Batch FFT API help",
+            prefix="job[:].fft",
+            subtitle="Batch FFT accessors, methods, signatures and examples.",
+            properties=[
+                ("spectrum", "Compute and compare spectra across sweep parameters"),
+                ("modes", "Detect and analyze modes across all selected jobs"),
+                ("transmission", "Batch transmission analysis"),
+            ],
+            methods=["compute_all"],
+            chrome=False,
         )
-        if n > 0:
-            first_name = self.results[0].path.split("/")[-1]
-            last_name = self.results[-1].path.split("/")[-1]
-            html += (
-                f'<span style="color:#94a3b8;">Results:</span> '
-                f'<code style="background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;'
-                f"font-family:'Courier New',monospace;font-size:0.9em;color:#cbd5e1;"
-                f'border:1px solid rgba(71,85,105,0.3);">{first_name}</code>'
-            )
-            if n > 1:
-                html += (
-                    f' <span style="color:#64748b;">→</span> '
-                    f'<code style="background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;'
-                    f"font-family:'Courier New',monospace;font-size:0.9em;color:#cbd5e1;"
-                    f'border:1px solid rgba(71,85,105,0.3);">{last_name}</code>'
-                )
-        else:
-            html += '<span style="color:#fbbf24;">⚠️ Empty batch – no results.</span>'
-        html += "</div>"
-
-        # ── available operations ────────────────────────────────
-        groups = [
-            (
-                "Spectrum",
+        sections = [
+            metrics_section_html(
                 [
                     (
-                        "job[:].fft.spectrum.compute_all(…)",
-                        "Compute spectra for all jobs → BatchSpectrumResult",
+                        "results",
+                        f"{result_count} result{'s' if result_count != 1 else ''}",
+                        NODE_COLOR_COMPUTE,
                     ),
-                    ("batch.plot.heatmap('B0')", "2D heatmap vs swept parameter"),
-                ],
+                    ("dataset", dataset_name, NODE_COLOR_ANALYSIS),
+                    (
+                        "slice",
+                        str(slice_info) if slice_info is not None else "full",
+                        None,
+                    ),
+                ]
             ),
-            (
-                "Modes",
-                [
-                    ("job[:].fft.modes.compute_modes()", "Batch FMR mode detection"),
-                    ("job[:].fft.modes.analyze_all()", "Analyze peaks across all jobs"),
-                ],
-            ),
-            (
-                "Transmission",
+            accessors_section_html(
                 [
                     (
-                        "job[:].m[…].fft.transmission.compute_all(…)",
-                        "Batch transmission analysis",
+                        "Spectrum:",
+                        [
+                            (
+                                'spectrum.analyze("theta").plot_sweeps()',
+                                NODE_COLOR_COMPUTE,
+                            ),
+                            ("spectrum.compute_all()", NODE_COLOR_COMPUTE),
+                            (
+                                "result.plot_heatmap(parameter='B0')",
+                                NODE_COLOR_PLOT,
+                            ),
+                            ("result.plot_sweeps()", NODE_COLOR_PLOT),
+                        ],
                     ),
-                ],
+                    (
+                        "Modes:",
+                        [
+                            ("modes.compute_modes()", NODE_COLOR_ANALYSIS),
+                            ("modes.analyze_all()", NODE_COLOR_ANALYSIS),
+                        ],
+                    ),
+                    (
+                        "Other:",
+                        [
+                            ("transmission.compute_all()", NODE_COLOR_UTIL),
+                            ("compute_all()", NODE_COLOR_COMPUTE),
+                        ],
+                    ),
+                ]
             ),
-            (
-                "General",
-                [
-                    ("job[:].fft.compute_all()", "Run raw FFT on all jobs"),
-                ],
+            examples_section_html(
+                "# method=1: average magnetization first, then FFT (default)\n"
+                "# method=2: FFT each cell, then average power |FFT|²\n"
+                "batch = job[:].fft.spectrum.compute_all(method=2)\n"
+                "\n"
+                "theta_plots = job[:].fft.spectrum.analyze(\n"
+                '    "theta",  # t_sl and phi become facets in this sweep\n'
+                "    method=2, fmin=5e9, fmax=25e9,\n"
+                ").plot_sweeps()\n"
+                'fig, axes = theta_plots["theta"]\n'
+                "all_sweep_plots = job[:].fft.spectrum.analyze().plot_sweeps()"
             ),
         ]
 
-        section_style = (
-            "padding:5px 8px;font-weight:600;color:#f1f5f9;"
-            "background:rgba(51,65,85,0.8);text-align:left;"
+        return node_card_html(
+            "Batch FFT Interface",
+            icon="🔬",
+            subtitle=(
+                "Compute spectra across selected simulations and compare each "
+                "swept parameter in faceted plots. Choose method=1 to average "
+                "magnetization before FFT or method=2 to average per-cell FFT power."
+            ),
+            badge=(
+                f"{result_count} result{'s' if result_count != 1 else ''}",
+                NODE_COLOR_COMPUTE,
+            ),
+            sections=sections,
+            api=api_card,
+            uid=f"batch-fft-{uid}",
         )
-
-        html += (
-            '<div style="background:linear-gradient(135deg,rgba(51,65,85,0.4) 0%,'
-            "rgba(30,41,59,0.4) 100%);padding:12px;border-radius:8px;margin-bottom:12px;"
-            'border:1px solid rgba(148,163,184,0.15);backdrop-filter:blur(10px);">'
-            '<b style="color:#94a3b8;">🔧 Available Operations:</b>'
-            '<table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:0.9em;">'
-        )
-        for group_name, methods in groups:
-            html += (
-                f'<tr><td colspan="2" style="{section_style}">{group_name}</td></tr>'
-            )
-            for code, desc in methods:
-                html += (
-                    '<tr style="border-bottom:1px solid rgba(71,85,105,0.3);">'
-                    f'<td style="padding:5px 8px 5px 16px;">'
-                    f'<code style="background:rgba(15,23,42,0.6);padding:3px 8px;border-radius:4px;'
-                    f'color:#93c5fd;border:1px solid rgba(71,85,105,0.3);font-weight:500;">{code}</code></td>'
-                    f'<td style="padding:5px 8px;color:#cbd5e1;">{desc}</td></tr>'
-                )
-        html += "</table></div>"
-
-        # ── quick-start examples (collapsible) ──────────────────
-        example_id = f"batch-fft-ex-{uid}"
-        html += (
-            f'<div style="margin-top:4px;">'
-            f"<span onclick=\"var e=document.getElementById('{example_id}');"
-            f"e.style.display=e.style.display==='none'?'block':'none';\""
-            f' style="cursor:pointer;color:#60a5fa;font-size:0.9em;">'
-            f"▶ Quick-start examples</span>"
-            f'<div id="{example_id}" style="display:none;margin-top:8px;">'
-            f'<pre style="background:rgba(15,23,42,0.8);padding:10px;border-radius:6px;'
-            f"font-family:'Courier New',monospace;font-size:0.85em;color:#10b981;"
-            f'border:1px solid rgba(71,85,105,0.4);overflow-x:auto;">'
-            "# Batch spectrum computation\n"
-            "batch = job[:].fft.spectrum.compute_all(\n"
-            '    extract_parameters=["B0", "d"],\n'
-            "    fmin=5e9, fmax=25e9,\n"
-            ")\n"
-            'batch.plot.heatmap("B0")\n\n'
-            "# Batch mode computation\n"
-            "job[:].fft.modes.compute_modes()\n\n"
-            "# Dataset-aware batch transmission\n"
-            "job[:].m_layer13[:200,...,0].fft.transmission.compute_all()"
-            "</pre></div></div>"
-        )
-
-        html += "</div>"
-        return html
 
 
 class BatchModeAnalyzer:
@@ -1203,7 +1181,10 @@ class BatchOperations:
                         (
                             "Analysis:",
                             [
-                                ("job[:].fft.spectrum", NODE_COLOR_ANALYSIS),
+                                (
+                                    'job[:].fft.spectrum.analyze("theta").plot_sweeps()',
+                                    NODE_COLOR_ANALYSIS,
+                                ),
                                 ("job[:].fft.modes", NODE_COLOR_ANALYSIS),
                                 ("job[:].fft.transmission", NODE_COLOR_ANALYSIS),
                             ],
@@ -1224,9 +1205,12 @@ class BatchOperations:
                     ]
                 ),
                 examples_section_html(
-                    "# Batch spectrum\n"
-                    "batch = job[:].fft.spectrum.compute_all(fmin=5e9, fmax=25e9)\n"
-                    'batch.plot.heatmap("B0")\n\n'
+                    "# One sweep parameter, faceted by the others\n"
+                    'theta_plots = job[:].fft.spectrum.analyze("theta",\n'
+                    "    fmin=5e9, fmax=25e9).plot_sweeps()\n"
+                    'theta_plots["theta"][0]\n\n'
+                    "# All detected sweep parameters\n"
+                    "all_sweep_plots = job[:].fft.spectrum.analyze().plot_sweeps()\n\n"
                     "# Batch numpy access\n"
                     "arr = job[:].get.m[:]          # shape: (n_jobs, t, z, y, x, c)\n\n"
                     "# Full pipeline\n"

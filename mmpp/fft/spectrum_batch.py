@@ -7,6 +7,15 @@ implementation is split under ``mmpp.fft.spectrum.batch``.
 from __future__ import annotations
 
 from .spectrum.batch.compute import BatchSpectrum
-from .spectrum.batch.result import BatchSpectrumResult, SpectrumEntry
+from .spectrum.batch.result import (
+    BatchSpectrumAnalysis,
+    BatchSpectrumResult,
+    SpectrumEntry,
+)
 
-__all__ = ["BatchSpectrum", "BatchSpectrumResult", "SpectrumEntry"]
+__all__ = [
+    "BatchSpectrum",
+    "BatchSpectrumAnalysis",
+    "BatchSpectrumResult",
+    "SpectrumEntry",
+]
