@@ -38,9 +38,22 @@ with current, consistent APIs.
 
 ## Installation
 
+The current PyPI release is `0.5.3`. MMPP `0.6.6` is available from the
+[GitHub release page](https://github.com/MateuszZelent/mmpp/releases/tag/v0.6.6);
+install its wheel directly while PyPI publishing is being configured:
+
 ```bash
-pip install mmpp
+python -m pip install "mmpp[fft] @ https://github.com/MateuszZelent/mmpp/releases/download/v0.6.6/mmpp-0.6.6-py3-none-any.whl"
 ```
+
+The regular PyPI install command remains:
+
+```bash
+python -m pip install "mmpp[fft]"
+```
+
+MMPP 0.6.6 adds per-cell FFT power averaging (`method=2`), automatic faceted
+batch sweep plots, and Zarr-compatible FFT cache saving.
 
 The same project metadata works with `uv`:
 
@@ -319,8 +332,15 @@ specs = pc_batch.fft.spectrum.compute_all(dataset_name="m", fmin=5e9, fmax=25e9)
 specs.plot_heatmap(parameter="Bext")
 
 # method=1 averages magnetization over cells before FFT; method=2 computes
-# per-cell FFT power and averages it over space.
-per_cell_batch = pc_batch.fft.spectrum.compute_all(dataset_name="m", method=2)
+# FFT power per cell, then averages |FFT|² over space.
+# This uncached example avoids reading or writing per-job and batch FFT caches.
+per_cell_batch = pc_batch.fft.spectrum.compute_all(
+    dataset_name="m",
+    method=2,
+    use_cache=False,
+    save=False,
+    save_batch=False,
+)
 
 # Analyze one sweep axis, with panels for the other varying parameters.
 theta_plots = pc_batch.fft.spectrum.analyze(
@@ -328,11 +348,22 @@ theta_plots = pc_batch.fft.spectrum.analyze(
     method=2,
     fmin=5e9,
     fmax=25e9,
+    use_cache=False,
+    save=False,
+    save_batch=False,
 ).plot_sweeps()
 fig, axes = theta_plots["theta"]
+from IPython.display import display
+
+display(fig)
 
 # Omit the parameter to generate plots for every detected sweep axis.
-all_sweep_plots = pc_batch.fft.spectrum.analyze().plot_sweeps()
+all_sweep_plots = pc_batch.fft.spectrum.analyze(
+    method=2,
+    use_cache=False,
+    save=False,
+    save_batch=False,
+).plot_sweeps()
 
 pc_batch.fft.modes.compute_modes()
 pc_batch.fft.modes.analyze_all()
