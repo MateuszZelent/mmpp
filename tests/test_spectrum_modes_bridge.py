@@ -1,3 +1,4 @@
+import re
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
@@ -103,7 +104,7 @@ def test_interactive_spectrum_helper_documents_fft_reduction_methods():
     fft = SimpleNamespace(job_result=SimpleNamespace(path="/tmp/dummy.zarr"))
     helper = FFTModeInterfaceNew(0, fft).interactive_spectrum
 
-    rendered = repr(helper)
+    rendered = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", repr(helper))
 
     assert "method" in rendered
     assert "per-cell FFT" in rendered
