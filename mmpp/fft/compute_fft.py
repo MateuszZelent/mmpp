@@ -60,6 +60,7 @@ from ._compute_loading import (
 )
 from ._compute_methods import build_fft_metadata, run_fft_method1, run_fft_method2
 from ._scaling import SPECTRUM_SCALINGS
+from ._zarr_compat import write_zarr_array
 from .filters.preprocess import (
     apply_filter as apply_preprocess_filter,
 )
@@ -244,11 +245,17 @@ class FFTComputeResult:
         else:
             fft_group = fft_main_group[dataset_name]
             if not force:
-                raise FileExistsError(
-                    f"FFT dataset fft/{dataset_name} already exists. "
-                    "Use force=True to overwrite."
-                )
-            log.info(f"Overwriting existing FFT dataset: fft/{dataset_name}")
+                required_arrays = {"spectrum", "frequencies"}
+                if required_arrays.issubset(set(fft_group.keys())):
+                    raise FileExistsError(
+                        f"FFT dataset fft/{dataset_name} already exists. "
+                        "Use force=True to overwrite."
+                    )
+                log.warning("Replacing incomplete FFT cache at fft/%s", dataset_name)
+                del fft_main_group[dataset_name]
+                fft_group = fft_main_group.create_group(dataset_name)
+            else:
+                log.info(f"Overwriting existing FFT dataset: fft/{dataset_name}")
 
         # Disable chunking for FFT data to avoid unnecessary fragmentation
 
@@ -259,18 +266,16 @@ class FFTComputeResult:
         )
 
         # Save spectrum data
-        fft_group.create_dataset(
+        write_zarr_array(
+            fft_group,
             "spectrum",
-            data=self.spectrum,
-            shape=self.spectrum.shape,
-            dtype=self.spectrum.dtype,
+            self.spectrum,
             overwrite=force,
         )
-        fft_group.create_dataset(
+        write_zarr_array(
+            fft_group,
             "frequencies",
-            data=self.frequencies,
-            shape=self.frequencies.shape,
-            dtype=self.frequencies.dtype,
+            self.frequencies,
             overwrite=force,
         )
 

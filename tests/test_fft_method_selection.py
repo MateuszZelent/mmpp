@@ -48,3 +48,58 @@ def test_fft_compute_selects_average_signal_or_average_cell_power(monkeypatch):
     assert np.max(np.abs(averaged_first.spectrum)) == 0.0
     assert np.max(np.abs(per_cell_first.spectrum)) > 0.0
     assert np.argmax(np.abs(per_cell_first.spectrum[:, 0])) == 5
+
+
+def test_fft_result_replaces_incomplete_zarr_cache_without_create_dataset(
+    monkeypatch,
+):
+    import zarr
+
+    from mmpp.fft.compute_fft import FFTComputeConfig, FFTComputeResult
+
+    class ArrayOnlyGroup:
+        """Minimal Zarr 3-style group that intentionally lacks create_dataset."""
+
+        def __init__(self):
+            self.members = {}
+            self.attrs = {}
+
+        def __contains__(self, name):
+            return name in self.members
+
+        def __getitem__(self, name):
+            return self.members[name]
+
+        def __delitem__(self, name):
+            del self.members[name]
+
+        def keys(self):
+            return self.members.keys()
+
+        def create_group(self, name):
+            group = ArrayOnlyGroup()
+            self.members[name] = group
+            return group
+
+        def create_array(self, name, *, data, overwrite=False, **_kwargs):
+            if name in self.members and not overwrite:
+                raise ValueError(f"{name} already exists")
+            self.members[name] = np.asarray(data).copy()
+            return self.members[name]
+
+    root = ArrayOnlyGroup()
+    fft_group = root.create_group("fft")
+    fft_group.create_group("m_z0_m2")  # An interrupted earlier write.
+    monkeypatch.setattr(zarr, "open", lambda *_args, **_kwargs: root)
+
+    result = FFTComputeResult(
+        frequencies=np.array([0.0, 1e9, 2e9]),
+        spectrum=np.array([1 + 0j, 2 + 1j, 3 + 0j]),
+        metadata={"method": 2},
+        config=FFTComputeConfig(),
+    )
+    result.save_to_zarr("incomplete.zarr", "m_z0_m2")
+
+    saved = root["fft"]["m_z0_m2"]
+    np.testing.assert_array_equal(saved["frequencies"], result.frequencies)
+    np.testing.assert_array_equal(saved["spectrum"], result.spectrum)

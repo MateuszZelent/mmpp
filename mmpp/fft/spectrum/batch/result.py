@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from ....cli.logging_config import get_mmpp_logger
+from ..._zarr_compat import write_zarr_array
 
 log = get_mmpp_logger("mmpp.fft.spectrum_batch")
 
@@ -452,58 +453,23 @@ class BatchSpectrumResult:
         """Save to zarr format."""
         import zarr
 
-        # Detect zarr version
-        zarr_major = int(zarr.__version__.split(".")[0])
+        root = zarr.open_group(str(path), mode="w")
+        write_zarr_array(root, "frequencies", self.frequencies)
+        write_zarr_array(root, "spectra", np.stack(self.spectra, axis=0))
+        write_zarr_array(root, "powers", np.stack(self.powers, axis=0))
 
-        if zarr_major >= 3:
-            # Zarr v3 API
-            store = zarr.DirectoryStore(str(path))
-            root = zarr.open_group(store=store, mode="w")
+        root.attrs["job_paths"] = self.job_paths
+        root.attrs["dataset_name"] = self.dataset_name
+        root.attrs["z_layer"] = self.z_layer
+        root.attrs["schema_version"] = self.schema_version
+        root.attrs["config_dict"] = json.dumps(self.config_dict, default=str)
 
-            root.create_dataset("frequencies", data=self.frequencies, chunks=None)
-            root.create_dataset(
-                "spectra", data=np.stack(self.spectra, axis=0), chunks=None
-            )
-            root.create_dataset(
-                "powers", data=np.stack(self.powers, axis=0), chunks=None
-            )
-
-            root.attrs["job_paths"] = self.job_paths
-            root.attrs["dataset_name"] = self.dataset_name
-            root.attrs["z_layer"] = self.z_layer
-            root.attrs["schema_version"] = self.schema_version
-            root.attrs["config_dict"] = json.dumps(self.config_dict, default=str)
-
-            # Save parameters
-            params_group = root.create_group("parameters")
-            for name, values in self.parameters.items():
-                try:
-                    params_group.create_dataset(
-                        name, data=np.array(values), chunks=None
-                    )
-                except Exception:
-                    params_group.attrs[name] = json.dumps(values, default=str)
-        else:
-            # Zarr v2 API
-            z = zarr.open(str(path), mode="w")
-
-            z.create_dataset("frequencies", data=self.frequencies)
-            z.create_dataset("spectra", data=np.stack(self.spectra, axis=0))
-            z.create_dataset("powers", data=np.stack(self.powers, axis=0))
-
-            z.attrs["job_paths"] = self.job_paths
-            z.attrs["dataset_name"] = self.dataset_name
-            z.attrs["z_layer"] = self.z_layer
-            z.attrs["schema_version"] = self.schema_version
-            z.attrs["config_dict"] = json.dumps(self.config_dict, default=str)
-
-            # Save parameters
-            params_group = z.create_group("parameters")
-            for name, values in self.parameters.items():
-                try:
-                    params_group.create_dataset(name, data=np.array(values))
-                except Exception:
-                    params_group.attrs[name] = json.dumps(values, default=str)
+        params_group = root.create_group("parameters")
+        for name, values in self.parameters.items():
+            try:
+                write_zarr_array(params_group, name, np.array(values))
+            except Exception:
+                params_group.attrs[name] = json.dumps(values, default=str)
 
     @classmethod
     def load(cls, path: str | Path) -> BatchSpectrumResult:
@@ -536,74 +502,34 @@ class BatchSpectrumResult:
         """Load from zarr format."""
         import zarr
 
-        # Detect zarr version
-        zarr_major = int(zarr.__version__.split(".")[0])
+        root = zarr.open_group(str(path), mode="r")
 
-        if zarr_major >= 3:
-            # Zarr v3 API
-            store = zarr.DirectoryStore(str(path))
-            root = zarr.open_group(store=store, mode="r")
+        frequencies = np.array(root["frequencies"])
+        spectra_stacked = np.array(root["spectra"])
+        powers_stacked = np.array(root["powers"])
 
-            frequencies = np.array(root["frequencies"][:])
-            spectra_stacked = np.array(root["spectra"][:])
-            powers_stacked = np.array(root["powers"][:])
+        spectra = [spectra_stacked[i] for i in range(spectra_stacked.shape[0])]
+        powers = [powers_stacked[i] for i in range(powers_stacked.shape[0])]
 
-            # Unstack to lists
-            spectra = [spectra_stacked[i] for i in range(spectra_stacked.shape[0])]
-            powers = [powers_stacked[i] for i in range(powers_stacked.shape[0])]
+        parameters = {}
+        if "parameters" in root:
+            params_group = root["parameters"]
+            for name in params_group.keys():
+                parameters[name] = np.array(params_group[name]).tolist()
+            for name, value in params_group.attrs.items():
+                parameters[name] = json.loads(value)
 
-            # Load parameters
-            parameters = {}
-            if "parameters" in root:
-                params_group = root["parameters"]
-                for name in params_group.keys():
-                    parameters[name] = np.array(params_group[name][:]).tolist()
-                for name, value in params_group.attrs.items():
-                    parameters[name] = json.loads(value)
-
-            return cls(
-                frequencies=frequencies,
-                spectra=spectra,
-                powers=powers,
-                parameters=parameters,
-                job_paths=root.attrs.get("job_paths", []),
-                dataset_name=root.attrs.get("dataset_name", "m"),
-                z_layer=root.attrs.get("z_layer", -1),
-                schema_version=root.attrs.get("schema_version", 0),
-                config_dict=json.loads(root.attrs.get("config_dict", "{}")),
-            )
-        else:
-            # Zarr v2 API
-            z = zarr.open(str(path), mode="r")
-
-            frequencies = np.array(z["frequencies"])
-            spectra_stacked = np.array(z["spectra"])
-            powers_stacked = np.array(z["powers"])
-
-            # Unstack to lists
-            spectra = [spectra_stacked[i] for i in range(spectra_stacked.shape[0])]
-            powers = [powers_stacked[i] for i in range(powers_stacked.shape[0])]
-
-            # Load parameters
-            parameters = {}
-            if "parameters" in z:
-                params_group = z["parameters"]
-                for name in params_group.keys():
-                    parameters[name] = np.array(params_group[name]).tolist()
-                for name, value in params_group.attrs.items():
-                    parameters[name] = json.loads(value)
-
-            return cls(
-                frequencies=frequencies,
-                spectra=spectra,
-                powers=powers,
-                parameters=parameters,
-                job_paths=z.attrs.get("job_paths", []),
-                dataset_name=z.attrs.get("dataset_name", "m"),
-                z_layer=z.attrs.get("z_layer", -1),
-                schema_version=z.attrs.get("schema_version", 0),
-                config_dict=json.loads(z.attrs.get("config_dict", "{}")),
-            )
+        return cls(
+            frequencies=frequencies,
+            spectra=spectra,
+            powers=powers,
+            parameters=parameters,
+            job_paths=root.attrs.get("job_paths", []),
+            dataset_name=root.attrs.get("dataset_name", "m"),
+            z_layer=root.attrs.get("z_layer", -1),
+            schema_version=root.attrs.get("schema_version", 0),
+            config_dict=json.loads(root.attrs.get("config_dict", "{}")),
+        )
 
     def plot_heatmap(
         self,

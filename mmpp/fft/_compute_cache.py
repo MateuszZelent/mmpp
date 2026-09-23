@@ -39,6 +39,15 @@ def load_existing_fft_result(
             return None
 
         fft_group = z[fft_path]
+        required_arrays = {"spectrum", "frequencies"}
+        missing_arrays = required_arrays.difference(fft_group.keys())
+        if missing_arrays:
+            logger.info(
+                "Ignoring incomplete FFT cache %s (missing: %s)",
+                fft_path,
+                ", ".join(sorted(missing_arrays)),
+            )
+            return None
 
         data_load_start = time.time()
         spectrum = np.array(fft_group["spectrum"])

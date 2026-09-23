@@ -162,6 +162,65 @@ def test_generic_batch_compute_all_forwards_selected_fft_method(monkeypatch):
     assert calls == [{"method": 2, "save": False}]
 
 
+def test_method2_batch_heatmap_reduces_component_axis_before_plotting(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+
+    frequencies = np.arange(4, dtype=float) * 1e9
+    results = [
+        SimpleNamespace(
+            path=str(tmp_path / f"theta_{theta}.zarr"),
+            attributes={"theta": theta},
+        )
+        for theta in (0, 45, 90)
+    ]
+
+    class FakeFFT:
+        def __init__(self, result, _mmpp_ref):
+            self.result = result
+
+        def spectrum(self, **kwargs):
+            assert kwargs["method"] == 2
+            scale = self.result.attributes["theta"] / 45 + 1
+            spectrum = np.broadcast_to(
+                np.array([1.0, 2.0, 3.0], dtype=complex) * scale,
+                (frequencies.size, 3),
+            )
+            return SimpleNamespace(
+                frequencies=frequencies,
+                spectrum=spectrum,
+                spectral_quantity=np.abs(spectrum) ** 2,
+            )
+
+    import mmpp.fft.core as fft_core
+
+    monkeypatch.setattr(fft_core, "FFT", FakeFFT)
+    batch = BatchSpectrum(
+        results, SimpleNamespace(base_path=str(tmp_path))
+    ).compute_all(
+        method=2,
+        parallel=False,
+        save=False,
+        save_batch=False,
+        use_cache=False,
+        extract_parameters=["theta"],
+    )
+
+    assert all(power.shape == frequencies.shape for power in batch.powers)
+    np.testing.assert_allclose(batch.powers[0], np.full(4, 14 / 3))
+    saved_path = tmp_path / "method2_batch.zarr"
+    batch.save(saved_path)
+    restored = BatchSpectrumResult.load(saved_path)
+    assert all(power.shape == frequencies.shape for power in restored.powers)
+    np.testing.assert_allclose(restored.powers[0], batch.powers[0])
+
+    fig, ax = batch.plot_heatmap(parameter="theta", log_scale=False, colorbar=False)
+    assert ax.images[0].get_array().shape == (4, 3)
+    plt.close(fig)
+
+
 def test_discovers_sweep_axes_from_nested_result_paths(tmp_path):
     results = [
         SimpleNamespace(
