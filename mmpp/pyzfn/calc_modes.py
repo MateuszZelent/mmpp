@@ -1,8 +1,16 @@
 """Functions for calculating spatially-resolved FFT modes."""
 
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
+import zarr
+
+from ..fft._compute_loading import (
+    _resample_nonuniform_time_data,
+    _time_axis_requires_resampling,
+    _uniform_dt_from_time_axis,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from .pyzfn import Pyzfn
@@ -17,6 +25,7 @@ def inner_calc_modes(
     slices: tuple[slice, ...] | slice | None = None,
     *,
     window: bool = True,
+    resample_nonuniform: bool = True,
 ) -> None:
     """Calculate spatially-resolved FFT modes and store the results in-place.
 
@@ -37,6 +46,10 @@ def inner_calc_modes(
     window : bool
         Whether to apply a Hanning window to the time dimension before FFT.
         Defaults to True.
+    resample_nonuniform : bool
+        Whether to linearly resample a non-uniform time axis to an
+        endpoint-preserving uniform grid before FFT. Defaults to True. Pass
+        ``False`` to retain strict uniform-axis validation.
 
     Raises
     ------
@@ -63,6 +76,9 @@ def inner_calc_modes(
     """
     dset_in = self.get_array(dset_in_str)
 
+    if not isinstance(resample_nonuniform, (bool, np.bool_)):
+        raise TypeError("resample_nonuniform must be boolean")
+
     if slices is None:
         slices = (slice(None),) * NDIMS
     elif isinstance(slices, slice):
@@ -83,18 +99,51 @@ def inner_calc_modes(
         )
         raise ValueError(msg)
 
+    time_slice = (
+        slices[0] if isinstance(slices, tuple) and len(slices) > 0 else slice(None)
+    )
+    ts = np.asarray(dset_in.attrs["t"], dtype=np.float64)[time_slice]
     arr = np.asarray(dset_in[slices], dtype=np.float32)
+    if arr.shape[0] != ts.size:
+        raise ValueError(
+            "The selected time axis length does not match the selected data "
+            f"shape: len(t)={ts.size}, data.shape[0]={arr.shape[0]}"
+        )
+
+    if _time_axis_requires_resampling(ts):
+        if not resample_nonuniform:
+            _uniform_dt_from_time_axis(ts, allow_nonuniform=False)
+        arr, did_resample = _resample_nonuniform_time_data(arr, ts)
+        if did_resample:
+            mean_dt = float(np.mean(np.diff(ts)))
+            max_deviation = float(np.max(np.abs(np.diff(ts) - mean_dt)))
+            relative_deviation = max_deviation / abs(mean_dt)
+            warnings.warn(
+                "Pyzfn mode FFT detected a non-uniform time axis and linearly "
+                "resampled it onto an endpoint-preserving uniform grid "
+                f"(largest step deviation={relative_deviation:.3%} of mean dt). "
+                "Interpolation may slightly attenuate or broaden high-frequency "
+                "peaks and alter quantitative amplitudes or phases; pass "
+                "resample_nonuniform=False to reject non-uniform input when strict "
+                "sampling is required.",
+                UserWarning,
+                stacklevel=2,
+            )
+            ts = np.linspace(ts[0], ts[-1], ts.size)
+
     arr -= arr.mean(axis=0, keepdims=True)
     if window:
         arr *= np.hanning(arr.shape[0])[:, None, None, None, None]
 
     out = np.fft.rfft(arr, axis=0).astype(np.complex64)
 
-    time_slice = (
-        slices[0] if isinstance(slices, tuple) and len(slices) > 0 else slice(None)
-    )
-    ts = np.asarray(dset_in.attrs["t"], np.float64)[time_slice]
-    freqs = np.fft.rfftfreq(len(ts), (ts[-1] - ts[0]) / len(ts)) * 1e-9
+    # ``Pyzfn`` opens its group read-only for safe inspection, while this
+    # legacy helper is explicitly an in-place writer. Reopen the same store
+    # only after all input has been loaded and the FFT is ready to persist.
+    self._group = zarr.open_group(self.clean_path, mode="a")
+
+    dt = _uniform_dt_from_time_axis(ts, allow_nonuniform=False)
+    freqs = np.fft.rfftfreq(len(ts), dt) * 1e-9
 
     self.add_ndarray(
         f"modes/{dset_out_str}/freqs",

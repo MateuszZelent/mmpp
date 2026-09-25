@@ -3731,9 +3731,36 @@ def test_spin_wave_analyzer_rejects_nonuniform_time_axis(tmp_path):
     with pytest.raises(ValueError, match="Non-uniform time axis.*resample"):
         SpinWaveAnalyzer(
             zarr_path,
+            config=DispersionConfig(dt=9e-12, resample_nonuniform=False),
+            tmax=None,
+        )
+
+
+def test_spin_wave_analyzer_resamples_nonuniform_time_axis_by_default(tmp_path):
+    from mmpp.fft.dispersion.core import SpinWaveAnalyzer
+    from mmpp.fft.dispersion.models import DispersionConfig
+
+    zarr_path = tmp_path / "dispersion_nonuniform_time_axis_default.zarr"
+    data = np.arange(4, dtype=np.float32).reshape(4, 1, 1, 1, 1)
+    root = zarr.open(str(zarr_path), mode="w")
+    root.create_dataset("m", data=data, chunks=data.shape)
+    time_axis = np.array([0.0, 1.2e-12, 2.8e-12, 4.5e-12])
+    root["m"].attrs["t"] = time_axis.tolist()
+    root.attrs["t_sampl"] = 1e-12
+    root.attrs["dx"] = 1e-9
+    root.attrs["dy"] = 1e-9
+
+    with pytest.warns(UserWarning, match="linearly resampled"):
+        analyzer = SpinWaveAnalyzer(
+            zarr_path,
             config=DispersionConfig(dt=9e-12),
             tmax=None,
         )
+
+    expected_time = np.linspace(time_axis[0], time_axis[-1], time_axis.size)
+    assert np.allclose(analyzer.time_axis, expected_time)
+    assert np.isclose(analyzer.dt, np.mean(np.diff(time_axis)))
+    assert any("resampled non-uniform" in note for note in analyzer._time_axis_notes)
 
 
 def test_spin_wave_analyzer_infers_spacing_from_uniform_spatial_axes(tmp_path):
@@ -5569,6 +5596,60 @@ def test_mode_fft_warns_and_uses_mean_dt_for_small_sampling_jitter():
         dt = _uniform_mode_dt(time_axis)
 
     assert np.isclose(dt, target_dt)
+
+
+def test_fmr_modes_resample_nonuniform_time_axis_by_default(tmp_path):
+    from mmpp.fft.modes import FMRModeAnalyzer
+
+    n_time = 8
+    nominal = np.arange(n_time, dtype=float) * 1e-12
+    time_axis = nominal.copy()
+    time_axis[1:-1] += np.array([0.0, 0.2, -0.15, 0.1, -0.1, 0.05]) * 1e-12
+    data = np.zeros((n_time, 1, 2, 2, 3), dtype=np.float32)
+    data[:, 0, :, :, 2] = np.sin(2 * np.pi * np.arange(n_time) / n_time)[:, None, None]
+
+    path = tmp_path / "nonuniform_modes.zarr"
+    root = zarr.open(str(path), mode="w")
+    root.create_dataset("m", data=data, chunks=data.shape)
+    root["m"].attrs["t"] = time_axis.tolist()
+    root.attrs["t_sampl"] = 1e-12
+
+    analyzer = FMRModeAnalyzer(str(path), dataset_name="m")
+    with pytest.warns(UserWarning, match="linearly resampled"):
+        analyzer.compute_modes(window=False, save=True, force=True)
+
+    assert analyzer.frequencies is not None
+    assert analyzer.frequencies.size == n_time // 2 + 1
+
+    strict = FMRModeAnalyzer(str(path), dataset_name="m")
+    with pytest.raises(ValueError, match="approximately uniformly sampled"):
+        strict.compute_modes(
+            window=False,
+            save=False,
+            force=True,
+            resample_nonuniform=False,
+        )
+
+
+def test_fmr_modes_save_false_remains_available_in_memory(tmp_path):
+    from mmpp.fft.modes import FMRModeAnalyzer
+
+    n_time = 8
+    data = np.zeros((n_time, 1, 2, 2, 3), dtype=np.float32)
+    data[:, 0, :, :, 0] = np.sin(2 * np.pi * np.arange(n_time) / n_time)[:, None, None]
+
+    path = tmp_path / "memory_modes.zarr"
+    root = zarr.open(str(path), mode="w")
+    root.create_dataset("m", data=data, chunks=data.shape)
+    root["m"].attrs["t"] = (np.arange(n_time, dtype=float) * 1e-12).tolist()
+
+    analyzer = FMRModeAnalyzer(str(path), dataset_name="m")
+    analyzer.compute_modes(window=False, save=False, force=True)
+
+    assert analyzer.modes_available
+    assert "modes/m/arr" not in root
+    mode = analyzer.get_mode(float(analyzer.frequencies[1]), z_layer=0)
+    assert mode.mode_array.shape == (2, 2, 3)
 
 
 def test_fft_dt_uses_full_selected_time_axis_and_rejects_irregular_sampling():

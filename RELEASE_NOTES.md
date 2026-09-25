@@ -1,3 +1,18 @@
+# MMPP Library Release v0.6.10
+
+## Uniform handling of nonuniform FFT time axes
+- All `mmpp.fft` spectrum, mode, batch, transmission, and dispersion paths now
+  linearly resample a strictly increasing but nonuniform time axis by default.
+- Emit an explicit warning with the measured timestamp deviation and explain
+  that interpolation can slightly change high-frequency peak amplitudes,
+  widths, and phases.
+- Preserve `resample_nonuniform=False` as a strict validation opt-out across
+  the FFT APIs, including legacy `Pyzfn.calc_modes` and shared PSD helpers.
+- Read-only Zarr archives can compute slice-specific FMR modes in memory when
+  an interactive view cannot persist its cache.
+
+---
+
 # MMPP Library Release v0.6.9
 
 ## MuMax mode FFT timestamp jitter

@@ -455,6 +455,11 @@ class FFT:
         if tmin is not None or tmax is not None:
             slice_info = self._merge_time_slice(slice_info, tmin=tmin, tmax=tmax)
 
+        # MuMax commonly writes tiny timestamp jitter. Keep the notebook-facing
+        # FFT entry points usable by default while preserving an explicit strict
+        # opt-out for quantitative workflows that require a regular source axis.
+        kwargs.setdefault("resample_nonuniform", True)
+
         fft_result = self._compute_fft(
             dset,
             z_layer,
@@ -700,20 +705,30 @@ class FFT:
                 except (TypeError, ValueError):
                     log.debug(f"Ignoring invalid tmax value: {tmax}")
 
-            dt = None
-            if hasattr(data_set, "dt"):
+            dt_slice_info = slice_info
+            if tmax is not None:
                 try:
-                    dt = data_set.dt
-                    log.debug(f"Using dt from data_set.dt property: {dt}")
-                except AttributeError:
-                    pass  # Fall through to manual checks
-            if dt is None:
-                job_meta = type(
-                    "_JobMeta", (), {"attrs": getattr(zarr_group, "attrs", {})}
-                )()
-                dt = resolve_dt_from_metadata(
-                    data_set=data_set, job=job_meta, logger=log
-                )
+                    tmax_int = int(tmax)
+                except (TypeError, ValueError):
+                    tmax_int = 0
+                if tmax_int > 0:
+                    dt_slice_info = self._merge_time_slice(
+                        slice_info,
+                        tmin=None,
+                        tmax=tmax_int,
+                    )
+
+            job_meta = type(
+                "_JobMeta", (), {"attrs": getattr(zarr_group, "attrs", {})}
+            )()
+            dt = resolve_dt_from_metadata(
+                data_set=data_set,
+                job=job_meta,
+                logger=log,
+                slice_info=dt_slice_info,
+                allow_nonuniform=bool(kwargs.get("resample_nonuniform", True)),
+                warn_nonuniform=bool(kwargs.get("resample_nonuniform", True)),
+            )
 
             # Determine FFT length (same logic as in compute_fft)
             fft_length = n_timesteps

@@ -8,12 +8,17 @@ similar to FMRModeAnalyzer but focused on wave propagation and k-space analysis.
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import zarr
 
+from .._compute_loading import (
+    _resample_nonuniform_time_data,
+    _time_axis_requires_resampling,
+)
 from ._fft_backend import (
     fft as _fft,
 )
@@ -280,6 +285,8 @@ class SpinWaveAnalyzer:
         self._time_axis_length: int | None = None
         self._loaded_time: int = 0
         self.time_axis: np.ndarray | None = None
+        self._loaded_time_axis: np.ndarray | None = None
+        self._time_axis_source: str | None = None
         self._time_axis_notes: list[str] = []
         self.dt: float = 0.0
         self.grid_spacings: dict[str, float] = {}
@@ -303,6 +310,7 @@ class SpinWaveAnalyzer:
 
         # Load time-domain magnetization data
         self._load_magnetization()
+        self._apply_time_axis_resampling()
         self._extract_grid_parameters()
 
     def _load_magnetization(self) -> None:
@@ -638,6 +646,103 @@ class SpinWaveAnalyzer:
         )
         return normalized
 
+    def _time_axis_metadata(self) -> tuple[np.ndarray, str] | None:
+        """Return the time axis that belongs to the selected magnetization."""
+        if self.zarr_file is None:
+            return None
+
+        candidates: list[tuple[Any, str]] = []
+        if self._M_path:
+            try:
+                dataset = self.zarr_file[self._M_path]
+                attrs = getattr(dataset, "attrs", {})
+                if hasattr(attrs, "get") and attrs.get("t") is not None:
+                    candidates.append((attrs.get("t"), f"{self._M_path}.attrs['t']"))
+            except (KeyError, AttributeError, TypeError):
+                pass
+        try:
+            if "t" in self.zarr_file:
+                candidates.append((np.asarray(self.zarr_file["t"]), "t"))
+        except (KeyError, TypeError):
+            pass
+
+        expected_samples = (
+            int(self.M_data.shape[0])
+            if self.M_data is not None and self.M_data.ndim > 0
+            else None
+        )
+        for raw_time, source in candidates:
+            try:
+                axis = np.asarray(raw_time, dtype=float).reshape(-1)
+            except (TypeError, ValueError):
+                continue
+            if axis.size < 2:
+                continue
+
+            if expected_samples is not None and axis.size != expected_samples:
+                indexer = self._indexer_for_time_window(self.tmin, self.tmax)
+                if (
+                    indexer is not None
+                    and self._time_axis_pos is not None
+                    and self._time_axis_pos < len(indexer)
+                ):
+                    time_index = indexer[self._time_axis_pos]
+                    try:
+                        if isinstance(time_index, slice):
+                            axis = cast(np.ndarray, axis[time_index])
+                        elif isinstance(time_index, (int, np.integer)):
+                            axis = cast(
+                                np.ndarray,
+                                axis[int(time_index) : int(time_index) + 1],
+                            )
+                    except (IndexError, TypeError):
+                        continue
+            if expected_samples is None or axis.size == expected_samples:
+                return axis, source
+        return None
+
+    def _apply_time_axis_resampling(self) -> None:
+        """Resample selected magnetization data before any dispersion FFT."""
+        self._loaded_time_axis = None
+        self._time_axis_source = None
+        metadata = self._time_axis_metadata()
+        if metadata is None:
+            return
+
+        time_axis, source = metadata
+        self._time_axis_source = source
+        if self.M_data is None:
+            return
+
+        if self.config.resample_nonuniform:
+            if _time_axis_requires_resampling(time_axis):
+                self.M_data, did_resample = _resample_nonuniform_time_data(
+                    self.M_data, time_axis
+                )
+                if did_resample:
+                    mean_dt = float(np.mean(np.diff(time_axis)))
+                    max_deviation = float(np.max(np.abs(np.diff(time_axis) - mean_dt)))
+                    relative_deviation = max_deviation / abs(mean_dt)
+                    self._time_axis_notes.append(
+                        "Sampling warning: linearly resampled non-uniform time "
+                        f"axis '{source}' ({relative_deviation:.3%} maximum step "
+                        "deviation) before FFT dispersion; peak amplitudes, widths, "
+                        "and phases can change slightly"
+                    )
+                    warnings.warn(
+                        "FFT dispersion detected a non-uniform time axis and "
+                        "linearly resampled it onto an endpoint-preserving uniform "
+                        f"grid (source {source}, largest step deviation="
+                        f"{relative_deviation:.3%} of mean dt). The FFT can continue, "
+                        "but interpolation may slightly attenuate or broaden "
+                        "high-frequency peaks and alter quantitative amplitudes or "
+                        "phases; validate those quantities when they matter.",
+                        UserWarning,
+                        stacklevel=4,
+                    )
+                    time_axis = np.linspace(time_axis[0], time_axis[-1], time_axis.size)
+        self._loaded_time_axis = np.asarray(time_axis, dtype=float)
+
     # ── Memory estimation ─────────────────────────────────────
 
     @staticmethod
@@ -766,6 +871,7 @@ class SpinWaveAnalyzer:
         self.M_data = self._load_reference_data(tmin, tmax)
         self.tmin = tmin if tmin is None else int(tmin)
         self.tmax = tmax if tmax is None else int(tmax)
+        self._apply_time_axis_resampling()
 
     def _extract_grid_parameters(self) -> None:
         """Extract time step and spatial grid parameters from zarr attributes."""
@@ -788,29 +894,20 @@ class SpinWaveAnalyzer:
                     declared_dt_source = key
                     break
 
-        if hasattr(self, "_M_path") and self._M_path:
-            try:
-                dataset = self.zarr_file[self._M_path]
-                if hasattr(dataset, "attrs") and "t" in dataset.attrs:
-                    t_attr = dataset.attrs["t"]
-                    time_axis_dt, notes = _time_spacing_from_axis(
-                        t_attr,
-                        f"{self._M_path}.attrs['t']",
-                    )
-                    self._time_axis_notes.extend(notes)
-                    if time_axis_dt is not None:
-                        self.time_axis = np.asarray(t_attr, dtype=float).reshape(-1)
-                        time_axis_source = f"{self._M_path}.attrs['t']"
-            except (KeyError, AttributeError, IndexError, TypeError) as e:
-                logger.debug(f"Could not extract dt from dataset attrs: {e}")
-
-        if time_axis_dt is None and "t" in self.zarr_file:
-            t = np.array(self.zarr_file["t"])
-            time_axis_dt, notes = _time_spacing_from_axis(t, "t")
+        metadata = self._time_axis_metadata()
+        if metadata is not None:
+            raw_time_axis, raw_time_source = metadata
+            time_axis = self._loaded_time_axis
+            if time_axis is None:
+                time_axis = raw_time_axis
+            time_axis_dt, notes = _time_spacing_from_axis(
+                time_axis,
+                raw_time_source,
+            )
             self._time_axis_notes.extend(notes)
             if time_axis_dt is not None:
-                self.time_axis = np.asarray(t, dtype=float).reshape(-1)
-                time_axis_source = "t"
+                self.time_axis = np.asarray(time_axis, dtype=float).reshape(-1)
+                time_axis_source = raw_time_source
 
         # Time axis metadata is more specific than scalar t_sampl/dt. The
         # helper above rejects non-uniform sampling because a regular FFT axis

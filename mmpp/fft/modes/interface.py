@@ -547,8 +547,8 @@ class InteractiveSpectrumHelper:
                 (
                     "resample_nonuniform",
                     "bool",
-                    "False",
-                    "Resample mumax-style irregular timestamps before FFT",
+                    "True",
+                    "Automatically resample mumax-style irregular timestamps before FFT",
                 ),
                 (
                     "baseline_mode",
@@ -1145,7 +1145,7 @@ class FFTModeInterfaceNew:
         peak_prominence: float | None = None,
         peak_distance: int | None = None,
         use_holography: bool = False,
-        resample_nonuniform: bool = False,
+        resample_nonuniform: bool = True,
         **kwargs,
     ):
         """Create interactive spectrum with mode visualization panels.
@@ -1188,8 +1188,11 @@ class FFTModeInterfaceNew:
             Start with this frequency selected
         resample_nonuniform : bool
             Linearly resample a non-uniform time axis before computing the FFT.
-            The resampled result is suitable for exploration, but interpolation
-            can affect quantitative peak amplitudes, widths, or phases.
+            Defaults to ``True`` for the interactive explorer because MuMax
+            output commonly contains small timestamp jitter. The resampled
+            result is suitable for exploration, but interpolation can affect
+            quantitative peak amplitudes, widths, or phases. Pass ``False``
+            to retain strict rejection of non-uniform timestamps.
         **kwargs
             Additional arguments (find_peaks params, etc.)
 
@@ -1462,6 +1465,31 @@ class FFTModeInterfaceNew:
                     "Mode computation finished but modes are still unavailable"
                 )
             log.info("Auto mode computation completed for dataset '%s'.", dataset)
+        except (KeyError, OSError, PermissionError) as exc:
+            # A shared/read-only Zarr cannot receive a slice-specific
+            # ``modes/.../views`` cache. Compute the same modes in memory so
+            # interactive inspection remains usable without mutating input data.
+            log.warning(
+                "Could not persist auto-computed modes for dataset '%s' (%s); "
+                "retrying in memory without writing to the Zarr archive.",
+                dataset,
+                exc,
+            )
+            try:
+                analyzer.compute_modes(save=False, force=False)
+                if not getattr(analyzer, "modes_available", False):
+                    raise RuntimeError(
+                        "In-memory mode computation finished but modes are still unavailable"
+                    )
+                log.info(
+                    "In-memory mode computation completed for read-only dataset '%s'.",
+                    dataset,
+                )
+            except Exception as memory_exc:
+                raise RuntimeError(
+                    f"Automatic mode computation failed for dataset '{dataset}'. "
+                    "Run `job[0].fft.modes.compute_modes(save=False)` manually and retry."
+                ) from memory_exc
         except Exception as exc:
             raise RuntimeError(
                 f"Automatic mode computation failed for dataset '{dataset}'. "

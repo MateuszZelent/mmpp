@@ -698,7 +698,7 @@ class FFTCompute:
         slice_info: Any | None = None,
         preloaded_data: np.ndarray | None = None,
         time_step_scale: float = 1.0,
-        resample_nonuniform: bool = False,
+        resample_nonuniform: bool = True,
     ) -> tuple[np.ndarray, float]:
         """Load data from zarr file."""
         return load_fft_input_data(
@@ -791,7 +791,7 @@ class FFTCompute:
         tmax: int | None = None,
         preloaded_data: np.ndarray | None = None,
         time_step_scale: float = 1.0,
-        resample_nonuniform: bool = False,
+        resample_nonuniform: bool = True,
         **kwargs,
     ) -> FFTComputeResult:
         """
@@ -821,7 +821,8 @@ class FFTCompute:
         tmax : int, optional
             Maximum number of time steps to use for FFT calculation (default: None, use all)
         resample_nonuniform : bool, optional
-            Resample nonuniform timestamps to an endpoint-preserving uniform time grid.
+            Resample nonuniform timestamps to an endpoint-preserving uniform time
+            grid (default: True). Pass ``False`` to retain strict rejection.
         **kwargs : Any
             Additional FFT configuration options
 

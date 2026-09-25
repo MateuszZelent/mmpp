@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 
 # Import shared logging configuration
 from ...cli.logging_config import get_mmpp_logger, setup_mmpp_logging
+from .._compute_loading import (
+    _resample_nonuniform_time_data,
+    _time_axis_requires_resampling,
+)
 from .material_mask import masked_spatial, resolve_material_mask
 
 # Get logger for FMR modes
@@ -690,6 +694,11 @@ class FMRModeAnalyzer:
         self.mode_group = f"modes/{dataset_name}"
         if self.view_id is not None:
             self.mode_group = f"{self.mode_group}/views/{self.view_id}"
+        # Slice-specific mode caches may be computed from read-only archives.
+        # Keep those results in memory when they cannot be persisted to Zarr.
+        self._memory_modes: np.ndarray | None = None
+        self._memory_frequencies: np.ndarray | None = None
+        self._memory_material_mask: np.ndarray | None = None
         self.config = config or ModeVisualizationConfig()
         self._character_analyzer = ModeCharacterAnalyzer(mode_character_config)
 
@@ -744,6 +753,11 @@ class FMRModeAnalyzer:
         The spectrum can be derived from modes power data (power_sum or power_max).
         """
         # Core requirement: modes and frequencies
+        if (
+            getattr(self, "_memory_modes", None) is not None
+            and getattr(self, "_memory_frequencies", None) is not None
+        ):
+            return True
         if self.modes_path is None or self.freqs_path is None:
             return False
 
@@ -1074,17 +1088,22 @@ class FMRModeAnalyzer:
         RuntimeError
             If mode data is not available
         """
-        if self.frequencies is None:
+        memory_frequencies = getattr(self, "_memory_frequencies", None)
+        memory_modes = getattr(self, "_memory_modes", None)
+        frequencies = memory_frequencies
+        if frequencies is None:
+            frequencies = self.frequencies
+        if frequencies is None:
             raise RuntimeError(
                 "No frequency data available. Run compute_modes() first."
             )
 
-        if self.modes_path is None:
+        if memory_modes is None and self.modes_path is None:
             raise RuntimeError("No mode data available. Run compute_modes() first.")
 
         # Find closest frequency index
-        freq_idx = np.argmin(np.abs(self.frequencies - frequency))
-        actual_freq = self.frequencies[freq_idx]
+        freq_idx = np.argmin(np.abs(frequencies - frequency))
+        actual_freq = frequencies[freq_idx]
 
         if abs(actual_freq - frequency) > 0.1:
             log.warning(
@@ -1094,7 +1113,11 @@ class FMRModeAnalyzer:
 
         # Validate and normalize z_layer bounds. New mode data is canonical 5D,
         # but retain read compatibility with legacy single-layer 4D caches.
-        mode_shape = self.zarr_file[self.modes_path].shape
+        mode_shape = (
+            memory_modes.shape
+            if memory_modes is not None
+            else self.zarr_file[self.modes_path].shape
+        )
         if len(mode_shape) == 5:
             n_layers = mode_shape[1]
         elif len(mode_shape) == 4:
@@ -1119,7 +1142,11 @@ class FMRModeAnalyzer:
 
         # Load mode data for this frequency with bounds checking
         try:
-            if len(mode_shape) == 5:
+            if memory_modes is not None and len(mode_shape) == 5:
+                mode_data = memory_modes[freq_idx, z_layer, :, :, :]
+            elif memory_modes is not None:
+                mode_data = memory_modes[freq_idx, :, :, :]
+            elif len(mode_shape) == 5:
                 mode_data = self.zarr_file[self.modes_path][freq_idx, z_layer, :, :, :]
             else:
                 mode_data = self.zarr_file[self.modes_path][freq_idx, :, :, :]
@@ -1164,7 +1191,16 @@ class FMRModeAnalyzer:
             "mode_shape": mode_shape,
         }
 
-        material_mask = self._runtime_material_mask(z_layer=z_layer, ny=ny, nx=nx)
+        material_mask = None
+        memory_material_mask = getattr(self, "_memory_material_mask", None)
+        if memory_material_mask is not None:
+            candidate = np.asarray(memory_material_mask, dtype=bool)
+            if candidate.ndim == 3 and z_layer < candidate.shape[0]:
+                candidate = candidate[z_layer]
+            if candidate.shape == (ny, nx):
+                material_mask = candidate
+        if material_mask is None:
+            material_mask = self._runtime_material_mask(z_layer=z_layer, ny=ny, nx=nx)
         metadata["material_mask_available"] = material_mask is not None
         result = FMRModeData(
             actual_freq,
@@ -1431,6 +1467,7 @@ class FMRModeAnalyzer:
         save: bool = True,
         force: bool = False,
         t_slice: slice = slice(None),
+        resample_nonuniform: bool = True,
     ) -> None:
         """
         Compute FMR modes from magnetization data.
@@ -1447,7 +1484,13 @@ class FMRModeAnalyzer:
             Force recomputation even if data exists
         t_slice : slice
             Time slice to process (default: all timesteps)
+        resample_nonuniform : bool
+            Linearly resample a non-uniform time axis before the mode FFT
+            (default: True). Pass ``False`` to retain strict validation.
         """
+        if not isinstance(resample_nonuniform, (bool, np.bool_)):
+            raise TypeError("resample_nonuniform must be boolean")
+
         if not force and f"{self.mode_group}/arr" in self.zarr_file:
             log.info("Mode data already exists, use force=True to recompute")
             return
@@ -1523,13 +1566,37 @@ class FMRModeAnalyzer:
                 time_slice=t_slice_norm,
                 expected_samples=num_samples,
             )
-            if t_array is not None:
-                dt = _uniform_mode_dt(t_array)
-            else:
+            if t_array is None:
                 log.debug(
                     "Explicit time-axis length does not match active mode view; "
                     "falling back to scalar dt metadata"
                 )
+
+        mode_data: np.ndarray | None = None
+        if t_array is not None and resample_nonuniform:
+            if _time_axis_requires_resampling(t_array):
+                mode_data, did_resample = _resample_nonuniform_time_data(
+                    np.asarray(source[t_slice_norm]), t_array
+                )
+                if did_resample:
+                    mean_dt = float(np.mean(np.diff(t_array)))
+                    max_deviation = float(np.max(np.abs(np.diff(t_array) - mean_dt)))
+                    relative_deviation = max_deviation / abs(mean_dt)
+                    warnings.warn(
+                        "Mode FFT detected a non-uniform time axis and linearly "
+                        "resampled it onto an endpoint-preserving uniform grid "
+                        f"(largest step deviation={relative_deviation:.3%} of "
+                        "mean dt). The FFT can continue, but interpolation may "
+                        "slightly attenuate or broaden high-frequency peaks and "
+                        "alter quantitative amplitudes or phases; validate those "
+                        "quantities when they matter.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    t_array = np.linspace(t_array[0], t_array[-1], t_array.size)
+
+        if t_array is not None:
+            dt = _uniform_mode_dt(t_array)
 
         def _extract_dt(candidate: Any) -> float | None:
             if candidate is None:
@@ -1596,8 +1663,10 @@ class FMRModeAnalyzer:
             t_slice_norm,
             z_slice,
         )
+        if mode_data is None:
+            mode_data = np.asarray(source[t_slice_norm])
         arr = _normalize_mode_input_shape(
-            np.asarray(source[t_slice_norm]),
+            mode_data,
             component_index=self.component_index,
         )
         if not isinstance(z_slice, slice):
@@ -1744,9 +1813,17 @@ class FMRModeAnalyzer:
             # zarr groups don't have close() method, just let it go out of scope
             log.info("✅ Mode computation completed and saved")
 
-        # Reload data
-        self.zarr_file = zarr.open(self.zarr_path, mode="r")
-        self._load_data()
+        # Reload persisted data, or retain the result in memory when a
+        # slice-specific computation is running against a read-only archive.
+        if save:
+            self.zarr_file = zarr.open(self.zarr_path, mode="r")
+            self._load_data()
+        else:
+            self._memory_modes = np.asarray(fft_result, dtype=np.complex64)
+            self._memory_frequencies = np.asarray(freqs, dtype=float)
+            self._memory_material_mask = np.asarray(material_mask, dtype=bool)
+            self.frequencies = self._memory_frequencies
+            self.spectrum = _mode_power_summaries(self._memory_modes)[1]
 
     def save_modes_animation(
         self,

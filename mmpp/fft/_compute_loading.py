@@ -348,6 +348,7 @@ def _uniform_dt_from_time_axis(
     *,
     slice_info: Any | None = None,
     allow_nonuniform: bool = False,
+    warn_nonuniform: bool = False,
 ) -> float:
     """Resolve dt from the active, uniformly sampled portion of a time axis."""
     axis: Any = np.asarray(value, dtype=float).reshape(-1)
@@ -374,6 +375,18 @@ def _uniform_dt_from_time_axis(
             f"(tolerance {relative_tolerance:.3g}). To linearly resample the "
             "data before FFT, pass resample_nonuniform=True."
         )
+    if max_deviation > tolerance and warn_nonuniform:
+        relative_deviation = max_deviation / abs(dt)
+        warnings.warn(
+            "FFT frequency metadata detected a non-uniform time axis and is "
+            "using the mean dt for the frequency grid (largest step deviation="
+            f"{relative_deviation:.3g} of mean dt). No time-domain samples were "
+            "loaded for this fast path; use a spectrum/FFT call for endpoint-"
+            "preserving linear resampling. Quantitative peak amplitudes and phases "
+            "require the resampled data path.",
+            UserWarning,
+            stacklevel=5,
+        )
     return dt
 
 
@@ -384,6 +397,7 @@ def resolve_dt_from_metadata(
     logger: Any,
     slice_info: Any | None = None,
     allow_nonuniform: bool = False,
+    warn_nonuniform: bool = False,
 ) -> float:
     """Resolve timestep with dataset-specific attributes first."""
     dt = None
@@ -396,6 +410,7 @@ def resolve_dt_from_metadata(
                     t_attr,
                     slice_info=slice_info,
                     allow_nonuniform=allow_nonuniform,
+                    warn_nonuniform=warn_nonuniform,
                 )
                 dt_from_time_axis = True
                 logger.debug("Using dt from data_set.attrs['t']: %s", dt)
@@ -533,7 +548,7 @@ def load_fft_input_data(
     logger: Any,
     preloaded_data: np.ndarray | None = None,
     time_step_scale: float = 1.0,
-    resample_nonuniform: bool = False,
+    resample_nonuniform: bool = True,
     _layout_out: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, float]:
     """Load FFT input data from zarr with slicing, z-layer handling, and dt detection.
@@ -703,7 +718,7 @@ def load_fft_input_data_profiled(
     logger: Any,
     preloaded_data: np.ndarray | None = None,
     time_step_scale: float = 1.0,
-    resample_nonuniform: bool = False,
+    resample_nonuniform: bool = True,
 ) -> tuple[np.ndarray, float, InputLoadMetrics]:
     """Load FFT input data and collect timing/memory metrics."""
     process = None

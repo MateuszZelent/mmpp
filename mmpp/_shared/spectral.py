@@ -79,6 +79,69 @@ def infer_dt(time: np.ndarray | None = None, *, dt: float | None = None) -> floa
     return value if np.isfinite(value) and value > 0.0 else float("nan")
 
 
+def _prepare_time_signal(
+    signal: np.ndarray,
+    time: np.ndarray | None,
+    *,
+    resample_nonuniform: bool,
+) -> tuple[np.ndarray, np.ndarray | None, bool]:
+    """Validate or resample a time-first signal before a spectral transform."""
+    x = np.asarray(signal)
+    if x.ndim != 1:
+        x = x.reshape(-1)
+    if time is None:
+        return x, None, False
+
+    t = np.asarray(time, dtype=float).reshape(-1)
+    if t.size != x.size:
+        raise ValueError(
+            "The time axis length must match the one-dimensional signal before FFT"
+        )
+    if t.size < 2:
+        return x, t, False
+
+    deltas = np.diff(t)
+    if not np.all(np.isfinite(t)) or np.any(deltas <= 0):
+        raise ValueError("The time axis must be finite and strictly increasing")
+    mean_dt = float(np.mean(deltas))
+    tolerance = max(abs(mean_dt) * 1e-6, np.finfo(float).eps * 10)
+    max_deviation = float(np.max(np.abs(deltas - mean_dt)))
+    if max_deviation <= tolerance:
+        return x, t, False
+
+    relative_deviation = max_deviation / abs(mean_dt)
+    if not resample_nonuniform:
+        raise ValueError(
+            "FFT requires a uniformly sampled time axis; the largest step "
+            f"deviation is {relative_deviation:.3g} of mean dt "
+            f"(tolerance {tolerance / abs(mean_dt):.3g}). To linearly resample "
+            "the data before FFT, pass resample_nonuniform=True."
+        )
+
+    uniform_time = np.linspace(t[0], t[-1], t.size)
+    flat = x.reshape(t.size, -1)
+    output = np.empty(flat.shape, dtype=np.result_type(x.dtype, np.float32))
+    for column in range(flat.shape[1]):
+        values = flat[:, column]
+        if np.iscomplexobj(values):
+            output[:, column] = np.interp(
+                uniform_time, t, values.real
+            ) + 1j * np.interp(uniform_time, t, values.imag)
+        else:
+            output[:, column] = np.interp(uniform_time, t, values)
+    warnings.warn(
+        "Shared spectral FFT detected a non-uniform time axis and linearly "
+        "resampled it onto an endpoint-preserving uniform grid "
+        f"(largest step deviation={relative_deviation:.3%} of mean dt). "
+        "Interpolation may slightly attenuate or broaden high-frequency peaks "
+        "and alter quantitative amplitudes or phases; pass "
+        "resample_nonuniform=False for strict validation.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return output.reshape(x.shape), uniform_time, True
+
+
 def _windowed_periodogram(
     signal: np.ndarray, dt: float
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -115,6 +178,7 @@ def compute_psd(
     noverlap: int | None = None,
     scaling: str = "density",
     detrend: str | bool = "constant",
+    resample_nonuniform: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, str, dict[str, Any]]:
     """Compute a one-dimensional power spectral density.
 
@@ -122,8 +186,14 @@ def compute_psd(
     fallback is an explicitly windowed periodogram so the fallback has the same
     broad leakage assumptions as Welch instead of a raw rectangular FFT.
     """
-    x = np.asarray(signal)
-    sample_dt = infer_dt(time, dt=dt)
+    if not isinstance(resample_nonuniform, (bool, np.bool_)):
+        raise TypeError("resample_nonuniform must be boolean")
+    x, prepared_time, did_resample = _prepare_time_signal(
+        signal,
+        time,
+        resample_nonuniform=bool(resample_nonuniform),
+    )
+    sample_dt = infer_dt(prepared_time, dt=dt)
     if x.size < 2 or not np.isfinite(sample_dt):
         return (
             np.array([], dtype=float),
@@ -145,6 +215,8 @@ def compute_psd(
         "fs": fs,
         "n_samples": int(x.size),
         "sidedness": "one-sided" if not np.iscomplexobj(x) else "positive frequencies",
+        "resample_nonuniform": bool(resample_nonuniform),
+        "resampled_nonuniform": did_resample,
     }
 
     if method_norm == "welch":
@@ -241,10 +313,18 @@ def compute_spectrogram_psd(
     dt: float | None = None,
     nperseg: int | None = None,
     noverlap: int | None = None,
+    resample_nonuniform: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, str, dict[str, Any]]:
     """Compute a PSD spectrogram with SciPy and a NumPy STFT fallback."""
-    x = np.asarray(signal, dtype=float).reshape(-1)
-    sample_dt = infer_dt(time, dt=dt)
+    if not isinstance(resample_nonuniform, (bool, np.bool_)):
+        raise TypeError("resample_nonuniform must be boolean")
+    prepared_signal, prepared_time, did_resample = _prepare_time_signal(
+        signal,
+        time,
+        resample_nonuniform=bool(resample_nonuniform),
+    )
+    x = np.asarray(prepared_signal, dtype=float).reshape(-1)
+    sample_dt = infer_dt(prepared_time, dt=dt)
     if x.size < 2 or not np.isfinite(sample_dt):
         return (
             np.array([], dtype=float),
@@ -264,6 +344,8 @@ def compute_spectrogram_psd(
         "fs": fs,
         "nperseg": int(seg),
         "noverlap": int(overlap),
+        "resample_nonuniform": bool(resample_nonuniform),
+        "resampled_nonuniform": did_resample,
     }
 
     if SCIPY_AVAILABLE and _scipy_spectrogram is not None:

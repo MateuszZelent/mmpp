@@ -154,8 +154,15 @@ class TransmissionConfig:
     # Signature: callback(progress: float, stage: str) where progress is 0-100%
     progress_callback: Callable[[float, str], None] | None = None
 
+    # MuMax can emit tiny timestamp jitter even when the requested output
+    # interval is nominally fixed. Keep transmission on the same FFT sampling
+    # contract as spectrum and mode analysis, with an explicit strict opt-out.
+    resample_nonuniform: bool = True
+
     def ensure_valid(self) -> None:
         """Validate configuration values."""
+        if not isinstance(self.resample_nonuniform, (bool, np.bool_)):
+            raise TypeError("resample_nonuniform must be boolean")
         # Backward-compatible aliases for "no x-averaging".
         # Many users intuitively pass False/0 to disable window averaging.
         if isinstance(self.spatial_window, bool):
@@ -2921,6 +2928,7 @@ class TransmissionCompute:
             slice_info=slice_info,
             preloaded_data=preloaded_data,
             time_step_scale=time_step_scale,
+            resample_nonuniform=config.resample_nonuniform,
         )
 
         # Check if component was pre-selected via slicing

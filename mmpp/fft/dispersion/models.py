@@ -48,6 +48,9 @@ class DispersionConfig:
     dk_max: float = 1e5  # Max k-deviation for sampling [rad/m]
     df_max: float | None = None  # Max f-deviation for branch tracking [Hz]
     min_prominence: float = 0.0  # Minimum peak prominence for detection
+    # Keep this option at the end so older positional config construction remains
+    # compatible while allowing MuMax-style timestamp jitter by default.
+    resample_nonuniform: bool = True
 
 
 @dataclass

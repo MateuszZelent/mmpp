@@ -173,10 +173,11 @@ class Pyzfn:
                 **kwargs,
             )
         # Zarr v2 uses require_dataset / open_array
+        resolved_chunks = None if chunks == "auto" else chunks
         return self._group.require_dataset(
             name,
             shape=shape,
-            chunks=chunks,
+            chunks=resolved_chunks,
             dtype=dtype,
             overwrite=overwrite,
         )

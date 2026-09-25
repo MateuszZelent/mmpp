@@ -14,6 +14,36 @@ from mmpp.fft.spectrum.result import SpectrumResult
 from mmpp.fft.transmission.compute import TransmissionConfig, TransmissionResult
 
 
+def test_transmission_forwards_nonuniform_sampling_policy_to_loader():
+    from mmpp.fft.transmission.compute import TransmissionCompute
+
+    captured = {}
+
+    class _FFTCompute:
+        def load_data_from_zarr(self, *args, **kwargs):
+            captured.update(kwargs)
+            return np.zeros((4, 1, 1, 2, 1), dtype=float), 1e-12
+
+    class _Job:
+        path = "/tmp/transmission-policy.zarr"
+
+        def get_largest_m_dataset(self):
+            return "m"
+
+    analyzer = TransmissionCompute(_FFTCompute(), _Job())
+    config = TransmissionConfig(
+        dataset_name="m",
+        filter_type=None,
+        window_function=None,
+        resample_nonuniform=False,
+    )
+    data, dt = analyzer._prepare_data(config)
+
+    assert data.shape == (4, 1, 1, 2, 1)
+    assert dt == 1e-12
+    assert captured["resample_nonuniform"] is False
+
+
 def test_spectrum_modes_bridge_interactive_passes_existing_spectrum_result():
     class _FakeModesInterface:
         def __init__(self):
@@ -105,6 +135,7 @@ def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(
     assert isinstance(computed, _DummySpectrumResult)
     assert fft.calls == 1
     assert fft.last_kwargs["method"] == 2
+    assert fft.last_kwargs["resample_nonuniform"] is True
 
     computed = interface._interactive_spectrum_impl(
         toolbar=True,

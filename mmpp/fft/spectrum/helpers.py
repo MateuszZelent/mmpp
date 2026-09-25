@@ -81,8 +81,8 @@ class _SpectrumQuickPlot:
             ("fmin / fmax", "None", "Frequency range filter (Hz)"),
             (
                 "resample_nonuniform",
-                "False",
-                "Linearly resample a nonuniform time axis to a uniform grid before FFT.",
+                "True",
+                "Linearly resample a nonuniform time axis to a uniform grid before FFT; pass False for strict mode.",
             ),
             ("window", "'hann'", "Window function"),
             ("filter_type", "'remove_mean'", "Pre-FFT filter"),
@@ -258,7 +258,7 @@ class SpectrumHelper:
                     ("fmin / fmax", "Frequency range filter (Hz)"),
                     (
                         "resample_nonuniform",
-                        "Linearly resample a nonuniform time axis to a uniform grid (default: False)",
+                        "Linearly resample a nonuniform time axis to a uniform grid (default: True; pass False for strict mode)",
                     ),
                     (
                         "window",

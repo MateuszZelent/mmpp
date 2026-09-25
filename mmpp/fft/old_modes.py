@@ -6,6 +6,7 @@ Provides both programmatic and interactive interfaces for mode analysis.
 """
 
 import math
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -18,6 +19,10 @@ import numpy as np
 
 # Import shared logging configuration
 from ..cli.logging_config import get_mmpp_logger, setup_mmpp_logging
+from ._compute_loading import (
+    _resample_nonuniform_time_data,
+    _time_axis_requires_resampling,
+)
 
 # Get logger for FMR modes
 log = get_mmpp_logger("mmpp.fft.modes")
@@ -3196,6 +3201,7 @@ Interactive Spectrum Controls:
         window: bool = True,
         save: bool = True,
         force: bool = False,
+        resample_nonuniform: bool = True,
     ) -> None:
         """
         Compute FMR modes from magnetization data.
@@ -3210,7 +3216,13 @@ Interactive Spectrum Controls:
             Save results to zarr
         force : bool
             Force recomputation even if data exists
+        resample_nonuniform : bool
+            Linearly resample a non-uniform time axis before the mode FFT
+            (default: True). Pass ``False`` to retain strict validation.
         """
+        if not isinstance(resample_nonuniform, (bool, np.bool_)):
+            raise TypeError("resample_nonuniform must be boolean")
+
         if not force and f"modes/{self.dataset_name}/arr" in self.zarr_file:
             log.info("Mode data already exists, use force=True to recompute")
             return
@@ -3315,11 +3327,36 @@ Interactive Spectrum Controls:
                 self.dataset_name,
             )
 
-        if t_array is None:
+        mode_data: np.ndarray | None = None
+        if t_array is not None and t_array.size == dset.shape[0]:
+            if _time_axis_requires_resampling(t_array):
+                if not resample_nonuniform:
+                    raise ValueError(
+                        "Mode FFT requires a uniformly sampled time axis; pass "
+                        "resample_nonuniform=True to continue with linear resampling"
+                    )
+                mode_data, did_resample = _resample_nonuniform_time_data(
+                    np.asarray(dset[:, z_slice]), t_array
+                )
+                if did_resample:
+                    mean_dt = float(np.mean(np.diff(t_array)))
+                    max_deviation = float(np.max(np.abs(np.diff(t_array) - mean_dt)))
+                    relative_deviation = max_deviation / abs(mean_dt)
+                    warnings.warn(
+                        "Legacy mode FFT detected a non-uniform time axis and "
+                        "linearly resampled it onto an endpoint-preserving uniform "
+                        f"grid (largest step deviation={relative_deviation:.3%} of "
+                        "mean dt). Interpolation may slightly affect quantitative "
+                        "amplitudes or phases.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    dt = mean_dt
+                    t_array = np.linspace(t_array[0], t_array[-1], t_array.size)
+            num_samples = t_array.size
+        else:
             num_samples = dset.shape[0]
             t_array = np.arange(num_samples, dtype=float) * dt
-        else:
-            num_samples = t_array.size
 
         # Calculate frequencies using number of time samples
         if num_samples < 2:
@@ -3329,7 +3366,9 @@ Interactive Spectrum Controls:
 
         # Load and process data
         log.info(f"Loading magnetization data: {dset.shape}")
-        arr = np.asarray(dset[:, z_slice])
+        if mode_data is None:
+            mode_data = np.asarray(dset[:, z_slice])
+        arr = mode_data
         log.info("Loading magnetization data finished")
 
         # Remove DC component

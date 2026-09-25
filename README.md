@@ -49,10 +49,14 @@ batch sweep plots, and Zarr-compatible FFT cache saving. MMPP 0.6.7 adds full
 methodology and input provenance to spectrum plots, plus an explicit option to
 resample nonuniform time axes before FFT computation.
 MMPP 0.6.8 preserves the full magnetization vector when vortex analysis starts
-from a component-selected dataset view and allows interactive spectrum plots to
-opt in to resampling a nonuniform time axis with `resample_nonuniform=True`.
-MMPP 0.6.9 accepts small MuMax timestamp jitter in mode FFTs with a warning and
-recommends setting `FixDt` when uniform sampling is required.
+from a component-selected dataset view and allows FFT paths to resample a
+nonuniform time axis with `resample_nonuniform=True`.
+MMPP 0.6.9 accepted small MuMax timestamp jitter in mode FFTs with a warning;
+MMPP 0.6.10 applies the same endpoint-preserving resampling policy to all
+`mmpp.fft` spectrum, mode, batch, transmission, and dispersion paths. The
+default is `resample_nonuniform=True`; pass `resample_nonuniform=False` for
+strict rejection. Warnings describe the possible effect on high-frequency
+peak amplitudes, widths, and phases.
 
 The same project metadata works with `uv`:
 

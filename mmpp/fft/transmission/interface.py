@@ -746,6 +746,11 @@ fig, ax, m = result.plot_transmission(
             ("dataset_name", "None", "str or None"),
             ("z_layer", "-1", "int (negative = from end)"),
             ("tmax", "None", "int or None"),
+            (
+                "resample_nonuniform",
+                "True",
+                "bool; linearly resample MuMax jitter (False = strict)",
+            ),
         ]
 
         for param, default, options in param_info:

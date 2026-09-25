@@ -299,15 +299,19 @@ def test_fft_resamples_nonuniform_time_axis_when_requested(tmp_path):
     magnetization.attrs["t"] = time_axis.tolist()
     job = ZarrJobResult(str(path), {})
 
-    with pytest.raises(ValueError, match="resample_nonuniform=True"):
-        FFT(job, None).spectrum(z_layer=0, window="none", filter_type="none")
-
     with pytest.warns(UserWarning, match="linearly resampled"):
         spectrum = FFT(job, None).spectrum(
             z_layer=0,
             window="none",
             filter_type="none",
-            resample_nonuniform=True,
+        )
+
+    with pytest.raises(ValueError, match="resample_nonuniform=True"):
+        FFT(job, None).spectrum(
+            z_layer=0,
+            window="none",
+            filter_type="none",
+            resample_nonuniform=False,
         )
 
     assert spectrum.frequencies.size == nt // 2 + 1
@@ -352,3 +356,52 @@ def test_interactive_spectrum_helper_forwards_nonuniform_resampling():
         "compute": {"resample_nonuniform": True, "method": 2},
         "plot": {"figsize": (8, 5), "info": "full"},
     }
+
+
+def test_shared_psd_resamples_nonuniform_time_axis_by_default():
+    from mmpp._shared.spectral import compute_psd
+
+    time_axis = np.array([0.0, 1.0, 2.1, 3.0, 4.0])
+    signal = np.sin(2.0 * np.pi * time_axis / 4.0)
+
+    with pytest.warns(UserWarning, match="Shared spectral FFT"):
+        frequencies, power, method, metadata = compute_psd(
+            signal,
+            time_axis,
+            method="periodogram",
+        )
+
+    assert method == "periodogram"
+    assert frequencies.size == power.size
+    assert metadata["resampled_nonuniform"] is True
+
+    with pytest.raises(ValueError, match="resample_nonuniform=True"):
+        compute_psd(
+            signal,
+            time_axis,
+            method="periodogram",
+            resample_nonuniform=False,
+        )
+
+
+def test_pyzfn_mode_fft_resamples_nonuniform_time_axis(tmp_path):
+    from mmpp.pyzfn import Pyzfn
+
+    n_time = 8
+    data = np.zeros((n_time, 1, 2, 2, 3), dtype=np.float32)
+    data[:, 0, :, :, 0] = np.arange(n_time, dtype=np.float32)[:, None, None]
+    time_axis = np.array([0.0, 1.0, 2.1, 3.0, 4.0, 5.0, 6.0, 7.0]) * 1e-12
+
+    path = tmp_path / "pyzfn_modes.zarr"
+    root = zarr.open(str(path), mode="w")
+    root.create_dataset("m", data=data, chunks=data.shape)
+    root["m"].attrs["t"] = time_axis.tolist()
+
+    job = Pyzfn(path)
+    with pytest.warns(UserWarning, match="Pyzfn mode FFT"):
+        job.calc_modes(window=False)
+
+    assert "modes/m/arr" in job
+    strict = Pyzfn(path)
+    with pytest.raises(ValueError, match="resample_nonuniform=True"):
+        strict.calc_modes(window=False, resample_nonuniform=False)

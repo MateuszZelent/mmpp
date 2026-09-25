@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this when cached dispersion results are no longer compatible due to
 # algorithmic/axis-convention changes. Included in the cache context hash.
-DISPERSION_CACHE_SCHEMA_VERSION = 4
+DISPERSION_CACHE_SCHEMA_VERSION = 5
 
 
 class _DispersionProgressReporter:
@@ -1653,6 +1653,7 @@ class FFTDispersionInterface:
         detrend: str = "mean",
         tmin: int | None = None,
         tmax: int | None = None,
+        resample_nonuniform: bool = True,
         **kwargs,
     ) -> FFTDispersionInterface:
         """
@@ -1676,6 +1677,9 @@ class FFTDispersionInterface:
         tmax : int or None, default=None
             Maximum number of time steps to load. If None, use all available
             timesteps unless the dataset accessor slice already limits time.
+        resample_nonuniform : bool, default=True
+            Linearly resample a non-uniform time axis before the dispersion FFT.
+            Pass ``False`` to retain strict validation.
 
         Returns
         -------
@@ -1686,6 +1690,7 @@ class FFTDispersionInterface:
             "component": component,
             "time_window": time_window,
             "detrend": detrend,
+            "resample_nonuniform": resample_nonuniform,
         }
 
         # Add optional parameters if provided
