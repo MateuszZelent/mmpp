@@ -7,6 +7,7 @@ Provides both programmatic and interactive interfaces for mode analysis.
 
 import hashlib
 import math
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional, Union, cast
@@ -22,6 +23,8 @@ from .material_mask import masked_spatial, resolve_material_mask
 
 # Get logger for FMR modes
 log = get_mmpp_logger("mmpp.fft.modes")
+
+_MODE_DT_MAX_RELATIVE_DEVIATION = 1e-3
 
 
 def _mode_extent_nm(
@@ -77,7 +80,7 @@ def _select_mode_time_axis(
 
 
 def _uniform_mode_dt(time_axis: np.ndarray) -> float:
-    """Return dt for a strictly increasing, uniformly sampled mode time axis."""
+    """Return mean dt, warning on jitter up to the maximum relative deviation."""
     values = np.asarray(time_axis, dtype=float).reshape(-1)
     if values.size < 2:
         raise ValueError("Mode FFT requires at least two time-axis samples")
@@ -87,11 +90,25 @@ def _uniform_mode_dt(time_axis: np.ndarray) -> float:
     if np.any(deltas <= 0):
         raise ValueError("Mode time axis must be strictly increasing")
     dt = float(np.mean(deltas))
-    tolerance = max(abs(dt) * 1e-6, np.finfo(float).eps * 10)
-    if np.max(np.abs(deltas - dt)) > tolerance:
+    relative_deviation = float(np.max(np.abs(deltas - dt)) / abs(dt))
+    warning_tolerance = max(abs(dt) * 1e-6, np.finfo(float).eps * 10) / abs(dt)
+    if relative_deviation > _MODE_DT_MAX_RELATIVE_DEVIATION:
         raise ValueError(
-            "Mode FFT requires a uniformly sampled time axis; resample the data "
-            "before computing modes"
+            "Mode FFT requires an approximately uniformly sampled time axis; "
+            f"the maximum step deviation is {relative_deviation:.3%} "
+            f"(limit {_MODE_DT_MAX_RELATIVE_DEVIATION:.1%}). Resample the data or use "
+            "a fixed MuMax timestep (FixDt) aligned with the output interval."
+        )
+    if relative_deviation > warning_tolerance:
+        warnings.warn(
+            "Mode FFT: the time axis has mild sampling jitter "
+            f"(maximum step deviation {relative_deviation:.3%}; continuing "
+            f"with the mean dt, up to {_MODE_DT_MAX_RELATIVE_DEVIATION:.1%}). This can "
+            "slightly affect frequencies and amplitudes. For more uniform "
+            "output, set MuMax FixDt to a stable constant step that divides "
+            "the output sampling interval (t_sampl) exactly.",
+            UserWarning,
+            stacklevel=2,
         )
     return dt
 

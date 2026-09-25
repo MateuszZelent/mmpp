@@ -51,6 +51,8 @@ resample nonuniform time axes before FFT computation.
 MMPP 0.6.8 preserves the full magnetization vector when vortex analysis starts
 from a component-selected dataset view and allows interactive spectrum plots to
 opt in to resampling a nonuniform time axis with `resample_nonuniform=True`.
+MMPP 0.6.9 accepts small MuMax timestamp jitter in mode FFTs with a warning and
+recommends setting `FixDt` when uniform sampling is required.
 
 The same project metadata works with `uv`:
 

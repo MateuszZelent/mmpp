@@ -5554,8 +5554,21 @@ def test_mode_time_axis_selection_rejects_mismatched_materialized_metadata():
 def test_mode_fft_rejects_nonuniform_time_axis():
     from mmpp.fft.modes import _uniform_mode_dt
 
-    with pytest.raises(ValueError, match="uniformly sampled"):
+    with pytest.raises(ValueError, match="approximately uniformly sampled"):
         _uniform_mode_dt(np.array([0.0, 1e-12, 3e-12, 4e-12]))
+
+
+def test_mode_fft_warns_and_uses_mean_dt_for_small_sampling_jitter():
+    from mmpp.fft.modes import _uniform_mode_dt
+
+    target_dt = 19.230769230769e-12
+    offsets = np.resize(np.array([-8e-15, 8e-15]), 20)
+    time_axis = np.concatenate(([0.0], np.cumsum(target_dt + offsets)))
+
+    with pytest.warns(UserWarning, match="FixDt"):
+        dt = _uniform_mode_dt(time_axis)
+
+    assert np.isclose(dt, target_dt)
 
 
 def test_fft_dt_uses_full_selected_time_axis_and_rejects_irregular_sampling():

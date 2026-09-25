@@ -1,3 +1,14 @@
+# MMPP Library Release v0.6.9
+
+## MuMax mode FFT timestamp jitter
+- Accept small timestamp deviations (up to 0.1% of the mean step) when mode
+  FFTs are computed, use the mean sample interval, and emit a warning that
+  recommends setting `FixDt` when uniform sampling is required.
+- Continue rejecting materially nonuniform time axes so an invalid FFT is not
+  silently computed.
+
+---
+
 # MMPP Library Release v0.6.8
 
 ## Vortex dataset selection and PyPI installation
