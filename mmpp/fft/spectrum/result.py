@@ -28,6 +28,7 @@ class SpectrumResult:
         scaling: str = "raw",
         spectrum_kind: str = "complex",
         power_quantity: str = "raw_power",
+        compute_metadata: dict[str, Any] | None = None,
     ):
         self.frequencies = np.asarray(frequencies, dtype=float)
         self.spectrum = np.asarray(spectrum)
@@ -36,6 +37,7 @@ class SpectrumResult:
         self._source_job = source_job
         self._source_fft = source_fft
         self._mode_context = dict(mode_context or {})
+        self.compute_metadata = dict(compute_metadata or {})
         self._filter_config = filter_config
         self._raw_spectrum = (
             np.asarray(raw_spectrum)
@@ -475,6 +477,7 @@ class SpectrumResult:
             source_job=self._source_job,
             source_fft=self._source_fft,
             mode_context=self._mode_context,
+            compute_metadata=getattr(self, "compute_metadata", {}),
             filter_config={"post": post},
             raw_spectrum=self._raw_spectrum,
             power_override=filtered_power,
@@ -573,7 +576,7 @@ class SpectrumResult:
         )
         example = (
             "# Plot spectrum with peak markers\n"
-            "spec.plot.spectrum(show_peaks=True)\n"
+            "spec.plot.spectrum(show_peaks=True, info='full')\n"
             "\n"
             "# Apply post-processing filters\n"
             "filtered = spec.filtered(normalize=True, gamma=0.5)\n"

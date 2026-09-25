@@ -14,6 +14,11 @@ from typing import Any, Literal
 import numpy as np
 
 from ..method_helpers import CallableMethodHelper
+from ..spectrum._plotting.info import (
+    add_fft_info,
+    spectrum_result_info,
+    validate_info_option,
+)
 
 log = logging.getLogger("mmpp.fft.modes")
 
@@ -1120,6 +1125,7 @@ class FFTModeInterfaceNew:
         show_peaks: bool | None = None,
         title: str | None = None,
         initial_frequency: float | None = None,
+        info: str | None = None,
         freq_min: float | None = None,
         freq_max: float | None = None,
         smooth_filter: str | None = None,
@@ -1195,6 +1201,7 @@ class FFTModeInterfaceNew:
         >>> job[0].fft.modes.interactive_spectrum(method=2)
         """
         method = _validate_interactive_integer("method", method)
+        validate_info_option(info)
         if method not in {1, 2}:
             raise ValueError("method must be 1 or 2")
         z_layer = _validate_interactive_integer("z_layer", z_layer)
@@ -1317,6 +1324,8 @@ class FFTModeInterfaceNew:
                 dpi=dpi,
                 figsize=figsize,
             )
+            if info == "full":
+                viewer._fft_info_text = spectrum_result_info(spectrum_result)
             return viewer.show(
                 components=components,
                 z_layer=z_layer,
@@ -1349,7 +1358,7 @@ class FFTModeInterfaceNew:
         for key in toolbar_only_keys:
             viewer_kwargs.pop(key, None)
 
-        return self._legacy_analyzer.interactive_spectrum(
+        legacy_view = self._legacy_analyzer.interactive_spectrum(
             components=components,
             z_layer=z_layer,
             spectrum_result=spectrum_result,  # Inject FFT spectrum!
@@ -1361,6 +1370,13 @@ class FFTModeInterfaceNew:
             use_holography=use_holography,
             **viewer_kwargs,
         )
+        if info == "full":
+            figure = getattr(legacy_view, "_fig", None)
+            if figure is None and hasattr(legacy_view, "axes"):
+                figure = legacy_view
+            if figure is not None:
+                add_fft_info(figure, spectrum_result_info(spectrum_result))
+        return legacy_view
 
     @property
     def interactive_spectrum(self):

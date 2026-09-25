@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import pickle
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,11 @@ import numpy as np
 
 from ....cli.logging_config import get_mmpp_logger
 from ..._zarr_compat import write_zarr_array
+from .._plotting.info import (
+    add_fft_info,
+    format_fft_info,
+    validate_info_option,
+)
 
 log = get_mmpp_logger("mmpp.fft.spectrum_batch")
 
@@ -65,6 +70,9 @@ class SpectrumEntry:
     path: str
     parameters: dict[str, Any]
     index: int
+    dataset_name: str | None = None
+    z_layer: int | None = None
+    config_dict: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.frequencies = np.asarray(self.frequencies, dtype=float)
@@ -96,6 +104,7 @@ class SpectrumEntry:
         ax: Any | None = None,
         freq_unit: str = "GHz",
         log_scale: bool = True,
+        info: str | None = None,
         **kwargs,
     ) -> tuple[Any, Any]:
         """Plot this spectrum.
@@ -113,6 +122,7 @@ class SpectrumEntry:
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required")
+        validate_info_option(info)
 
         freq_scales = {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
         if freq_unit not in freq_scales:
@@ -141,6 +151,17 @@ class SpectrumEntry:
             if param_str
             else f"Spectrum [{self.index}]"
         )
+
+        if info == "full":
+            add_fft_info(
+                fig,
+                format_fft_info(
+                    source_paths=[self.path],
+                    dataset=self.dataset_name,
+                    z_layer=self.z_layer,
+                    config=self.config_dict,
+                ),
+            )
 
         return fig, ax
 
@@ -299,6 +320,9 @@ class BatchSpectrumResult:
             path=self.job_paths[index],
             parameters={k: v[index] for k, v in self.parameters.items()},
             index=index,
+            dataset_name=self.dataset_name,
+            z_layer=self.z_layer,
+            config_dict=dict(self.config_dict),
         )
 
     def __iter__(self):
@@ -547,9 +571,10 @@ class BatchSpectrumResult:
         verbose: bool = False,
         dpi: int | None = None,
         figsize: tuple[float, float] | None = None,
+        info: str | None = None,
         **kwargs,
     ) -> tuple[Any, Any]:
-        """Plot 2D heatmap of power spectrum vs parameter."""
+        """Plot a power heatmap; ``info='full'`` adds retained FFT provenance."""
         from .plotting import plot_heatmap
 
         return plot_heatmap(
@@ -568,12 +593,14 @@ class BatchSpectrumResult:
             verbose=verbose,
             dpi=dpi,
             figsize=figsize,
+            info=info,
             **kwargs,
         )
 
     def plot_sweeps(
         self,
         parameters: list[str] | tuple[str, ...] | str | None = None,
+        info: str | None = None,
         **kwargs,
     ) -> dict[str, tuple[Any, np.ndarray]]:
         """Plot a faceted spectrum map for each varying sweep parameter.
@@ -587,10 +614,13 @@ class BatchSpectrumResult:
         >>> figures = batch.plot_sweeps()
         >>> fig, axes = figures["theta"]
         >>> figures = batch.plot_sweeps(parameters=["theta", "phi"])
+
+        Set ``info="full"`` to annotate every returned figure with its FFT
+        settings and input file list.
         """
         from .sweep import plot_sweeps
 
-        return plot_sweeps(self, parameters=parameters, **kwargs)
+        return plot_sweeps(self, parameters=parameters, info=info, **kwargs)
 
     def plot_experimental_data(
         self,
@@ -607,6 +637,7 @@ class BatchSpectrumResult:
         error_linewidth: float = 1.5,
         label: str = "Experimental",
         ax: Any | None = None,
+        info: str | None = None,
         **heatmap_kwargs,
     ) -> tuple[Any, Any]:
         """Plot heatmap with experimental peak positions overlaid."""
@@ -627,6 +658,7 @@ class BatchSpectrumResult:
             error_linewidth=error_linewidth,
             label=label,
             ax=ax,
+            info=info,
             **heatmap_kwargs,
         )
 
@@ -646,6 +678,7 @@ class BatchSpectrumResult:
         ax: Any | None = None,
         label: str = "Experimental",
         color: str = "red",
+        info: str | None = None,
         **plot_kwargs,
     ) -> tuple[Any, Any]:
         """Overlay experimental data on spectrum plot."""
@@ -659,6 +692,7 @@ class BatchSpectrumResult:
             ax=ax,
             label=label,
             color=color,
+            info=info,
             **plot_kwargs,
         )
 

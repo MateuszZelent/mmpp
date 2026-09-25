@@ -18,6 +18,7 @@ from mmpp.fft.spectrum.batch.result import (
     BatchSpectrumResult,
 )
 from mmpp.fft.spectrum.batch.sweep import discover_sweep_parameters
+from mmpp.fft.spectrum.helpers import _SpectrumQuickPlot
 
 
 def test_batch_fft_helper_documents_auto_sweep_spectrum_workflow():
@@ -298,7 +299,7 @@ def test_fft_resamples_nonuniform_time_axis_when_requested(tmp_path):
     magnetization.attrs["t"] = time_axis.tolist()
     job = ZarrJobResult(str(path), {})
 
-    with pytest.raises(ValueError, match="uniformly sampled time axis"):
+    with pytest.raises(ValueError, match="resample_nonuniform=True"):
         FFT(job, None).spectrum(z_layer=0, window="none", filter_type="none")
 
     spectrum = FFT(job, None).spectrum(
@@ -323,3 +324,30 @@ def test_fft_resamples_nonuniform_time_axis_when_requested(tmp_path):
     truncated_dt = float(np.mean(np.diff(time_axis[:64])))
     assert truncated.frequencies.size == 64 // 2 + 1
     assert truncated.frequencies[-1] == pytest.approx(1.0 / (2.0 * truncated_dt))
+
+
+def test_interactive_spectrum_helper_forwards_nonuniform_resampling():
+    calls = {}
+
+    class FakePlot:
+        def interactive(self, **kwargs):
+            calls["plot"] = kwargs
+            return "interactive-viewer"
+
+    class FakeResult:
+        plot = FakePlot()
+
+    class FakeHelper:
+        def __call__(self, **kwargs):
+            calls["compute"] = kwargs
+            return FakeResult()
+
+    result = _SpectrumQuickPlot(FakeHelper()).interactive(
+        resample_nonuniform=True, method=2, figsize=(8, 5), info="full"
+    )
+
+    assert result == "interactive-viewer"
+    assert calls == {
+        "compute": {"resample_nonuniform": True, "method": 2},
+        "plot": {"figsize": (8, 5), "info": "full"},
+    }

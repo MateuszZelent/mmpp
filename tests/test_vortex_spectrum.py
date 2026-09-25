@@ -102,6 +102,48 @@ def test_gyration_spectrum_peak_and_plot(tmp_path):
     assert ax.get_title() == "Gyration PSD"
 
 
+def test_gyration_plot_full_info_reports_source_and_methodology(tmp_path):
+    data, _, dx, dy, dt = _make_orbit_data(nt=96)
+    job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+
+    spectrum = job.m.solitons.vortex.spectrum
+    result = spectrum.gyration()
+    ax = spectrum.plt.power_spectrum(info="full", figsize=(7, 4), layout="constrained")
+    info = "\n".join(text.get_text() for text in ax.figure.texts)
+    normalized_info = " ".join(info.split())
+
+    assert "Input files (1):" in info
+    assert "vortex_spectrum_phase2.zarr" in info
+    assert "source=dataset; dataset=m; z-layer=0" in info
+    assert "core located from mz (m[..., 2])" in info
+    assert "Core tracker: method=" in info
+    assert "(requested=auto)" in info
+    assert "Spectrum signal: PSD(x_core) + PSD(y_core)" in info
+    assert "not directly to mx/my/mz" in normalized_info
+    assert f"PSD estimator: {result.method}; backend=" in normalized_info
+    assert "N=96" in normalized_info
+    assert "nperseg=96" in normalized_info
+    assert "window=hann" in normalized_info
+    assert ax.figure.texts[0].get_position()[1] < ax.get_position().y0
+    ax.figure.canvas.draw()
+    renderer = ax.figure.canvas.get_renderer()
+    info_box = ax.figure.texts[0].get_window_extent(renderer=renderer)
+    axes_box = ax.get_window_extent(renderer=renderer)
+    assert info_box.y1 <= axes_box.y0
+    import matplotlib.pyplot as plt
+
+    plt.close(ax.figure)
+
+
+def test_gyration_plot_full_info_rejects_unknown_mode(tmp_path):
+    data, _, dx, dy, dt = _make_orbit_data(nt=32, nx=32, ny=32)
+    job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+    spec = job.m.solitons.vortex.spectrum.gyration(method="periodogram")
+
+    with np.testing.assert_raises_regex(ValueError, "info must be None or 'full'"):
+        spec.plt.power_spectrum(info="compact")
+
+
 def test_gyration_is_callable_interactive_helper(tmp_path):
     data, _, dx, dy, dt = _make_orbit_data(nt=160)
     job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
@@ -166,6 +208,9 @@ def test_vortex_public_callable_nodes_render_helpers(tmp_path):
         assert ">API</button>" in html
         assert "box-shadow" in html
         assert "<h3" not in html
+
+    spectrum_plot_help = vortex.spectrum.plt.power_spectrum._repr_html_()
+    assert "info='full'" in spectrum_plot_help
 
 
 def test_gyration_helper_opens_spectrum_module():

@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+from .info import add_fft_info, spectrum_result_info, validate_info_option
+
 try:
     import matplotlib.pyplot as plt
     from matplotlib.colors import to_rgba
@@ -112,11 +114,13 @@ def plot_spectrum(
     show_peaks: bool = True,
     title: str | None = None,
     dpi: int | None = None,
+    info: str | None = None,
     **kwargs,
 ):
     """Plot spectrum in a way compatible with legacy ``SpectrumResult.plot_spectrum``."""
     if not _HAS_MATPLOTLIB:
         raise ImportError("Matplotlib required for plotting")
+    validate_info_option(info)
 
     freq_scales = {"Hz": 1.0, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9, "THz": 1e12}
     if freq_unit not in freq_scales:
@@ -283,4 +287,6 @@ def plot_spectrum(
     )
 
     fig.tight_layout()
+    if info == "full":
+        add_fft_info(fig, spectrum_result_info(result))
     return fig, ax, peaks_info

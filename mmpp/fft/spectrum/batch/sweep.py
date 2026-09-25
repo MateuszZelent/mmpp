@@ -11,6 +11,8 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting.info import add_fft_info, batch_spectrum_info, validate_info_option
+
 _PATH_PARAMETER = re.compile(
     r"^(?P<name>[A-Za-z][A-Za-z0-9_]*)_"
     r"(?P<value>[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)$"
@@ -228,6 +230,7 @@ def plot_sweeps(
     colorbar: bool = True,
     max_columns: int = 4,
     figsize: tuple[float, float] | None = None,
+    info: str | None = None,
     **kwargs: Any,
 ) -> dict[str, tuple[Any, np.ndarray]]:
     """Plot one frequency-versus-parameter map per sweep axis.
@@ -238,6 +241,8 @@ def plot_sweeps(
     """
     from .plotting import plot_heatmap
     from .result import BatchSpectrumResult
+
+    validate_info_option(info)
 
     if isinstance(max_columns, bool) or not isinstance(max_columns, int):
         raise TypeError("max_columns must be a positive integer")
@@ -311,12 +316,22 @@ def plot_sweeps(
             current_figsize = figsize
         import matplotlib.pyplot as plt
 
-        figure, axes = plt.subplots(
-            rows,
-            columns,
-            squeeze=False,
-            figsize=current_figsize,
-        )
+        # Keep figure creation independent of rc settings left behind by other
+        # notebook plots. This routine adds colorbars and then applies
+        # tight_layout(), which cannot replace an active constrained-layout
+        # engine once colorbars exist (Matplotlib 3.10+).
+        with plt.rc_context(
+            {
+                "figure.autolayout": False,
+                "figure.constrained_layout.use": False,
+            }
+        ):
+            figure, axes = plt.subplots(
+                rows,
+                columns,
+                squeeze=False,
+                figsize=current_figsize,
+            )
         flat_axes = axes.ravel()
 
         for panel_index, group_key in enumerate(group_keys):
@@ -386,6 +401,8 @@ def plot_sweeps(
             unused_axis.set_visible(False)
         figure.suptitle(f"Spectrum across {parameter}")
         figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+        if info == "full":
+            add_fft_info(figure, batch_spectrum_info(result))
         plots[parameter] = (figure, axes)
 
     return plots

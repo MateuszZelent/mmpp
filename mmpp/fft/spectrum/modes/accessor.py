@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .._plotting.info import add_fft_info, spectrum_result_info, validate_info_option
+
 if TYPE_CHECKING:
     from .bridge import SpectrumModes
 
@@ -15,9 +17,14 @@ class SpectrumModesPlotAccessor:
         self._modes = modes
 
     def imshow(self, f: float, component: str = "z", **kwargs):
-        """Plot single mode at frequency ``f`` [GHz]."""
+        """Plot one mode; ``info='full'`` adds the source spectrum methodology."""
+        info = kwargs.pop("info", None)
+        validate_info_option(info)
         mode = self._modes.at(f=f)
-        return mode.plot.imshow(component=component, **kwargs)
+        image = mode.plot.imshow(component=component, **kwargs)
+        if info == "full":
+            add_fft_info(image.axes.figure, spectrum_result_info(self._modes._spectrum))
+        return image
 
     def animation(
         self,
@@ -74,6 +81,11 @@ class SpectrumModesPlotAccessor:
         imshow_params = [
             ("f", "required", "Frequency in GHz"),
             ("component", "'z'", "Magnetization component ('x', 'y', 'z')"),
+            (
+                "info",
+                "None",
+                "Use 'full' to show the spectrum input and FFT method below the mode plot",
+            ),
             ("**kwargs", "", "Forwarded to mode.plot.imshow()"),
         ]
         anim_params = [
@@ -93,7 +105,7 @@ class SpectrumModesPlotAccessor:
 
         example = (
             "# Plot single mode at 5.2 GHz\n"
-            "spec.modes.plot.imshow(f=5.2, component='z')\n"
+            "spec.modes.plot.imshow(f=5.2, component='z', info='full')\n"
             "\n"
             "# Animate detected peaks\n"
             "spec.modes.plot.animation(peaks=[0, 1, 2])\n"

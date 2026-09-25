@@ -91,6 +91,7 @@ tests/**
 !tests/test_spectrum_modes_bridge.py
 !tests/test_fft_method_selection.py
 !tests/test_spectrum_sweep.py
+!tests/test_fft_spectrum_info.py
 !tests/test_import_hygiene.py
 !tests/test_imports_vortex.py
 !tests/test_imports_hysteresis.py

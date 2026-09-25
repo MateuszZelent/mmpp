@@ -1,3 +1,19 @@
+# MMPP Library Release v0.6.7
+
+## FFT and spectrum provenance
+- Added `info="full"` to FFT spectrum plots, interactive spectrum views,
+  multi-spectrum overlays, batch plots, and vortex gyration PSD plots. The
+  annotation reports recorded source files and calculation settings.
+- Recorded FFT and PSD details such as selected z-layer, sample count,
+  frequency sidedness, backend, window, segment sizes, overlap, detrending,
+  and normalization where available.
+- Made nonuniform-time FFT errors report the sampling deviation and documented
+  the explicit `resample_nonuniform=True` option for linear resampling.
+- Included the source dataset, component, layer, tracking method, and PSD
+  estimator in vortex gyration spectrum provenance.
+
+---
+
 # MMPP Library Release v0.6.5
 
 ## Dependency compatibility follow-up

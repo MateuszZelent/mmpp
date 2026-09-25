@@ -1730,6 +1730,8 @@ def test_spectrum_quick_plot_repr_includes_forwarded_api_help() -> None:
     assert ".spectrum(**compute_kw)" in html
     assert ".interactive(**compute_kw)" in html
     assert "job[0].fft.spectrum.plot.spectrum()" in html
+    assert "resample_nonuniform" in html
+    assert "plot.interactive(resample_nonuniform=True, info=&#x27;full&#x27;)" in html
     assert ">Overview</button>" in html
     assert ">API</button>" in html
 

@@ -540,6 +540,7 @@ class FFT:
             source_fft=self,
             mode_context={
                 "dset": dset,
+                "z_layer": fft_result.metadata.get("z_layer", z_layer),
                 "slice_info": slice_info,
                 "preloaded_data": kwargs.get("preloaded_data"),
                 "time_step_scale": kwargs.get("time_step_scale", 1.0),
@@ -547,6 +548,7 @@ class FFT:
             scaling=fft_result.metadata.get("scaling", "raw"),
             spectrum_kind=fft_result.metadata.get("spectrum_kind", "complex"),
             power_quantity=fft_result.metadata.get("power_quantity", "raw_power"),
+            compute_metadata=fft_result.metadata,
         )
         result._single_component = component_selected
         return result
@@ -935,6 +937,7 @@ class FFT:
         save_dataset_name: str | None = None,
         slice_info: Any | None = None,
         slice_identifier: str | None = None,
+        info: str | None = None,
         **kwargs,
     ) -> tuple[Any, Any]:
         """
@@ -966,6 +969,8 @@ class FFT:
         slice_identifier : str, optional
             Optional deterministic slice identifier used in save/cache naming.
             If omitted and slice_info is provided, it is derived automatically.
+        info : {None, "full"}, optional
+            Add source files and recorded FFT methodology below the plot.
         **kwargs : Any
             Additional plotting options
 
@@ -991,6 +996,7 @@ class FFT:
             save_dataset_name=save_dataset_name,
             slice_info=slice_info,
             slice_identifier=slice_identifier,
+            info=info,
             **kwargs,
         )
 

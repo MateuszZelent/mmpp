@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from ...spectrum._plotting.info import add_fft_info
 from .filters import component_plot_label
 
 _DEFAULT_FIGSIZE = (16.0, 10.0)
@@ -78,6 +79,8 @@ def render_figure(
             )
             draw_spectrum(explorer)
             explorer._update_mode_plots()
+            if explorer._fft_info_text and explorer._fig is not None:
+                add_fft_info(explorer._fig, explorer._fft_info_text)
             # Figure is displayed inside widget output, not notebook return value.
             plt_module.show()
     else:
@@ -90,6 +93,8 @@ def render_figure(
         )
         draw_spectrum(explorer)
         explorer._update_mode_plots()
+        if explorer._fft_info_text and explorer._fig is not None:
+            add_fft_info(explorer._fig, explorer._fft_info_text)
 
 
 def create_figure(

@@ -38,12 +38,12 @@ with current, consistent APIs.
 
 ## Installation
 
-The current PyPI release is `0.5.3`. MMPP `0.6.6` is available from the
-[GitHub release page](https://github.com/MateuszZelent/mmpp/releases/tag/v0.6.6);
+The current PyPI release is `0.5.3`. MMPP `0.6.7` is available from the
+[GitHub release page](https://github.com/MateuszZelent/mmpp/releases/tag/v0.6.7);
 install its wheel directly while PyPI publishing is being configured:
 
 ```bash
-python -m pip install "mmpp[fft] @ https://github.com/MateuszZelent/mmpp/releases/download/v0.6.6/mmpp-0.6.6-py3-none-any.whl"
+python -m pip install "mmpp[fft] @ https://github.com/MateuszZelent/mmpp/releases/download/v0.6.7/mmpp-0.6.7-py3-none-any.whl"
 ```
 
 The regular PyPI install command remains:
@@ -52,8 +52,10 @@ The regular PyPI install command remains:
 python -m pip install "mmpp[fft]"
 ```
 
-MMPP 0.6.6 adds per-cell FFT power averaging (`method=2`), automatic faceted
-batch sweep plots, and Zarr-compatible FFT cache saving.
+MMPP 0.6.6 added per-cell FFT power averaging (`method=2`), automatic faceted
+batch sweep plots, and Zarr-compatible FFT cache saving. MMPP 0.6.7 adds full
+methodology and input provenance to spectrum plots, plus an explicit option to
+resample nonuniform time axes before FFT computation.
 
 The same project metadata works with `uv`:
 

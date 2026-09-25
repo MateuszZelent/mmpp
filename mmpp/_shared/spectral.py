@@ -143,6 +143,8 @@ def compute_psd(
         "requested_method": str(method).lower(),
         "dt": sample_dt,
         "fs": fs,
+        "n_samples": int(x.size),
+        "sidedness": "one-sided" if not np.iscomplexobj(x) else "positive frequencies",
     }
 
     if method_norm == "welch":
@@ -159,7 +161,18 @@ def compute_psd(
                 detrend=detrend,
                 scaling=scaling,
             )
-            metadata.update({"nperseg": seg, "noverlap": overlap, "scaling": scaling})
+            metadata.update(
+                {
+                    "backend": "scipy.signal.welch",
+                    "window": "hann (periodic)",
+                    "nperseg": seg,
+                    "nfft": seg,
+                    "noverlap": overlap,
+                    "detrend": detrend,
+                    "scaling": scaling,
+                    "average": "mean",
+                }
+            )
             return (
                 np.asarray(frequencies, dtype=float),
                 np.asarray(np.real(power), dtype=float),
@@ -174,7 +187,17 @@ def compute_psd(
         )
 
     frequencies, power = _windowed_periodogram(x, sample_dt)
-    metadata.update(_fft_backend_info())
+    metadata.update(
+        {
+            **_fft_backend_info(),
+            "window": "hann (symmetric)",
+            "nperseg": int(x.size),
+            "nfft": int(x.size),
+            "noverlap": 0,
+            "detrend": "constant",
+            "normalization": "sum(window**2)",
+        }
+    )
     return frequencies, power, "periodogram", metadata
 
 

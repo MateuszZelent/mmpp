@@ -18,10 +18,9 @@ class _SpectrumQuickPlot:
     def spectrum(self, **compute_kw):
         """Compute spectrum and plot it immediately.
 
-        All keyword arguments are forwarded to ``spectrum()`` except those
-        recognised by the plot accessor (``log_scale``, ``freq_unit``,
-        ``show_peaks``, ``dpi``, ``ax``), which are forwarded to
-        ``result.plot.spectrum()``.
+        All keyword arguments are forwarded to ``spectrum()`` except plotting
+        options such as ``info``, ``log_scale``, ``freq_unit``, ``show_peaks``,
+        ``dpi``, and ``ax``, which are forwarded to ``result.plot.spectrum()``.
         """
         plot_keys = {
             "log_scale",
@@ -36,14 +35,15 @@ class _SpectrumQuickPlot:
             "label",
             "xlim",
             "component",
+            "info",
         }
         plot_kw = {k: compute_kw.pop(k) for k in list(compute_kw) if k in plot_keys}
         result = self._helper(**compute_kw)
         return result.plot.spectrum(**plot_kw)
 
     def interactive(self, **compute_kw):
-        """Compute spectrum and open interactive viewer."""
-        plot_keys = {"dpi", "figsize"}
+        """Compute spectrum and open interactive viewer; ``info='full'`` adds provenance."""
+        plot_keys = {"dpi", "figsize", "info"}
         plot_kw = {k: compute_kw.pop(k) for k in list(compute_kw) if k in plot_keys}
         result = self._helper(**compute_kw)
         return result.plot.interactive(**plot_kw)
@@ -79,6 +79,11 @@ class _SpectrumQuickPlot:
             ("z_layer", "-1", "Z-layer index"),
             ("tmin / tmax", "None", "Time range (indices)"),
             ("fmin / fmax", "None", "Frequency range filter (Hz)"),
+            (
+                "resample_nonuniform",
+                "False",
+                "Linearly resample a nonuniform time axis to a uniform grid before FFT.",
+            ),
             ("window", "'hann'", "Window function"),
             ("filter_type", "'remove_mean'", "Pre-FFT filter"),
             ("scaling", "'raw'", "raw, continuous_ft, amplitude, power, psd"),
@@ -100,6 +105,11 @@ class _SpectrumQuickPlot:
             ("figsize", "(10, 5)", "Figure size"),
             ("dpi", "None", "Resolution override"),
             ("title", "None", "Custom title"),
+            (
+                "info",
+                "None",
+                "Use 'full' to add source files and FFT settings below the plot or interactive view",
+            ),
         ]
         plot_rows = "".join(
             f"<tr><td style='padding:3px 8px;font-family:monospace;color:#93c5fd;'>{n}</td>"
@@ -120,7 +130,7 @@ class _SpectrumQuickPlot:
             "ax.legend()\n"
             "\n"
             "# Interactive explorer\n"
-            "data.fft.spectrum.plot.interactive()"
+            "data.fft.spectrum.plot.interactive(resample_nonuniform=True, info='full')"
         )
 
         section_style = (
@@ -246,6 +256,10 @@ class SpectrumHelper:
                     ("z_layer", "Z-layer index (default: -1, last layer)"),
                     ("tmin / tmax", "Time range as indices"),
                     ("fmin / fmax", "Frequency range filter (Hz)"),
+                    (
+                        "resample_nonuniform",
+                        "Linearly resample a nonuniform time axis to a uniform grid (default: False)",
+                    ),
                     (
                         "window",
                         "Window function: hann, hamming, blackman, tukey, … (default: 'hann')",

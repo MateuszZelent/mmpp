@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+from .._plotting.info import add_fft_info, batch_spectrum_info, validate_info_option
+
 try:
     import matplotlib.pyplot as plt
 
@@ -85,11 +87,13 @@ def plot_heatmap(
     verbose: bool = False,
     dpi: int | None = None,
     figsize: tuple[float, float] | None = None,
+    info: str | None = None,
     **kwargs,
 ) -> tuple[Any, Any]:
     """Plot 2D heatmap of power spectrum vs parameter."""
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("Matplotlib required for plotting")
+    validate_info_option(info)
 
     if freq_unit not in {"Hz", "kHz", "MHz", "GHz", "THz"}:
         raise ValueError("freq_unit must be Hz, kHz, MHz, GHz, or THz")
@@ -252,6 +256,9 @@ def plot_heatmap(
         cbar = fig.colorbar(im, ax=ax, label=label)
         cbar.outline.set_visible(False)
 
+    if info == "full":
+        add_fft_info(fig, batch_spectrum_info(result))
+
     return fig, ax
 
 
@@ -328,11 +335,13 @@ def plot_experimental_data(
     error_linewidth: float = 1.5,
     label: str = "Experimental",
     ax: Any | None = None,
+    info: str | None = None,
     **heatmap_kwargs,
 ) -> tuple[Any, Any]:
     """Plot heatmap with experimental peak positions overlaid."""
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("Matplotlib required for plotting")
+    validate_info_option(info)
 
     try:
         import pandas as pd
@@ -352,7 +361,7 @@ def plot_experimental_data(
     }
 
     if ax is None:
-        fig, ax = plot_heatmap(result, **heatmap_kwargs)
+        fig, ax = plot_heatmap(result, info=info, **heatmap_kwargs)
     else:
         fig = ax.figure
 
@@ -411,6 +420,8 @@ def plot_experimental_data(
         zorder=10,
     )
     ax.legend(loc="best", framealpha=0.9)
+    if info == "full":
+        add_fft_info(fig, batch_spectrum_info(result))
     return fig, ax
 
 
@@ -422,11 +433,13 @@ def overlay_experimental(
     ax: Any | None = None,
     label: str = "Experimental",
     color: str = "red",
+    info: str | None = None,
     **plot_kwargs,
 ) -> tuple[Any, Any]:
     """Overlay experimental data on spectrum plot."""
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("Matplotlib required for plotting")
+    validate_info_option(info)
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -467,5 +480,8 @@ def overlay_experimental(
 
     if parameter_value is not None and param_name:
         ax.set_title(f"{param_name} = {parameter_value:.3f}")
+
+    if info == "full":
+        add_fft_info(fig, batch_spectrum_info(result))
 
     return fig, ax

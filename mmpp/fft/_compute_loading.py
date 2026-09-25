@@ -364,9 +364,15 @@ def _uniform_dt_from_time_axis(
         raise ValueError("Time axis must be strictly increasing")
     dt = float(np.mean(deltas))
     tolerance = max(abs(dt) * 1e-6, np.finfo(float).eps * 10)
-    if np.max(np.abs(deltas - dt)) > tolerance and not allow_nonuniform:
+    max_deviation = float(np.max(np.abs(deltas - dt)))
+    if max_deviation > tolerance and not allow_nonuniform:
+        relative_deviation = max_deviation / abs(dt)
+        relative_tolerance = tolerance / abs(dt)
         raise ValueError(
-            "FFT requires a uniformly sampled time axis; resample the data first"
+            "FFT requires a uniformly sampled time axis; the largest step "
+            f"deviation is {relative_deviation:.3g} of mean dt "
+            f"(tolerance {relative_tolerance:.3g}). To linearly resample the "
+            "data before FFT, pass resample_nonuniform=True."
         )
     return dt
 

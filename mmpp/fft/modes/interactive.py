@@ -151,6 +151,7 @@ class InteractiveSpectrum:
 
         # Visualization state
         self._fig: Figure | None = None
+        self._fft_info_text: str | None = None
         self._ax_spectrum: Axes | None = None
         self._mode_axes: np.ndarray | None = None
         self._mode_cbar_axes: list[Any] = []

@@ -12,11 +12,11 @@ class SpectrumPlotAccessor:
         self._result = result
 
     def spectrum(self, **kwargs):
-        """Plot spectrum using static matplotlib view."""
+        """Plot spectrum; ``info='full'`` adds its inputs and FFT settings below."""
         return plot_spectrum(self._result, **kwargs)
 
     def interactive(self, **kwargs):
-        """Open interactive explorer routed through modes interface."""
+        """Open the explorer; ``info='full'`` annotates the spectrum methodology."""
         return self._result.modes.interactive(**kwargs)
 
     def __repr__(self) -> str:
@@ -47,6 +47,11 @@ class SpectrumPlotAccessor:
             ("xlim", "None", "Frequency axis limits (f_min, f_max) in GHz"),
             ("component", "None", "Magnetization component to plot"),
             ("title", "None", "Custom plot title"),
+            (
+                "info",
+                "None",
+                "Use 'full' to show input files and FFT calculation settings",
+            ),
             ("save", "None", "Path to save figure or True for auto-name"),
         ]
         param_rows = "".join(
@@ -57,10 +62,10 @@ class SpectrumPlotAccessor:
         )
         example = (
             "# Static spectrum plot\n"
-            "spec.plot.spectrum(show_peaks=True, xlim=(0, 30))\n"
+            "spec.plot.spectrum(show_peaks=True, xlim=(0, 30), info='full')\n"
             "\n"
             "# Interactive explorer\n"
-            "spec.plot.interactive(component='z')"
+            "spec.plot.interactive(component='z', info='full')"
         )
         html = (
             "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"

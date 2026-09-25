@@ -35,12 +35,13 @@ def test_spectrum_modes_bridge_interactive_passes_existing_spectrum_result():
         mode_context={"dset": "m_layer13", "slice_info": (slice(0, 100), Ellipsis, 2)},
     )
 
-    out = spec.plot.interactive(show=False)
+    out = spec.plot.interactive(show=False, info="full")
 
     assert out == "interactive-ok"
     assert len(fake_modes.calls) == 1
     assert fake_modes.calls[0]["spectrum_result"] is spec
     assert fake_modes.calls[0]["show"] is False
+    assert fake_modes.calls[0]["info"] == "full"
     assert fake_modes._dataset_context == "m_layer13"
     assert fake_modes._slice_context == (slice(0, 100), Ellipsis, 2)
 
@@ -53,6 +54,9 @@ def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(
             self.frequencies = np.linspace(1.0, 30.0, 128)
             self.power = np.ones_like(self.frequencies)
             self.component_label = "$m_z$"
+            self.compute_metadata = {"method": 2}
+            self._mode_context = {"dset": "m", "z_layer": 0}
+            self._source_job = SimpleNamespace(path="/tmp/spectrum-info.zarr")
 
     class _CountingFFT:
         def __init__(self):
@@ -66,8 +70,12 @@ def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(
             return _DummySpectrumResult()
 
     class _ViewerStub:
+        instances = []
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
+            self._fft_info_text = None
+            self.instances.append(self)
 
         def show(self, **_kwargs):
             return self.kwargs["spectrum_result"]
@@ -97,6 +105,15 @@ def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(
     assert isinstance(computed, _DummySpectrumResult)
     assert fft.calls == 1
     assert fft.last_kwargs["method"] == 2
+
+    info_result = _DummySpectrumResult()
+    interface._interactive_spectrum_impl(
+        toolbar=True,
+        show=False,
+        spectrum_result=info_result,
+        info="full",
+    )
+    assert "FFT method 2" in _ViewerStub.instances[-1]._fft_info_text
 
 
 def test_interactive_spectrum_helper_documents_fft_reduction_methods():

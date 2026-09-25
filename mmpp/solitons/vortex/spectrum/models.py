@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import textwrap
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -214,12 +217,180 @@ class VortexSpectrumPlotAccessor(InteractiveNodeMixin):
 
     _interactive_owner = "spectrum.plt"
     _interactive_nodes = frozenset({"power_spectrum"})
+    _interactive_descriptions = {
+        "power_spectrum": "Plot the vortex gyration PSD; info='full' adds its input and computation methodology below the axes."
+    }
+    _interactive_examples = {"power_spectrum": ["spec.plt.power_spectrum(info='full')"]}
 
     def __init__(self, result: VortexSpectrumResult):
         self._result = result
 
+    def _methodology_text(self) -> str:
+        metadata = self._result.metadata
+        lines: list[str] = []
+
+        source_file = metadata.get("source_file")
+        input_file_count = metadata.get("input_file_count")
+        if input_file_count is None:
+            lines.append("Input files: source not recorded (precomputed trajectory)")
+        elif source_file:
+            lines.append(f"Input files ({input_file_count}):")
+            path_line = "  "
+            path_parts = str(source_file).split(os.sep)
+            for index, part in enumerate(path_parts):
+                segment = part if index == 0 else os.sep + part
+                if len(path_line) + len(segment) > 94 and path_line.strip():
+                    lines.append(path_line)
+                    path_line = "  " + segment
+                else:
+                    path_line += segment
+            if path_line.strip():
+                lines.append(path_line)
+        else:
+            lines.append(f"Input files: {input_file_count}; source path not recorded")
+
+        source = metadata.get("source", "unknown")
+        details = [f"source={source}"]
+        dataset = metadata.get("dataset")
+        if dataset:
+            details.append(f"dataset={dataset}")
+        if metadata.get("slice_info"):
+            details.append(f"slice={metadata['slice_info']}")
+        if metadata.get("z_layer") is not None:
+            details.append(f"z-layer={metadata['z_layer']}")
+        magnetization_component = metadata.get("magnetization_component")
+        if magnetization_component:
+            details.append(f"core located from {magnetization_component}")
+        elif source == "table":
+            details.append(
+                "trajectory from table columns "
+                f"{metadata.get('x_column', 'x')} and {metadata.get('y_column', 'y')}"
+            )
+        lines.append("Tracking input: " + "; ".join(details))
+
+        requested = metadata.get("trajectory_requested_method")
+        used = metadata.get("trajectory_method", "unknown")
+        tracker_line = f"Core tracker: method={used}"
+        if requested and requested != used:
+            tracker_line += f" (requested={requested})"
+        fallback_from = metadata.get("fallback_from")
+        if fallback_from:
+            tracker_line += f"; fallback from {fallback_from}"
+        frame_methods = metadata.get("tracking_frame_methods", [])
+        if frame_methods:
+            if isinstance(frame_methods, dict):
+                counts = frame_methods
+            else:
+                counts = Counter(str(value) for value in frame_methods)
+            tracker_line += "; frames=" + ", ".join(
+                f"{name}:{count}" for name, count in sorted(counts.items())
+            )
+        fallbacks = int(metadata.get("tracking_frame_fallbacks", 0))
+        if fallbacks and not frame_methods:
+            tracker_line += f"; frame fallbacks={fallbacks}"
+        lines.append(tracker_line)
+
+        lines.append(
+            "Spectrum signal: PSD(x_core) + PSD(y_core); "
+            "FFT is applied to tracked positions, not directly to mx/my/mz."
+        )
+        if metadata.get("sidedness"):
+            lines.append(f"Spectrum sides: {metadata['sidedness']}")
+        backend = metadata.get("backend", "unspecified backend")
+        requested_estimator = metadata.get("requested_method")
+        estimator = self._result.method
+        if requested_estimator and requested_estimator != estimator:
+            estimator += f" (requested={requested_estimator})"
+        lines.append(f"PSD estimator: {estimator}; backend={backend}")
+
+        n_samples = metadata.get("n_samples")
+        dt = metadata.get("dt")
+        fs = metadata.get("fs")
+        sampling = []
+        if n_samples is not None:
+            sampling.append(f"N={int(n_samples)}")
+        if dt is not None:
+            sampling.append(f"dt={float(dt):.6g} s")
+        if fs is not None:
+            sampling.append(f"fs={float(fs):.6g} Hz")
+        if sampling:
+            lines.append("Sampling: " + "; ".join(sampling))
+
+        settings = []
+        for key in (
+            "nperseg",
+            "nfft",
+            "noverlap",
+            "window",
+            "detrend",
+            "scaling",
+            "average",
+        ):
+            if key in metadata:
+                settings.append(f"{key}={metadata[key]}")
+        if "normalization" in metadata:
+            settings.append(f"normalization={metadata['normalization']}")
+        if settings:
+            lines.append("Estimator settings: " + "; ".join(settings))
+
+        wrap_width = 94
+        return "\n".join(
+            textwrap.fill(
+                line,
+                width=wrap_width,
+                subsequent_indent="  ",
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            for line in lines
+        )
+
+    @staticmethod
+    def _add_info_block(ax, text: str) -> None:
+        figure = ax.figure
+        fontsize = 7.5
+        lines = text.splitlines()
+        figure_height = float(figure.get_size_inches()[1])
+        block_height = len(lines) * fontsize * 1.35 / 72.0 + 0.06
+        reserved_bottom = min(0.52, max(0.22, block_height / figure_height))
+
+        layout_engine = figure.get_layout_engine()
+        if layout_engine is None and figure.subplotpars.bottom < reserved_bottom:
+            figure.subplots_adjust(bottom=reserved_bottom)
+        elif layout_engine is not None:
+            figure.canvas.draw()
+            axes_positions = [(axis, axis.get_position()) for axis in figure.axes]
+            figure.set_layout_engine(None)
+            available_height = 1.0 - reserved_bottom
+            for axis, position in axes_positions:
+                axis.set_position(
+                    [
+                        position.x0,
+                        reserved_bottom + position.y0 * available_height,
+                        position.width,
+                        position.height * available_height,
+                    ]
+                )
+
+        figure.text(
+            0.01,
+            0.012,
+            text,
+            ha="left",
+            va="bottom",
+            fontsize=fontsize,
+            family="monospace",
+            linespacing=1.2,
+        )
+
     def power_spectrum(
-        self, *, ax=None, as_ghz: bool = True, log_scale: bool = False, **kwargs
+        self,
+        *,
+        ax=None,
+        as_ghz: bool = True,
+        log_scale: bool = False,
+        info: str | None = None,
+        **kwargs,
     ):
         """Plot power spectrum.
 
@@ -228,7 +399,12 @@ class VortexSpectrumPlotAccessor(InteractiveNodeMixin):
         health : CoreHealthStatus or None
             When provided, an annotation warning is drawn on the axes if the
             simulation showed core annihilation or boundary collision.
+        info : {None, "full"}
+            Draw the recorded input and computation methodology below the plot.
         """
+        if info not in {None, "full"}:
+            raise ValueError("info must be None or 'full'")
+
         plot_kwargs = dict(kwargs)
         save = plot_kwargs.pop("save", None)
         health = plot_kwargs.pop("health", None)
@@ -251,6 +427,9 @@ class VortexSpectrumPlotAccessor(InteractiveNodeMixin):
         ax.set_title(f"Vortex {self._result.component} spectrum")
         apply_axes_style(ax, style_kwargs)
 
+        if info == "full":
+            self._add_info_block(ax, self._methodology_text())
+
         # Attach health annotation when annihilation/collision was detected
         if health is not None:
             try:
@@ -269,9 +448,9 @@ class VortexSpectrumPlotAccessor(InteractiveNodeMixin):
             "VortexSpectrumPlotAccessor",
             [
                 (
-                    ".power_spectrum(as_ghz=True, log_scale=False)",
+                    ".power_spectrum(as_ghz=True, log_scale=False, info=None)",
                     "Power spectrum of vortex gyration",
-                    "as_ghz: frequency in GHz. log_scale: log10 power axis. Accepts matplotlib kwargs.",
+                    "info='full' adds input files, core tracking source and method, PSD estimator, and FFT settings below the plot.",
                 ),
             ],
         )

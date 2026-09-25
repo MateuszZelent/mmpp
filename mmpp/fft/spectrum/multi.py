@@ -6,6 +6,8 @@ from typing import Any, cast
 
 import numpy as np
 
+from ._plotting.info import add_fft_info, format_fft_info, validate_info_option
+
 try:
     import matplotlib.pyplot as plt
     from matplotlib.colors import to_rgba
@@ -108,11 +110,13 @@ class MultiSpectrumResult:
         dpi: int = 100,
         figsize: tuple[float, float] = (10, 6),
         colors: list[Any] | None = None,
+        info: str | None = None,
         **kwargs,
     ):
-        """Plot all spectra overlaid on a single figure."""
+        """Overlay spectra; ``info='full'`` adds the source runs and FFT settings."""
         if not _HAS_MATPLOTLIB:
             raise ImportError("Matplotlib required for plotting")
+        validate_info_option(info)
 
         frequency_scales: dict[str, float] = {
             "Hz": 1.0,
@@ -186,6 +190,57 @@ class MultiSpectrumResult:
             ax.legend(loc="best", fontsize=9)
 
         plt.tight_layout()
+        if info == "full":
+            source_paths = []
+            metadata = []
+            contexts = []
+            for spectrum in self.spectra:
+                job = getattr(spectrum, "_source_job", None)
+                path = getattr(job, "path", None)
+                if path:
+                    source_paths.append(str(path))
+                spectrum_metadata = getattr(spectrum, "compute_metadata", None)
+                if spectrum_metadata:
+                    metadata.append(spectrum_metadata)
+                contexts.append(getattr(spectrum, "_mode_context", {}) or {})
+
+            dataset_values = list(
+                dict.fromkeys(
+                    str(context.get("dset"))
+                    for context in contexts
+                    if context.get("dset") is not None
+                )
+            )
+            layer_values = list(
+                dict.fromkeys(
+                    context.get("z_layer")
+                    for context in contexts
+                    if context.get("z_layer") is not None
+                )
+            )
+            component_values = list(
+                dict.fromkeys(
+                    str(getattr(spectrum, "component_label", None))
+                    for spectrum in self.spectra
+                    if getattr(spectrum, "component_label", None)
+                )
+            )
+            add_fft_info(
+                fig,
+                format_fft_info(
+                    metadata=metadata,
+                    source_paths=source_paths,
+                    dataset=(dataset_values[0] if len(dataset_values) == 1 else None),
+                    z_layer=(layer_values[0] if len(layer_values) == 1 else None),
+                    component=(
+                        component_values[0]
+                        if len(component_values) == 1
+                        else "varies across plotted spectra"
+                        if component_values
+                        else None
+                    ),
+                ),
+            )
         peaks_list = [getattr(s, "peaks_info", None) for s in self.spectra]
         return fig, ax, peaks_list
 

@@ -368,6 +368,8 @@ class CoreInterface(InteractiveNodeMixin):
                     "dataset": self._dataset_name,
                     "slice_info": self._slice_info,
                     "job_result": self._job,
+                    "source_file": str(getattr(self._job, "path", "")) or None,
+                    "input_file_count": 1,
                     "requested_method": requested_method,
                 }
             )
@@ -442,8 +444,12 @@ class CoreInterface(InteractiveNodeMixin):
                 "dataset": self.dataset_name,
                 "slice_info": self._slice_info,
                 "job_result": self._job,
+                "source_file": str(getattr(self._job, "path", "")) or None,
+                "input_file_count": 1,
                 "source": "dataset",
                 "requested_method": requested_method,
+                "z_layer": self._resolved_z_layer(selected_z, shape_for_key),
+                "magnetization_component": "mz (m[..., 2])",
             },
         }
 
@@ -474,6 +480,17 @@ class CoreInterface(InteractiveNodeMixin):
         self._last_trajectory = result
         self._cache.put(key, result, config_json)
         return result
+
+    @staticmethod
+    def _resolved_z_layer(z_layer: int, shape: tuple[int, ...]) -> int | None:
+        """Return the concrete z-layer index used for a 5D magnetization array."""
+        if len(shape) != 5:
+            return None
+        nz = int(shape[1])
+        index = int(z_layer)
+        if index < 0:
+            index += nz
+        return index
 
     def _require_trajectory(self) -> TrajectoryResult:
         if self._last_trajectory is None:

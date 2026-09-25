@@ -29,6 +29,11 @@ from .metrics import (
     format_width_value,
     normalize_peak_width_option,
 )
+from .spectrum._plotting.info import (
+    add_fft_info,
+    format_fft_info,
+    validate_info_option,
+)
 
 
 class FFTPlotter:
@@ -124,6 +129,7 @@ class FFTPlotter:
         tmax: int | None = None,
         slice_info: Any | None = None,
         slice_identifier: str | None = None,
+        info: str | None = None,
         **kwargs,
     ) -> tuple[Any, Any]:
         """
@@ -158,6 +164,8 @@ class FFTPlotter:
             Optional slicing applied before FFT data loading.
         slice_identifier : str, optional
             Optional deterministic identifier for slice-aware save/cache naming.
+        info : {None, "full"}, optional
+            Add input files and recorded FFT methodology below the plot.
         \\*\\*kwargs : Any
             Additional FFT configuration options. Recognised keys include
             ``peak_width``/``fwhh``/``fwhm``/``hwfh`` (bool or str) to add a
@@ -170,6 +178,7 @@ class FFTPlotter:
         """
         if not MATPLOTLIB_AVAILABLE:
             raise ImportError("Matplotlib required for plotting")
+        validate_info_option(info)
 
         # Auto-select largest m dataset if none specified
         if dataset_name is None and self.results:
@@ -204,6 +213,8 @@ class FFTPlotter:
             )
 
         # Analyze all results
+        computation_metadata: list[dict[str, Any]] = []
+        computation_paths: list[str] = []
         if dataset_name is None:
             raise ValueError("No FFT dataset is available")
         for i, result in enumerate(self.results):
@@ -221,7 +232,6 @@ class FFTPlotter:
                     tmax=tmax,
                     **kwargs,
                 )
-
                 power = np.abs(fft_result.spectrum) ** 2
 
                 # Debug: Check array shapes
@@ -295,6 +305,9 @@ class FFTPlotter:
                         label=label,
                     )
                     line = lines[0] if isinstance(lines, list) else lines
+
+                computation_metadata.append(dict(fft_result.metadata))
+                computation_paths.append(str(getattr(result, "path", "")))
 
                 if show_peak_width:
                     # Ensure arrays have same length before computing FWHM
@@ -419,6 +432,24 @@ class FFTPlotter:
 
         ax.tick_params(labelsize=self.config["tick_fontsize"])
         plt.tight_layout()
+
+        if info == "full":
+            add_fft_info(
+                fig,
+                format_fft_info(
+                    metadata=computation_metadata,
+                    source_paths=computation_paths,
+                    dataset=dataset_name,
+                    z_layer=z_layer,
+                    slice_info=slice_info,
+                    config={
+                        "method": method,
+                        "tmin": None,
+                        "tmax": tmax,
+                        **kwargs,
+                    },
+                ),
+            )
 
         # Save if requested
         if save_path:

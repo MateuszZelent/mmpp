@@ -351,14 +351,20 @@ class SpectrumInterfacePlotAccessor(InteractiveNodeMixin):
 
     _interactive_owner = "job[0].vortex.spectrum.plt"
     _interactive_nodes = frozenset({"power_spectrum", "spectrogram"})
+    _interactive_descriptions = {
+        "power_spectrum": "Compute and plot the gyration PSD; info='full' adds input and methodology details below the plot."
+    }
+    _interactive_examples = {
+        "power_spectrum": ["job[0].vortex.spectrum.plt.power_spectrum(info='full')"]
+    }
 
     def __init__(self, interface: VortexSpectrumInterface):
         self._interface = interface
 
-    def power_spectrum(self, **kwargs):
-        """Compute and plot gyration power spectrum."""
+    def power_spectrum(self, *, info: str | None = None, **kwargs):
+        """Compute and plot gyration PSD, optionally showing full provenance."""
         result = self._interface.gyration()
-        return result.plt.power_spectrum(**kwargs)
+        return result.plt.power_spectrum(info=info, **kwargs)
 
     def spectrogram(self, **kwargs):
         """Compute and plot spectrogram."""
@@ -374,9 +380,9 @@ class SpectrumInterfacePlotAccessor(InteractiveNodeMixin):
             "SpectrumInterfacePlotAccessor",
             [
                 (
-                    ".power_spectrum()",
+                    ".power_spectrum(info='full')",
                     "Compute + plot gyration power spectrum",
-                    "Delegates to VortexSpectrumResult.plt.power_spectrum().",
+                    "Adds the input source, core-tracking method, PSD estimator, and FFT settings below the plot.",
                 ),
                 (
                     ".spectrogram()",

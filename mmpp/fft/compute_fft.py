@@ -879,6 +879,9 @@ class FFTCompute:
                     log.debug(
                         f"Parameters: z_layer={z_layer}→{normalized_z_layer}, dataset={dataset}, method={method}"
                     )
+                    existing_result.metadata.setdefault(
+                        "resolved_z_layer", normalized_z_layer
+                    )
                     return existing_result
                 else:
                     log.warning(
@@ -985,6 +988,7 @@ class FFTCompute:
                 "zarr_path": zarr_path,
                 "source_dataset": dataset,
                 "z_layer": z_layer,
+                "resolved_z_layer": normalized_z_layer,
                 "save_dataset_name": save_dataset_name,
                 "slice_identifier": slice_identifier,
                 "resample_nonuniform": bool(resample_nonuniform),
