@@ -5,6 +5,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import numpy as np
+import pytest
 import zarr
 
 from mmpp.core.job import ZarrJobResult
@@ -130,6 +131,30 @@ def test_gyration_plot_full_info_reports_source_and_methodology(tmp_path):
     info_box = ax.figure.texts[0].get_window_extent(renderer=renderer)
     axes_box = ax.get_window_extent(renderer=renderer)
     assert info_box.y1 <= axes_box.y0
+    import matplotlib.pyplot as plt
+
+    plt.close(ax.figure)
+
+
+def test_component_selected_dataset_restores_vector_for_vortex_spectrum(tmp_path):
+    data, _, dx, dy, dt = _make_orbit_data(nt=96, nx=32, ny=32)
+    job = _create_job(tmp_path, data[:, np.newaxis, ...], dx=dx, dy=dy, dt=dt)
+
+    selected = job.m[..., 0]
+    with pytest.warns(UserWarning, match="full magnetization vector"):
+        vortex = selected.vortex
+    component_slice = vortex._slice_info[-1]
+    assert isinstance(component_slice, slice)
+    assert component_slice.start is None
+    assert component_slice.stop is None
+    assert component_slice.step is None
+
+    ax = vortex.spectrum.plt.power_spectrum(info="full", figsize=(7, 4))
+
+    assert hasattr(ax, "plot")
+    info = "\n".join(text.get_text() for text in ax.figure.texts)
+    assert "core located from mz (m[..., 2])" in info
+
     import matplotlib.pyplot as plt
 
     plt.close(ax.figure)

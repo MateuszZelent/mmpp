@@ -13,6 +13,7 @@ from .dataset_geometry import (
     IndexPlan,
     compose_index_keys,
     has_only_simple_slices,
+    infer_axis_layout,
     make_index_plan,
     normalize_index_key,
     resolve_dataset_geometry,
@@ -918,14 +919,71 @@ class DatasetAwareWrapper:
         if self._solitons is None:
             from ..solitons import DatasetSpecificSolitons
 
+            soliton_slice = self._soliton_analysis_slice()
             self._solitons = DatasetSpecificSolitons(
                 self.job_result,
                 self.dataset_name,
                 getattr(self.job_result, "_mmpp_ref", None),
-                slice_info=self.slice_info,
+                slice_info=soliton_slice,
                 dataset_view=self,
             )
         return self._solitons
+
+    def _soliton_analysis_slice(self):
+        """Keep vector magnetization intact for soliton analysis.
+
+        A component selection such as ``m[..., 0]`` is useful for scalar FFT
+        analysis, but vortex and skyrmion analysis require the full magnetization
+        vector. Preserve the user's time/spatial selection while restoring the
+        original component axis.
+        """
+        plan = self._index_plan
+        source_shape = (
+            tuple(int(value) for value in plan.source_shape)
+            if plan is not None
+            else self._base_shape()
+        )
+        selection = plan.storage_key if plan is not None else self.slice_info
+        if selection is None:
+            return None
+
+        try:
+            layout = infer_axis_layout(
+                source_shape, getattr(self.job_result, "attrs", None)
+            )
+            component_axis = layout.component_axis
+            if component_axis is None:
+                return selection
+            normalized = list(
+                normalize_index_key(selection, len(source_shape), keep_dims=True)
+            )
+        except (IndexError, TypeError, ValueError):
+            return selection
+
+        component_size = int(source_shape[component_axis])
+        component_selection = normalized[component_axis]
+        if isinstance(component_selection, slice):
+            start, stop, step = component_selection.indices(component_size)
+            if start == 0 and stop == component_size and step == 1:
+                return tuple(normalized)
+        else:
+            try:
+                indices = np.asarray(component_selection)
+                if indices.dtype == bool:
+                    indices = np.flatnonzero(indices)
+                if np.array_equal(indices.reshape(-1), np.arange(component_size)):
+                    return tuple(normalized)
+            except (TypeError, ValueError):
+                pass
+
+        normalized[component_axis] = slice(None)
+        warnings.warn(
+            "Soliton analysis needs the full magnetization vector; ignoring the "
+            "component selection on this dataset view.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return tuple(normalized)
 
     @property
     def analyze(self):

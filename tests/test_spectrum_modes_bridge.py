@@ -106,6 +106,16 @@ def test_interactive_impl_uses_provided_spectrum_result_without_recomputing(
     assert fft.calls == 1
     assert fft.last_kwargs["method"] == 2
 
+    computed = interface._interactive_spectrum_impl(
+        toolbar=True,
+        show=False,
+        resample_nonuniform=True,
+    )
+
+    assert isinstance(computed, _DummySpectrumResult)
+    assert fft.calls == 2
+    assert fft.last_kwargs["resample_nonuniform"] is True
+
     info_result = _DummySpectrumResult()
     interface._interactive_spectrum_impl(
         toolbar=True,

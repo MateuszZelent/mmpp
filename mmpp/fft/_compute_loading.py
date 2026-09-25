@@ -648,9 +648,24 @@ def load_fft_input_data(
                     did_resample = False
             if did_resample:
                 resampled_dt = float(np.mean(np.diff(time_axis)))
+                max_step_deviation = float(
+                    np.max(np.abs(np.diff(time_axis) - resampled_dt))
+                )
+                relative_step_deviation = max_step_deviation / abs(resampled_dt)
                 logger.info(
                     "Resampled nonuniform time axis to %s uniform samples",
                     time_axis.size,
+                )
+                warnings.warn(
+                    "FFT detected a non-uniform time axis and linearly resampled "
+                    f"{time_axis.size} samples onto an endpoint-preserving uniform "
+                    f"grid (largest step deviation={relative_step_deviation:.3g} "
+                    "of mean dt). The FFT can continue, but interpolation may "
+                    "slightly attenuate or broaden high-frequency peaks and alter "
+                    "quantitative amplitudes or phases; validate those quantities "
+                    "when they matter.",
+                    UserWarning,
+                    stacklevel=5,
                 )
 
     dt = resolve_dt_from_metadata(

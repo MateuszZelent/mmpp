@@ -1,3 +1,15 @@
+# MMPP Library Release v0.6.8
+
+## Vortex dataset selection and PyPI installation
+- Preserve the full magnetization vector for vortex and soliton analysis when
+  a dataset view selects a single component, while retaining time/spatial
+  selections and warning that the component selection is ignored.
+- Allow `resample_nonuniform=True` in interactive FFT mode plots and warn that
+  interpolation can affect quantitative peak amplitudes, widths, and phases.
+- Document the PyPI install command now that Trusted Publishing is configured.
+
+---
+
 # MMPP Library Release v0.6.7
 
 ## FFT and spectrum provenance

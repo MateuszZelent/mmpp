@@ -545,6 +545,12 @@ class InteractiveSpectrumHelper:
                 ("log_scale", "bool", "False", "Logarithmic Y-scale"),
                 ("normalize", "bool", "True", "Normalize power to max"),
                 (
+                    "resample_nonuniform",
+                    "bool",
+                    "False",
+                    "Resample mumax-style irregular timestamps before FFT",
+                ),
+                (
                     "baseline_mode",
                     "str",
                     "'none'",
@@ -581,6 +587,7 @@ job[0].fft.modes.interactive_spectrum(
     components=['x', 'y'],
     z_layer=-1,
     method=2,  # average per-cell FFT power in the spectrum curve
+    resample_nonuniform=True,  # use for slightly irregular mumax timestamps
     dpi=200,
     log_scale=True,
     show_peaks=True,
@@ -1138,6 +1145,7 @@ class FFTModeInterfaceNew:
         peak_prominence: float | None = None,
         peak_distance: int | None = None,
         use_holography: bool = False,
+        resample_nonuniform: bool = False,
         **kwargs,
     ):
         """Create interactive spectrum with mode visualization panels.
@@ -1178,6 +1186,10 @@ class FFTModeInterfaceNew:
             Custom plot title
         initial_frequency : float, optional
             Start with this frequency selected
+        resample_nonuniform : bool
+            Linearly resample a non-uniform time axis before computing the FFT.
+            The resampled result is suitable for exploration, but interpolation
+            can affect quantitative peak amplitudes, widths, or phases.
         **kwargs
             Additional arguments (find_peaks params, etc.)
 
@@ -1208,6 +1220,9 @@ class FFTModeInterfaceNew:
         toolbar = _validate_interactive_bool("toolbar", toolbar)
         show = _validate_interactive_bool("show", show)
         use_holography = _validate_interactive_bool("use_holography", use_holography)
+        resample_nonuniform = _validate_interactive_bool(
+            "resample_nonuniform", resample_nonuniform
+        )
         for option_name, option_value in (
             ("log_scale", log_scale),
             ("normalize", normalize),
@@ -1234,6 +1249,7 @@ class FFTModeInterfaceNew:
                 slice_info=self._slice_context,
                 preloaded_data=getattr(self, "_preloaded_context", None),
                 time_step_scale=getattr(self, "_time_step_scale_context", 1.0),
+                resample_nonuniform=resample_nonuniform,
                 find_peaks=find_peaks_params,
             )
             log.info(

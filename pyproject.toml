@@ -179,6 +179,11 @@ ignore = [
 "mmpp/fft/plot.py" = ["E402"]
 "mmpp/fft/transmission/compute.py" = ["E402"]
 "mmpp/tests/run_h5_test.py" = ["E402"]
+# These are notebook-style example fragments and intentionally rely on names
+# defined by the surrounding user workflow.
+"tests/REPLACE_YOUR_CODE.py" = ["E402"]
+"tests/add_overlay_to_your_code.py" = ["F821"]
+"tests/your_code_with_overlay.py" = ["E402", "F821"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["mmpp"]

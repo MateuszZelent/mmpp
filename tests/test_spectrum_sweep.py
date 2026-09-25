@@ -302,12 +302,13 @@ def test_fft_resamples_nonuniform_time_axis_when_requested(tmp_path):
     with pytest.raises(ValueError, match="resample_nonuniform=True"):
         FFT(job, None).spectrum(z_layer=0, window="none", filter_type="none")
 
-    spectrum = FFT(job, None).spectrum(
-        z_layer=0,
-        window="none",
-        filter_type="none",
-        resample_nonuniform=True,
-    )
+    with pytest.warns(UserWarning, match="linearly resampled"):
+        spectrum = FFT(job, None).spectrum(
+            z_layer=0,
+            window="none",
+            filter_type="none",
+            resample_nonuniform=True,
+        )
 
     assert spectrum.frequencies.size == nt // 2 + 1
     assert spectrum.spectrum.shape[0] == nt // 2 + 1
