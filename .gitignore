@@ -230,6 +230,7 @@ docs/HYSTERESIS_IMPLEMENTATION_AUDIT.md
 !docs/tutorials/soliton_analysis.md
 !docs/tutorials/vortex_thiele_dynamics.md
 !docs/analysis/VORTEX_CURRENT_DRIVEN_THIELE_AUDIT_2026-08-31.md
+!docs/analysis/INTERACTIVE_UI_SCIENTIFIC_AUDIT_2026-09-25.md
 tests/notebooks/vortex/vortex_dynamics.ipynb
 tests/test.ipynb
 vortex_analytical_model.zip
