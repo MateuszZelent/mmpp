@@ -934,6 +934,13 @@ class MMPP:
             with open(db_path, "rb") as f:
                 self.df = pickle.load(f)
 
+            # Older databases can lack parameters encoded in folder names.
+            # Restore them before constructing result objects so the table,
+            # notebook summary and find() all expose the same values.
+            for index, path in self.df["path"].items():
+                for key, value in self._parse_path_parameters(path).items():
+                    self.df.at[index, key] = value
+
             # Reconstruct ZarrJobResult objects with path validation and translation
             self.zarr_results = []
             valid_paths = []
@@ -1122,9 +1129,9 @@ class MMPP:
         Parameters
         ----------
         **kwargs : Any
-            Attribute criteria to filter by. Each keyword argument must match
-            a column name in the database (see `job.columns` property or
-            `job.df.columns` for available columns).
+            Attribute criteria to filter by. Column names are matched without
+            regard to case; an exact spelling takes precedence if columns
+            differ only by case. See `job.columns` or `job.df.columns`.
 
         Common Simulation Parameters
         ----------------------------
@@ -1228,23 +1235,46 @@ class MMPP:
         filtered_df = self.df.copy()
 
         for key, target_value in kwargs.items():
-            if key not in filtered_df.columns:
+            column = key
+            if column not in filtered_df.columns:
+                matches = [
+                    name
+                    for name in filtered_df.columns
+                    if name.casefold() == key.casefold()
+                ]
+                if len(matches) == 1:
+                    column = matches[0]
+                elif key.casefold() in matches:
+                    # Path-derived parameters are lowercase and take precedence
+                    # over differently cased Zarr attributes in older caches.
+                    column = key.casefold()
+                elif len(matches) > 1:
+                    log.error(
+                        f"Column '{key}' is ambiguous. Matching columns: "
+                        f"{sorted(matches, key=str.casefold)}"
+                    )
+                    from ..batch_operations import BatchOperations
+
+                    return BatchOperations([], self)
+
+            if column not in filtered_df.columns:
                 log.error(
-                    f"Column '{key}' not found in database. Available columns: {list(filtered_df.columns)}"
+                    f"Column '{key}' not found in database. Available columns: "
+                    f"{sorted(filtered_df.columns, key=str.casefold)}"
                 )
                 from ..batch_operations import BatchOperations
 
                 return BatchOperations([], self)
 
             # Check if column is numeric
-            if pd.api.types.is_numeric_dtype(filtered_df[key]):
+            if pd.api.types.is_numeric_dtype(filtered_df[column]):
                 # Find nearest value for numeric columns
-                column_values = filtered_df[key].values
+                column_values = filtered_df[column].values
 
                 # Handle NaN values
                 valid_mask = ~pd.isna(column_values)
                 if not valid_mask.any():
-                    log.warning(f"All values in column '{key}' are NaN")
+                    log.warning(f"All values in column '{column}' are NaN")
                     filtered_df = filtered_df.iloc[0:0]  # Empty DataFrame
                     break
 
@@ -1253,14 +1283,14 @@ class MMPP:
                 nearest_value = valid_values[np.argmin(differences)]
 
                 log.info(
-                    f"find({key}={target_value}): Using nearest value {nearest_value}"
+                    f"find({column}={target_value}): Using nearest value {nearest_value}"
                 )
 
                 # Filter to rows with nearest value
-                filtered_df = filtered_df[filtered_df[key] == nearest_value]
+                filtered_df = filtered_df[filtered_df[column] == nearest_value]
             else:
                 # Exact match for non-numeric columns
-                filtered_df = filtered_df[filtered_df[key] == target_value]
+                filtered_df = filtered_df[filtered_df[column] == target_value]
 
         # Get matching ZarrJobResults
         matching_paths = set(filtered_df["path"])

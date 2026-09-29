@@ -101,6 +101,12 @@ print("first result:", jobs[0].name)
 
 ## Opening and scanning results
 
+Every push to `main` runs CI. After CI passes, GitHub Actions creates a GitHub
+release for the tested commit with source and wheel distributions under a
+`commit-<SHA>` tag. A local commit alone does not trigger this workflow; push it
+to GitHub. Version tags (`v*`) continue to use the separate release workflow
+that publishes to PyPI.
+
 `mp.open(...)` creates an `MMPP` object and scans the provided location. The input
 may be:
 
