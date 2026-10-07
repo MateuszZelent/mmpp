@@ -1,3 +1,4 @@
+import re
 from collections.abc import MutableMapping
 from html import escape
 from typing import Any
@@ -9,15 +10,43 @@ if RICH_AVAILABLE:
     from rich.table import Table
 
 
+_BRACED_NUMBER = re.compile(
+    r"\{\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*\}"
+)
+
+
+def _normalize_attribute_value(value: Any) -> Any:
+    """Convert a brace-wrapped numeric scalar to a Python number."""
+    if not isinstance(value, str):
+        return value
+
+    match = _BRACED_NUMBER.fullmatch(value)
+    if match is None:
+        return value
+
+    number = match.group(1)
+    try:
+        if "." not in number and "e" not in number.lower():
+            return int(number)
+        return float(number)
+    except ValueError:
+        return value
+
+
 class AttributesView(MutableMapping):
-    """Wrapper for zarr attrs with rich/Jupyter-friendly display."""
+    """Wrapper for Zarr attrs with scalar normalization and rich display.
+
+    Some simulation metadata stores a single numeric scalar as a braced string,
+    for example ``"{151100}"``. Such values are exposed as Python numbers while
+    the underlying Zarr metadata remains unchanged.
+    """
 
     def __init__(self, attrs: Any):
         self._attrs = attrs
 
     # Mapping protocol
     def __getitem__(self, key):
-        return self._attrs[key]
+        return _normalize_attribute_value(self._attrs[key])
 
     def __setitem__(self, key, value):
         self._attrs[key] = value
@@ -35,17 +64,19 @@ class AttributesView(MutableMapping):
         return self._attrs.keys()
 
     def items(self):
-        return self._attrs.items()
+        return {key: self[key] for key in self._attrs}.items()
 
     def values(self):
-        return self._attrs.values()
+        return {key: self[key] for key in self._attrs}.values()
 
     def get(self, key, default=None):
-        return self._attrs.get(key, default)
+        if key not in self._attrs:
+            return default
+        return self[key]
 
     def as_dict(self) -> dict[str, Any]:
         """Return attributes as a plain dict."""
-        return dict(self._attrs)
+        return {key: self[key] for key in self._attrs}
 
     # Displays -------------------------------------------------------------
     def _rich_table(self):
@@ -61,7 +92,7 @@ class AttributesView(MutableMapping):
             table.add_column("Key", style="magenta", no_wrap=True)
             table.add_column("Value", style="green")
             for key in sorted(self._attrs.keys()):
-                val = self._attrs[key]
+                val = self[key]
                 table.add_row(str(key), repr(val))
             return table
         except Exception:
@@ -88,7 +119,7 @@ class AttributesView(MutableMapping):
         # Fallback plain text
         lines = ["Simulation attributes:"]
         for key in sorted(self._attrs.keys()):
-            lines.append(f"- {key}: {self._attrs[key]!r}")
+            lines.append(f"- {key}: {self[key]!r}")
         return "\n".join(lines)
 
     def __str__(self) -> str:
@@ -103,7 +134,7 @@ class AttributesView(MutableMapping):
             attr_count = len(self._attrs)
             rows = []
             for key in sorted(self._attrs.keys()):
-                val = self._attrs[key]
+                val = self[key]
                 rows.append(
                     "<tr>"
                     f"<td style='padding:4px 10px;font-family:monospace;color:#93c5fd;"
