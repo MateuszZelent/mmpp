@@ -10,6 +10,7 @@ Provides methods to estimate:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -18,6 +19,16 @@ if TYPE_CHECKING:
     from ..models import DispersionResult1D
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LowIntensityInterval:
+    """Frequency interval with weak observed response, not a proven band gap."""
+
+    f_low: float
+    f_high: float
+    mean_relative_intensity: float
+    status: str = "low_observed_intensity_candidate"
 
 
 class BrillouinZoneDetector:
@@ -42,13 +53,16 @@ class BrillouinZoneDetector:
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
+        self.last_detection: dict[str, Any] | None = None
+        self._last_quality: float | None = None
+        self._last_failure: str | None = None
 
     def detect_lattice_constant(
         self,
         result: DispersionResult1D,
         method: str = "autocorrelation",
         f_range: tuple[float, float] | None = None,
-    ) -> float:
+    ) -> float | None:
         """
         Detect lattice constant from periodicity in the dispersion relation.
 
@@ -66,23 +80,35 @@ class BrillouinZoneDetector:
 
         Returns
         -------
-        float
-            Estimated lattice constant [m]
+        float or None
+            Candidate lattice constant [m], or ``None`` when the data do not
+            support a resolved periodicity. ``last_detection`` records method,
+            quality, and failure status.
         """
-        if method == "autocorrelation":
-            return self._detect_via_autocorr(result, f_range)
-        elif method == "fft":
-            return self._detect_via_fft(result, f_range)
-        elif method == "peak_spacing":
-            return self._detect_via_peak_spacing(result, f_range)
-        else:
+        if method not in {"autocorrelation", "fft", "peak_spacing"}:
             raise ValueError(f"Unknown detection method: {method}")
+        self._last_quality = None
+        self._last_failure = None
+        detector = {
+            "autocorrelation": self._detect_via_autocorr,
+            "fft": self._detect_via_fft,
+            "peak_spacing": self._detect_via_peak_spacing,
+        }[method]
+        value = detector(result, f_range)
+        self.last_detection = {
+            "method": method,
+            "value_m": value,
+            "quality": self._last_quality,
+            "status": "candidate" if value is not None else "not_detected",
+            "reason": self._last_failure,
+        }
+        return value
 
     def _detect_via_autocorr(
         self,
         result: DispersionResult1D,
         f_range: tuple[float, float] | None = None,
-    ) -> float:
+    ) -> float | None:
         """
         Detect lattice constant via autocorrelation of the k-profile.
 
@@ -105,6 +131,12 @@ class BrillouinZoneDetector:
             # Auto select: positive frequencies, above noise floor
             f_mask = f_axis > 0
         S = S[:, f_mask]
+        if S.size == 0 or k_axis.size < 8 or not np.all(np.isfinite(k_axis)):
+            self._last_failure = "insufficient finite k/f samples"
+            return None
+        if np.any(np.diff(k_axis) <= 0):
+            self._last_failure = "k axis must be strictly increasing"
+            return None
 
         # Get k-profile weighted by log intensity to reduce dynamic range
         S_positive = np.maximum(S, 1e-20)
@@ -113,6 +145,11 @@ class BrillouinZoneDetector:
 
         # Remove DC / mean to focus on periodic structure
         S_mean = S_mean - np.mean(S_mean)
+
+        variation = float(np.max(np.abs(S_mean))) if S_mean.size else 0.0
+        if not np.isfinite(variation) or variation <= 1e-10:
+            self._last_failure = "k-profile has no resolved periodic variation"
+            return None
 
         # Normalize
         S_mean = S_mean / (np.max(np.abs(S_mean)) + 1e-20)
@@ -139,9 +176,9 @@ class BrillouinZoneDetector:
         max_lag_physical = min(len(autocorr) - 1, int(max_period_k / dk))
 
         # Ensure valid range
-        if min_lag_physical >= max_lag_physical:
-            min_lag_physical = 5
-            max_lag_physical = len(autocorr) // 2
+        if min_lag_physical >= max_lag_physical or max_lag_physical <= 1:
+            self._last_failure = "available k range cannot resolve physical periods"
+            return None
 
         # Find ALL peaks in physical range
         peaks_in_range = []
@@ -181,26 +218,17 @@ class BrillouinZoneDetector:
                     best_peak["period_k"],
                     a * 1e9,
                 )
+                self._last_quality = float(np.clip(best_peak["value"], 0.0, 1.0))
                 return a
 
-        # Fallback: estimate from k-range assuming ~2 BZ visible
-        k_range = k_axis[-1] - k_axis[0]
-        a_fallback = 2 * np.pi / k_range * 2
-
-        # Clamp to physical limits
-        a_fallback = np.clip(a_fallback, 100e-9, 2000e-9)
-
-        logger.warning(
-            "Autocorr detection weak, using fallback: a=%.1f nm", a_fallback * 1e9
-        )
-
-        return a_fallback
+        self._last_failure = "no autocorrelation peak met the periodicity criterion"
+        return None
 
     def _detect_via_fft(
         self,
         result: DispersionResult1D,
         f_range: tuple[float, float] | None = None,
-    ) -> float:
+    ) -> float | None:
         """
         Detect lattice constant via FFT of the k-profile.
 
@@ -216,6 +244,12 @@ class BrillouinZoneDetector:
         else:
             f_mask = f_axis > 0
         S = S[:, f_mask]
+        if S.size == 0 or len(k_axis) < 8 or not np.all(np.isfinite(k_axis)):
+            self._last_failure = "insufficient finite k/f samples"
+            return None
+        if np.any(np.diff(k_axis) <= 0):
+            self._last_failure = "k axis must be strictly increasing"
+            return None
 
         # Get k-profile using log to reduce dynamic range
         S_positive = np.maximum(S, 1e-20)
@@ -256,7 +290,10 @@ class BrillouinZoneDetector:
             peak_idx = np.argmax(fft_mag_valid)
             dominant_freq = fft_freq_valid[peak_idx]
 
-            if dominant_freq > 0:
+            median_level = float(np.median(fft_mag_valid))
+            peak_level = float(fft_mag_valid[peak_idx])
+            prominence_ratio = peak_level / max(median_level, np.finfo(float).eps)
+            if dominant_freq > 0 and prominence_ratio >= 3.0:
                 # freq = a/(2π) → a = 2π * freq
                 # Actually: period_k = 1/freq, a = 2π/period_k = 2π * freq
                 a = 2 * np.pi * dominant_freq
@@ -266,17 +303,19 @@ class BrillouinZoneDetector:
                     dominant_freq,
                     a * 1e9,
                 )
-
+                self._last_quality = float(
+                    np.clip(1.0 - 1.0 / prominence_ratio, 0.0, 1.0)
+                )
                 return a
 
-        # Fallback
-        return self._detect_via_autocorr(result, f_range)
+        self._last_failure = "no sufficiently prominent periodicity peak"
+        return None
 
     def _detect_via_peak_spacing(
         self,
         result: DispersionResult1D,
         f_range: tuple[float, float] | None = None,
-    ) -> float:
+    ) -> float | None:
         """
         Detect lattice constant from spacing between dispersion branches.
 
@@ -296,8 +335,7 @@ class BrillouinZoneDetector:
 
         for i_f in range(S.shape[1]):
             S_k = S[:, i_f]
-            threshold = 0.3 * np.max(S_k)
-            peaks = self._find_peaks_simple(S_k, threshold)
+            peaks = self._find_peaks_simple(S_k, threshold=0.3)
 
             if len(peaks) >= 2:
                 # Compute spacings between consecutive peaks
@@ -314,19 +352,22 @@ class BrillouinZoneDetector:
             valid = (spacings > 0.5 * median_spacing) & (spacings < 2 * median_spacing)
 
             if np.any(valid):
-                period_k = np.median(spacings[valid])
-                a = 2 * np.pi / period_k
+                period_k = float(np.median(spacings[valid]))
+                a = 2 * np.pi / period_k if period_k > 0 else float("nan")
+                if np.isfinite(a) and 50e-9 < a < 5e-6:
+                    scatter = float(
+                        np.median(np.abs(spacings[valid] - period_k)) / period_k
+                    )
+                    self._last_quality = float(1.0 / (1.0 + scatter))
+                    logger.info(
+                        "Peak-spacing candidate: median Δk=%.3e → a=%.1f nm",
+                        period_k,
+                        a * 1e9,
+                    )
+                    return a
 
-                logger.info(
-                    "Peak spacing detection: median Δk=%.3e → a=%.1f nm",
-                    period_k,
-                    a * 1e9,
-                )
-
-                return a
-
-        # Fallback
-        return self._detect_via_autocorr(result, f_range)
+        self._last_failure = "no consistent positive peak spacing was detected"
+        return None
 
     def _find_peaks_simple(
         self,
@@ -386,50 +427,67 @@ class BrillouinZoneDetector:
         threshold: float = 0.1,
     ) -> list[tuple[float, float]]:
         """
-        Find frequency gaps in the dispersion relation.
+        Return legacy frequency tuples for low-observed-intensity intervals.
 
-        Parameters
-        ----------
-        result : DispersionResult1D
-            Dispersion result to analyze
-        threshold : float
-            Relative intensity threshold for gap detection
-
-        Returns
-        -------
-        List[Tuple[float, float]]
-            List of (f_low, f_high) tuples defining gaps [Hz]
+        An interval with weak excitation is not evidence that eigenmodes are
+        absent. Use :meth:`find_low_intensity_intervals` to retain the status
+        and measured relative intensity with each candidate.
         """
-        S = result.S
-        f_axis = result.f_axis
+        return [
+            (candidate.f_low, candidate.f_high)
+            for candidate in self.find_low_intensity_intervals(
+                result, threshold=threshold
+            )
+        ]
 
-        # Sum over k to get total intensity at each frequency
-        S_f = np.sum(S, axis=0)
+    def find_low_intensity_intervals(
+        self,
+        result: DispersionResult1D,
+        threshold: float = 0.1,
+    ) -> list[LowIntensityInterval]:
+        """Find frequency intervals with low integrated observed intensity."""
+        if not np.isfinite(threshold) or not 0.0 < threshold < 1.0:
+            raise ValueError("threshold must be finite and between 0 and 1")
 
-        # Normalize
-        S_f = S_f / (np.max(S_f) + 1e-20)
+        S = np.asarray(result.S, dtype=float)
+        f_axis = np.asarray(result.f_axis, dtype=float)
+        if S.ndim != 2 or S.shape[1] != f_axis.size:
+            raise ValueError("result.S must have shape (Nk, Nf) matching f_axis")
+        if S.size == 0 or not np.all(np.isfinite(S)):
+            return []
 
-        # Find regions below threshold
-        gaps = []
-        in_gap = False
-        gap_start = 0
+        S_f = np.sum(np.maximum(S, 0.0), axis=0)
+        max_intensity = float(np.max(S_f))
+        if max_intensity <= 0:
+            return []
+        relative = S_f / max_intensity
 
-        for i, val in enumerate(S_f):
-            if val < threshold and not in_gap:
-                in_gap = True
-                gap_start = i
-            elif val >= threshold and in_gap:
-                in_gap = False
-                if i - gap_start > 2:  # Minimum gap width
-                    gaps.append((f_axis[gap_start], f_axis[i - 1]))
+        intervals: list[LowIntensityInterval] = []
+        start: int | None = None
+        for idx, value in enumerate(relative):
+            if value < threshold and start is None:
+                start = idx
+            elif value >= threshold and start is not None:
+                if idx - start > 2:
+                    intervals.append(
+                        LowIntensityInterval(
+                            f_low=float(f_axis[start]),
+                            f_high=float(f_axis[idx - 1]),
+                            mean_relative_intensity=float(np.mean(relative[start:idx])),
+                        )
+                    )
+                start = None
+        if start is not None and relative.size - start > 2:
+            intervals.append(
+                LowIntensityInterval(
+                    f_low=float(f_axis[start]),
+                    f_high=float(f_axis[-1]),
+                    mean_relative_intensity=float(np.mean(relative[start:])),
+                )
+            )
 
-        # Handle gap extending to end
-        if in_gap and len(f_axis) - gap_start > 2:
-            gaps.append((f_axis[gap_start], f_axis[-1]))
-
-        logger.info("Found %d band gaps", len(gaps))
-
-        return gaps
+        logger.info("Found %d low-observed-intensity candidates", len(intervals))
+        return intervals
 
     def estimate_effective_mass(
         self,
@@ -470,13 +528,60 @@ class BrillouinZoneDetector:
         k_fit = k_axis[mask]
         S_fit = S[mask, :]
 
-        # Find peak frequency at each k
-        f_peaks: Any = []
-        for i in range(len(k_fit)):
-            i_max = np.argmax(S_fit[i, :])
-            f_peaks.append(f_axis[i_max])
+        if f_axis.size < 3 or not np.all(np.isfinite(f_axis)):
+            logger.warning("Frequency axis is insufficient for mass estimation")
+            return None
 
-        f_peaks = np.array(f_peaks)
+        center_idx = int(np.argmin(np.abs(k_fit - k_center)))
+        central_spectrum = S_fit[center_idx]
+        central_peak = int(np.argmax(central_spectrum))
+        f_peaks = np.full(k_fit.size, np.nan, dtype=float)
+        f_peaks[center_idx] = f_axis[central_peak]
+
+        def local_peaks(values: np.ndarray) -> np.ndarray:
+            if values.size < 3:
+                return np.array([int(np.argmax(values))], dtype=int)
+            peaks = (
+                np.flatnonzero(
+                    (values[1:-1] >= values[:-2])
+                    & (values[1:-1] >= values[2:])
+                    & ((values[1:-1] > values[:-2]) | (values[1:-1] > values[2:]))
+                )
+                + 1
+            )
+            return peaks if peaks.size else np.array([int(np.argmax(values))])
+
+        df = float(np.median(np.abs(np.diff(f_axis))))
+        max_frequency_jump = max(5.0 * df, 0.1 * float(np.ptp(f_axis)))
+        for direction in (-1, 1):
+            previous_idx = center_idx
+            indices = (
+                range(center_idx - 1, -1, -1)
+                if direction < 0
+                else range(center_idx + 1, k_fit.size)
+            )
+            for idx in indices:
+                candidates = local_peaks(S_fit[idx])
+                distances = np.abs(f_axis[candidates] - f_peaks[previous_idx])
+                order = np.argsort(distances)
+                best = int(order[0])
+                if distances[best] > max_frequency_jump:
+                    logger.warning(
+                        "Dispersion branch tracking failed near k=%g; refusing a mixed-branch fit",
+                        k_fit[idx],
+                    )
+                    return None
+                if order.size > 1 and distances[order[1]] - distances[best] <= 0.5 * df:
+                    logger.warning(
+                        "Ambiguous neighboring branches near k=%g; refusing effective-mass fit",
+                        k_fit[idx],
+                    )
+                    return None
+                f_peaks[idx] = f_axis[candidates[best]]
+                previous_idx = idx
+
+        if np.any(~np.isfinite(f_peaks)):
+            return None
 
         # Fit parabola: ω(k) = a*k² + b*k + c
         try:

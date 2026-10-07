@@ -549,6 +549,20 @@ class FFT:
                 "slice_info": slice_info,
                 "preloaded_data": kwargs.get("preloaded_data"),
                 "time_step_scale": kwargs.get("time_step_scale", 1.0),
+                "spectrum_transform": {
+                    key: fft_result.metadata.get(key)
+                    for key in (
+                        "method",
+                        "window",
+                        "filter_type",
+                        "scaling",
+                        "zero_padding",
+                        "nfft_requested",
+                        "fft_length",
+                        "data_shape",
+                        "dt",
+                    )
+                },
             },
             scaling=fft_result.metadata.get("scaling", "raw"),
             spectrum_kind=fft_result.metadata.get("spectrum_kind", "complex"),

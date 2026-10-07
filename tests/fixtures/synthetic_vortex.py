@@ -26,7 +26,9 @@ def generate_synthetic_vortex(
         cy = float(center_pix[1])
 
     x = np.arange(Nx, dtype=float) - cx
-    y = np.arange(Ny, dtype=float) - cy
+    # Match the public XYConvention default: physical y increases as array rows
+    # decrease, so row zero is the top edge of the field.
+    y = cy - np.arange(Ny, dtype=float)
     x_grid, y_grid = np.meshgrid(x, y)
 
     radius = np.hypot(x_grid, y_grid)

@@ -50,6 +50,11 @@ class TrajectoryResult:
         return np.abs(self.z)
 
     @property
+    def polarity_known(self) -> np.ndarray:
+        """Mask identifying samples whose core polarity is known (±1)."""
+        return np.asarray(self.polarity != 0, dtype=bool)
+
+    @property
     def phi(self) -> np.ndarray:
         """Instantaneous orbital angle."""
         return np.angle(self.z)
@@ -72,15 +77,25 @@ class TrajectoryResult:
 
     @property
     def instantaneous_frequency(self) -> np.ndarray:
-        """Angular frequency estimated as ``d(phi_unwrapped)/dt``."""
+        """Legacy alias for angular frequency in rad/s."""
+        return self.instantaneous_angular_frequency
+
+    @property
+    def instantaneous_angular_frequency(self) -> np.ndarray:
+        """Angular frequency ``d(phi_unwrapped)/dt`` in rad/s."""
         if self.time.size < 2:
             return np.zeros_like(self.time, dtype=float)
         return np.asarray(np.gradient(self.phi_unwrapped, self.time), dtype=float)
 
     @property
+    def instantaneous_frequency_hz(self) -> np.ndarray:
+        """Instantaneous cyclic frequency in Hz, derived from rad/s."""
+        return self.instantaneous_angular_frequency / (2.0 * np.pi)
+
+    @property
     def rotation_sense(self) -> str:
         """Rotation direction inferred from mean angular frequency."""
-        omega = self.instantaneous_frequency
+        omega = self.instantaneous_angular_frequency
         return "CCW" if float(np.mean(omega)) >= 0.0 else "CW"
 
     @property
@@ -115,7 +130,7 @@ class TrajectoryResult:
         n = int(self.time.size)
         radius_mean_nm = float(np.mean(self.r) * 1e9) if n else float("nan")
         freq_mean_ghz = (
-            float(np.mean(self.instantaneous_frequency) * 1e-9)
+            float(np.mean(self.instantaneous_frequency_hz) * 1e-9)
             if n >= 2
             else float("nan")
         )

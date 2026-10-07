@@ -13,12 +13,43 @@ def classify_gc_states(
     *,
     radius_threshold: float = 0.6,
     smoothing_window: int = 9,
+    disk_radius: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Classify each sample as ``G-state`` or ``C-state`` using normalized orbit radius."""
+    """Label small/large orbit candidates relative to the physical disk radius.
+
+    The trajectory alone does not establish the magnetization texture, so these
+    historical G/C labels are candidate orbit regimes. Missing a physical disk
+    radius yields ``unknown`` labels instead of normalizing by the trajectory's
+    own percentile.
+    """
     radius = np.asarray(trajectory.r, dtype=float)
     if radius.size == 0:
         return np.array([], dtype="<U8"), np.array([], dtype=float)
 
+    radius_threshold = float(radius_threshold)
+    if not np.isfinite(radius_threshold) or not 0.0 < radius_threshold <= 1.0:
+        raise ValueError("radius_threshold must be in (0, 1]")
+    if disk_radius is None:
+        disk_radius = (getattr(trajectory, "metadata", {}) or {}).get("disk_radius")
+    if disk_radius is None:
+        return (
+            np.full(radius.size, "unknown", dtype="<U8"),
+            np.full(radius.size, np.nan, dtype=float),
+        )
+    try:
+        reference_radius = float(disk_radius)
+    except (TypeError, ValueError):
+        reference_radius = float("nan")
+    if not np.isfinite(reference_radius) or reference_radius <= 0.0:
+        return (
+            np.full(radius.size, "unknown", dtype="<U8"),
+            np.full(radius.size, np.nan, dtype=float),
+        )
+
+    if isinstance(smoothing_window, (bool, np.bool_)) or not isinstance(
+        smoothing_window, (int, np.integer)
+    ):
+        raise TypeError("smoothing_window must be a positive integer")
     window = max(int(smoothing_window), 1)
     if window > 1 and radius.size >= window:
         kernel = np.ones(window, dtype=float) / float(window)
@@ -26,10 +57,8 @@ def classify_gc_states(
     else:
         smooth_radius = radius
 
-    ref = float(np.percentile(smooth_radius, 95))
-    ref = max(ref, 1e-30)
-    normalized = smooth_radius / ref
-    labels = np.where(normalized <= float(radius_threshold), "G-state", "C-state")
+    normalized = smooth_radius / reference_radius
+    labels = np.where(normalized <= radius_threshold, "G-state", "C-state")
     return labels.astype("<U8"), normalized
 
 
@@ -39,7 +68,7 @@ def _estimate_min_dwell_time(
     if trajectory.time.size < 2:
         return 0.0
     dt = float(np.median(np.diff(np.asarray(trajectory.time, dtype=float))))
-    omega = np.asarray(trajectory.instantaneous_frequency, dtype=float)
+    omega = np.asarray(trajectory.instantaneous_angular_frequency, dtype=float)
     finite = np.isfinite(omega) & (np.abs(omega) > 0.0)
     if not np.any(finite):
         return float(max(min_dwell_periods, 0)) * dt
@@ -98,6 +127,7 @@ def detect_state_switches(
     min_dwell_periods: int = 3,
     refractory: float = 0.5e-9,
     smoothing_window: int = 9,
+    disk_radius: float | None = None,
 ) -> tuple[list[StateSwitchEvent], np.ndarray]:
     """Detect transitions between ``G-state`` and ``C-state``."""
     time = np.asarray(trajectory.time, dtype=float)
@@ -106,6 +136,7 @@ def detect_state_switches(
         trajectory,
         radius_threshold=radius_threshold,
         smoothing_window=smoothing_window,
+        disk_radius=disk_radius,
     )
 
     if labels.size != time.size:
@@ -147,6 +178,10 @@ def detect_state_switches(
                 to_state=curr_label,
                 confidence=conf,
                 metadata={
+                    "classification_scope": "trajectory_orbit_radius_candidate",
+                    "disk_radius_m": float(disk_radius)
+                    if disk_radius is not None
+                    else (getattr(trajectory, "metadata", {}) or {}).get("disk_radius"),
                     "radius_before_norm": float(
                         np.mean(normalized_radius[prev_start : prev_end + 1])
                     ),

@@ -71,6 +71,7 @@ def test_extract_mode_2d_matches_ifft_for_single_bin():
         config=DispersionConfig(dt=dt, dx=dx),
         dt=dt,
         dx=dx,
+        flipx=False,
         S_complex=S_complex,
     )
 
@@ -125,6 +126,7 @@ def test_extract_mode_2d_preserves_orthogonal_phase_factor():
         config=DispersionConfig(dt=dt, dx=dx),
         dt=dt,
         dx=dx,
+        flipx=False,
         S_complex=S_complex,
         orth_axis=np.arange(n_orth) * (7e-9),
         orth_axis_label="y",
@@ -178,6 +180,7 @@ def test_folding_extract_mode_profile_supports_orthogonal_s_complex():
         config=DispersionConfig(dt=dt, dx=dx),
         dt=dt,
         dx=dx,
+        flipx=False,
         S_complex=S_complex,
         orth_axis=np.arange(n_orth) * (7e-9),
         orth_axis_label="y",
@@ -231,6 +234,7 @@ def test_folding_mode_mask_selects_bz_replicas_used_for_profile_reconstruction()
         config=DispersionConfig(dt=1.0, dx=5e-9),
         dt=1.0,
         dx=5e-9,
+        flipx=False,
         S_complex=spectrum,
     )
     folder = BrillouinZoneFolding(lattice_constant=period, n_periods=1)
@@ -1876,7 +1880,9 @@ def test_compute_1d_complex_wave_extracts_spatial_mode_end_to_end(tmp_path):
     assert info["k_bins_selected"] == 1
     assert info["f_bins_selected"] == 1
 
-    expected = np.exp(1j * k0 * x_axis)
+    # The public dispersion axis includes flipx; the inverse-transform spatial
+    # phase therefore follows exp(-i*k*x) while preserving original sample order.
+    expected = np.exp(-1j * k0 * x_axis)
     reconstructed = mode_2d[0] / np.max(np.abs(mode_2d[0]))
     phase = np.vdot(expected, reconstructed)
     phase /= abs(phase)
@@ -4901,7 +4907,7 @@ def test_transmission_cache_distinguishes_materialized_view_identity():
     from mmpp.fft.transmission.cache import TransmissionCache
     from mmpp.fft.transmission.compute import TransmissionConfig
 
-    cache = TransmissionCache(SimpleNamespace(), dataset_name="m")
+    cache = TransmissionCache(SimpleNamespace(path="source.zarr"), dataset_name="m")
     config = TransmissionConfig(dataset_name="m")
     first = cache.generate_cache_key(
         config, slice_info=None, view_identity="float32:(4,):aaa;dt_scale=1"
@@ -5277,7 +5283,7 @@ def test_transmission_power_metrics_use_squared_fft_magnitude():
         method="circular",
         window_axis=None,
     )
-    assert np.allclose(circular, [[1.0]])
+    assert np.allclose(circular, [[2.0]])
 
 
 def test_transmission_reference_normalization_marks_zero_reference_undefined():

@@ -79,28 +79,57 @@ class PoyntingVectorAnalysis:
         self.config = config or ElectromagneticAnalysisConfig()
 
     def compute_poynting_vector(
-        self, E_field: np.ndarray, H_field: np.ndarray
+        self,
+        E_field: np.ndarray,
+        H_field: np.ndarray,
+        *,
+        time_average: bool | None = None,
     ) -> np.ndarray:
         """
-        Compute Poynting vector S = (1/μ₀) * E × H
+        Compute ``E × H`` for instantaneous fields or peak phasors.
 
         Parameters:
         -----------
         E_field : np.ndarray
-            Electric field array with shape (ny, nx, 3)
+            Electric field in V/m, with shape (..., 3).
         H_field : np.ndarray
-            Magnetic field array with shape (ny, nx, 3)
+            Magnetic field strength in A/m, with shape (..., 3).
+        time_average : bool, optional
+            For peak phasors, return ``0.5 * Re(E × conj(H))``. If omitted,
+            complex input arrays are treated as peak phasors and real arrays as
+            instantaneous fields. Complex instantaneous fields are undefined.
 
         Returns:
         --------
         poynting_vector : np.ndarray
             Poynting vector with shape (ny, nx, 3)
         """
-        if E_field.shape != H_field.shape:
+        electric = np.asarray(E_field)
+        magnetic = np.asarray(H_field)
+        if electric.shape != magnetic.shape:
             raise ValueError("E and H field arrays must have the same shape")
+        if electric.ndim == 0 or electric.shape[-1] != 3:
+            raise ValueError(
+                "E and H fields must have three components on the last axis"
+            )
+        if not np.isfinite(electric).all() or not np.isfinite(magnetic).all():
+            raise ValueError("E and H fields must contain only finite values")
+        if time_average is None:
+            time_average = np.iscomplexobj(electric) or np.iscomplexobj(magnetic)
+        elif not isinstance(time_average, (bool, np.bool_)):
+            raise TypeError("time_average must be boolean or None")
+        if not time_average and (
+            np.iscomplexobj(electric) or np.iscomplexobj(magnetic)
+        ):
+            raise ValueError("Complex E/H fields require time_average=True")
 
-        # Compute cross product E × H
-        poynting_vector = np.cross(E_field, H_field, axis=2) / self.config.mu_0
+        # H is in A/m, so SI Poynting is E × H; μ0 is only involved when the
+        # second field is B in tesla.
+        conjugate_h = np.conjugate(magnetic) if time_average else magnetic
+        poynting_vector = np.cross(electric, conjugate_h, axis=-1)
+        poynting_vector = (
+            0.5 * np.real(poynting_vector) if time_average else np.real(poynting_vector)
+        )
 
         log.info(f"Computed Poynting vector with shape {poynting_vector.shape}")
         return poynting_vector
@@ -111,6 +140,8 @@ class PoyntingVectorAnalysis:
         H_field: np.ndarray,
         epsilon_r: float = 1.0,
         mu_r: float = 1.0,
+        *,
+        time_average: bool | None = None,
     ) -> dict[str, np.ndarray]:
         """
         Compute electromagnetic energy density.
@@ -118,27 +149,55 @@ class PoyntingVectorAnalysis:
         Parameters:
         -----------
         E_field : np.ndarray
-            Electric field array
+            Electric field in V/m, with shape (..., 3).
         H_field : np.ndarray
-            Magnetic field array
+            Magnetic field strength in A/m, with shape (..., 3).
         epsilon_r : float
             Relative permittivity
         mu_r : float
             Relative permeability
+        time_average : bool, optional
+            For peak phasors, use the cycle averages ``epsilon*|E|²/4`` and
+            ``mu*|H|²/4``. If omitted, complex arrays are treated as peak
+            phasors and real arrays as instantaneous fields.
 
         Returns:
         --------
         energy_densities : dict
             Dictionary with electric, magnetic, and total energy densities
         """
+        electric = np.asarray(E_field)
+        magnetic = np.asarray(H_field)
+        if electric.shape != magnetic.shape:
+            raise ValueError("E and H field arrays must have the same shape")
+        if electric.ndim == 0 or electric.shape[-1] != 3:
+            raise ValueError(
+                "E and H fields must have three components on the last axis"
+            )
+        if not np.isfinite(electric).all() or not np.isfinite(magnetic).all():
+            raise ValueError("E and H fields must contain only finite values")
+        if time_average is None:
+            time_average = np.iscomplexobj(electric) or np.iscomplexobj(magnetic)
+        elif not isinstance(time_average, (bool, np.bool_)):
+            raise TypeError("time_average must be boolean or None")
+        if not time_average and (
+            np.iscomplexobj(electric) or np.iscomplexobj(magnetic)
+        ):
+            raise ValueError("Complex E/H fields require time_average=True")
+
+        epsilon_r = float(epsilon_r)
+        mu_r = float(mu_r)
+        if not np.isfinite(epsilon_r) or epsilon_r <= 0:
+            raise ValueError("epsilon_r must be finite and positive")
+        if not np.isfinite(mu_r) or mu_r <= 0:
+            raise ValueError("mu_r must be finite and positive")
         epsilon = epsilon_r * self.config.epsilon_0
         mu = mu_r * self.config.mu_0
 
-        # Electric energy density: (1/2) * ε * |E|²
-        u_e = 0.5 * epsilon * np.sum(np.abs(E_field) ** 2, axis=2)
+        factor = 0.25 if time_average else 0.5
+        u_e = factor * epsilon * np.sum(np.abs(electric) ** 2, axis=-1)
 
-        # Magnetic energy density: (1/2) * μ * |H|²
-        u_m = 0.5 * mu * np.sum(np.abs(H_field) ** 2, axis=2)
+        u_m = factor * mu * np.sum(np.abs(magnetic) ** 2, axis=-1)
 
         # Total energy density
         u_total = u_e + u_m
@@ -272,6 +331,29 @@ class RadiationPatternAnalysis:
         far_field : dict
             Dictionary with theta, phi arrays and E_theta, E_phi components
         """
+        current_density = np.asarray(current_density)
+        extent_values = tuple(float(value) for value in spatial_extent)
+        if len(extent_values) != 4:
+            raise ValueError("spatial_extent must contain four finite bounds in meters")
+        spatial_extent = cast(tuple[float, float, float, float], extent_values)
+        frequency = float(frequency)
+        if (
+            current_density.ndim != 3
+            or current_density.shape[-1] != 3
+            or 0 in current_density.shape[:2]
+        ):
+            raise ValueError("current_density must have shape (ny, nx, 3)")
+        if not np.isfinite(current_density).all():
+            raise ValueError("current_density must contain only finite values")
+        if len(spatial_extent) != 4 or not np.isfinite(spatial_extent).all():
+            raise ValueError("spatial_extent must contain four finite bounds in meters")
+        if (
+            spatial_extent[0] >= spatial_extent[1]
+            or spatial_extent[2] >= spatial_extent[3]
+        ):
+            raise ValueError("spatial_extent bounds must be strictly increasing")
+        if not np.isfinite(frequency) or frequency <= 0:
+            raise ValueError("frequency must be finite and positive")
         k = 2 * np.pi * frequency / self.config.c  # Wave number
 
         # Create angular grid
@@ -281,9 +363,11 @@ class RadiationPatternAnalysis:
 
         # Spatial grid
         ny, nx = current_density.shape[:2]
-        x = np.linspace(spatial_extent[0], spatial_extent[1], nx)
-        y = np.linspace(spatial_extent[2], spatial_extent[3], ny)
-        X, Y = np.meshgrid(x, y, indexing="ij")
+        dx = (spatial_extent[1] - spatial_extent[0]) / nx
+        dy = (spatial_extent[3] - spatial_extent[2]) / ny
+        x = spatial_extent[0] + (np.arange(nx) + 0.5) * dx
+        y = spatial_extent[2] + (np.arange(ny) + 0.5) * dy
+        X, Y = np.meshgrid(x, y, indexing="xy")
 
         # Initialize far-field arrays
         E_theta = np.zeros_like(Theta, dtype=complex)
@@ -303,9 +387,6 @@ class RadiationPatternAnalysis:
         phi_hat_z = np.zeros_like(Phi)
 
         # Integrate current density contributions
-        dx = (spatial_extent[1] - spatial_extent[0]) / nx
-        dy = (spatial_extent[3] - spatial_extent[2]) / ny
-
         for i in range(ny):
             for j in range(nx):
                 # Phase factor for each spatial point
@@ -439,7 +520,7 @@ class QFactorAnalysis:
 
     def compute_q_factor_spectral(
         self, frequencies: np.ndarray, spectrum: np.ndarray, peak_freq: float
-    ) -> float:
+    ) -> float | None:
         """
         Compute Q-factor from spectral width method.
 
@@ -448,43 +529,89 @@ class QFactorAnalysis:
         frequencies : np.ndarray
             Frequency array
         spectrum : np.ndarray
-            Power spectrum
+            Non-negative power spectrum sampled on ``frequencies``.
         peak_freq : float
             Peak frequency
 
         Returns:
         --------
-        q_factor : float
-            Quality factor
+        q_factor : float or None
+            Quality factor, or ``None`` if the selected peak lacks a sampled
+            half-maximum crossing on either side.
         """
-        # Find half-maximum points
-        peak_idx = np.argmin(np.abs(frequencies - peak_freq))
-        peak_value = spectrum[peak_idx]
+        frequencies = np.asarray(frequencies, dtype=float)
+        spectrum = np.asarray(spectrum, dtype=float)
+        peak_freq = float(peak_freq)
+        if frequencies.ndim != 1 or spectrum.ndim != 1:
+            raise ValueError("frequencies and spectrum must be one-dimensional")
+        if frequencies.size != spectrum.size or frequencies.size < 3:
+            raise ValueError(
+                "frequencies and spectrum must align and contain >= 3 bins"
+            )
+        if (
+            not np.isfinite(frequencies).all()
+            or not np.isfinite(spectrum).all()
+            or not np.isfinite(peak_freq)
+        ):
+            raise ValueError("frequencies, spectrum, and peak_freq must be finite")
+        if np.any(np.diff(frequencies) <= 0):
+            raise ValueError("frequencies must be strictly increasing")
+        if np.any(spectrum < 0):
+            raise ValueError("spectrum must be non-negative power")
+        if peak_freq <= 0:
+            raise ValueError("peak_freq must be positive for a finite Q-factor")
+
+        peak_idx = int(np.argmin(np.abs(frequencies - peak_freq)))
+        peak_value = float(spectrum[peak_idx])
+        if peak_value <= 0:
+            log.info("Q-factor unavailable: selected spectral peak has no power")
+            return None
+        if (peak_idx > 0 and spectrum[peak_idx - 1] > peak_value) or (
+            peak_idx + 1 < spectrum.size and spectrum[peak_idx + 1] > peak_value
+        ):
+            log.info("Q-factor unavailable: peak_freq does not select a local maximum")
+            return None
         half_max = peak_value / 2
 
-        # Find frequencies at half maximum
-        left_idx = np.where((frequencies < peak_freq) & (spectrum >= half_max))[0]
-        right_idx = np.where((frequencies > peak_freq) & (spectrum >= half_max))[0]
+        f_left = None
+        for idx in range(peak_idx - 1, -1, -1):
+            if spectrum[idx] <= half_max <= spectrum[idx + 1]:
+                delta = spectrum[idx + 1] - spectrum[idx]
+                fraction = 0.0 if delta == 0 else (half_max - spectrum[idx]) / delta
+                f_left = float(
+                    frequencies[idx]
+                    + fraction * (frequencies[idx + 1] - frequencies[idx])
+                )
+                break
 
-        if len(left_idx) > 0 and len(right_idx) > 0:
-            f_left = frequencies[left_idx[-1]]
-            f_right = frequencies[right_idx[0]]
-            delta_f = f_right - f_left
-            q_factor = peak_freq / delta_f
-        else:
-            q_factor = np.inf
+        f_right = None
+        for idx in range(peak_idx + 1, spectrum.size):
+            if spectrum[idx] <= half_max <= spectrum[idx - 1]:
+                delta = spectrum[idx] - spectrum[idx - 1]
+                fraction = 0.0 if delta == 0 else (half_max - spectrum[idx - 1]) / delta
+                f_right = float(
+                    frequencies[idx - 1]
+                    + fraction * (frequencies[idx] - frequencies[idx - 1])
+                )
+                break
 
-        log.info(f"Computed Q-factor: {q_factor:.1f} at {peak_freq:.3f} GHz")
+        if f_left is None or f_right is None or f_right <= f_left:
+            log.info("Q-factor unavailable: spectrum is not bracketed at half maximum")
+            return None
+        q_factor = float(frequencies[peak_idx] / (f_right - f_left))
+        log.info("Computed Q-factor: %.1f at %.6g Hz", q_factor, frequencies[peak_idx])
         return q_factor
 
-    def compute_mode_lifetime(self, q_factor: float, frequency: float) -> float:
+    def compute_mode_lifetime(
+        self, q_factor: float | None, frequency: float
+    ) -> float | None:
         """
         Compute mode lifetime from Q-factor.
 
         Parameters:
         -----------
-        q_factor : float
-            Quality factor
+        q_factor : float or None
+            Quality factor; ``None`` represents an unavailable spectral width.
         frequency : float
             Mode frequency in Hz
 
@@ -493,6 +620,16 @@ class QFactorAnalysis:
         lifetime : float
             Mode lifetime in seconds
         """
+        if q_factor is None:
+            return None
+        q_factor = float(q_factor)
+        frequency = float(frequency)
+        if not np.isfinite(q_factor) and not np.isinf(q_factor):
+            raise ValueError("q_factor must be finite or positive infinity")
+        if q_factor < 0:
+            raise ValueError("q_factor must be non-negative")
+        if not np.isfinite(frequency) or frequency <= 0:
+            raise ValueError("frequency must be finite and positive")
         omega = 2 * np.pi * frequency
         lifetime = q_factor / omega
 
@@ -501,7 +638,14 @@ class QFactorAnalysis:
 
 
 def analyze_electromagnetic_properties(
-    mode_data, config: ElectromagneticAnalysisConfig = None
+    mode_data,
+    config: ElectromagneticAnalysisConfig = None,
+    *,
+    electric_field_v_per_m: np.ndarray | None = None,
+    magnetic_field_a_per_m: np.ndarray | None = None,
+    current_density_a_per_m2: np.ndarray | None = None,
+    spatial_extent_m: tuple[float, float, float, float] | None = None,
+    time_average: bool | None = None,
 ) -> dict[str, Any]:
     """
     Comprehensive electromagnetic analysis of FMR mode data.
@@ -512,6 +656,19 @@ def analyze_electromagnetic_properties(
         Mode data to analyze
     config : ElectromagneticAnalysisConfig, optional
         Analysis configuration
+    electric_field_v_per_m : np.ndarray, optional
+        Actual electric field in V/m, shape (ny, nx, 3).
+    magnetic_field_a_per_m : np.ndarray, optional
+        Actual magnetic field strength in A/m, shape (ny, nx, 3).
+    current_density_a_per_m2 : np.ndarray, optional
+        Actual current density in A/m² for the far-field calculation.
+    spatial_extent_m : tuple, optional
+        ``(x_min, x_max, y_min, y_max)`` in meters. If omitted for a supplied
+        current density, ``mode_data.extent`` is interpreted in nanometers.
+    time_average : bool, optional
+        Whether supplied complex E/H arrays are peak phasors. If omitted, the
+        numerical field dtype selects peak-phasor (complex) or instantaneous
+        (real) formulas.
 
     Returns:
     --------
@@ -520,60 +677,72 @@ def analyze_electromagnetic_properties(
     """
     config = config or ElectromagneticAnalysisConfig()
 
-    # Initialize analysis modules
     poynting_analyzer = PoyntingVectorAnalysis(config)
     radiation_analyzer = RadiationPatternAnalysis(config)
-    QFactorAnalysis(config)
+    has_one_field = (electric_field_v_per_m is None) != (magnetic_field_a_per_m is None)
+    if has_one_field:
+        return {
+            "analysis_successful": False,
+            "analysis_status": "invalid_input",
+            "error": "Supply both electric_field_v_per_m and magnetic_field_a_per_m",
+        }
 
-    results: dict[str, Any] = {}
-
-    log.info(
-        f"Starting electromagnetic analysis for frequency {mode_data.frequency:.3f} GHz"
-    )
-
-    # Extract field components (assuming mode_array contains magnetization)
-    # In real implementation, would need proper E and H field calculation
-    # For now, use approximation based on magnetization dynamics
+    has_fields = electric_field_v_per_m is not None
+    has_current = current_density_a_per_m2 is not None
+    results: dict[str, Any] = {
+        "analysis_successful": False,
+        "analysis_status": "unavailable",
+        "field_analysis_available": False,
+        "radiation_analysis_available": False,
+    }
+    if not has_fields and not has_current:
+        results["error"] = (
+            "FMR mode data contains magnetization only; provide actual E/H fields "
+            "and/or current density to run electromagnetic analysis"
+        )
+        return results
 
     try:
-        # Mock field calculation - in practice this would be more sophisticated
-        m_data = mode_data.mode_array
+        if has_fields:
+            E_field = np.asarray(electric_field_v_per_m)
+            H_field = np.asarray(magnetic_field_a_per_m)
+            results["poynting_vector"] = poynting_analyzer.compute_poynting_vector(
+                E_field, H_field, time_average=time_average
+            )
+            results["energy_densities"] = poynting_analyzer.compute_energy_density(
+                E_field, H_field, time_average=time_average
+            )
+            results["field_analysis_available"] = True
 
-        # Approximate electric field from magnetization precession
-        # E ∝ ∂M/∂t ∝ iωM for harmonic motion
-        omega = 2 * np.pi * mode_data.frequency * 1e9  # Convert GHz to Hz
-        E_field = 1j * omega * m_data * config.mu_0  # Simplified approximation
+        if current_density_a_per_m2 is not None:
+            if spatial_extent_m is None:
+                if not hasattr(mode_data, "extent"):
+                    raise ValueError(
+                        "spatial_extent_m is required when mode_data has no extent"
+                    )
+                extent_values = tuple(float(value) * 1e-9 for value in mode_data.extent)
+                if len(extent_values) != 4:
+                    raise ValueError("mode_data.extent must contain four bounds")
+                spatial_extent_m = cast(
+                    tuple[float, float, float, float], extent_values
+                )
+            frequency_hz = float(mode_data.frequency) * 1e9
+            results["far_field"] = radiation_analyzer.compute_far_field(
+                current_density_a_per_m2,
+                spatial_extent_m,
+                frequency_hz,
+            )
+            results["radiation_analysis_available"] = True
 
-        # Approximate magnetic field from curl of E
-        # For simplicity, assume H ∝ M
-        H_field = m_data / config.mu_0
-
-        # Poynting vector analysis
-        poynting_vector = poynting_analyzer.compute_poynting_vector(E_field, H_field)
-        energy_densities = poynting_analyzer.compute_energy_density(E_field, H_field)
-
-        results["poynting_vector"] = poynting_vector
-        results["energy_densities"] = energy_densities
-
-        # Current density for radiation analysis (∂M/∂t)
-        current_density = 1j * omega * m_data * config.gamma  # Magnetization current
-
-        # Radiation pattern analysis
-        extent_m = cast(
-            tuple[float, float, float, float], tuple(x * 1e-9 for x in mode_data.extent)
-        )  # Convert nm to m
-        far_field = radiation_analyzer.compute_far_field(
-            current_density, extent_m, omega / (2 * np.pi)
-        )
-
-        results["far_field"] = far_field
-        results["analysis_successful"] = True
-
-        log.info("Electromagnetic analysis completed successfully")
+        complete = has_fields and has_current
+        results["analysis_successful"] = bool(complete)
+        results["analysis_status"] = "complete" if complete else "partial"
+        log.info("Electromagnetic analysis status: %s", results["analysis_status"])
 
     except Exception as e:
         log.error(f"Electromagnetic analysis failed: {e}")
         results["analysis_successful"] = False
+        results["analysis_status"] = "error"
         results["error"] = str(e)
 
     return results

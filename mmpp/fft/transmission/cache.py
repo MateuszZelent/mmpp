@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -37,12 +38,20 @@ class TransmissionCache:
             return value.decode("utf-8")
         return value if isinstance(value, str) else None
 
+    def _source_identity(self) -> str:
+        """Return the canonical source archive path used to scope cache entries."""
+        return str(Path(self.job_result.path).expanduser().resolve())
+
     def _serialize_for_json(self, obj: Any) -> Any:
         """Recursively prepare object for JSON serialization."""
         if obj is None or isinstance(obj, (bool, int, float, str)):
             return obj
         if isinstance(obj, (bytes, bytearray)):
             return obj.decode("utf-8")
+        if isinstance(obj, np.generic):
+            return self._serialize_for_json(obj.item())
+        if isinstance(obj, np.ndarray):
+            return self._serialize_for_json(obj.tolist())
         if isinstance(obj, (list, tuple)):
             return [self._serialize_for_json(item) for item in obj]
         if isinstance(obj, dict):
@@ -249,12 +258,13 @@ class TransmissionCache:
         config_dict.pop("progress_callback", None)
 
         # Add slice info to cache key
+        config_dict["source_archive"] = self._source_identity()
         if slice_info is not None:
             config_dict["slice_info"] = self._serialize_for_json(slice_info)
         if view_identity is not None:
             config_dict["view_identity"] = str(view_identity)
 
-        config_json = json.dumps(config_dict, sort_keys=True)
+        config_json = json.dumps(self._serialize_for_json(config_dict), sort_keys=True)
         hash_obj = hashlib.sha256(config_json.encode())
         return hash_obj.hexdigest()[:16]
 
@@ -313,6 +323,19 @@ class TransmissionCache:
             return None
 
         entry = cast(Any, entry_node)
+        if entry.attrs.get("complete") is not True:
+            log.debug("Ignoring incomplete transmission cache entry %s", entry_name)
+            return None
+
+        # A custom cache directory can serve several source archives. Older
+        # entries were keyed only by dataset/configuration and could return a
+        # different job's spectrum when the names happened to match.
+        stored_source = self._ensure_text(entry.attrs.get("zarr_path"))
+        if stored_source is None or Path(stored_source).expanduser().resolve() != Path(
+            self._source_identity()
+        ):
+            log.debug("Cache source archive mismatch for %s", entry_name)
+            return None
 
         # Verify configuration matches
         stored_config_json = entry.attrs.get("config_json")
@@ -374,6 +397,10 @@ class TransmissionCache:
         complex_spectra_summary = self._load_group_array(
             entry, "complex_spectra_summary"
         )
+        cross_spectrum = self._load_group_array(entry, "cross_spectrum")
+        if config.method == "cpsd" and cross_spectrum is None:
+            log.debug("CPSD cache entry %s has no coherent cross spectrum", entry_name)
+            return None
 
         # Load metadata
         metadata_json = entry.attrs.get("metadata_json", "{}")
@@ -398,6 +425,7 @@ class TransmissionCache:
             transverse_power=transverse_power,
             longitudinal_power=longitudinal_power,
             complex_spectra_summary=complex_spectra_summary,
+            cross_spectrum=cross_spectrum,
         )
 
     def save_result(
@@ -437,17 +465,23 @@ class TransmissionCache:
         log.debug("Saving cache entry: %s (key=%s)", entry_name, cache_key[:16])
 
         if entry_name in cache_group:
-            if not overwrite:
+            existing = cache_group[entry_name]
+            if not overwrite and existing.attrs.get("complete") is True:
                 log.info(
                     "Transmission cache %s already exists (use overwrite=True to replace)",
                     entry_name,
                 )
                 return
-            log.debug("Overwriting existing cache entry: %s", entry_name)
+            log.debug(
+                "Replacing incomplete or explicitly overwritten cache entry: %s",
+                entry_name,
+            )
             del cache_group[entry_name]
 
+        temporary_name = f"{entry_name}.tmp-{uuid.uuid4().hex}"
+
         try:
-            entry = cache_group.create_group(entry_name)
+            entry = cache_group.create_group(temporary_name)
         except ValueError as exc:
             message = str(exc).lower()
             if "read-only" in message or "read only" in message:
@@ -455,37 +489,23 @@ class TransmissionCache:
                 return
             raise
 
-        # Save required arrays
-        self._create_dataset(entry, "frequencies", result.frequencies)
-        self._create_dataset(entry, "x_positions", result.x_positions)
-        self._create_dataset(entry, "transmission", result.transmission)
-        self._create_dataset(entry, "power_map", result.power_map)
-        self._create_dataset(entry, "reference_power", result.reference_power)
+        try:
+            self._populate_entry(entry, result, slice_info)
+        except Exception:
+            if temporary_name in cache_group:
+                del cache_group[temporary_name]
+            raise
 
-        # Save optional arrays
-        if result.power_plus is not None:
-            self._create_dataset(entry, "power_plus", result.power_plus)
-        if result.power_minus is not None:
-            self._create_dataset(entry, "power_minus", result.power_minus)
-        if result.transverse_power is not None:
-            self._create_dataset(entry, "transverse_power", result.transverse_power)
-        if result.longitudinal_power is not None:
-            self._create_dataset(entry, "longitudinal_power", result.longitudinal_power)
-        if result.complex_spectra_summary is not None:
-            self._create_dataset(
-                entry, "complex_spectra_summary", result.complex_spectra_summary
-            )
-
-        # Save configuration and metadata
-        from dataclasses import asdict
-
-        entry.attrs["config_json"] = json.dumps(asdict(result.config))
-        entry.attrs["metadata_json"] = json.dumps(result.metadata)
-        entry.attrs["dataset_name"] = self.dataset_name
-        entry.attrs["slice_info"] = json.dumps(self._serialize_for_json(slice_info))
-        entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
-        entry.attrs["job_name"] = getattr(self.job_result, "name", "")
-        entry.attrs["zarr_path"] = str(self.job_result.path)
+        # Publish only after every array and metadata field has been written.
+        # The completion marker is added after the move so interrupted writes
+        # can never masquerade as valid cache hits.
+        try:
+            cache_group.move(temporary_name, entry_name)
+            cache_group[entry_name].attrs["complete"] = True
+        except Exception:
+            if temporary_name in cache_group:
+                del cache_group[temporary_name]
+            raise
 
         store = getattr(cache_group, "store", None)
         store_desc = (
@@ -502,3 +522,45 @@ class TransmissionCache:
                 else "<unknown>"
             ),
         )
+
+    def _populate_entry(
+        self,
+        entry: Any,
+        result: TransmissionResult,
+        slice_info: Any,
+    ) -> None:
+        """Write arrays and serializable metadata into an unpublished entry."""
+        self._create_dataset(entry, "frequencies", result.frequencies)
+        self._create_dataset(entry, "x_positions", result.x_positions)
+        self._create_dataset(entry, "transmission", result.transmission)
+        self._create_dataset(entry, "power_map", result.power_map)
+        self._create_dataset(entry, "reference_power", result.reference_power)
+
+        optional_arrays = {
+            "power_plus": result.power_plus,
+            "power_minus": result.power_minus,
+            "transverse_power": result.transverse_power,
+            "longitudinal_power": result.longitudinal_power,
+            "complex_spectra_summary": result.complex_spectra_summary,
+            "cross_spectrum": result.cross_spectrum,
+        }
+        for name, array in optional_arrays.items():
+            if array is not None:
+                self._create_dataset(entry, name, array)
+
+        from dataclasses import asdict
+
+        config_dict = asdict(result.config)
+        # Callbacks are runtime-only and cannot be represented in JSON.
+        config_dict.pop("progress_callback", None)
+        entry.attrs["config_json"] = json.dumps(
+            self._serialize_for_json(config_dict), sort_keys=True
+        )
+        entry.attrs["metadata_json"] = json.dumps(
+            self._serialize_for_json(result.metadata), sort_keys=True
+        )
+        entry.attrs["dataset_name"] = self.dataset_name
+        entry.attrs["slice_info"] = json.dumps(self._serialize_for_json(slice_info))
+        entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
+        entry.attrs["job_name"] = getattr(self.job_result, "name", "")
+        entry.attrs["zarr_path"] = self._source_identity()

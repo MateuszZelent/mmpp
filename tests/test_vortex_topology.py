@@ -25,7 +25,7 @@ def _make_vortex_snapshot(
         center_y = (ny - 1) / 2.0
 
     x = np.arange(nx, dtype=float) - center_x
-    y = np.arange(ny, dtype=float) - center_y
+    y = center_y - np.arange(ny, dtype=float)
     x_grid, y_grid = np.meshgrid(x, y)
 
     radius = np.hypot(x_grid, y_grid)
@@ -113,7 +113,7 @@ def test_topology_convention_parameter_is_supported():
         convention=XYConvention(y_axis="up"),
     )
 
-    assert abs(result_down.Q - 0.5) < 0.02
+    assert abs(result_down.Q + 0.5) < 0.02
     assert abs(result_up.Q - 0.5) < 0.02
     assert result_down.convention == "down"
     assert result_up.convention == "up"

@@ -65,7 +65,7 @@ class CoreHealthStatus:
         was passed.  Read-only marker used by downstream code.
     """
 
-    is_healthy: bool
+    is_healthy: bool | None
     polarity_flipped: bool
     annihilated: bool
     boundary_collision: bool
@@ -74,6 +74,7 @@ class CoreHealthStatus:
     min_wall_distance_frac: float | None = None
     warnings: list[str] = field(default_factory=list)
     excluded: bool = False
+    status: str = "unavailable"
 
     # ------------------------------------------------------------------
     # Convenience helpers
@@ -131,9 +132,10 @@ class CoreHealthStatus:
     def _repr_html_(self) -> str:
         from html import escape as _esc
 
-        color = "#22c55e" if self.is_healthy else "#f97316"
-        label = "HEALTHY" if self.is_healthy else "ISSUES DETECTED"
+        color = "#22c55e" if self.is_healthy is True else "#f97316"
+        label = self.status.upper().replace("_", " ")
         rows = [
+            ("status", label),
             ("polarity_flipped", str(self.polarity_flipped)),
             ("annihilated", str(self.annihilated)),
             ("boundary_collision", str(self.boundary_collision)),
@@ -179,7 +181,13 @@ class CoreHealthStatus:
         )
 
     def __repr__(self) -> str:  # noqa: D105
-        status = "HEALTHY" if self.is_healthy else "UNHEALTHY"
+        status = (
+            "HEALTHY"
+            if self.is_healthy is True
+            else "UNHEALTHY"
+            if self.is_healthy is False
+            else str(self.status).upper()
+        )
         return (
             f"CoreHealthStatus({status}, "
             f"annihilated={self.annihilated}, "
@@ -193,45 +201,50 @@ class CoreHealthStatus:
 # ---------------------------------------------------------------------------
 
 
-def _average_core_mz(data: np.ndarray, frame_idx: int, core_fraction: float) -> float:
-    """Return mean ``m_z`` in the central ``core_fraction`` of the disk.
-
-    Parameters
-    ----------
-    data : ndarray, shape (Nt, Ny, Nx, 3) or (Nt, Nz, Ny, Nx, 3)
-        Full magnetisation array.
-    frame_idx : int
-        Time-step index (0 = first, -1 = last).
-    core_fraction : float
-        Fraction of the grid radius considered the "core region".
-    """
+def _frame_mz(data: np.ndarray, frame_idx: int) -> np.ndarray | None:
+    """Return one out-of-plane frame from an MMPP vector-field array."""
     arr = np.asarray(data, dtype=float)
-
-    # Normalise to (Ny, Nx, 3)
     if arr.ndim == 5:
-        # (Nt, Nz, Ny, Nx, 3) → pick middle z layer
-        frame = arr[frame_idx, arr.shape[1] // 2, ...]
+        frame = arr[frame_idx, arr.shape[1] // 2]
     elif arr.ndim == 4:
         frame = arr[frame_idx]
     elif arr.ndim == 3:
         frame = arr
     else:
-        return float("nan")
+        return None
+    if frame.ndim != 3 or frame.shape[-1] < 3:
+        return None
+    return np.asarray(frame[..., 2], dtype=float)
 
-    mz = frame[..., 2]  # (Ny, Nx)
+
+def _local_core_mz(
+    data: np.ndarray,
+    frame_idx: int,
+    x_m: float,
+    y_m: float,
+    *,
+    dx: float,
+    dy: float,
+    y_axis: str,
+    radius_pixels: int,
+) -> tuple[float, float]:
+    """Return signed and absolute local ``m_z`` around a tracked core point."""
+    mz = _frame_mz(data, frame_idx)
+    if mz is None or not np.isfinite(mz).all():
+        return float("nan"), float("nan")
     ny, nx = mz.shape
-
-    # Build a circular mask centred on the grid
-    cy, cx = (ny - 1) / 2.0, (nx - 1) / 2.0
-    r_max = min(cy, cx) * core_fraction
-    yy, xx = np.mgrid[0:ny, 0:nx]
-    dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-    mask = dist <= r_max
-
-    if not np.any(mask):
-        return float(np.mean(mz))
-
-    return float(np.mean(mz[mask]))
+    xi = int(round(float(x_m) / dx))
+    yi = int(round(float(y_m) / dy))
+    if y_axis == "up":
+        yi = ny - 1 - yi
+    if not (0 <= xi < nx and 0 <= yi < ny):
+        return float("nan"), float("nan")
+    x0, x1 = max(0, xi - radius_pixels), min(nx, xi + radius_pixels + 1)
+    y0, y1 = max(0, yi - radius_pixels), min(ny, yi + radius_pixels + 1)
+    patch = mz[y0:y1, x0:x1]
+    if patch.size == 0:
+        return float("nan"), float("nan")
+    return float(np.mean(patch)), float(np.mean(np.abs(patch)))
 
 
 def _min_wall_distance(
@@ -260,6 +273,7 @@ def check_core_health(
     *,
     trajectory=None,
     disk_radius: float | None = None,
+    disk_center: tuple[float, float] | None = None,
     mz_annihilation_threshold: float = 0.05,
     boundary_fraction: float = 0.85,
     core_fraction: float = 0.25,
@@ -294,6 +308,17 @@ def check_core_health(
     -------
     CoreHealthStatus
     """
+    for name, value, lower, upper in (
+        ("mz_annihilation_threshold", mz_annihilation_threshold, 0.0, 1.0),
+        ("boundary_fraction", boundary_fraction, 0.0, 1.0),
+        ("core_fraction", core_fraction, 0.0, 1.0),
+    ):
+        if not np.isfinite(value) or not lower < value <= upper:
+            raise ValueError(f"{name} must be finite and in ({lower}, {upper}]")
+    if disk_center is not None:
+        if len(disk_center) != 2 or not np.isfinite(disk_center).all():
+            raise ValueError("disk_center must contain two finite coordinates")
+
     # ---- resolve dataset -----------------------------------------------
     if dataset_name is None:
         try:
@@ -311,12 +336,56 @@ def check_core_health(
     except Exception:
         pass
 
-    # ---- compute mz at start / end ------------------------------------
+    # ---- measure local mz at the tracked endpoints ---------------------
     mz_initial = float("nan")
     mz_final = float("nan")
-    if data is not None and data.ndim >= 3:
-        mz_initial = _average_core_mz(data, 0, core_fraction)
-        mz_final = _average_core_mz(data, -1, core_fraction)
+    abs_mz_final = float("nan")
+    local_state_available = False
+    tx = np.asarray(getattr(trajectory, "x", []), dtype=float).reshape(-1)
+    ty = np.asarray(getattr(trajectory, "y", []), dtype=float).reshape(-1)
+    if (
+        data is not None
+        and data.ndim in {4, 5}
+        and tx.size == ty.size == data.shape[0]
+        and tx.size >= 2
+    ):
+        attrs = getattr(job_result, "attrs", {}) or {}
+        try:
+            dx = float(attrs.get("dx", attrs.get("cellsize_x")))
+            dy = float(attrs.get("dy", attrs.get("cellsize_y", dx)))
+        except (TypeError, ValueError):
+            dx = dy = float("nan")
+        if np.isfinite(dx) and np.isfinite(dy) and dx > 0.0 and dy > 0.0:
+            metadata = getattr(trajectory, "metadata", {}) or {}
+            y_axis = str(metadata.get("y_axis", "up")).lower()
+            if y_axis not in {"up", "down"}:
+                y_axis = "up"
+            radius_px = int(
+                np.clip(round(min(data.shape[-3:-1]) * float(core_fraction) / 2), 1, 4)
+            )
+            mz_initial, _ = _local_core_mz(
+                data,
+                0,
+                tx[0],
+                ty[0],
+                dx=dx,
+                dy=dy,
+                y_axis=y_axis,
+                radius_pixels=radius_px,
+            )
+            mz_final, abs_mz_final = _local_core_mz(
+                data,
+                -1,
+                tx[-1],
+                ty[-1],
+                dx=dx,
+                dy=dy,
+                y_axis=y_axis,
+                radius_pixels=radius_px,
+            )
+            local_state_available = bool(
+                np.isfinite(mz_initial) and np.isfinite(mz_final)
+            )
 
     # ---- classify problems --------------------------------------------
     polarity_flipped = False
@@ -325,11 +394,12 @@ def check_core_health(
     min_wall_frac: float | None = None
     warn_msgs: list[str] = []
 
-    if np.isfinite(mz_initial) and np.isfinite(mz_final):
-        if abs(mz_final) < mz_annihilation_threshold:
+    if local_state_available:
+        if abs_mz_final < mz_annihilation_threshold:
             annihilated = True
             warn_msgs.append(
-                f"Core annihilated: |mz_final|={abs(mz_final):.3f} < {mz_annihilation_threshold}"
+                "No localized out-of-plane core signal at the tracked final position: "
+                f"mean(|mz|)={abs_mz_final:.3f} < {mz_annihilation_threshold}"
             )
         elif np.sign(mz_initial) != np.sign(mz_final) and mz_initial != 0.0:
             polarity_flipped = True
@@ -339,11 +409,8 @@ def check_core_health(
             )
 
     # ---- boundary collision via trajectory ----------------------------
-    if trajectory is not None:
+    if trajectory is not None and tx.size == ty.size and tx.size > 0:
         try:
-            tx = np.asarray(trajectory.x, dtype=float)
-            ty = np.asarray(trajectory.y, dtype=float)
-
             # Resolve disk radius
             R = disk_radius
             if R is None or not np.isfinite(R) or R <= 0.0:
@@ -366,11 +433,48 @@ def check_core_health(
                             except Exception:
                                 pass
 
-            if R is not None and np.isfinite(R) and R > 0.0:
-                cx = float(np.mean(tx))
-                cy = float(np.mean(ty))
+            if (
+                R is not None
+                and np.isfinite(R)
+                and R > 0.0
+                and np.isfinite(tx).all()
+                and np.isfinite(ty).all()
+            ):
+                if disk_center is not None:
+                    cx, cy = map(float, disk_center)
+                else:
+                    attrs = getattr(job_result, "attrs", {}) or {}
+                    if data is not None and data.ndim in {4, 5}:
+                        ny, nx = data.shape[-3:-1]
+                    else:
+                        ny = nx = 1
+                    center_x = attrs.get("center_x")
+                    center_y = attrs.get("center_y")
+                    dx = attrs.get("dx", attrs.get("cellsize_x"))
+                    dy = attrs.get("dy", attrs.get("cellsize_y", dx))
+                    if center_x is None or center_y is None:
+                        if dx is None or dy is None or nx < 2 or ny < 2:
+                            raise ValueError(
+                                "Cannot infer disk center without physical grid spacing"
+                            )
+                        dx_value, dy_value = float(dx), float(dy)
+                        if (
+                            not np.isfinite(dx_value)
+                            or not np.isfinite(dy_value)
+                            or dx_value <= 0.0
+                            or dy_value <= 0.0
+                        ):
+                            raise ValueError("Grid spacing must be finite and positive")
+                        if center_x is None:
+                            center_x = (nx - 1) * dx_value / 2.0
+                        if center_y is None:
+                            center_y = (ny - 1) * dy_value / 2.0
+                    cx, cy = float(center_x), float(center_y)
+                    if not np.isfinite([cx, cy]).all():
+                        raise ValueError("Disk center must be finite")
                 frac = _min_wall_distance(tx, ty, R, cx, cy)
-                min_wall_frac = frac
+                if np.isfinite(frac):
+                    min_wall_frac = frac
                 if frac < (1.0 - boundary_fraction):
                     boundary_collision = True
                     r_max_nm = (R - frac * R) * 1e9
@@ -378,10 +482,29 @@ def check_core_health(
                         f"Boundary collision: core reached {r_max_nm:.1f} nm "
                         f"from disk edge ({frac * 100:.1f}% R left)"
                     )
-        except Exception:
-            pass
+        except (TypeError, ValueError, OverflowError):
+            min_wall_frac = None
 
-    is_healthy = not (polarity_flipped or annihilated or boundary_collision)
+    issues_detected = polarity_flipped or annihilated or boundary_collision
+    has_boundary_measurement = min_wall_frac is not None
+    complete = local_state_available and has_boundary_measurement
+    is_healthy = False if issues_detected else (True if complete else None)
+    if issues_detected:
+        status_label = "unhealthy"
+    elif complete:
+        status_label = "healthy"
+    elif local_state_available or has_boundary_measurement:
+        status_label = "partial"
+        warn_msgs.append(
+            "Core health is partial: local texture and boundary status could not "
+            "both be assessed."
+        )
+    else:
+        status_label = "unavailable"
+        warn_msgs.append(
+            "Core health is unavailable: a time-aligned tracked core, local field "
+            "data, and physical cell spacing are required."
+        )
     return CoreHealthStatus(
         is_healthy=is_healthy,
         polarity_flipped=polarity_flipped,
@@ -391,4 +514,5 @@ def check_core_health(
         mz_final=mz_final,
         min_wall_distance_frac=min_wall_frac,
         warnings=warn_msgs,
+        status=status_label,
     )

@@ -72,6 +72,7 @@ tests/**
 !tests/notebooks/vortex/
 !tests/notebooks/vortex/vortex_dynamics.ipynb
 !tests/test_dispersion_mode_extraction.py
+!tests/test_fft_physics_contracts.py
 !tests/test_dispersion_benchmark.py
 !tests/test_vortex_thiele_audit.py
 !tests/test_dispersion_release_gate.py
@@ -82,6 +83,7 @@ tests/**
 !tests/test_vortex_modes.py
 !tests/test_vortex_nonlinear.py
 !tests/test_vortex_events.py
+!tests/test_vortex_autofit_regressions.py
 !tests/test_vortex_signals.py
 !tests/test_vortex_energy.py
 !tests/test_vortex_interactive.py
@@ -232,6 +234,7 @@ docs/HYSTERESIS_IMPLEMENTATION_AUDIT.md
 !docs/tutorials/vortex_thiele_dynamics.md
 !docs/analysis/VORTEX_CURRENT_DRIVEN_THIELE_AUDIT_2026-08-31.md
 !docs/analysis/INTERACTIVE_UI_SCIENTIFIC_AUDIT_2026-09-25.md
+!docs/analysis/MMPP_DEEP_CODE_AUDIT_2026-10-07.md
 tests/notebooks/vortex/vortex_dynamics.ipynb
 tests/test.ipynb
 vortex_analytical_model.zip

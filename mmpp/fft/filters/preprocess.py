@@ -62,6 +62,25 @@ def detrend_linear(data: np.ndarray) -> np.ndarray:
     return arr - (mean + slope * x.reshape(reshape))
 
 
+def detrend_polynomial(data: np.ndarray, order: int = 2) -> np.ndarray:
+    """Remove a polynomial trend of degree 0, 1, or 2 along time."""
+    arr = np.asarray(data)
+    if arr.ndim == 0 or arr.size == 0:
+        return arr
+    if isinstance(order, (bool, np.bool_)) or int(order) not in {0, 1, 2}:
+        raise ValueError("polynomial detrend order must be 0, 1, or 2")
+    degree = int(order)
+    n_time = int(arr.shape[0])
+    if n_time <= degree:
+        return remove_mean(arr)
+    x = np.linspace(-1.0, 1.0, n_time)
+    design = np.vander(x, N=degree + 1, increasing=True)
+    flat = arr.reshape(n_time, -1)
+    coeffs, *_ = np.linalg.lstsq(design, flat, rcond=None)
+    trend = (design @ coeffs).reshape(arr.shape)
+    return arr - trend
+
+
 def remove_mean_and_static(data: np.ndarray) -> np.ndarray:
     """Compose remove_mean + remove_static."""
     # Static subtraction followed by centering leaves no artificial DC term.
@@ -277,7 +296,8 @@ def apply_single_filter(
     if name == "remove_static":
         return remove_static(data)
     if name in {"detrend", "detrend_linear"}:
-        return detrend_linear(data)
+        order = int(parameters.get("order", 1))
+        return detrend_polynomial(data, order=order)
     if name == "remove_mean_and_static":
         return remove_mean_and_static(data)
     if name == "savgol_smooth":

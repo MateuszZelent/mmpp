@@ -209,6 +209,11 @@ class TransmissionConfig:
             raise ValueError(
                 "method='cpsd' requires spatial_window_mode='post_fft' (window axis is needed)"
             )
+        if self.method == "cpsd" and self.average_mode == "median":
+            raise ValueError(
+                "method='cpsd' requires a coherent mean-like spatial reducer; "
+                "average_mode='median' has no defined complex CSD interpretation"
+            )
         if self.raw_fft_output and self.spatial_window_mode != "post_fft":
             log.warning(
                 "raw_fft_output=True requires spatial_window_mode='post_fft'; "
@@ -236,6 +241,9 @@ class TransmissionResult:
     longitudinal_power: np.ndarray | None = None
     # Optional lightweight complex-spectrum summary when keep_complex_fft is True
     complex_spectra_summary: np.ndarray | None = None
+    # For method='cpsd', retain the complex cross spectrum before taking its
+    # magnitude for the real-valued compatibility `power_map` field.
+    cross_spectrum: np.ndarray | None = None
 
     def _repr_html_(self) -> str:
         """HTML representation for Jupyter notebooks."""
@@ -2485,7 +2493,7 @@ def _edge_taper_weighted_average(
     taper_power: float,
 ) -> np.ndarray:
     """Apply separable Hann taper over selected axes and reduce them."""
-    weighted = np.asarray(data, dtype=float)
+    weighted = np.asarray(data)
     norm = 1.0
     for axis in axes:
         axis_len = weighted.shape[axis]
@@ -2536,7 +2544,9 @@ def _apply_transmission_method(
         my = spectrum[..., 1] * np.sqrt(float(component_weights[1]))
         m_plus = (mx + 1j * my) / np.sqrt(2.0)
         m_minus = (mx - 1j * my) / np.sqrt(2.0)
-        metric = 0.5 * (np.abs(m_plus) ** 2 + np.abs(m_minus) ** 2)
+        # The two normalized circular channels are orthogonal and their sum
+        # equals the transverse power for equal component weights.
+        metric = np.abs(m_plus) ** 2 + np.abs(m_minus) ** 2
         # Keep optional longitudinal/extra contributions explicit via weights.
         for comp_idx in range(2, n_comp):
             w = float(component_weights[comp_idx])
@@ -2564,7 +2574,7 @@ def _apply_transmission_method(
                 "CPSD reference spectrum shape mismatch: "
                 f"expected {expected_shape}, got {reference_array.shape}"
             )
-        metric = np.zeros(spectrum.shape[:-1], dtype=float)
+        metric = np.zeros(spectrum.shape[:-1], dtype=np.complex128)
         for comp_idx in range(n_comp):
             w = float(component_weights[comp_idx])
             if w == 0.0:
@@ -2572,7 +2582,7 @@ def _apply_transmission_method(
             comp_spec = spectrum[..., comp_idx]
             ref = reference_array[..., comp_idx]
             ref = np.expand_dims(ref, axis=window_axis)
-            metric += np.abs(comp_spec * np.conj(ref)) * w
+            metric += comp_spec * np.conj(ref) * w
         return metric
 
     raise ValueError(f"Unsupported transmission method: {method}")
@@ -2671,7 +2681,7 @@ def _aggregate_spatial(
         "none" - take z=0 (and y=0 when present), mean over window
     """
 
-    arr = np.asarray(power, dtype=float)
+    arr = np.asarray(power)
     if arr.ndim == 3:
         # (freq, z, window)
         if mode == "none":
@@ -3038,6 +3048,10 @@ class TransmissionCompute:
                 "method='circular' requires at least 2 components (mx,my); "
                 f"got n_comp={n_comp}"
             )
+        if config.enable_circular_components and n_comp < 2:
+            raise ValueError(
+                "enable_circular_components=True requires at least two components (mx,my)"
+            )
 
         # 🐛 CRITICAL DEBUG: Log dimensional interpretation
         log.info(
@@ -3168,6 +3182,11 @@ class TransmissionCompute:
         freqs = np.fft.rfftfreq(n_time, d=dt)
 
         power_map = np.zeros((n_freq, n_windows), dtype=float)
+        cross_spectrum = (
+            np.zeros((n_freq, n_windows), dtype=np.complex128)
+            if config.method == "cpsd"
+            else None
+        )
         transverse_map = (
             np.zeros((n_freq, n_windows), dtype=float)
             if config.store_component_maps
@@ -3261,7 +3280,17 @@ class TransmissionCompute:
             full_spectrum = None  # Won't have single full_spectrum in this mode
 
             # Decide whether to parallelize pre-FFT window processing
-            use_parallel_pre = _USE_JOBLIB and n_windows > 100
+            # The parallel reducer currently returns only the primary
+            # transmission metric. Keep optional result products on the serial
+            # path so callers never receive allocated-but-zero maps.
+            has_optional_outputs = (
+                config.store_component_maps
+                or config.enable_circular_components
+                or config.keep_complex_fft
+            )
+            use_parallel_pre = (
+                _USE_JOBLIB and n_windows > 100 and not has_optional_outputs
+            )
 
             if use_parallel_pre:
                 log.info(
@@ -3397,6 +3426,56 @@ class TransmissionCompute:
                     )
 
                     power_map[:, win_idx] = aggregated
+
+                    if complex_accum is not None:
+                        for comp_idx in range(n_comp):
+                            comp_spec = window_spectrum[..., comp_idx]
+                            spatial_axes = tuple(range(1, comp_spec.ndim))
+                            complex_accum[:, comp_idx] += comp_spec.mean(
+                                axis=spatial_axes
+                            )
+
+                    if transverse_map is not None:
+                        transverse_metric = np.zeros(
+                            window_spectrum.shape[:-1], dtype=float
+                        )
+                        if n_comp > 0:
+                            transverse_metric += np.abs(window_spectrum[..., 0]) ** 2
+                        if n_comp > 1:
+                            transverse_metric += np.abs(window_spectrum[..., 1]) ** 2
+                        transverse_map[:, win_idx] = _aggregate_pre_fft(
+                            transverse_metric,
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+
+                    if longitudinal_map is not None and n_comp > 2:
+                        longitudinal_map[:, win_idx] = _aggregate_pre_fft(
+                            np.abs(window_spectrum[..., 2]) ** 2,
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
+
+                    if (
+                        config.enable_circular_components
+                        and power_plus is not None
+                        and power_minus is not None
+                    ):
+                        if n_comp > 1:
+                            mx_fft = window_spectrum[..., 0]
+                            my_fft = window_spectrum[..., 1]
+                            m_plus = (mx_fft + 1j * my_fft) / np.sqrt(2.0)
+                            m_minus = (mx_fft - 1j * my_fft) / np.sqrt(2.0)
+                            power_plus[:, win_idx] = _aggregate_pre_fft(
+                                np.abs(m_plus) ** 2,
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
+                            power_minus[:, win_idx] = _aggregate_pre_fft(
+                                np.abs(m_minus) ** 2,
+                                config.average_mode,
+                                config.edge_taper_power,
+                            )
 
             t_fft_end = time.time()
             log.info(
@@ -3556,7 +3635,7 @@ class TransmissionCompute:
 
             # Decide on processing strategy
             use_parallel = (
-                _USE_JOBLIB and n_windows > 100
+                _USE_JOBLIB and n_windows > 100 and not config.keep_complex_fft
             )  # Only parallelize for many windows
             use_vectorized = (
                 config.average_mode == "none"
@@ -3564,6 +3643,7 @@ class TransmissionCompute:
                 and config.method == "power_ratio"
                 and not config.enable_circular_components
                 and not config.store_component_maps
+                and not config.keep_complex_fft
                 and not use_parallel
             )
 
@@ -3837,7 +3917,11 @@ class TransmissionCompute:
 
                 # Collect results
                 for win_idx, results in results_list:
-                    power_map[:, win_idx] = results["power"]
+                    if cross_spectrum is not None:
+                        cross_spectrum[:, win_idx] = results["power"]
+                        power_map[:, win_idx] = np.abs(results["power"])
+                    else:
+                        power_map[:, win_idx] = results["power"]
                     if transverse_map is not None and "transverse" in results:
                         transverse_map[:, win_idx] = results["transverse"]
                     if longitudinal_map is not None and "longitudinal" in results:
@@ -3903,11 +3987,7 @@ class TransmissionCompute:
                     )
 
                     # Store longitudinal component map if requested
-                    if (
-                        longitudinal_map is not None
-                        and n_comp > 2
-                        and component_weights[2] != 0
-                    ):
+                    if longitudinal_map is not None and n_comp > 2:
                         mz_fft = spectrum[..., 2]
                         longitudinal_map[:, win_idx] = _aggregate_spatial(
                             np.abs(mz_fft) ** 2,
@@ -3931,28 +4011,24 @@ class TransmissionCompute:
                         config.edge_taper_power,
                     )
 
-                    power_map[:, win_idx] = aggregated
+                    if cross_spectrum is not None:
+                        cross_spectrum[:, win_idx] = aggregated
+                        power_map[:, win_idx] = np.abs(aggregated)
+                    else:
+                        power_map[:, win_idx] = aggregated
 
                     # Store transverse component map if requested (mx + my)
                     if transverse_map is not None:
-                        transverse_power = None
-                        if n_comp > 0 and component_weights[0] != 0:  # mx
-                            mx_fft = spectrum[..., 0]
-                            transverse_power = np.abs(mx_fft) ** 2
-                        if n_comp > 1 and component_weights[1] != 0:  # my
-                            my_fft = spectrum[..., 1]
-                            my_power = np.abs(my_fft) ** 2
-                            if transverse_power is None:
-                                transverse_power = my_power
-                            else:
-                                transverse_power += my_power
-
-                        if transverse_power is not None:
-                            transverse_map[:, win_idx] = _aggregate_spatial(
-                                transverse_power,
-                                config.average_mode,
-                                config.edge_taper_power,
-                            )
+                        transverse_power = np.zeros(spectrum.shape[:-1], dtype=float)
+                        if n_comp > 0:
+                            transverse_power += np.abs(spectrum[..., 0]) ** 2
+                        if n_comp > 1:
+                            transverse_power += np.abs(spectrum[..., 1]) ** 2
+                        transverse_map[:, win_idx] = _aggregate_spatial(
+                            transverse_power,
+                            config.average_mode,
+                            config.edge_taper_power,
+                        )
 
                     # Store circular components if requested
                     if (
@@ -4015,6 +4091,13 @@ class TransmissionCompute:
             "invalid_normalization_bins": invalid_normalization_bins,
         }
         metadata.update(config.metadata)
+        if cross_spectrum is not None:
+            metadata["power_map_observable"] = "magnitude_of_coherently_averaged_csd"
+            metadata["cross_spectrum_definition"] = (
+                "sum(component_weight * S_local * conj(S_reference)); "
+                "complex average over selected spatial samples"
+            )
+            metadata["energy_flux_interpretation"] = False
         if dx_m is not None:
             metadata.setdefault("dx_m", dx_m)
             metadata.setdefault("dx_nm", dx_nm)
@@ -4035,6 +4118,7 @@ class TransmissionCompute:
             power_minus=power_minus,
             transverse_power=transverse_map,
             longitudinal_power=longitudinal_map,
+            cross_spectrum=cross_spectrum,
         )
 
         # Finalize and attach complex-spectrum summary if requested

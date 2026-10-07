@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover
 
 def _y_axis_value(convention: Any | None) -> str:
     if convention is None:
-        return "down"
+        return "up"
     y_axis = getattr(convention, "y_axis", "down")
     return "up" if str(y_axis).lower() == "up" else "down"
 
@@ -32,11 +32,11 @@ def _y_axis_value(convention: Any | None) -> str:
 def _orient_field(
     m_hat: np.ndarray,
     convention: Any | None,
-) -> tuple[np.ndarray, float, bool]:
+) -> tuple[np.ndarray, bool]:
     """Return field oriented for right-handed XY derivatives."""
     if _y_axis_value(convention) == "up":
-        return np.flip(m_hat, axis=0), -1.0, True
-    return m_hat, 1.0, False
+        return np.flip(m_hat, axis=0), True
+    return m_hat, False
 
 
 def normalize_magnetization(m: np.ndarray) -> np.ndarray:
@@ -61,7 +61,7 @@ def topological_density_fd(
 ) -> tuple[np.ndarray, float]:
     """Finite-difference topological density and integrated charge."""
     m_hat = normalize_magnetization(m)
-    oriented, sign, flipped = _orient_field(m_hat, convention)
+    oriented, flipped = _orient_field(m_hat, convention)
     if oriented.shape[0] > 2 and oriented.shape[1] > 2:
         dm_dx = np.gradient(oriented, float(dx), axis=1, edge_order=2)
         dm_dy = np.gradient(oriented, float(dy), axis=0, edge_order=2)
@@ -71,7 +71,7 @@ def topological_density_fd(
 
     cross = np.cross(dm_dx, dm_dy)
     q = np.einsum("...i,...i", oriented, cross) / (4.0 * np.pi)
-    q = np.asarray(q, dtype=float) * sign
+    q = np.asarray(q, dtype=float)
     if flipped:
         q = np.flip(q, axis=0)
     q_total = float(np.sum(q) * float(dx) * float(dy))
@@ -192,19 +192,18 @@ def berg_luscher_Q(
 ) -> float | tuple[np.ndarray, float]:
     """Berg-Luscher topological charge, optionally with density map."""
     m_hat = normalize_magnetization(m)
-    oriented, sign, flipped = _orient_field(m_hat, convention)
+    oriented, flipped = _orient_field(m_hat, convention)
     integral_map, q_total = (
         _berg_luscher_integral_numba(oriented)
         if HAS_NUMBA
         else _berg_luscher_integral_python(oriented)
     )
 
-    q_total *= sign
     if not return_density:
         return float(q_total)
 
     density = integral_map / (float(dx) * float(dy))
-    density = np.asarray(density, dtype=float) * sign
+    density = np.asarray(density, dtype=float)
     if flipped:
         density = np.flip(density, axis=0)
     return np.asarray(density, dtype=float), float(q_total)

@@ -315,11 +315,25 @@ class ModeCharacterAnalyzer:
             )
 
         rotation = None
-        if m_index is not None:
-            if m_index > 0:
-                rotation = "CCW"
-            elif m_index < 0:
-                rotation = "CW"
+        if np.isfinite(phase_xy_mean):
+            quadrature_distance = min(
+                abs(float(_wrap_to_pi(np.array([phase_xy_mean - np.pi / 2]))[0])),
+                abs(float(_wrap_to_pi(np.array([phase_xy_mean + np.pi / 2]))[0])),
+            )
+        else:
+            quadrature_distance = float("inf")
+        phasor_convention = (
+            str(mode.metadata.get("phasor_convention", "")).strip().lower()
+        )
+        if quadrature_distance <= self.config.quadrature_tolerance:
+            if phasor_convention in {"exp(-iwt)", "e^(-iwt)", "negative"}:
+                rotation = "CCW" if phase_xy_mean > 0 else "CW"
+            elif phasor_convention in {"exp(+iwt)", "e^(+iwt)", "positive"}:
+                rotation = "CW" if phase_xy_mean > 0 else "CCW"
+        if rotation is None:
+            notes.append(
+                "temporal_rotation_requires_quadrature_and_declared_phasor_convention"
+            )
 
         labels = [
             f"m={m_index}" if m_index is not None else "m=undetermined",
@@ -477,9 +491,18 @@ class ModeCharacterAnalyzer:
 
             order = np.argsort(phi)
             phi_sorted = phi[order]
-            mx_real = np.real(mx)
-            my_real = np.real(my)
-            complex_field = mx_real[ring_mask] + 1j * my_real[ring_mask]
+            # A global FFT phase multiplies both component phasors equally.
+            # Keep their full complex values so that this arbitrary phase does
+            # not change the spatial winding classification.
+            mx_ring = mx[ring_mask]
+            my_ring = my[ring_mask]
+            circular_plus = mx_ring + 1j * my_ring
+            circular_minus = mx_ring - 1j * my_ring
+            plus_power = float(np.sum(np.abs(circular_plus) ** 2))
+            minus_power = float(np.sum(np.abs(circular_minus) ** 2))
+            complex_field = (
+                circular_plus if plus_power >= minus_power else circular_minus
+            )
             phase = np.angle(complex_field)[order]
             phase_unwrapped = np.unwrap(phase)
 

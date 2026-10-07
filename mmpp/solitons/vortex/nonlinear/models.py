@@ -132,13 +132,17 @@ class STParametersResult:
         return node_card_html(
             "ST Parameters Result",
             icon="🧮",
-            subtitle="Slavin-Tiberkevich parameters extracted from a single trajectory.",
+            subtitle="Trajectory observables; damping and cross-run power require calibration.",
             sections=[
                 metrics_section_html(
                     [
                         ("f_0_ghz", f"{float(self.f_0_ghz):.6g}", None),
                         ("N", f"{float(self.N):.6g}", None),
-                        ("Gamma_G", f"{float(self.Gamma_G):.6g}", None),
+                        (
+                            "Gamma_G",
+                            f"{float(self.Gamma_G):.6g} (not inferred from linewidth)",
+                            None,
+                        ),
                         ("linewidth_hz", f"{float(self.linewidth_hz):.6g}", None),
                         ("Q meaning", "power coefficient of variation", None),
                     ]
@@ -158,12 +162,18 @@ class STParametersResult:
                     ("omega_0", "Auto-oscillation angular frequency"),
                     ("f_0_ghz", "Auto-oscillation frequency in GHz"),
                     ("N", "Nonlinear frequency shift coefficient"),
-                    ("Gamma_G", "Positive damping"),
+                    (
+                        "Gamma_G",
+                        "Legacy field; NaN unless damping is independently identified",
+                    ),
                     ("Q", "Power coefficient of variation"),
                     ("sigma", "Spin-torque efficiency"),
                     ("I_threshold", "Threshold current"),
-                    ("generation_power", "Generated power"),
-                    ("linewidth_hz", "Estimated linewidth"),
+                    (
+                        "generation_power",
+                        "Dimensionless power under recorded radius normalization",
+                    ),
+                    ("linewidth_hz", "Observed trajectory-spectrum FWHM in Hz"),
                     ("quality_factor", "Quality factor"),
                     ("plt", "Plotting accessor"),
                 ],

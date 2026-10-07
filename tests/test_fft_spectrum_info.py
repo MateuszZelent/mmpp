@@ -275,3 +275,45 @@ def test_batch_entry_plot_adds_full_info():
         assert "FFT method 2" in caption
     finally:
         plt.close(figure)
+
+
+def test_spectrum_modes_reports_the_actual_temporal_transform():
+    from mmpp.fft.spectrum.modes.bridge import SpectrumModes
+
+    mode_data = SimpleNamespace(
+        frequency=2.0,
+        metadata={
+            "analysis_config": {"window": True, "dt": 1e-12},
+        },
+    )
+
+    class ModeInterface:
+        _legacy_analyzer = SimpleNamespace(frequencies=np.array([1.0, 2.0]))
+
+        def mode(self, **_kwargs):
+            return SimpleNamespace(mode_data=mode_data)
+
+    interface = ModeInterface()
+    spectrum = SimpleNamespace(
+        _source_fft=SimpleNamespace(modes=interface),
+        _source_job=None,
+        _mode_context={
+            "spectrum_transform": {
+                "method": 1,
+                "window": "hann",
+                "filter_type": "remove_mean",
+                "scaling": "raw",
+                "dt": 1e-12,
+            }
+        },
+        compute_metadata={},
+        frequencies=np.array([1e9, 2e9]),
+    )
+
+    mode = SpectrumModes(spectrum).at(1.9)
+
+    assert mode.analysis_metadata["requested_frequency_hz"] == pytest.approx(1.9e9)
+    assert mode.analysis_metadata["actual_mode_frequency_hz"] == pytest.approx(2.0e9)
+    assert mode.analysis_metadata["frequency_offset_hz"] == pytest.approx(0.1e9)
+    assert mode.analysis_metadata["transform_consistent"] is True
+    assert "cell-wise complex FFTs" in mode.analysis_metadata["spatial_method"]

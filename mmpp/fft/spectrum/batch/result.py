@@ -27,7 +27,7 @@ from .._plotting.info import (
 
 log = get_mmpp_logger("mmpp.fft.spectrum_batch")
 
-BATCH_SPECTRUM_SCHEMA_VERSION = 2
+BATCH_SPECTRUM_SCHEMA_VERSION = 3
 
 # Optional imports
 try:
@@ -203,6 +203,8 @@ class BatchSpectrumResult:
         dataset_name: str = "m",
         z_layer: int = -1,
         schema_version: int = BATCH_SPECTRUM_SCHEMA_VERSION,
+        requested_paths: list[str] | None = None,
+        path_statuses: list[dict[str, Any]] | None = None,
     ):
         """Initialize batch spectrum result.
 
@@ -234,7 +236,38 @@ class BatchSpectrumResult:
         self.dataset_name = str(dataset_name)
         self.z_layer = z_layer
         self.schema_version = schema_version
+        self.requested_paths = [
+            str(path)
+            for path in (requested_paths if requested_paths is not None else job_paths)
+        ]
+        self.path_statuses = (
+            [dict(status) for status in path_statuses]
+            if path_statuses is not None
+            else [
+                {"index": index, "path": path, "status": "success"}
+                for index, path in enumerate(self.requested_paths)
+            ]
+        )
         self._validate_integrity()
+
+    @property
+    def status(self) -> str:
+        """Return whether every requested spectrum succeeded."""
+        return "complete" if self.is_complete else "partial"
+
+    @property
+    def is_complete(self) -> bool:
+        """Whether every requested job produced an accepted spectrum."""
+        return bool(self.path_statuses) and all(
+            entry["status"] == "success" for entry in self.path_statuses
+        )
+
+    @property
+    def failures(self) -> list[dict[str, Any]]:
+        """Return failed or skipped inputs with their reasons."""
+        return [
+            dict(entry) for entry in self.path_statuses if entry["status"] != "success"
+        ]
 
     def _validate_integrity(self) -> None:
         """Validate aligned 1D batch traces and per-job metadata."""
@@ -253,6 +286,25 @@ class BatchSpectrumResult:
             raise ValueError("BatchSpectrumResult requires at least one spectrum")
         if len(self.powers) != count or len(self.job_paths) != count:
             raise ValueError("Spectra, powers, and job_paths must have equal lengths")
+        if len(self.path_statuses) != len(self.requested_paths):
+            raise ValueError("Every requested path must have a corresponding status")
+        valid_statuses = {"success", "failed", "skipped"}
+        for index, (path, entry) in enumerate(
+            zip(self.requested_paths, self.path_statuses, strict=False)
+        ):
+            if entry.get("index") != index or str(entry.get("path")) != path:
+                raise ValueError("Path statuses must preserve requested input order")
+            if entry.get("status") not in valid_statuses:
+                raise ValueError(f"Invalid path status at index {index}")
+            if entry.get("status") != "success" and not entry.get("error"):
+                raise ValueError(f"Non-success path {index} requires an error reason")
+        successful_paths = [
+            str(entry["path"])
+            for entry in self.path_statuses
+            if entry["status"] == "success"
+        ]
+        if successful_paths != self.job_paths:
+            raise ValueError("job_paths must match successful paths in request order")
         for index, (spectrum, power) in enumerate(
             zip(self.spectra, self.powers, strict=False)
         ):
@@ -483,6 +535,8 @@ class BatchSpectrumResult:
         write_zarr_array(root, "powers", np.stack(self.powers, axis=0))
 
         root.attrs["job_paths"] = self.job_paths
+        root.attrs["requested_paths"] = json.dumps(self.requested_paths)
+        root.attrs["path_statuses"] = json.dumps(self.path_statuses, default=str)
         root.attrs["dataset_name"] = self.dataset_name
         root.attrs["z_layer"] = self.z_layer
         root.attrs["schema_version"] = self.schema_version
@@ -553,6 +607,8 @@ class BatchSpectrumResult:
             z_layer=root.attrs.get("z_layer", -1),
             schema_version=root.attrs.get("schema_version", 0),
             config_dict=json.loads(root.attrs.get("config_dict", "{}")),
+            requested_paths=json.loads(root.attrs.get("requested_paths", "[]")),
+            path_statuses=json.loads(root.attrs.get("path_statuses", "[]")),
         )
 
     def plot_heatmap(
@@ -706,6 +762,7 @@ class BatchSpectrumAnalysis:
         sweep_parameters: str | Sequence[str] | None = None,
     ) -> None:
         self.result = result
+        self.sweep_parameters: str | tuple[str, ...] | None
         if isinstance(sweep_parameters, str) or sweep_parameters is None:
             self.sweep_parameters = sweep_parameters
         else:
@@ -722,9 +779,13 @@ class BatchSpectrumAnalysis:
         ``BatchSpectrum.analyze``. With no selection, all varying numeric axes
         in the batch are plotted.
         """
-        selected_parameters = (
-            self.sweep_parameters if parameters is None else parameters
-        )
+        selected_parameters: str | tuple[str, ...] | None
+        if parameters is None:
+            selected_parameters = self.sweep_parameters
+        elif isinstance(parameters, str):
+            selected_parameters = parameters
+        else:
+            selected_parameters = tuple(parameters)
         return self.result.plot_sweeps(parameters=selected_parameters, **kwargs)
 
     def __getattr__(self, name: str) -> Any:

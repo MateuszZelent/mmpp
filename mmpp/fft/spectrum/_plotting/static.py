@@ -154,8 +154,10 @@ def plot_spectrum(
         if vmax > 0:
             traces = traces / vmax
 
-    quantity_label = getattr(result, "spectral_quantity_label", None) or (
-        "PSD" if getattr(result, "power_quantity", "") == "psd" else "Power"
+    quantity_label = (
+        getattr(result, "display_quantity_label", None)
+        or getattr(result, "spectral_quantity_label", None)
+        or ("PSD" if getattr(result, "power_quantity", "") == "psd" else "Power")
     )
     scale_factor = 1.0
     exponent = 0

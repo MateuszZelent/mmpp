@@ -14,7 +14,7 @@ def _binary_polarity_series(values: np.ndarray, threshold: float) -> np.ndarray:
         return np.array([], dtype=int)
 
     out = np.zeros(series.size, dtype=int)
-    current = 1 if series[0] >= 0.0 else -1
+    current = 0
     for idx, value in enumerate(series):
         abs_value = abs(float(value))
         if abs_value >= float(threshold):
@@ -34,7 +34,13 @@ def detect_polarity_switches(
     polarity = _binary_polarity_series(
         np.asarray(trajectory.polarity, dtype=float), threshold
     )
-    confidence = np.asarray(trajectory.confidence, dtype=float)
+    polarity_confidence = (getattr(trajectory, "metadata", {}) or {}).get(
+        "polarity_confidence"
+    )
+    confidence = np.asarray(
+        trajectory.confidence if polarity_confidence is None else polarity_confidence,
+        dtype=float,
+    )
 
     if time.size != polarity.size:
         raise ValueError(
@@ -49,7 +55,7 @@ def detect_polarity_switches(
     for idx in range(1, polarity.size):
         prev_state = int(polarity[idx - 1])
         next_state = int(polarity[idx])
-        if prev_state == next_state:
+        if prev_state == 0 or next_state == 0 or prev_state == next_state:
             continue
 
         t = float(time[idx])

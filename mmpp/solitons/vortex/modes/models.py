@@ -10,8 +10,8 @@ from typing import Any
 class VortexModeResult:
     """Classification result for a single vortex dynamical mode."""
 
-    m_index: int
-    n_index: int
+    m_index: int | None
+    n_index: int | None
     l_index: int | None = None
 
     mode_type: str = "unknown"
@@ -31,7 +31,9 @@ class VortexModeResult:
 
     @property
     def label(self) -> str:
-        """Human-readable mode label."""
+        """Human-readable label without implying unavailable spatial indices."""
+        if self.m_index is None or self.n_index is None:
+            return f"{self.mode_type}({self.frequency_ghz:.6g} GHz)"
         return f"{self.mode_type}(m={self.m_index}, n={self.n_index})"
 
     def _repr_html_(self) -> str:
@@ -51,7 +53,7 @@ class VortexModeResult:
         return node_card_html(
             "Vortex Mode Result (VortexModeResult)",
             icon="🎵",
-            subtitle="Single classified vortex dynamical mode with spectral label and confidence.",
+            subtitle="Trajectory spectral feature; spatial indices require a mode profile.",
             sections=[
                 metrics_section_html(
                     [
@@ -91,8 +93,14 @@ class VortexModeResult:
                 title="Vortex mode result API help",
                 prefix="jobs[-1].solitons.vortex.modes.classify()",
                 properties=[
-                    ("m_index", "Azimuthal mode index"),
-                    ("n_index", "Radial mode index"),
+                    (
+                        "m_index",
+                        "Spatial azimuthal index, if measured from a field profile",
+                    ),
+                    (
+                        "n_index",
+                        "Spatial radial index, if measured from a field profile",
+                    ),
                     ("l_index", "Optional additional index"),
                     ("mode_type", "Mode classification label"),
                     ("rotation_sense", "Rotation-sense classification"),

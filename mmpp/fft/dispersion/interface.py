@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this when cached dispersion results are no longer compatible due to
 # algorithmic/axis-convention changes. Included in the cache context hash.
-DISPERSION_CACHE_SCHEMA_VERSION = 5
+DISPERSION_CACHE_SCHEMA_VERSION = 6
 
 
 class _DispersionProgressReporter:
@@ -594,7 +594,7 @@ class FFTDispersionInterface:
         >>> job[0].fft.dispersion(backend="fftw").compute_1d(axis="x")
         >>> job[0].fft.dispersion(backend="scipy", workers=4).filters(...).compute_1d()
         """
-        from ._fft_backend import set_backend, set_workers
+        from .._backend import set_backend, set_workers
 
         if backend is not None:
             set_backend(backend)
@@ -663,6 +663,7 @@ class FFTDispersionInterface:
                 preloaded_data=self.preloaded_data,
                 time_step_scale=self.time_step_scale,
                 view_geometry=self.view_geometry,
+                job_result=self.parent_fft.job_result,
             )
         return self._analyzer
 
@@ -1422,6 +1423,7 @@ class FFTDispersionInterface:
             orth_axis_label=orth_axis_label,
             dt=self._ensure_float(entry.attrs.get("dt")) or 0.0,
             dx=self._ensure_float(entry.attrs.get("dx")) or 0.0,
+            spatial_origin=self._ensure_float(entry.attrs.get("spatial_origin")) or 0.0,
             flipx=flipx_flag,
             scaling=scaling,
             scaling_factors=scaling_factors,
@@ -1507,6 +1509,7 @@ class FFTDispersionInterface:
             orth_axis_label=result.orth_axis_label,
             dt=result.dt,
             dx=result.dx,
+            spatial_origin=result.spatial_origin,
             flipx=result.flipx,
             scaling=result.scaling,
             scaling_factors=dict(result.scaling_factors or {}),
@@ -1577,6 +1580,7 @@ class FFTDispersionInterface:
         entry.attrs["component"] = result.component
         entry.attrs["dt"] = float(result.dt)
         entry.attrs["dx"] = float(result.dx)
+        entry.attrs["spatial_origin"] = float(result.spatial_origin)
         entry.attrs["flipx"] = bool(result.flipx)
         entry.attrs["scaling"] = str(result.scaling)
         entry.attrs["scaling_factors_json"] = json.dumps(result.scaling_factors or {})
@@ -1931,7 +1935,7 @@ class FFTDispersionInterface:
         _backend = compute_kwargs.pop("backend", None)
         _workers = compute_kwargs.pop("workers", None)
         if _backend is not None or _workers is not None:
-            from ._fft_backend import set_backend, set_workers
+            from .._backend import set_backend, set_workers
 
             if _backend is not None:
                 set_backend(_backend)
@@ -2001,7 +2005,7 @@ class FFTDispersionInterface:
 
         context_payload = dict(compute_kwargs)
         context_payload["flipx"] = bool(flipx)
-        from ._fft_backend import get_info as _get_fft_backend_info
+        from .._backend import get_info as _get_fft_backend_info
 
         backend_info = _get_fft_backend_info()
         context_payload["fft_backend"] = {
@@ -2241,6 +2245,7 @@ class FFTDispersionInterface:
             S_display=filtered_S,
             dt=result.dt,
             dx=result.dx,
+            spatial_origin=result.spatial_origin,
             flipx=result.flipx,
             scaling=result.scaling,
             scaling_factors=dict(result.scaling_factors or {}),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from collections.abc import Sequence
@@ -20,6 +21,67 @@ if TYPE_CHECKING:
     from ..multi import MultiSpectrumResult
 
 log = get_mmpp_logger("mmpp.fft.spectrum_batch")
+
+
+def _source_signature(result: Any, dataset_name: str | None) -> str | None:
+    """Fingerprint source metadata and selected dataset chunk stats, never data bytes."""
+    source_text = getattr(result, "path", None)
+    if not source_text:
+        return None
+    source = Path(str(source_text))
+    if not source.exists():
+        return None
+
+    digest = hashlib.sha256()
+    digest.update(str(source.resolve()).encode())
+    digest.update(str(dataset_name or "").encode())
+    attrs = getattr(result, "attrs", {}) or {}
+    if hasattr(attrs, "items"):
+        for key in ("revision", "generation", "data_revision", "modified_at"):
+            value = attrs.get(key)
+            if value is not None:
+                digest.update(f"{key}={value!r}".encode())
+
+    try:
+        source_stat = source.stat()
+    except OSError:
+        return None
+    if source.is_file():
+        digest.update(f"file:{source_stat.st_size}:{source_stat.st_mtime_ns}".encode())
+        return digest.hexdigest()
+
+    selected = source / str(dataset_name).lstrip("/\\") if dataset_name else source
+    if not selected.exists():
+        selected = source
+    # Include root-level time/geometry metadata because these can affect the
+    # transform even when the selected array chunks themselves are unchanged.
+    metadata_names = {".zattrs", ".zgroup", "zarr.json"}
+    for name in sorted(metadata_names):
+        metadata_path = source / name
+        if metadata_path.is_file():
+            try:
+                stat = metadata_path.stat()
+            except OSError:
+                return None
+            digest.update(f"meta:{name}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+
+    found_file = False
+    try:
+        for root, directories, filenames in os.walk(selected):
+            directories[:] = sorted(
+                name
+                for name in directories
+                if name not in {".mmpp_batch_cache", "fft", ".cache"}
+            )
+            for filename in sorted(filenames):
+                file_path = Path(root) / filename
+                stat = file_path.stat()
+                relative = file_path.relative_to(source)
+                digest.update(f"{relative}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+                found_file = True
+    except OSError:
+        return None
+    return digest.hexdigest() if found_file else None
 
 
 def _batch_trace(
@@ -325,13 +387,29 @@ class BatchSpectrum:
             **kwargs,
         }
 
+        expected_paths = [str(result.path) for result in self.results]
+        source_signatures = [
+            _source_signature(result, active_dataset) for result in self.results
+        ]
+        cache_identity_available = all(
+            signature is not None for signature in source_signatures
+        )
+        if not cache_identity_available:
+            log.info(
+                "Batch disk cache disabled: at least one source has no stable local signature"
+            )
         batch_key = CacheKey.for_batch(
             analysis_type="batch_spectrum",
-            job_paths=[r.path for r in self.results],
+            job_paths=expected_paths,
             dataset_name=active_dataset or "m",
             config=config_for_cache,
             slice_info=active_slice,
             extract_parameters=extract_parameters,
+            source_signatures=(
+                [str(signature) for signature in source_signatures]
+                if cache_identity_available
+                else None
+            ),
         )
 
         if batch_cache_dir is None:
@@ -345,16 +423,22 @@ class BatchSpectrum:
 
         batch_cache_file = batch_cache_dir / f"{batch_key.to_entry_name()}.pkl"
 
-        if not force and save_batch and batch_cache_file.exists():
+        if (
+            cache_identity_available
+            and not force
+            and save_batch
+            and batch_cache_file.exists()
+        ):
             try:
                 log.info("Found cached batch result: %s", batch_cache_file)
                 cached = BatchSpectrumResult.load(batch_cache_file)
-                expected_paths = [str(result.path) for result in self.results]
-                if (
-                    len(cached) == len(self.results)
-                    and cached.job_paths == expected_paths
-                ):
-                    log.info("Loaded %s spectra from cache", len(cached))
+                if cached.requested_paths == expected_paths and cached.path_statuses:
+                    log.info(
+                        "Loaded %s/%s spectra from cache (%s)",
+                        len(cached),
+                        len(expected_paths),
+                        cached.status,
+                    )
                     return cached
                 log.warning(
                     "Batch cache entries or job order differ from the request. Recomputing..."
@@ -478,6 +562,7 @@ class BatchSpectrum:
                     else:
                         errors.append(
                             {
+                                "index": int(result_data["index"]),
                                 "path": result_data["path"],
                                 "error": result_data.get("error", "Unknown"),
                             }
@@ -515,6 +600,7 @@ class BatchSpectrum:
                 else:
                     errors.append(
                         {
+                            "index": int(result_data["index"]),
                             "path": result_data["path"],
                             "error": result_data.get("error", "Unknown"),
                         }
@@ -539,7 +625,12 @@ class BatchSpectrum:
             }
 
         if not computed_spectra:
-            raise RuntimeError(f"All {len(self.results)} spectrum computations failed.")
+            detail = "; ".join(
+                f"{item['path']}: {item['error']}" for item in errors[:5]
+            )
+            raise RuntimeError(
+                f"All {len(self.results)} spectrum computations failed. {detail}"
+            )
 
         # The first successful job in input order, not the fastest thread, owns
         # the canonical grid. This makes parallel and sequential results identical.
@@ -552,6 +643,7 @@ class BatchSpectrum:
             if not bool(is_compatible):
                 errors.append(
                     {
+                        "index": int(computed_indices[idx]),
                         "path": job_paths[idx],
                         "error": (
                             "Frequency grid differs from the first successful input "
@@ -577,6 +669,11 @@ class BatchSpectrum:
                 for value, keep in zip(job_paths, compatible, strict=False)
                 if keep
             ]
+            computed_indices = [
+                value
+                for value, keep in zip(computed_indices, compatible, strict=False)
+                if keep
+            ]
             parameters = {
                 key: [
                     value
@@ -598,12 +695,40 @@ class BatchSpectrum:
 
         successful = len(computed_spectra)
         failed = len(errors)
-        log.info("Batch spectrum: %s successful, %s failed", successful, failed)
+        log.info(
+            "Batch spectrum: %s successful, %s failed or skipped", successful, failed
+        )
         log.info("Total: %.2fs, Average: %.2fs per result", total_time, avg_time)
         if errors:
             log.warning("Errors in %s computations:", len(errors))
             for err in errors[:3]:
                 log.warning("  %s: %s", err["path"], err["error"])
+
+        issue_by_index = {int(item["index"]): item for item in errors}
+        successful_indices = set(computed_indices)
+        path_statuses = []
+        for index, path in enumerate(expected_paths):
+            if index in successful_indices:
+                path_statuses.append(
+                    {"index": index, "path": path, "status": "success"}
+                )
+                continue
+            issue = issue_by_index.get(index)
+            error = (
+                issue["error"]
+                if issue
+                else "No spectrum result was retained for this input"
+            )
+            path_statuses.append(
+                {
+                    "index": index,
+                    "path": path,
+                    "status": "skipped"
+                    if "Frequency grid differs" in error
+                    else "failed",
+                    "error": error,
+                }
+            )
 
         batch_result = BatchSpectrumResult(
             frequencies=computed_frequencies,
@@ -614,12 +739,22 @@ class BatchSpectrum:
             config_dict=config_for_cache,
             dataset_name=active_dataset or "m",
             z_layer=z_layer,
+            requested_paths=expected_paths,
+            path_statuses=path_statuses,
         )
 
-        if save_batch:
+        if save_batch and cache_identity_available:
             try:
-                batch_result.save(batch_cache_file)
-                log.info("Saved batch result to %s", batch_cache_file)
+                signatures_after = [
+                    _source_signature(result, active_dataset) for result in self.results
+                ]
+                if signatures_after != source_signatures:
+                    log.warning(
+                        "Source changed during batch computation; result was not cached"
+                    )
+                else:
+                    batch_result.save(batch_cache_file)
+                    log.info("Saved batch result to %s", batch_cache_file)
             except Exception as exc:
                 log.warning("Failed to save batch: %s", exc)
 

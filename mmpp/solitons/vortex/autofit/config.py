@@ -26,6 +26,8 @@ class ParameterSpec:
             raise ValueError(
                 f"ParameterSpec: lower ({self.lower}) must be < upper ({self.upper})"
             )
+        if not np.isfinite(self.scale) or self.scale <= 0.0:
+            raise ValueError("ParameterSpec.scale must be positive and finite")
         if self.prior_type not in {"gaussian", "log_normal", "uniform"}:
             raise ValueError(
                 f"prior_type must be 'gaussian', 'log_normal', or 'uniform', "

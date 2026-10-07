@@ -106,13 +106,18 @@ def test_energy_potential_and_pinning_from_boltzmann(tmp_path):
     potential = job.m.vortex.energy.potential(
         trajectory=traj,
         method="boltzmann",
+        temperature_k=300.0,
+        assume_equilibrium=True,
         bins=48,
         force=True,
     )
     assert "EffectivePotentialResult" in potential._repr_html_()
     assert potential.radius_m.size > 0
     assert potential.potential_j.shape == potential.radius_m.shape
-    assert potential.method == "boltzmann"
+    assert potential.method == "radial_pmf"
+    assert (
+        potential.metadata["measure_correction"] == "divide radial occupancy by 2*pi*r"
+    )
 
     pinning = job.m.vortex.energy.pinning(
         potential=potential,
@@ -120,7 +125,9 @@ def test_energy_potential_and_pinning_from_boltzmann(tmp_path):
         force=True,
     )
     assert "PinningResult" in pinning._repr_html_()
-    assert len(pinning.sites) >= 1
+    assert pinning.sites == []
+    assert pinning.metadata["status"] == "radial_minima_only"
+    assert pinning.metadata["n_candidates"] >= 1
     ax = pinning.plt.potential_with_sites()
     assert hasattr(ax, "plot")
 

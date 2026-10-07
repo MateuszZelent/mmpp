@@ -57,6 +57,7 @@ class DispersionMode:
 
     # Original (unfolded) coordinates
     k_original: float = 0.0  # Original k before folding
+    tracking_confidence: float = 1.0  # Peak-continuity assignment confidence in [0, 1]
 
     def __repr__(self) -> str:
         return (

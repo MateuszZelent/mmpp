@@ -262,6 +262,7 @@ def _extract_polarity_series(
     *,
     threshold_up: float,
     threshold_down: float,
+    time_axis: np.ndarray | None = None,
 ) -> tuple[np.ndarray, int, list[float]]:
     """Extract polarity time series with hysteresis thresholds."""
     values = np.asarray(core_signal, dtype=float)
@@ -284,11 +285,19 @@ def _extract_polarity_series(
         if state > 0 and value <= threshold_down:
             state = -1
             switch_count += 1
-            switch_times.append(float(idx) * float(dt))
+            switch_times.append(
+                float(time_axis[idx])
+                if time_axis is not None
+                else float(idx) * float(dt)
+            )
         elif state < 0 and value >= threshold_up:
             state = 1
             switch_count += 1
-            switch_times.append(float(idx) * float(dt))
+            switch_times.append(
+                float(time_axis[idx])
+                if time_axis is not None
+                else float(idx) * float(dt)
+            )
         polarity[idx] = state
 
     return polarity, switch_count, switch_times
@@ -311,6 +320,7 @@ def _run_tracking(
     roi: tuple[int, int, int, int] | None,
     metadata: dict[str, Any] | None,
     fallback_from: str | None,
+    time_axis: np.ndarray | None,
 ) -> TrajectoryResult:
     x_down = np.zeros(nt, dtype=float)
     y_down = np.zeros(nt, dtype=float)
@@ -372,12 +382,21 @@ def _run_tracking(
             roi_pixels=polarity_roi_pixels,
         )
 
-    time = np.arange(nt, dtype=float) * float(dt)
+    if time_axis is None:
+        time = np.arange(nt, dtype=float) * float(dt)
+    else:
+        time = np.asarray(time_axis, dtype=float).reshape(-1)
+        if time.size != nt or not np.isfinite(time).all():
+            raise ValueError("time_axis must contain one finite timestamp per frame")
+        intervals = np.diff(time)
+        if intervals.size and not (np.all(intervals > 0.0) or np.all(intervals < 0.0)):
+            raise ValueError("time_axis must be strictly monotonic")
     polarity, switch_count, switch_times = _extract_polarity_series(
         core_signal,
         dt,
         threshold_up=float(polarity_threshold_up),
         threshold_down=float(polarity_threshold_down),
+        time_axis=time,
     )
 
     result_metadata: dict[str, Any] = {
@@ -437,6 +456,7 @@ def track_core(
     polarity_roi_pixels: int = 1,
     roi: tuple[int, int, int, int] | None = None,
     metadata: dict[str, Any] | None = None,
+    time_axis: np.ndarray | None = None,
 ) -> TrajectoryResult:
     """Track vortex core position over time from in-memory arrays."""
     series = _normalize_tracking_input(data, z_layer=z_layer)
@@ -476,6 +496,7 @@ def track_core(
         roi=roi,
         metadata=metadata,
         fallback_from=fallback_from,
+        time_axis=time_axis,
     )
 
 
@@ -495,6 +516,7 @@ def track_core_lazy(
     polarity_roi_pixels: int = 1,
     roi: tuple[int, int, int, int] | None = None,
     metadata: dict[str, Any] | None = None,
+    time_axis: np.ndarray | None = None,
 ) -> TrajectoryResult:
     """Track vortex core position using lazy frame reads from zarr-like arrays."""
     shape = tuple(getattr(data_obj, "shape", ()))
@@ -557,6 +579,7 @@ def track_core_lazy(
         roi=roi,
         metadata=metadata,
         fallback_from=fallback_from,
+        time_axis=time_axis,
     )
 
 

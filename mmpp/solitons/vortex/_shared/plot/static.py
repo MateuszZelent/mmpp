@@ -93,8 +93,8 @@ class TrajectoryPlotAccessor:
         axes[1, 0].set_ylabel("r [m]")
         axes[1, 0].set_title("Orbit radius")
 
-        omega_hz = self._result.instantaneous_frequency / (2.0 * np.pi)
-        axes[1, 1].plot(self._result.time, omega_hz)
+        frequency_hz = self._result.instantaneous_frequency_hz
+        axes[1, 1].plot(self._result.time, frequency_hz)
         axes[1, 1].set_xlabel("Time [s]")
         axes[1, 1].set_ylabel("Frequency [Hz]")
         axes[1, 1].set_title("Instantaneous frequency")

@@ -1424,11 +1424,17 @@ class CIPThieleModel:
         if t_eval.size == 0 or t_eval[-1] < t1:
             t_eval = np.append(t_eval, t1)
 
+        max_step = float(ivp_kwargs.pop("max_step", step))
+        if not np.isfinite(max_step) or max_step <= 0.0:
+            raise ValueError("max_step must be positive and finite")
+        max_step = min(max_step, step)
+
         sol = solve_ivp(
             fun=lambda t, y: self._rhs(t, y, J_func, B_func),
             t_span=(t0, t1),
             y0=initial,
             t_eval=t_eval,
+            max_step=max_step,
             method=method,
             rtol=ivp_kwargs.pop("rtol", 1e-9),
             atol=ivp_kwargs.pop("atol", 1e-12),

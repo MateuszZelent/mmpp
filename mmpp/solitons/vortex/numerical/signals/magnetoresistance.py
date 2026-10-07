@@ -27,41 +27,12 @@ def _normalize_polarizer(
     return x / norm, y / norm, z / norm
 
 
-def _estimate_disk_radius(
-    x: np.ndarray,
-    y: np.ndarray,
-    *,
-    disk_radius: float | None,
-    metadata: dict,
-) -> float:
-    if (
-        disk_radius is not None
-        and np.isfinite(float(disk_radius))
-        and float(disk_radius) > 0.0
-    ):
-        return float(disk_radius)
-
-    meta_r = metadata.get("disk_radius", None)
-    if meta_r is not None:
-        try:
-            value = float(meta_r)
-            if np.isfinite(value) and value > 0.0:
-                return value
-        except Exception:
-            pass
-
-    x0 = float(np.mean(x)) if x.size else 0.0
-    y0 = float(np.mean(y)) if y.size else 0.0
-    radius = np.sqrt((x - x0) ** 2 + (y - y0) ** 2)
-    guess = float(np.percentile(radius, 95)) * 1.1 if radius.size else 1.0e-9
-    return max(guess, 1e-12)
-
-
 def _projection_from_trajectory(
     trajectory: TrajectoryResult,
     *,
     polarizer: tuple[float, float, float] | tuple[float, float],
     disk_radius: float | None,
+    disk_center: tuple[float, float] | None,
     chirality: int | None,
     xi_shape_factor: float = 2.0 / 3.0,
 ) -> np.ndarray:
@@ -69,17 +40,46 @@ def _projection_from_trajectory(
     y = np.asarray(trajectory.y, dtype=float)
     metadata = dict(getattr(trajectory, "metadata", {}) or {})
 
-    x0 = float(np.mean(x)) if x.size else 0.0
-    y0 = float(np.mean(y)) if y.size else 0.0
-    radius_ref = _estimate_disk_radius(
-        x,
-        y,
-        disk_radius=disk_radius,
-        metadata=metadata,
-    )
+    px, py, pz = _normalize_polarizer(polarizer)
+    polarity = np.asarray(trajectory.polarity, dtype=float)
+    if pz != 0.0 and np.any(polarity == 0.0):
+        raise ValueError(
+            "The out-of-plane trajectory proxy requires known core polarity"
+        )
 
-    x_norm = (x - x0) / radius_ref
-    y_norm = (y - y0) / radius_ref
+    if disk_radius is None:
+        disk_radius = metadata.get("disk_radius")
+    if disk_center is None:
+        disk_center = metadata.get("disk_center")
+    if px != 0.0 or py != 0.0:
+        if disk_radius is None:
+            raise ValueError(
+                "In-plane trajectory projection requires an explicit physical "
+                "disk_radius or trajectory.metadata['disk_radius']"
+            )
+        try:
+            radius_ref = float(disk_radius)
+        except (TypeError, ValueError):
+            radius_ref = float("nan")
+        if not np.isfinite(radius_ref) or radius_ref <= 0.0:
+            raise ValueError(
+                "In-plane trajectory projection requires an explicit physical "
+                "disk_radius or trajectory.metadata['disk_radius']"
+            )
+        if disk_center is None:
+            raise ValueError(
+                "In-plane trajectory projection requires disk_center or "
+                "trajectory.metadata['disk_center']"
+            )
+        center = np.asarray(disk_center, dtype=float).reshape(-1)
+        if center.size != 2 or not np.isfinite(center).all():
+            raise ValueError("disk_center must contain two finite coordinates")
+        x_norm = (x - center[0]) / radius_ref
+        y_norm = (y - center[1]) / radius_ref
+    else:
+        radius_ref = None
+        x_norm = np.zeros_like(x)
+        y_norm = np.zeros_like(y)
 
     c = int(
         np.sign(chirality if chirality is not None else metadata.get("chirality", 1))
@@ -90,9 +90,8 @@ def _projection_from_trajectory(
     # Average in-plane magnetization induced by vortex-core displacement.
     mx_avg = -float(c) * xi * y_norm
     my_avg = float(c) * xi * x_norm
-    mz_avg = np.asarray(trajectory.polarity, dtype=float)
+    mz_avg = polarity
 
-    px, py, pz = _normalize_polarizer(polarizer)
     projection = px * mx_avg + py * my_avg + pz * mz_avg
     return np.clip(np.asarray(projection, dtype=float), -1.0, 1.0)
 
@@ -104,13 +103,16 @@ def compute_magnetoresistance(
     resistance_parallel_ohm: float = 100.0,
     delta_resistance_ohm: float = 40.0,
     disk_radius: float | None = None,
+    disk_center: tuple[float, float] | None = None,
     chirality: int | None = None,
 ) -> MagnetoresistanceResult:
     """Compute MR/TMR proxy trace from tracked vortex trajectory."""
+    trajectory_metadata = dict(getattr(trajectory, "metadata", {}) or {})
     projection = _projection_from_trajectory(
         trajectory,
         polarizer=polarizer,
         disk_radius=disk_radius,
+        disk_center=disk_center,
         chirality=chirality,
     )
 
@@ -130,12 +132,20 @@ def compute_magnetoresistance(
             "disk_radius": (
                 float(disk_radius)
                 if disk_radius is not None and np.isfinite(float(disk_radius))
-                else None
+                else trajectory_metadata.get("disk_radius")
+            ),
+            "disk_center": (
+                tuple(float(value) for value in disk_center)
+                if disk_center is not None
+                else trajectory_metadata.get("disk_center")
             ),
             "chirality": int(np.sign(chirality) or 1)
             if chirality is not None
             else None,
             "source_method": trajectory.method,
+            "interpretation": (
+                "uncalibrated trajectory proxy; not a field/contact simulation"
+            ),
         },
     )
 

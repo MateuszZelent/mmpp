@@ -27,6 +27,14 @@ from .polarity import detect_polarity_switches
 from .state_transitions import detect_state_switches
 
 
+def _positive_number(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if np.isfinite(result) and result > 0.0 else None
+
+
 class EventsInterface(InteractiveNodeMixin):
     """Event detection namespace (polarity, state transitions, expulsion, dwell time)."""
 
@@ -93,6 +101,19 @@ class EventsInterface(InteractiveNodeMixin):
                 pass
         return 50.0e-9
 
+    def _declared_disk_radius(self) -> float | None:
+        """Return a radius explicitly stated in job metadata, if present."""
+        attrs = getattr(self._job, "attrs", {}) or {}
+        for key in ("R", "radius", "disk_radius"):
+            value = _positive_number(attrs.get(key))
+            if value is not None:
+                return value
+        for key in ("D", "diameter", "disk_diameter", "pillar_diameter"):
+            value = _positive_number(attrs.get(key))
+            if value is not None:
+                return 0.5 * value
+        return None
+
     def _infer_disk_center(self) -> tuple[float, float]:
         attrs = getattr(self._job, "attrs", {})
         dx = float(attrs.get("dx", 1.0e-9))
@@ -138,6 +159,7 @@ class EventsInterface(InteractiveNodeMixin):
         min_dwell_periods: int = 3,
         refractory: float = 0.5e-9,
         smoothing_window: int = 9,
+        disk_radius: float | None = None,
         force: bool = False,
     ) -> list[StateSwitchEvent]:
         """Detect G/C state transitions."""
@@ -150,6 +172,9 @@ class EventsInterface(InteractiveNodeMixin):
             min_dwell_periods=min_dwell_periods,
             refractory=refractory,
             smoothing_window=smoothing_window,
+            disk_radius=(
+                self._declared_disk_radius() if disk_radius is None else disk_radius
+            ),
         )
         if trajectory is None:
             self._last_states = (events, labels)
@@ -205,6 +230,7 @@ class EventsInterface(InteractiveNodeMixin):
         min_dwell_periods: int = 3,
         refractory: float = 0.5e-9,
         smoothing_window: int = 9,
+        disk_radius: float | None = None,
     ) -> DwellTimeResult:
         """Compute dwell-time statistics for selected state."""
         traj = self._resolve_trajectory(trajectory)
@@ -217,6 +243,9 @@ class EventsInterface(InteractiveNodeMixin):
                 min_dwell_periods=min_dwell_periods,
                 refractory=refractory,
                 smoothing_window=smoothing_window,
+                disk_radius=(
+                    self._declared_disk_radius() if disk_radius is None else disk_radius
+                ),
             )
         return dwell_time_statistics(traj.time, labels, state=state)
 

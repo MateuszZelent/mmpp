@@ -148,6 +148,7 @@ class CacheKey:
         config: Any | None = None,
         slice_info: Any | None = None,
         extract_parameters: list[str] | None = None,
+        source_signatures: list[str] | None = None,
     ) -> CacheKey:
         """Create cache key for batch operations.
 
@@ -182,6 +183,14 @@ class CacheKey:
         config_dict: dict[str, Any] = {"config": serialize_config(config)}
         if extract_parameters:
             config_dict["extract_params"] = sorted(extract_parameters)
+        if source_signatures is not None:
+            if len(source_signatures) != len(job_paths):
+                raise ValueError("source_signatures must align with job_paths")
+            path_signatures = sorted(
+                (str(path), str(signature))
+                for path, signature in zip(job_paths, source_signatures, strict=True)
+            )
+            config_dict["source_signatures"] = path_signatures
         config_hash = hashlib.sha256(str(config_dict).encode()).hexdigest()[:16]
 
         return cls(

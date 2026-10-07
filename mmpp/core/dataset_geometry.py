@@ -343,13 +343,26 @@ def _compose_slices(base: slice, child: slice, source_size: int) -> slice:
     base_start, base_stop, base_step = base.indices(int(source_size))
     base_len = len(range(base_start, base_stop, base_step))
     child_start, child_stop, child_step = child.indices(base_len)
-    if len(range(child_start, child_stop, child_step)) == 0:
+    child_indices = range(child_start, child_stop, child_step)
+    if len(child_indices) == 0:
         return slice(0, 0, 1)
-    return slice(
-        base_start + child_start * base_step,
-        base_start + child_stop * base_step,
-        base_step * child_step,
-    )
+
+    composed_step = base_step * child_step
+    first = base_start + child_indices[0] * base_step
+    last = base_start + child_indices[-1] * base_step
+    stop_value = last + composed_step
+    stop: int | None = stop_value
+
+    # Python normalizes a negative slice stop relative to the array length.
+    # That changes the selected indices when a reverse slice is composed
+    # (for example, slice(4, -1, -1) is empty for an array of length five).
+    # None is the only way to represent a reverse slice through index zero.
+    if composed_step < 0 and stop_value < 0:
+        stop = None
+    elif composed_step > 0 and stop_value > int(source_size):
+        stop = None
+
+    return slice(first, stop, composed_step)
 
 
 def compose_index_keys(

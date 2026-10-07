@@ -17,7 +17,7 @@ from .models import TopologyResult
 
 def _resolve_convention(convention: XYConvention | None) -> XYConvention:
     if convention is None:
-        return XYConvention(y_axis="down")
+        return XYConvention(y_axis="up")
     return convention
 
 
@@ -81,15 +81,22 @@ def _sample_ring_phases(
     cy_pix: float,
     radius_pixels: float,
     n_samples: int = 180,
+    *,
+    y_axis: str = "up",
 ) -> np.ndarray:
     """Sample in-plane angle around a circular contour."""
     ny, nx, _ = m_snapshot.shape
     angles = np.linspace(0.0, 2.0 * np.pi, n_samples, endpoint=False)
     phi_values = np.zeros(n_samples, dtype=float)
+    if str(y_axis).lower() not in {"up", "down"}:
+        raise ValueError("y_axis must be 'up' or 'down'")
+    row_sign = -1.0 if str(y_axis).lower() == "up" else 1.0
 
     for i, theta in enumerate(angles):
         x = int(np.clip(round(cx_pix + radius_pixels * np.cos(theta)), 0, nx - 1))
-        y = int(np.clip(round(cy_pix + radius_pixels * np.sin(theta)), 0, ny - 1))
+        y = int(
+            np.clip(round(cy_pix + row_sign * radius_pixels * np.sin(theta)), 0, ny - 1)
+        )
         vec = m_snapshot[y, x, :2]
         phi_values[i] = np.arctan2(vec[1], vec[0])
 
@@ -98,12 +105,14 @@ def _sample_ring_phases(
 
 def _classify_state(vorticity: int, q_total: float) -> str:
     """Classify coarse topological state from invariants."""
+    # A skyrmion can also have non-zero in-plane winding. Test its closed
+    # topological charge before applying the vortex/antivortex heuristic.
+    if abs(q_total) >= 0.8:
+        return "skyrmion"
     if vorticity > 0:
         return "vortex"
     if vorticity < 0:
         return "antivortex"
-    if abs(q_total) >= 0.8:
-        return "skyrmion"
     if abs(q_total) >= 0.2:
         return "meron"
     return "unknown"
@@ -165,6 +174,7 @@ def detect_topology(
         core_x / max(dx, 1e-15),
         core_y_down / max(dy, 1e-15),
         ring_radius_pix,
+        y_axis=conv.y_axis,
     )
     w_raw = winding_number(phi_ring)
     vorticity = int(np.sign(w_raw)) if abs(w_raw) >= 0.5 else 0

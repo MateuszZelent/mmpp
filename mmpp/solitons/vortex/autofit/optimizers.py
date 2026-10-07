@@ -69,19 +69,29 @@ def run_optimization(
 
     state = _OptimizationState()
 
-    bounds: list[tuple[float, float]] = []
+    bounds_physical: list[tuple[float, float]] = []
+    scales: list[float] = []
     x0_values: list[float] = []
     for name in param_names:
         spec = param_specs[name]
-        bounds.append((spec.lower, spec.upper))
+        bounds_physical.append((spec.lower, spec.upper))
+        scales.append(float(spec.scale))
         x0_values.append(initial_values.get(name, spec.initial or 0.0))
 
-    x0 = np.array(x0_values, dtype=float)
+    scale_array = np.asarray(scales, dtype=float)
+    bounds = [
+        (lower / scale, upper / scale)
+        for (lower, upper), scale in zip(bounds_physical, scales, strict=False)
+    ]
+    x0 = np.asarray(x0_values, dtype=float) / scale_array
     x0 = _clip_to_bounds(x0, bounds)
     state.best_x = x0.copy()
 
     def _scalar_objective(x_vec: np.ndarray) -> float:
-        params = {name: float(x_vec[i]) for i, name in enumerate(param_names)}
+        if state.n_evals >= config.max_eval:
+            raise _MaxEvalReached()
+        physical_values = np.asarray(x_vec, dtype=float) * scale_array
+        params = {name: float(physical_values[i]) for i, name in enumerate(param_names)}
         loss, _ = objective_fn(params)
         state.loss_history.append(loss)
         state.n_evals += 1
@@ -176,13 +186,14 @@ def run_optimization(
 
     best_x = state.best_x
     assert best_x is not None
-    best_params = {name: float(best_x[i]) for i, name in enumerate(param_names)}
+    best_physical = best_x * scale_array
+    best_params = {name: float(best_physical[i]) for i, name in enumerate(param_names)}
 
     # Check active bounds
     active_bounds: dict[str, str] = {}
     for i, name in enumerate(param_names):
-        lo, hi = bounds[i]
-        val = float(best_x[i])
+        lo, hi = bounds_physical[i]
+        val = float(best_physical[i])
         tol = max(abs(hi - lo) * 1e-6, 1e-15)
         if abs(val - lo) < tol:
             active_bounds[name] = "lower"
@@ -195,20 +206,11 @@ def run_optimization(
     poorly_identified: list[str] = []
 
     remaining_budget = config.max_eval - state.n_evals
-    hessian_cost = 2 * len(param_names)
+    hessian_cost = 2 * len(param_names) + 1
     if len(param_names) >= 1 and remaining_budget >= hessian_cost:
         try:
-            hessian_approx = _approx_hessian_diag(_scalar_objective, best_x, bounds)
-            param_uncertainties = {}
-            for i, name in enumerate(param_names):
-                if hessian_approx[i] > 0:
-                    sigma = 1.0 / np.sqrt(hessian_approx[i])
-                    param_uncertainties[name] = float(sigma)
-                    if abs(best_x[i]) > 0 and sigma / abs(best_x[i]) > 1.0:
-                        poorly_identified.append(name)
-                else:
-                    param_uncertainties[name] = float("inf")
-                    poorly_identified.append(name)
+            hessian_scaled = _approx_hessian_diag(_scalar_objective, best_x, bounds)
+            hessian_approx = hessian_scaled / (scale_array**2)
         except Exception:
             pass
 
@@ -226,6 +228,13 @@ def run_optimization(
         param_uncertainties=param_uncertainties,
         poorly_identified=poorly_identified,
         active_bounds=active_bounds,
+        curvature_status=(
+            "Diagonal loss curvature in physical parameter units; it is not a "
+            "statistical uncertainty or identifiability estimate."
+            if hessian_approx is not None
+            else "Not estimated. Statistical parameter uncertainty requires an "
+            "explicit observation-noise model."
+        ),
     )
 
     return best_params, diagnostics
@@ -236,28 +245,39 @@ def _approx_hessian_diag(
     x: np.ndarray,
     bounds: list[tuple[float, float]],
 ) -> np.ndarray:
-    """Approximate diagonal of the Hessian via central finite differences."""
+    """Approximate diagonal curvature with central or one-sided differences."""
     f0 = func(x)
     n = len(x)
     diag = np.zeros(n, dtype=float)
 
     for i in range(n):
         lo, hi = bounds[i]
-        h = max(abs(x[i]) * 1e-4, 1e-10)
-        h = min(h, (hi - lo) * 0.1)
-
-        x_plus = x.copy()
-        x_minus = x.copy()
-        x_plus[i] = min(x[i] + h, hi)
-        x_minus[i] = max(x[i] - h, lo)
-
-        actual_h = (x_plus[i] - x_minus[i]) / 2.0
-        if actual_h <= 0:
+        span = hi - lo
+        h = max(abs(x[i]) * 1e-4, 1e-5)
+        if np.isfinite(span):
+            h = min(h, span / 4.0)
+        if h <= 0.0:
             continue
-
-        f_plus = func(x_plus)
-        f_minus = func(x_minus)
-        diag[i] = (f_plus - 2 * f0 + f_minus) / (actual_h**2)
+        room_left = x[i] - lo
+        room_right = hi - x[i]
+        if room_left >= h and room_right >= h:
+            x_plus = x.copy()
+            x_minus = x.copy()
+            x_plus[i] += h
+            x_minus[i] -= h
+            diag[i] = (func(x_plus) - 2.0 * f0 + func(x_minus)) / (h * h)
+        elif room_right >= 2.0 * h:
+            x_one = x.copy()
+            x_two = x.copy()
+            x_one[i] += h
+            x_two[i] += 2.0 * h
+            diag[i] = (f0 - 2.0 * func(x_one) + func(x_two)) / (h * h)
+        elif room_left >= 2.0 * h:
+            x_one = x.copy()
+            x_two = x.copy()
+            x_one[i] -= h
+            x_two[i] -= 2.0 * h
+            diag[i] = (f0 - 2.0 * func(x_one) + func(x_two)) / (h * h)
 
     return diag
 

@@ -392,14 +392,19 @@ class ThieleAnalyzer(InteractiveNodeMixin):
         rx = x - x0
         ry = y - y0
         gyro_force = np.column_stack((-G * vy, G * vx))
+        stt = _coerce_force_series(stt_force, time, x, y, vx, vy)
+        oersted = _coerce_force_series(oersted_force, time, x, y, vx, vy)
 
         if kappa is None:
-            target_x = gyro_force[:, 0] + D * vx
-            target_y = gyro_force[:, 1] + D * vy
+            # Fit only the unmodelled conservative force. Known drive forces
+            # belong on the right hand side of the same force balance used by
+            # residual_force below.
+            target_x = stt[:, 0] + oersted[:, 0] - gyro_force[:, 0] - D * vx
+            target_y = stt[:, 1] + oersted[:, 1] - gyro_force[:, 1] - D * vy
             denom = float(np.sum(rx * rx + ry * ry))
             if denom > 1e-30:
                 num = float(np.sum(rx * target_x + ry * target_y))
-                kappa_val = -num / denom
+                kappa_val = num / denom
             else:
                 kappa_val = 0.0
         else:
@@ -407,8 +412,6 @@ class ThieleAnalyzer(InteractiveNodeMixin):
 
         conservative_force = np.column_stack((-kappa_val * rx, -kappa_val * ry))
         dissipative_force = np.column_stack((-D * vx, -D * vy))
-        stt = _coerce_force_series(stt_force, time, x, y, vx, vy)
-        oersted = _coerce_force_series(oersted_force, time, x, y, vx, vy)
         residual = gyro_force - conservative_force - dissipative_force - stt - oersted
 
         return ThieleForceBalanceResult(

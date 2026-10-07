@@ -39,6 +39,7 @@ def chirality_ring(
     *,
     dx: float = 1.0,
     dy: float = 1.0,
+    y_axis: str = "up",
 ) -> int:
     """Estimate chirality from the ring-averaged azimuthal magnetization component."""
     if m_xy.ndim != 3 or m_xy.shape[-1] != 2:
@@ -46,7 +47,13 @@ def chirality_ring(
 
     ny, nx, _ = m_xy.shape
     x_coords = np.arange(nx, dtype=float) * dx
-    y_coords = np.arange(ny, dtype=float) * dy
+    y_idx = np.arange(ny, dtype=float)
+    if str(y_axis).lower() == "up":
+        y_coords = (ny - 1 - y_idx) * dy
+    elif str(y_axis).lower() == "down":
+        y_coords = y_idx * dy
+    else:
+        raise ValueError("y_axis must be 'up' or 'down'")
     x_grid, y_grid = np.meshgrid(x_coords, y_coords)
 
     cx, cy = core_pos
@@ -77,7 +84,7 @@ def chirality_ring_with_confidence(
     *,
     dx: float = 1.0,
     dy: float = 1.0,
-    y_axis: str = "down",
+    y_axis: str = "up",
 ) -> tuple[int, float]:
     """Estimate chirality and confidence on annulus around the core."""
     if m_xy.ndim != 3 or m_xy.shape[-1] != 2:
@@ -88,8 +95,10 @@ def chirality_ring_with_confidence(
     y_idx = np.arange(ny, dtype=float)
     if str(y_axis).lower() == "up":
         y_coords = (ny - 1 - y_idx) * dy
-    else:
+    elif str(y_axis).lower() == "down":
         y_coords = y_idx * dy
+    else:
+        raise ValueError("y_axis must be 'up' or 'down'")
     x_grid, y_grid = np.meshgrid(x_coords, y_coords)
 
     cx, cy = core_pos

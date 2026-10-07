@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 try:  # pragma: no cover - backend availability is environment-dependent
-    from mmpp.fft.dispersion import _fft_backend as _central_fft_backend
+    from mmpp.fft import _backend as _central_fft_backend
 
     FFT_BACKEND_AVAILABLE = True
 except Exception:  # pragma: no cover
@@ -142,30 +142,131 @@ def _prepare_time_signal(
     return output.reshape(x.shape), uniform_time, True
 
 
+def _detrend_segment(signal: np.ndarray, detrend: Any) -> np.ndarray:
+    """Apply SciPy-compatible constant/linear detrending to one segment."""
+    values = np.asarray(signal)
+    if detrend is False or (isinstance(detrend, np.bool_) and not bool(detrend)):
+        return values
+    if callable(detrend):
+        detrended = np.asarray(detrend(values))
+        if detrended.shape != values.shape:
+            raise ValueError("A detrend callable must preserve the segment shape")
+        return detrended
+
+    mode = str(detrend).lower()
+    if mode == "constant":
+        return values - np.mean(values)
+    if mode == "linear":
+        coordinate = np.arange(values.size, dtype=float)
+        centered_coordinate = coordinate - np.mean(coordinate)
+        centered_values = values - np.mean(values)
+        slope = np.sum(centered_values * centered_coordinate) / np.sum(
+            centered_coordinate**2
+        )
+        return values - (np.mean(values) + slope * centered_coordinate)
+    raise ValueError("detrend must be 'constant', 'linear', False, or callable")
+
+
+def _hann_window(size: int) -> np.ndarray:
+    """Return a periodic Hann window, with a useful singleton definition."""
+    if int(size) == 1:
+        return np.ones(1, dtype=float)
+    return np.hanning(int(size) + 1)[:-1]
+
+
 def _windowed_periodogram(
-    signal: np.ndarray, dt: float
+    signal: np.ndarray,
+    dt: float,
+    *,
+    scaling: str = "density",
+    detrend: Any = "constant",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute a Hann-windowed one-sided periodogram."""
-    x = np.asarray(signal)
+    """Compute a Hann-windowed periodogram with SciPy-compatible units."""
+    x = np.asarray(signal).reshape(-1)
     n = int(x.size)
     if n < 2:
         return np.array([], dtype=float), np.array([], dtype=float)
+    if scaling not in {"density", "spectrum"}:
+        raise ValueError("scaling must be 'density' or 'spectrum'")
 
-    centered = x - np.mean(x)
-    window = np.hanning(n)
-    if np.iscomplexobj(centered):
-        spectrum = _fft(centered * window)
+    window = _hann_window(n)
+    transformed = _detrend_segment(x, detrend) * window
+    if np.iscomplexobj(transformed):
+        spectrum = _fft(transformed)
         frequencies = _fftfreq(n, float(dt))
-        mask = frequencies >= 0.0
-        frequencies = frequencies[mask]
-        power = (np.abs(spectrum) ** 2)[mask]
+        power = np.abs(spectrum) ** 2
+        denominator = (
+            (1.0 / float(dt)) * float(np.sum(window**2))
+            if scaling == "density"
+            else float(np.sum(window)) ** 2
+        )
     else:
-        spectrum = _rfft(np.asarray(centered, dtype=float) * window)
+        spectrum = _rfft(np.asarray(transformed, dtype=float))
         frequencies = _rfftfreq(n, float(dt))
         power = np.abs(spectrum) ** 2
+        if n % 2 == 0:
+            power[1:-1] *= 2.0
+        else:
+            power[1:] *= 2.0
+        denominator = (
+            (1.0 / float(dt)) * float(np.sum(window**2))
+            if scaling == "density"
+            else float(np.sum(window)) ** 2
+        )
+    if not np.isfinite(denominator) or denominator <= 0.0:
+        raise ValueError("The selected window has zero spectral normalization")
+    return np.asarray(frequencies, dtype=float), np.asarray(
+        power / denominator, dtype=float
+    )
 
-    denom = max(float(np.sum(window**2)), 1e-30)
-    return np.asarray(frequencies, dtype=float), np.asarray(power / denom, dtype=float)
+
+def _numpy_welch(
+    signal: np.ndarray,
+    *,
+    fs: float,
+    nperseg: int,
+    noverlap: int,
+    scaling: str,
+    detrend: Any,
+) -> tuple[np.ndarray, np.ndarray]:
+    """NumPy Welch fallback using the same periodic Hann and PSD units as SciPy."""
+    x = np.asarray(signal).reshape(-1)
+    step = nperseg - noverlap
+    window = _hann_window(nperseg)
+    spectra: list[np.ndarray] = []
+    for start in range(0, x.size - nperseg + 1, step):
+        segment = _detrend_segment(x[start : start + nperseg], detrend) * window
+        if np.iscomplexobj(segment):
+            transform = _fft(segment)
+            scale = (
+                fs * float(np.sum(window**2))
+                if scaling == "density"
+                else float(np.sum(window)) ** 2
+            )
+            spectra.append(np.abs(transform) ** 2 / scale)
+        else:
+            transform = _rfft(np.asarray(segment, dtype=float))
+            power = np.abs(transform) ** 2
+            if nperseg % 2 == 0:
+                power[1:-1] *= 2.0
+            else:
+                power[1:] *= 2.0
+            scale = (
+                fs * float(np.sum(window**2))
+                if scaling == "density"
+                else float(np.sum(window)) ** 2
+            )
+            spectra.append(power / scale)
+
+    if not spectra:
+        return np.array([], dtype=float), np.array([], dtype=float)
+    mean_power = np.mean(np.stack(spectra), axis=0)
+    frequencies = (
+        _fftfreq(nperseg, 1.0 / fs)
+        if np.iscomplexobj(x)
+        else _rfftfreq(nperseg, 1.0 / fs)
+    )
+    return np.asarray(frequencies, dtype=float), np.asarray(mean_power, dtype=float)
 
 
 def compute_psd(
@@ -180,11 +281,11 @@ def compute_psd(
     detrend: str | bool = "constant",
     resample_nonuniform: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, str, dict[str, Any]]:
-    """Compute a one-dimensional power spectral density.
+    """Compute a one-dimensional density or spectrum.
 
-    ``method='welch'`` uses SciPy when available. If SciPy is unavailable, the
-    fallback is an explicitly windowed periodogram so the fallback has the same
-    broad leakage assumptions as Welch instead of a raw rectangular FFT.
+    ``method='welch'`` uses SciPy when available and an equivalent segmented
+    NumPy implementation otherwise. Complex signals retain both frequency
+    directions; real signals use the correctly folded one-sided spectrum.
     """
     if not isinstance(resample_nonuniform, (bool, np.bool_)):
         raise TypeError("resample_nonuniform must be boolean")
@@ -207,6 +308,8 @@ def compute_psd(
         method_norm = "periodogram"
     if method_norm not in {"welch", "periodogram"}:
         raise ValueError("method must be 'welch', 'periodogram', or 'fft'")
+    if scaling not in {"density", "spectrum"}:
+        raise ValueError("scaling must be 'density' or 'spectrum'")
 
     fs = 1.0 / sample_dt
     metadata: dict[str, Any] = {
@@ -214,7 +317,7 @@ def compute_psd(
         "dt": sample_dt,
         "fs": fs,
         "n_samples": int(x.size),
-        "sidedness": "one-sided" if not np.iscomplexobj(x) else "positive frequencies",
+        "sidedness": "one-sided" if not np.iscomplexobj(x) else "two-sided",
         "resample_nonuniform": bool(resample_nonuniform),
         "resampled_nonuniform": did_resample,
     }
@@ -222,9 +325,16 @@ def compute_psd(
     if method_norm == "welch":
         if SCIPY_AVAILABLE and _scipy_welch is not None:
             seg = int(nperseg) if nperseg is not None else min(256, x.size)
-            seg = max(8, min(seg, x.size))
+            if seg <= 0:
+                raise ValueError("nperseg must be a positive integer")
+            seg = min(seg, x.size)
+            if seg < 2:
+                raise ValueError("nperseg must be at least 2")
             overlap = seg // 2 if noverlap is None else int(noverlap)
-            overlap = min(max(overlap, 0), seg - 1)
+            if overlap < 0:
+                raise ValueError("noverlap must be non-negative")
+            if overlap >= seg:
+                raise ValueError("noverlap must be smaller than nperseg")
             frequencies, power = _scipy_welch(
                 x,
                 fs=fs,
@@ -253,21 +363,59 @@ def compute_psd(
             )
 
         warnings.warn(
-            "SciPy is unavailable; falling back from Welch to a Hann-windowed periodogram.",
+            "SciPy is unavailable; using a NumPy Hann-windowed spectral estimate.",
             RuntimeWarning,
             stacklevel=2,
         )
 
-    frequencies, power = _windowed_periodogram(x, sample_dt)
+    if method_norm == "welch":
+        seg = int(nperseg) if nperseg is not None else min(256, x.size)
+        if seg <= 0:
+            raise ValueError("nperseg must be a positive integer")
+        seg = min(seg, x.size)
+        if seg < 2:
+            raise ValueError("nperseg must be at least 2")
+        overlap = seg // 2 if noverlap is None else int(noverlap)
+        if overlap < 0:
+            raise ValueError("noverlap must be non-negative")
+        if overlap >= seg:
+            raise ValueError("noverlap must be smaller than nperseg")
+        frequencies, power = _numpy_welch(
+            x,
+            fs=fs,
+            nperseg=seg,
+            noverlap=overlap,
+            scaling=scaling,
+            detrend=detrend,
+        )
+        metadata.update(
+            {
+                **_fft_backend_info(),
+                "window": "hann (periodic)",
+                "nperseg": seg,
+                "nfft": seg,
+                "noverlap": overlap,
+                "detrend": detrend,
+                "scaling": scaling,
+                "average": "mean",
+                "normalization": scaling,
+            }
+        )
+        return frequencies, power, "welch", metadata
+
+    frequencies, power = _windowed_periodogram(
+        x, sample_dt, scaling=scaling, detrend=detrend
+    )
     metadata.update(
         {
             **_fft_backend_info(),
-            "window": "hann (symmetric)",
+            "window": "hann (periodic)",
             "nperseg": int(x.size),
             "nfft": int(x.size),
             "noverlap": 0,
-            "detrend": "constant",
-            "normalization": "sum(window**2)",
+            "detrend": detrend,
+            "scaling": scaling,
+            "normalization": scaling,
         }
     )
     return frequencies, power, "periodogram", metadata
@@ -278,28 +426,39 @@ def _numpy_stft_psd(
     dt: float,
     nperseg: int,
     noverlap: int,
+    time_offset: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute a Hann-windowed STFT PSD fallback."""
+    """Compute a density-scaled, Hann-windowed STFT PSD fallback."""
     step = max(1, nperseg - noverlap)
     starts = np.arange(0, max(signal.size - nperseg + 1, 1), step)
-    window = np.hanning(nperseg)
-    norm = max(float(np.sum(window**2)), 1e-30)
+    window = _hann_window(nperseg)
+    norm = max(float((1.0 / dt) * np.sum(window**2)), 1e-30)
 
     spectra = []
     times = []
     for start in starts:
-        segment = np.asarray(signal[start : start + nperseg], dtype=float)
+        segment = np.asarray(signal[start : start + nperseg])
         if segment.size < nperseg:
-            padded = np.zeros(nperseg, dtype=float)
+            padded = np.zeros(nperseg, dtype=segment.dtype)
             padded[: segment.size] = segment
             segment = padded
 
-        segment = (segment - float(np.mean(segment))) * window
-        spectrum = _rfft(segment)
-        spectra.append((np.abs(spectrum) ** 2) / norm)
-        times.append((start + nperseg / 2.0) * dt)
+        segment = _detrend_segment(segment, "constant") * window
+        if np.iscomplexobj(segment):
+            spectrum = _fft(segment)
+            power = np.abs(spectrum) ** 2 / norm
+            frequencies = _fftfreq(nperseg, dt)
+        else:
+            spectrum = _rfft(np.asarray(segment, dtype=float))
+            power = np.abs(spectrum) ** 2 / norm
+            if nperseg % 2 == 0:
+                power[1:-1] *= 2.0
+            else:
+                power[1:] *= 2.0
+            frequencies = _rfftfreq(nperseg, dt)
+        spectra.append(power)
+        times.append(time_offset + (start + nperseg / 2.0) * dt)
 
-    frequencies = _rfftfreq(nperseg, dt)
     matrix = (
         np.asarray(spectra, dtype=float).T if spectra else np.empty((0, 0), dtype=float)
     )
@@ -323,7 +482,7 @@ def compute_spectrogram_psd(
         time,
         resample_nonuniform=bool(resample_nonuniform),
     )
-    x = np.asarray(prepared_signal, dtype=float).reshape(-1)
+    x = np.asarray(prepared_signal).reshape(-1)
     sample_dt = infer_dt(prepared_time, dt=dt)
     if x.size < 2 or not np.isfinite(sample_dt):
         return (
@@ -335,10 +494,20 @@ def compute_spectrogram_psd(
         )
 
     seg = int(nperseg) if nperseg is not None else min(128, x.size)
-    seg = max(8, min(seg, x.size))
+    if seg <= 0:
+        raise ValueError("nperseg must be a positive integer")
+    seg = min(seg, x.size)
     overlap = seg // 2 if noverlap is None else int(noverlap)
-    overlap = min(max(overlap, 0), seg - 1)
+    if overlap < 0:
+        raise ValueError("noverlap must be non-negative")
+    if overlap >= seg:
+        raise ValueError("noverlap must be smaller than nperseg")
     fs = 1.0 / sample_dt
+    time_offset = (
+        float(prepared_time[0])
+        if prepared_time is not None and prepared_time.size
+        else 0.0
+    )
     metadata: dict[str, Any] = {
         "dt": sample_dt,
         "fs": fs,
@@ -352,13 +521,15 @@ def compute_spectrogram_psd(
         frequencies, times, power = _scipy_spectrogram(
             x,
             fs=fs,
+            window="hann",
             nperseg=seg,
             noverlap=overlap,
             detrend="constant",
+            scaling="density",
             mode="psd",
         )
         return (
-            np.asarray(times, dtype=float),
+            np.asarray(times, dtype=float) + time_offset,
             np.asarray(frequencies, dtype=float),
             np.asarray(power, dtype=float),
             "scipy_stft",
@@ -370,7 +541,9 @@ def compute_spectrogram_psd(
         RuntimeWarning,
         stacklevel=2,
     )
-    times, frequencies, power = _numpy_stft_psd(x, sample_dt, seg, overlap)
+    times, frequencies, power = _numpy_stft_psd(
+        x, sample_dt, seg, overlap, time_offset=time_offset
+    )
     metadata.update(_fft_backend_info())
     return times, frequencies, power, "numpy_stft", metadata
 

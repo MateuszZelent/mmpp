@@ -7,6 +7,7 @@ import json
 import os
 import resource
 import sys
+import warnings
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -414,11 +415,22 @@ def _read_table_trace(result: Any, *, component: str) -> tuple[np.ndarray, np.nd
         time: Any = np.asarray(table[time_key][:], dtype=float).reshape(-1)
     else:
         attrs = getattr(result, "attrs", {}) or {}
-        dt = _coerce_numeric(attrs.get("t_sampl", 1e-12), default=1e-12)
+        raw_dt = attrs.get("t_sampl", attrs.get("sampling_interval"))
+        try:
+            dt = float(raw_dt)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "A table signal without a time column requires sampling interval metadata"
+            ) from exc
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError(f"Invalid table sampling interval: {raw_dt!r}")
         time = np.arange(signal.size, dtype=float) * float(dt)
 
-    n = min(int(time.size), int(signal.size))
-    return time[:n], signal[:n]
+    if time.size != signal.size:
+        raise ValueError(
+            f"Table signal has {signal.size} samples but its time axis has {time.size}"
+        )
+    return time, signal
 
 
 def _resolve_magnetization_dataset_name(result: Any, dataset_name: str | None) -> str:
@@ -469,9 +481,39 @@ def _read_magnetization_trace(
         else:
             raise ValueError("spatial_reduction must be 'mean', 'sum', 'max', or 'min'")
 
+    n_samples = int(np.asarray(signal).size)
+    time_values = None
+    raw_attrs = getattr(raw, "attrs", {})
+    if hasattr(raw_attrs, "get"):
+        time_values = raw_attrs.get("t")
+    if time_values is None:
+        root = getattr(result, "_z", None)
+        if root is not None:
+            for key in ("t", "time", f"t_{dset_name}"):
+                try:
+                    time_values = root[key][:]
+                    break
+                except Exception:
+                    continue
     attrs = getattr(result, "attrs", {}) or {}
-    dt = _coerce_numeric(attrs.get("t_sampl", 1e-12), default=1e-12)
-    time = np.arange(np.asarray(signal).size, dtype=float) * float(dt)
+    if time_values is None:
+        raw_dt = attrs.get("t_sampl", attrs.get("sampling_interval"))
+        try:
+            dt = float(raw_dt)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Dataset {dset_name!r} has no timestamp array or sampling interval"
+            ) from exc
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError(f"Invalid sampling interval: {raw_dt!r}")
+        time = np.arange(n_samples, dtype=float) * dt
+    else:
+        time = np.asarray(time_values, dtype=float).reshape(-1)
+    if time.size != n_samples:
+        raise ValueError(
+            f"Magnetization dataset {dset_name!r} has {n_samples} samples but "
+            f"its time axis has {time.size}"
+        )
     return time, np.asarray(signal, dtype=float).reshape(-1)
 
 
@@ -586,8 +628,8 @@ def _compute_vortex_spectrum_map_one(
                 result,
                 trajectory=trajectory,
             )
-            if not health.is_healthy:
-                if exclude_annihilated:
+            if health.status != "healthy":
+                if exclude_annihilated and health.annihilated:
                     import warnings
 
                     path_label = str(getattr(result, "path", index))
@@ -1395,7 +1437,7 @@ class BatchVortexInterface(InteractiveNodeMixin):
     def _classify_regime(
         row: pd.Series,
         *,
-        power_floor_rel: float,
+        power_floor: float | None,
         radius_floor_nm: float,
         expulsion_ratio: float,
     ) -> str:
@@ -1410,10 +1452,12 @@ class BatchVortexInterface(InteractiveNodeMixin):
             return "collision"
         if int(row.get("n_gc_switch", 0)) > 0:
             return "intermittent"
-        peak_power_rel = _coerce_numeric(row.get("peak_power_rel", np.nan))
+        peak_power = _coerce_numeric(row.get("peak_power", np.nan))
         radius_mean_nm = _coerce_numeric(row.get("r_mean_nm", np.nan))
         if (
-            np.isfinite(peak_power_rel) and peak_power_rel < float(power_floor_rel)
+            power_floor is not None
+            and np.isfinite(peak_power)
+            and peak_power < float(power_floor)
         ) or (np.isfinite(radius_mean_nm) and radius_mean_nm < float(radius_floor_nm)):
             return "damped"
         return "stable_gyro"
@@ -1428,7 +1472,8 @@ class BatchVortexInterface(InteractiveNodeMixin):
         noverlap: int | None = 256,
         radius_threshold: float = 0.6,
         expulsion_ratio: float = 0.95,
-        power_floor_rel: float = 0.02,
+        power_floor_rel: float | None = None,
+        power_floor: float | None = None,
         radius_floor_nm: float = 0.2,
         show_progress: bool = True,
         parallel: bool | int | str = False,
@@ -1436,6 +1481,17 @@ class BatchVortexInterface(InteractiveNodeMixin):
         profile_memory: bool = False,
     ) -> pd.DataFrame:
         """Summarize vortex dynamics across the batch."""
+        if power_floor_rel is not None:
+            warnings.warn(
+                "power_floor_rel is deprecated and no longer changes regime labels; "
+                "use an absolute power_floor in a consistent unit or omit it.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if power_floor is not None and (
+            not np.isfinite(float(power_floor)) or float(power_floor) < 0.0
+        ):
+            raise ValueError("power_floor must be finite and non-negative")
         ordered_results = self._ordered_results(sort_by)
         mem_start = _memory_mb() if profile_memory else float("nan")
 
@@ -1483,9 +1539,15 @@ class BatchVortexInterface(InteractiveNodeMixin):
                     **spectrum_kwargs,
                 )
                 p_switches = vortex.events.polarity_switches(trajectory=trajectory)
+                disk_radius = _disk_radius_from_attrs(attrs)
                 gc_switches = vortex.events.state_switches(
                     trajectory=trajectory,
                     radius_threshold=radius_threshold,
+                    disk_radius=(
+                        disk_radius
+                        if np.isfinite(disk_radius) and disk_radius > 0.0
+                        else None
+                    ),
                 )
                 expulsions = vortex.events.core_expulsions(
                     trajectory=trajectory,
@@ -1497,8 +1559,6 @@ class BatchVortexInterface(InteractiveNodeMixin):
                     if getattr(gyration.power, "size", 0)
                     else 0.0
                 )
-                disk_radius = _disk_radius_from_attrs(attrs)
-
                 row.update(
                     {
                         "n_samples": int(len(trajectory.time)),
@@ -1600,10 +1660,13 @@ class BatchVortexInterface(InteractiveNodeMixin):
         frame["peak_power_rel"] = frame["peak_power"].astype(float) / float(
             peak_power_max
         )
+        frame.attrs["peak_power_rel_definition"] = (
+            "descriptive ratio to this returned batch maximum; not used for regime labels"
+        )
         frame["regime"] = frame.apply(
             self._classify_regime,
             axis=1,
-            power_floor_rel=power_floor_rel,
+            power_floor=power_floor,
             radius_floor_nm=radius_floor_nm,
             expulsion_ratio=expulsion_ratio,
         )

@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from ..utils import mirror_fftshifted_indices
+
 if TYPE_CHECKING:  # pragma: no cover
     from ..models import DispersionResult1D
 
@@ -303,6 +305,16 @@ def extract_mode_2d(
         S_k = np.array(S_k, copy=True)
         S_k[~k_mask] = 0
 
+    # S_complex follows the public k-axis convention, which may include the
+    # display-direction flip. Undo that permutation before IFFT so the real
+    # space mode remains in the original sample order.
+    if bool(getattr(result, "flipx", False)):
+        mirror_idx = mirror_fftshifted_indices(k_axis.size)
+        if has_orth:
+            S_k = S_k[:, mirror_idx]
+        else:
+            S_k = S_k[mirror_idx]
+
     # IFFT over k -> propagation axis.
     if _axis_is_shifted(k_axis):
         if has_orth:
@@ -316,22 +328,22 @@ def extract_mode_2d(
         M_mode = np.fft.ifft(S_k)  # (N_prop,)
         M_mode = M_mode[np.newaxis, :]  # (1, N_prop)
 
-    # ``S_complex`` is stored in the public k-axis convention already.  The
-    # inverse transform above is therefore the complete reconstruction;
-    # applying ``flipx`` again would reverse and roll the physical profile.
-
     # Axes in real space.
     n_prop = int(M_mode.shape[1])
     dx = float(getattr(result, "dx", 0.0) or 0.0)
     if dx > 0:
-        prop_axis: Any = np.arange(n_prop, dtype=float) * dx
+        prop_axis: Any = (
+            float(getattr(result, "spatial_origin", 0.0))
+            + np.arange(n_prop, dtype=float) * dx
+        )
     else:
         if k_axis.size > 1:
             dk = float(np.abs(k_axis[1] - k_axis[0]))
             L = 2.0 * np.pi / dk if dk > 0 else float(n_prop)
         else:
             L = float(n_prop)
-        prop_axis = np.linspace(0.0, L, n_prop, endpoint=False)
+        origin = float(getattr(result, "spatial_origin", 0.0))
+        prop_axis = np.linspace(origin, origin + L, n_prop, endpoint=False)
 
     if has_orth and getattr(result, "orth_axis", None) is not None:
         orth_axis = np.asarray(result.orth_axis, dtype=float)

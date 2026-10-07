@@ -1695,7 +1695,7 @@ class InteractiveDispersionModes:
         for method in methods:
             try:
                 a = self.detector.detect_lattice_constant(self.result, method=method)
-                if 50e-9 < a < 5000e-9:
+                if a is not None and 50e-9 < a < 5000e-9:
                     results.append(a)
             except Exception:
                 pass

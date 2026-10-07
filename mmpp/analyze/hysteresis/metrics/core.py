@@ -19,6 +19,7 @@ class CoerciveFieldResult:
     mean: float
     asymmetry: float
     unit: str = "input"
+    branch_status: str = "unavailable"
 
 
 @dataclass
@@ -39,6 +40,7 @@ class SaturationResult:
     hs_positive: float
     hs_negative: float
     ms_mean: float
+    status: str = "unavailable"
 
 
 @dataclass
@@ -73,21 +75,29 @@ def compute_coercive_field(
     field_arr = np.asarray(field, dtype=float)
     mag_arr = np.asarray(magnetization, dtype=float)
 
-    hc_pos_candidates: list[float] = []
-    hc_neg_candidates: list[float] = []
+    ascending_candidates: list[float] = []
+    descending_candidates: list[float] = []
 
     for branch in _major_branches(branches):
         bx = field_arr[branch.slice]
         by = mag_arr[branch.slice]
         crossings = find_zero_crossings(bx, by)
-        for value in crossings:
-            if value >= 0:
-                hc_pos_candidates.append(float(value))
-            else:
-                hc_neg_candidates.append(float(value))
+        destination = (
+            ascending_candidates
+            if str(getattr(branch, "name", "")).lower() == "ascending"
+            else descending_candidates
+        )
+        destination.extend(float(value) for value in crossings)
 
-    hc_plus = float(np.mean(hc_pos_candidates)) if hc_pos_candidates else float("nan")
-    hc_minus = float(np.mean(hc_neg_candidates)) if hc_neg_candidates else float("nan")
+    # Hc+ is the M=0 crossing on the increasing-field branch and Hc- is the
+    # crossing on the decreasing-field branch. Exchange bias may put both at
+    # the same sign of H, so field sign cannot identify the branch.
+    hc_plus = (
+        float(np.mean(ascending_candidates)) if ascending_candidates else float("nan")
+    )
+    hc_minus = (
+        float(np.mean(descending_candidates)) if descending_candidates else float("nan")
+    )
 
     mean_val = _nanmean_abs([hc_minus, hc_plus])
     asym = float(np.abs(hc_plus) - np.abs(hc_minus))
@@ -98,6 +108,11 @@ def compute_coercive_field(
         mean=mean_val,
         asymmetry=asym,
         unit=unit,
+        branch_status=(
+            "complete"
+            if np.isfinite(hc_plus) and np.isfinite(hc_minus)
+            else "incomplete_major_loop"
+        ),
     )
 
 
@@ -167,16 +182,12 @@ def compute_saturation_points(
         if sign > 0:
             idx = np.where((field_arr >= 0) & sat_mask)[0]
             if idx.size == 0:
-                idx = np.where(field_arr >= 0)[0]
-            if idx.size == 0:
                 return float("nan"), float("nan")
             fields = field_arr[idx]
             cutoff = float(np.nanpercentile(fields, 80))
             selected = idx[fields >= cutoff]
         else:
             idx = np.where((field_arr <= 0) & sat_mask)[0]
-            if idx.size == 0:
-                idx = np.where(field_arr <= 0)[0]
             if idx.size == 0:
                 return float("nan"), float("nan")
             fields = field_arr[idx]
@@ -194,12 +205,18 @@ def compute_saturation_points(
     ms_neg, hs_neg = _pick(-1)
     ms_mean = _nanmean_abs([ms_pos, ms_neg])
 
+    status = (
+        "detected"
+        if np.isfinite(ms_pos) and np.isfinite(ms_neg)
+        else "plateau_not_detected"
+    )
     return SaturationResult(
         ms_positive=ms_pos,
         ms_negative=ms_neg,
         hs_positive=hs_pos,
         hs_negative=hs_neg,
         ms_mean=ms_mean,
+        status=status,
     )
 
 
@@ -220,7 +237,12 @@ def compute_squareness(
     """Compute squareness S = Mr / Ms."""
     mr = float(remanence.mean)
     ms = float(saturation.ms_mean)
-    if not np.isfinite(mr) or not np.isfinite(ms) or ms == 0.0:
+    if (
+        saturation.status != "detected"
+        or not np.isfinite(mr)
+        or not np.isfinite(ms)
+        or ms == 0.0
+    ):
         return float("nan")
     return float(mr / ms)
 

@@ -6,6 +6,7 @@ Provides both programmatic and interactive interfaces for mode analysis.
 """
 
 import hashlib
+import json
 import math
 import warnings
 from dataclasses import dataclass, field
@@ -640,6 +641,7 @@ class FMRModeAnalyzer:
         component_index: int | None = None,
         time_step_scale: float = 1.0,
         view_geometry=None,
+        job_result: Any | None = None,
     ):
         """
         Initialize FMR mode analyzer.
@@ -665,11 +667,33 @@ class FMRModeAnalyzer:
         if not ZARR_AVAILABLE:
             raise ImportError("Zarr is required for mode analysis")
 
-        # Auto-select largest m dataset if none specified
-        if dataset_name is None:
-            from ...plotting import _find_largest_m_dataset
+        self.job_result = job_result
 
-            dataset_name = _find_largest_m_dataset(zarr_path)
+        # Auto-select the largest magnetization dataset through the shared
+        # source adapter when available, including H5-backed quantities.
+        if dataset_name is None:
+            if self.job_result is not None:
+                candidates = [
+                    name
+                    for name in self.job_result.datasets
+                    if name.rsplit("/", 1)[-1].lower().startswith("m")
+                ]
+                if not candidates:
+                    candidates = [
+                        name
+                        for name in self.job_result.datasets
+                        if name.rsplit("/", 1)[-1].lower() == "magnetization"
+                    ]
+                if not candidates:
+                    raise ValueError("No magnetization dataset is available")
+                dataset_name = max(
+                    candidates,
+                    key=lambda name: self._source_time_length(name),
+                )
+            else:
+                from ...plotting import _find_largest_m_dataset
+
+                dataset_name = _find_largest_m_dataset(zarr_path)
 
         self.zarr_path = zarr_path
         self.dataset_name = dataset_name
@@ -699,6 +723,7 @@ class FMRModeAnalyzer:
         self._memory_modes: np.ndarray | None = None
         self._memory_frequencies: np.ndarray | None = None
         self._memory_material_mask: np.ndarray | None = None
+        self._last_mode_analysis_config: dict[str, Any] | None = None
         self.config = config or ModeVisualizationConfig()
         self._character_analyzer = ModeCharacterAnalyzer(mode_character_config)
 
@@ -777,10 +802,43 @@ class FMRModeAnalyzer:
         try:
             root = zarr.open(self.zarr_path, mode="r")
             keys = set(root.group_keys()) | set(root.array_keys())
-            return sorted({key.split("/")[0] for key in keys})
+            datasets = {key.split("/")[0] for key in keys}
+            if self.job_result is not None:
+                datasets.update(self.job_result.datasets)
+            return sorted(datasets)
         except Exception as exc:
             log.debug("Unable to list datasets in %s: %s", self.zarr_path, exc)
+            if self.job_result is not None:
+                return sorted(self.job_result.datasets)
             return []
+
+    def _source_time_length(self, name: str) -> int:
+        """Get a source dataset's time length for auto-selection."""
+        try:
+            source = self.job_result.get_raw(name)
+            shape = tuple(getattr(source, "shape", ()))
+            return int(shape[0]) if len(shape) >= 3 else -1
+        except Exception:
+            return -1
+
+    def _get_source_dataset(self):
+        """Resolve exactly the configured magnetization dataset."""
+        if self.job_result is not None:
+            try:
+                return self.job_result.get_raw(self.dataset_name)
+            except Exception as exc:
+                available = ", ".join(self._list_available_datasets())
+                raise ValueError(
+                    f"Dataset '{self.dataset_name}' is not available through the "
+                    f"JobResult source. Available datasets: {available}"
+                ) from exc
+        if self.dataset_name not in self.zarr_file:
+            available = self._list_available_datasets()
+            raise ValueError(
+                f"Dataset '{self.dataset_name}' not found in zarr file "
+                f"'{self.zarr_path}'. Available datasets: {', '.join(available)}"
+            )
+        return self.zarr_file[self.dataset_name]
 
     def _get_zarr_paths(self) -> tuple[str | None, str | None, str | None]:
         """
@@ -952,8 +1010,8 @@ class FMRModeAnalyzer:
         attrs_to_check = [
             self.zarr_file.attrs,
             (
-                self.zarr_file[self.dataset_name].attrs
-                if self.dataset_name in self.zarr_file
+                getattr(self._get_source_dataset(), "attrs", {})
+                if self.dataset_name
                 else {}
             ),
         ]
@@ -1029,7 +1087,7 @@ class FMRModeAnalyzer:
             if self.preloaded_data is not None:
                 sample = np.asarray(self.preloaded_data)[:1]
             else:
-                dset = self.zarr_file[self.dataset_name]
+                dset = self._get_source_dataset()
                 key = list(
                     self.view_slice
                     if isinstance(self.view_slice, tuple)
@@ -1190,6 +1248,18 @@ class FMRModeAnalyzer:
             "spatial_resolution": (self.dx, self.dy),
             "mode_shape": mode_shape,
         }
+        analysis_config = getattr(self, "_last_mode_analysis_config", None)
+        try:
+            group = self.zarr_file[self.mode_group]
+            config_json = group.attrs.get("analysis_config_json")
+            if config_json is not None:
+                if isinstance(config_json, bytes):
+                    config_json = config_json.decode("utf-8", errors="replace")
+                analysis_config = json.loads(str(config_json))
+        except Exception:
+            pass
+        if analysis_config is not None:
+            metadata["analysis_config"] = dict(analysis_config)
 
         material_mask = None
         memory_material_mask = getattr(self, "_memory_material_mask", None)
@@ -1491,42 +1561,10 @@ class FMRModeAnalyzer:
         if not isinstance(resample_nonuniform, (bool, np.bool_)):
             raise TypeError("resample_nonuniform must be boolean")
 
-        if not force and f"{self.mode_group}/arr" in self.zarr_file:
-            log.info("Mode data already exists, use force=True to recompute")
-            return
-
         log.info(f"Computing FMR modes for dataset {self.dataset_name}")
 
-        # Remove existing data if force=True
-        if force:
-            try:
-                # Open in write mode for deletion
-                zarr_write = zarr.open(self.zarr_path, mode="a")
-                if self.mode_group in zarr_write:
-                    del zarr_write[self.mode_group]
-                    log.info(f"Removed existing modes data for {self.dataset_name}")
-                if self.view_id is None and f"fft/{self.dataset_name}" in zarr_write:
-                    del zarr_write[f"fft/{self.dataset_name}"]
-                    log.info(f"Removed existing FFT data for {self.dataset_name}")
-                zarr_write.close()
-                # Important: Reopen in read mode and reload data paths
-                self.zarr_file = zarr.open(self.zarr_path, mode="r")
-                self._load_data()  # Reload paths after deletion
-            except Exception as e:
-                log.warning(f"Could not remove existing data: {e}")
-                # Continue anyway - might be permission issue
-
         # Load magnetization data
-        if self.dataset_name not in self.zarr_file:
-            available = self._list_available_datasets()
-            suggestion = (
-                f" Available datasets: {', '.join(available)}" if available else ""
-            )
-            raise ValueError(
-                f"Dataset '{self.dataset_name}' not found in zarr file '{self.zarr_path}'.{suggestion}"
-            )
-
-        dset = self.zarr_file[self.dataset_name]
+        dset = self._get_source_dataset()
 
         # Normalize time slice and determine number of selected samples.
         source = (
@@ -1551,7 +1589,11 @@ class FMRModeAnalyzer:
         dt: float | None = None
         t_array: np.ndarray | None = None
         try:
-            raw_t = dset.attrs["t"][:]
+            raw_t = dset.attrs.get("t")
+            if raw_t is None:
+                raw_t = dset["t"][:]
+            else:
+                raw_t = raw_t[:]
         except (KeyError, TypeError, AttributeError, IndexError) as exc:
             log.debug(
                 "No usable explicit time axis for dataset %s: %s",
@@ -1612,7 +1654,11 @@ class FMRModeAnalyzer:
         if dt is None:
             for attrs in (
                 getattr(dset, "attrs", {}),
-                getattr(self.zarr_file, "attrs", {}),
+                (
+                    getattr(self.job_result, "attrs", {})
+                    if self.job_result is not None
+                    else getattr(self.zarr_file, "attrs", {})
+                ),
             ):
                 for key in ("t_sampl", "dt"):
                     dt_candidate = _extract_dt(attrs.get(key))
@@ -1648,6 +1694,34 @@ class FMRModeAnalyzer:
         if t_array is None:
             t_array = np.arange(num_samples, dtype=float) * dt
 
+        if not isinstance(z_slice, slice):
+            raise TypeError(f"z_slice must be slice, got {type(z_slice).__name__}")
+        mode_config = {
+            "window": bool(window),
+            "z_slice": repr(z_slice),
+            "t_slice": repr(t_slice_norm),
+            "resample_nonuniform": bool(resample_nonuniform),
+            "component_index": self.component_index,
+            "view_id": self.view_id or "full",
+            "time_step_scale": float(self.time_step_scale),
+            "dt": float(dt),
+            "time_axis_digest": hashlib.blake2b(
+                np.ascontiguousarray(t_array).tobytes(), digest_size=12
+            ).hexdigest(),
+        }
+        mode_config_json = json.dumps(mode_config, sort_keys=True)
+        self._last_mode_analysis_config = dict(mode_config)
+        mode_array_path = f"{self.mode_group}/arr"
+        if not force and mode_array_path in self.zarr_file:
+            cached_group = self.zarr_file[self.mode_group]
+            cached_config = cached_group.attrs.get("analysis_config_json")
+            if isinstance(cached_config, bytes):
+                cached_config = cached_config.decode("utf-8", errors="replace")
+            if cached_config == mode_config_json:
+                log.info("Matching mode data already exists for %s", self.dataset_name)
+                return
+            log.info("Cached mode configuration differs; recomputing modes")
+
         # Calculate frequencies using number of time samples
         if num_samples < 2:
             raise ValueError(
@@ -1669,8 +1743,6 @@ class FMRModeAnalyzer:
             mode_data,
             component_index=self.component_index,
         )
-        if not isinstance(z_slice, slice):
-            raise TypeError(f"z_slice must be slice, got {type(z_slice).__name__}")
         z_start, z_stop, z_step = z_slice.indices(arr.shape[1])
         if z_step <= 0:
             raise ValueError("z_slice step must be positive")
@@ -1682,10 +1754,13 @@ class FMRModeAnalyzer:
         geometry_candidates = []
         for candidate_name in ("geom", "geometry", "Msat", "msat", "Ms"):
             try:
-                if candidate_name in self.zarr_file:
-                    geometry_candidates.append(
-                        (candidate_name, np.asarray(self.zarr_file[candidate_name]))
-                    )
+                if self.job_result is not None:
+                    candidate = self.job_result.get_raw(candidate_name)
+                elif candidate_name in self.zarr_file:
+                    candidate = self.zarr_file[candidate_name]
+                else:
+                    continue
+                geometry_candidates.append((candidate_name, np.asarray(candidate[:])))
             except Exception as exc:
                 log.debug(
                     "Could not load material-mask candidate %s: %s",
@@ -1729,12 +1804,10 @@ class FMRModeAnalyzer:
             # Open in write mode
             zarr_write = zarr.open(self.zarr_path, mode="a")
 
-            # Remove existing data if force=True to avoid conflicts
-            if force:
-                if self.mode_group in zarr_write:
-                    del zarr_write[self.mode_group]
-                if self.view_id is None and f"fft/{self.dataset_name}" in zarr_write:
-                    del zarr_write[f"fft/{self.dataset_name}"]
+            # Replace only this mode cache, after a new result has been
+            # computed successfully. FFT cache entries are independent.
+            if force and self.mode_group in zarr_write:
+                del zarr_write[self.mode_group]
 
             # Create groups
             modes_group = zarr_write.require_group(self.mode_group)
@@ -1809,6 +1882,7 @@ class FMRModeAnalyzer:
             modes_group.attrs["power_definition"] = "abs_fft_squared"
             modes_group.attrs["material_mask_source"] = material_mask_source
             modes_group.attrs["material_mask_active_fraction"] = active_fraction
+            modes_group.attrs["analysis_config_json"] = mode_config_json
 
             # zarr groups don't have close() method, just let it go out of scope
             log.info("✅ Mode computation completed and saved")
@@ -2088,6 +2162,7 @@ MMPP FFT Mode Analyzer:
                 dataset_name=dataset_name,  # Use context if available, else auto-detect
                 debug=debug_mode,
                 log_level=log_level,
+                job_result=self.parent_fft.job_result,
             )
 
         return self._mode_analyzer
@@ -2122,7 +2197,11 @@ MMPP FFT Mode Analyzer:
                 else None
             )
             temp_analyzer = FMRModeAnalyzer(
-                zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
+                zarr_path,
+                dataset_name=dset,
+                debug=debug_mode,
+                log_level=log_level,
+                job_result=self.parent_fft.job_result,
             )
 
             # Check if modes exist or force recomputation
@@ -2167,7 +2246,11 @@ MMPP FFT Mode Analyzer:
                 else None
             )
             temp_analyzer = FMRModeAnalyzer(
-                zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
+                zarr_path,
+                dataset_name=dset,
+                debug=debug_mode,
+                log_level=log_level,
+                job_result=self.parent_fft.job_result,
             )
             temp_analyzer.compute_modes(**kwargs)
         else:
@@ -2192,7 +2275,11 @@ MMPP FFT Mode Analyzer:
                 else None
             )
             temp_analyzer = FMRModeAnalyzer(
-                zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
+                zarr_path,
+                dataset_name=dset,
+                debug=debug_mode,
+                log_level=log_level,
+                job_result=self.parent_fft.job_result,
             )
 
             # Check if modes exist, if not compute them
@@ -2262,7 +2349,11 @@ MMPP FFT Mode Analyzer:
                 else None
             )
             temp_analyzer = FMRModeAnalyzer(
-                zarr_path, dataset_name=dset, debug=debug_mode, log_level=log_level
+                zarr_path,
+                dataset_name=dset,
+                debug=debug_mode,
+                log_level=log_level,
+                job_result=self.parent_fft.job_result,
             )
 
             # Check if modes exist, if not compute them

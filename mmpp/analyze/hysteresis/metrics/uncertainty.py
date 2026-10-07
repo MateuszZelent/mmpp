@@ -70,6 +70,12 @@ def _block_bootstrap_indices(
     rng: np.random.Generator,
     block_size: int,
 ) -> np.ndarray:
+    if n_points <= 0:
+        raise ValueError("n_points must be positive")
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive")
+    if block_size <= 0:
+        raise ValueError("block_size must be positive")
     out = np.empty((n_samples, n_points), dtype=int)
     for sample_idx in range(n_samples):
         idx: list[int] = []
@@ -79,6 +85,48 @@ def _block_bootstrap_indices(
             idx.extend(range(start, stop))
         out[sample_idx, :] = np.asarray(idx[:n_points], dtype=int)
     return out
+
+
+def _moving_average(values: np.ndarray, window: int) -> np.ndarray:
+    """Smooth one branch while keeping its original sampling protocol."""
+    arr = np.asarray(values, dtype=float)
+    if arr.size < 3 or window <= 1:
+        return arr.copy()
+    width = min(int(window), arr.size)
+    if width % 2 == 0:
+        width -= 1
+    pad = width // 2
+    padded = np.pad(arr, pad_width=pad, mode="reflect")
+    return np.convolve(padded, np.ones(width) / width, mode="valid")
+
+
+def _resample_branch_residuals(
+    field: np.ndarray,
+    magnetization: np.ndarray,
+    *,
+    rng: np.random.Generator,
+    block_size: int,
+) -> np.ndarray:
+    """Resample within-branch residuals without reordering field values."""
+    sampled = np.asarray(magnetization, dtype=float).copy()
+    for branch in segment_branches(field):
+        section = branch.slice
+        values = sampled[section]
+        if values.size < 3:
+            continue
+        local_block = min(max(int(block_size), 1), values.size)
+        baseline = _moving_average(values, window=max(local_block, 3))
+        residual = values - baseline
+        residual -= float(np.mean(residual))
+
+        indices: list[int] = []
+        while len(indices) < values.size:
+            start = int(rng.integers(0, values.size))
+            indices.extend(
+                ((start + offset) % values.size) for offset in range(local_block)
+            )
+        sampled[section] = baseline + residual[np.asarray(indices[: values.size])]
+    return sampled
 
 
 def bootstrap_confidence_interval(
@@ -100,18 +148,30 @@ def bootstrap_confidence_interval(
     n_boot = int(
         n_samples if n_samples is not None else result.config.bootstrap_n_samples
     )
+    if n_boot <= 0:
+        raise ValueError("n_samples must be positive")
     level = float(ci if ci is not None else result.config.bootstrap_ci)
     if not (0.0 < level < 1.0):
         raise ValueError("ci must be in (0, 1)")
 
     rng = np.random.default_rng(int(seed))
     blk = int(block_size if block_size is not None else max(10, n_points // 10))
-    bootstrap_idx = _block_bootstrap_indices(n_points, n_boot, rng, blk)
+    if blk <= 0:
+        raise ValueError("block_size must be positive")
+    branches = segment_branches(field)
+    if not branches:
+        raise ValueError("The field protocol does not contain a resampleable branch")
 
     estimates: list[float] = []
-    for idx in bootstrap_idx:
+    for _ in range(n_boot):
+        mag_sample = _resample_branch_residuals(
+            field,
+            mag,
+            rng=rng,
+            block_size=blk,
+        )
         try:
-            v, _unit = _estimate_metric(result, metric_name, field[idx], mag[idx])
+            v, _unit = _estimate_metric(result, metric_name, field, mag_sample)
         except Exception:
             continue
         if np.isfinite(v):

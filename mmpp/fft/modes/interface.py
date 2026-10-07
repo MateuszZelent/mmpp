@@ -65,6 +65,15 @@ class ModeResult:
     mode_data: Any
     requested_frequency: float
     z_layer: int
+    analysis_metadata: dict[str, Any] | None = None
+
+    @property
+    def transform_consistent(self) -> bool | None:
+        """Whether the mode FFT used the same effective transform as its spectrum."""
+        if self.analysis_metadata is None:
+            return None
+        value = self.analysis_metadata.get("transform_consistent")
+        return None if value is None else bool(value)
 
     @property
     def frequency(self) -> float:
@@ -163,6 +172,19 @@ class ModeResult:
             ),
             (".extent", "Spatial extent (x_min, x_max, y_min, y_max)"),
         ]
+        if self.analysis_metadata is not None:
+            consistent = self.transform_consistent
+            consistency_label = (
+                "unknown"
+                if consistent is None
+                else "consistent"
+                if consistent
+                else "different"
+            )
+            props.append((".transform_consistent", consistency_label))
+            interpretation = self.analysis_metadata.get("interpretation")
+            if interpretation:
+                props.append((".analysis_metadata", str(interpretation)))
         prop_rows = "".join(
             f"<tr><td style='padding:4px 8px;font-family:monospace;color:#93c5fd;'>{_esc(n)}</td>"
             f"<td style='padding:4px 8px;color:#cbd5e1;'>{_esc(v)}</td></tr>"
@@ -784,6 +806,22 @@ class FFTModeInterfaceNew:
         """Get dataset name (from context or auto-detect)."""
         if self._dataset_context:
             return self._dataset_context
+        job_result = getattr(self.parent_fft, "job_result", None)
+        available_datasets = getattr(job_result, "datasets", None)
+        get_raw = getattr(job_result, "get_raw", None)
+        if available_datasets is not None and callable(get_raw):
+            names = [
+                name
+                for name in available_datasets
+                if name.rsplit("/", 1)[-1].lower().startswith("m")
+            ]
+            if names:
+                return max(
+                    names,
+                    key=lambda name: int(
+                        getattr(get_raw(name), "shape", (0,))[0]
+                    ),
+                )
         # Auto-detect
         try:
             from ...plotting import _find_largest_m_dataset
@@ -1237,6 +1275,12 @@ class FFTModeInterfaceNew:
         # Reuse an already computed spectrum when provided (e.g. SpectrumResult.plot.interactive()).
         # Fallback to parent FFT computation to preserve legacy behavior.
         spectrum_result = kwargs.pop("spectrum_result", None)
+        dataset_label = self._dataset_context
+        if dataset_label is None and spectrum_result is not None:
+            mode_context = getattr(spectrum_result, "_mode_context", {}) or {}
+            dataset_label = mode_context.get("dset")
+        if dataset_label is None:
+            dataset_label = self.dataset_name
 
         # Convenience aliases so both spellings work transparently
         if "animate" in kwargs and "auto_animate" not in kwargs:
@@ -1247,7 +1291,7 @@ class FFTModeInterfaceNew:
         if spectrum_result is None:
             find_peaks_params = kwargs.pop("find_peaks", {"min_prominence": 0.01})
             spectrum_result = self.parent_fft._spectrum_impl(
-                dset=self.dataset_name,
+                dset=dataset_label,
                 method=method,
                 slice_info=self._slice_context,
                 preloaded_data=getattr(self, "_preloaded_context", None),
@@ -1257,13 +1301,13 @@ class FFTModeInterfaceNew:
             )
             log.info(
                 f"interactive_spectrum: using FFT spectrum with "
-                f"dataset={self.dataset_name}, slice={self._slice_context}, "
+                f"dataset={dataset_label}, slice={self._slice_context}, "
                 f"component={self.component_index}"
             )
         else:
             log.info(
                 "interactive_spectrum: reusing provided SpectrumResult "
-                f"(dataset={self.dataset_name}, slice={self._slice_context}, "
+                f"(dataset={dataset_label}, slice={self._slice_context}, "
                 f"component={self.component_index})"
             )
 
@@ -1421,20 +1465,32 @@ class FFTModeInterfaceNew:
     def _legacy_analyzer(self):
         """Get legacy FMRModeAnalyzer for features not yet migrated."""
         if self._mode_analyzer is None:
-            from . import FMRModeAnalyzer
-
             dataset = self._dataset_context or self.dataset_name
-            self._mode_analyzer = FMRModeAnalyzer(
-                zarr_path=self.zarr_path,
-                dataset_name=dataset,
-                view_slice=self._slice_context,
-                preloaded_data=getattr(self, "_preloaded_context", None),
-                component_index=self.component_index,
-                time_step_scale=getattr(self, "_time_step_scale_context", 1.0),
-                view_geometry=getattr(self, "_geometry_context", None),
-            )
+            self._mode_analyzer = self._new_legacy_analyzer(dataset)
         self._ensure_modes_ready()
         return self._mode_analyzer
+
+    def _new_legacy_analyzer(self, dataset: str):
+        """Build the legacy analyzer with context belonging to ``dataset``."""
+        from . import FMRModeAnalyzer
+
+        same_dataset = dataset == (self._dataset_context or self.dataset_name)
+        return FMRModeAnalyzer(
+            zarr_path=self.zarr_path,
+            dataset_name=dataset,
+            view_slice=self._slice_context if same_dataset else None,
+            preloaded_data=(
+                getattr(self, "_preloaded_context", None) if same_dataset else None
+            ),
+            component_index=self.component_index,
+            time_step_scale=(
+                getattr(self, "_time_step_scale_context", 1.0) if same_dataset else 1.0
+            ),
+            view_geometry=(
+                getattr(self, "_geometry_context", None) if same_dataset else None
+            ),
+            job_result=self.parent_fft.job_result,
+        )
 
     def _ensure_modes_ready(self) -> None:
         """Auto-bootstrap mode computation when mode datasets are missing."""
@@ -1702,7 +1758,12 @@ class FFTModeInterfaceNew:
             Additional arguments for mode computation
         """
         dataset = dset or self._dataset_context or self.dataset_name
-        return self._legacy_analyzer.compute_modes(dset=dataset, **kwargs)
+        analyzer = self._mode_analyzer
+        if analyzer is None or analyzer.dataset_name != dataset:
+            analyzer = self._new_legacy_analyzer(dataset)
+            self._mode_analyzer = analyzer
+            self._auto_compute_checked = False
+        return analyzer.compute_modes(**kwargs)
 
     def __repr__(self) -> str:
         """Rich representation of modes interface."""

@@ -8,6 +8,13 @@ from typing import Any
 import numpy as np
 
 
+def _rotate_initial_position(x: float, y: float, phase: float) -> tuple[float, float]:
+    """Rotate an initial Thiele position by the fitted phase offset."""
+    radius = math.hypot(x, y)
+    angle = math.atan2(y, x) + float(phase)
+    return radius * math.cos(angle), radius * math.sin(angle)
+
+
 class SimulationContext:
     """Pre-built simulation context to avoid per-evaluation overhead.
 
@@ -30,7 +37,7 @@ class SimulationContext:
         tracking_method: str | None,
         initial_condition: str,
     ):
-        from ..plotting import (
+        from ..trajectory.operations import (
             _resolve_analytical_initial_state,
             _trajectory_center,
             _trajectory_dt,
@@ -233,7 +240,7 @@ class SimulationContext:
     def simulate(self, params: dict[str, Any]):
         """Simulate analytical trajectory using fast path when available."""
         from ..model.adapters import thiele_to_trajectory_result
-        from ..plotting import (
+        from ..trajectory.operations import (
             _resample_trajectory_to_reference,
             _trajectory_center,
             _translate_trajectory,
@@ -264,9 +271,11 @@ class SimulationContext:
         alignment_center = (
             (0.0, 0.0) if not field_has_effect(self._field) else raw_center
         )
+        center_x = self._center[0] + float(params.get("center_x", 0.0))
+        center_y = self._center[1] + float(params.get("center_y", 0.0))
         shift = (
-            self._center[0] - alignment_center[0],
-            self._center[1] - alignment_center[1],
+            center_x - alignment_center[0],
+            center_y - alignment_center[1],
         )
         aligned = _translate_trajectory(
             analytical,
@@ -275,6 +284,7 @@ class SimulationContext:
             metadata={
                 "raw_center": raw_center,
                 "alignment_reference_center": alignment_center,
+                "alignment_target_center": (center_x, center_y),
             },
         )
         return _resample_trajectory_to_reference(aligned, self._time)
@@ -315,12 +325,15 @@ class SimulationContext:
         if omega0_eff <= 0.0:
             raise ValueError("omega0_eff must remain positive on the fast path")
 
+        s0_x, s0_y = _rotate_initial_position(
+            self._s0_x, self._s0_y, params.get("phase0", 0.0)
+        )
         t_out, sx_out, sy_out = integrate_cpp_rk4(
             self._t0,
             self._sim_t1,
             self._dt,
-            self._s0_x,
-            self._s0_y,
+            s0_x,
+            s0_y,
             chi_val,
             omega0_eff,
             N,
@@ -395,12 +408,15 @@ class SimulationContext:
         u0_cx = u0 * self._current_dir[0]
         u0_cy = u0 * self._current_dir[1]
 
+        r0_x, r0_y = _rotate_initial_position(
+            self._r0_x, self._r0_y, params.get("phase0", 0.0)
+        )
         t_out, X_out, Y_out = integrate_cip_rk4(
             self._t0,
             self._sim_t1,
             self._dt,
-            self._r0_x,
-            self._r0_y,
+            r0_x,
+            r0_y,
             omega0,
             u0_cx,
             u0_cy,
@@ -462,7 +478,9 @@ class SimulationContext:
             model._d1 *= d0_scale
         return model.simulate(
             t_span=(self._t0, self._sim_t1),
-            s0=(self._s0_x, self._s0_y),
+            s0=_rotate_initial_position(
+                self._s0_x, self._s0_y, params.get("phase0", 0.0)
+            ),
             J_func=self._current_density
             if callable(self._current_density)
             else current_dc(float(self._J_const)),
@@ -504,7 +522,9 @@ class SimulationContext:
         )
         return model.simulate(
             t_span=(self._t0, self._sim_t1),
-            r0=(self._r0_x, self._r0_y),
+            r0=_rotate_initial_position(
+                self._r0_x, self._r0_y, params.get("phase0", 0.0)
+            ),
             J_func=self._current_density
             if callable(self._current_density)
             else current_dc(float(self._J_const)),

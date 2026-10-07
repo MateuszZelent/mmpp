@@ -159,6 +159,15 @@ class SignalsInterface(InteractiveNodeMixin):
         if norm <= 1e-30:
             raise ValueError("polarizer cannot be a zero vector")
         px, py, pz = px / norm, py / norm, pz / norm
+        for coefficient, key, component in (
+            (px, mx_key, "mx"),
+            (py, my_key, "my"),
+            (pz, mz_key, "mz"),
+        ):
+            if coefficient != 0.0 and key is None:
+                raise ValueError(
+                    f"Table fallback requires {component} for the requested polarizer"
+                )
 
         projection = np.clip(px * mx + py * my + pz * mz, -1.0, 1.0)
         resistance = float(resistance_parallel_ohm) + 0.5 * float(
@@ -178,6 +187,10 @@ class SignalsInterface(InteractiveNodeMixin):
                 "polarizer": (px, py, pz),
                 "resistance_parallel_ohm": float(resistance_parallel_ohm),
                 "delta_resistance_ohm": float(delta_resistance_ohm),
+                "interpretation": (
+                    "spatially averaged table projection without contact weighting "
+                    "or device calibration"
+                ),
             },
         )
 
@@ -189,6 +202,7 @@ class SignalsInterface(InteractiveNodeMixin):
         resistance_parallel_ohm: float | None = None,
         delta_resistance_ohm: float | None = None,
         disk_radius: float | None = None,
+        disk_center: tuple[float, float] | None = None,
         chirality: int | None = None,
         force: bool = False,
     ) -> MagnetoresistanceResult:
@@ -200,6 +214,7 @@ class SignalsInterface(InteractiveNodeMixin):
             and resistance_parallel_ohm is None
             and delta_resistance_ohm is None
             and disk_radius is None
+            and disk_center is None
             and chirality is None
         ):
             return self._last_mr
@@ -223,6 +238,7 @@ class SignalsInterface(InteractiveNodeMixin):
                 resistance_parallel_ohm=r_p,
                 delta_resistance_ohm=d_r,
                 disk_radius=disk_radius,
+                disk_center=disk_center,
                 chirality=chirality,
             )
         except Exception as exc:

@@ -158,9 +158,9 @@ def extract_st_parameters(
             linewidth_meta.get("peak_frequency_hz", spectrum.peak_frequency_hz)
         )
 
-    gamma_g = (
-        float(2.0 * np.pi * linewidth_hz) if np.isfinite(linewidth_hz) else float("nan")
-    )
+    # A stationary-spectrum FWHM depends on phase noise, nonlinear conversion,
+    # observation duration, and windowing; it does not identify Gilbert damping.
+    gamma_g = float("nan")
 
     n_points = amp.power.size
     fraction = float(np.clip(steady_state_fraction, 0.05, 1.0))
@@ -185,6 +185,15 @@ def extract_st_parameters(
         "fit_status": str(fit_meta.get("status", "unknown")),
         "linewidth_status": str(linewidth_meta.get("status", "unknown")),
         "linewidth_resolution_limited": bool(linewidth_resolution_limited),
+        "linewidth_definition": "FWHM of trajectory power spectrum in Hz",
+        "Gamma_G_status": "not_identifiable_from_stationary_linewidth",
+        "amplitude_normalization": str(
+            amp.metadata.get("reference_radius_source", "unknown")
+        ),
+        "generation_power_comparable_across_trajectories": bool(
+            amp.metadata.get("power_comparable_across_trajectories", False)
+        ),
+        "reference_radius_m": float(amp.reference_radius),
     }
     for key in ("df", "f_left_hz", "f_right_hz"):
         if key in linewidth_meta:

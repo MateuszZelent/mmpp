@@ -58,7 +58,7 @@ class VortexModeResult:
     l_index: int | None = None
 
     mode_type: str = "azimuthal"
-    rotation_sense: str = "CW"
+    rotation_sense: str = "undetermined"
     confidence: float = 0.0
 
     core_position: tuple[float, float] = (0.0, 0.0)
@@ -166,7 +166,7 @@ class AdvancedVortexClassifier:
         if int(np.sum(mask)) < 16:
             return 0, 0.0
 
-        complex_field = np.real(dmx[mask]) + 1j * np.real(dmy[mask])
+        complex_field = dmx[mask] + 1j * dmy[mask]
         phase = np.angle(complex_field)
         order = np.argsort(phi[mask])
         phi_sorted = phi[mask][order]
@@ -222,7 +222,7 @@ class AdvancedVortexClassifier:
         dmy = np.asarray(mode_array[:, :, 1], dtype=np.complex128)
         dmz = np.asarray(mode_array[:, :, 2], dtype=np.complex128)
 
-        core = self._estimate_core_position(np.real(dmz), material_mask)
+        core = self._estimate_core_position(dmz, material_mask)
         cx, cy = core
 
         e_par = float(np.sum(np.abs(dmx) ** 2 + np.abs(dmy) ** 2))
@@ -266,7 +266,7 @@ class AdvancedVortexClassifier:
             width=width_px,
             valid_mask=material_mask,
         )
-        rotation = "CCW" if m_idx >= 0 else "CW"
+        rotation = "undetermined"
 
         in_plane_amp = np.sqrt(np.abs(dmx) ** 2 + np.abs(dmy) ** 2)
         amp_thr = float(np.max(in_plane_amp)) * 0.1 if in_plane_amp.size else 0.0
@@ -298,8 +298,19 @@ class AdvancedVortexClassifier:
         else:
             dist_quad = float("inf")
 
+        phasor_convention = str(metadata.get("phasor_convention", "")).strip().lower()
+        if np.isfinite(delta_phi_xy) and dist_quad <= self.config.tol_phi_quadrature:
+            if phasor_convention in {"exp(-iwt)", "e^(-iwt)", "negative"}:
+                rotation = "CCW" if delta_phi_xy > 0 else "CW"
+            elif phasor_convention in {"exp(+iwt)", "e^(+iwt)", "positive"}:
+                rotation = "CW" if delta_phi_xy > 0 else "CCW"
+        notes = []
+        if rotation == "undetermined":
+            notes.append(
+                "rotation_sense_requires_quadrature_and_declared_phasor_convention"
+            )
+
         perp_frac = e_perp / e_total
-        notes: list[str] = []
         if (
             abs(m_idx) == 1
             and e_par_frac >= self.config.eta_parallel_for_gyr

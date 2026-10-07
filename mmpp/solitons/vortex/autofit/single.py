@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import time as _time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -54,7 +55,6 @@ def run_single_job_fit(
     from ..plotting import (
         VortexAnalyticalComparison,
         _resolve_plot_trajectory,
-        _simulate_matching_trajectory,
     )
 
     warnings_list: list[str] = []
@@ -140,6 +140,26 @@ def run_single_job_fit(
 
     # 3. Build parameter specs and identify fit/frozen sets
     param_specs = config.get_param_specs()
+    missing_specs = sorted(set(config.fit_params) - set(param_specs))
+    if missing_specs:
+        raise ValueError(
+            "No ParameterSpec is defined for requested fit parameter(s): "
+            + ", ".join(missing_specs)
+        )
+    common_fit_parameters = {"phase0", "center_x", "center_y", "omega0"}
+    model_fit_parameters = (
+        {"N", "chi_scale", "P_model", "d0_scale", "domega0_dJ"}
+        if resolution.model_kind == "cpp"
+        else {"P", "beta", "beta_nonadiabatic"}
+    )
+    unsupported = sorted(
+        set(config.fit_params) - common_fit_parameters - model_fit_parameters
+    )
+    if unsupported:
+        raise ValueError(
+            f"Fit parameter(s) are not consumed by the {resolution.model_kind.upper()} "
+            "autofit solver: " + ", ".join(unsupported)
+        )
     active_param_names = [
         name
         for name in config.fit_params
@@ -280,6 +300,12 @@ def run_single_job_fit(
     # 7. Build objective function with tqdm progress bar and optional live dashboard
     eval_count = [0]
     best_so_far = [float("inf")]
+    best_objective: dict[str, Any] = {
+        "loss": float("inf"),
+        "breakdown": {},
+        "params": None,
+        "trajectory": None,
+    }
     evaluation_records: list[dict[str, Any]] = []
 
     pbar = _make_progress_bar(config.max_eval, config.verbose)
@@ -298,18 +324,45 @@ def run_single_job_fit(
     def _evaluate(
         param_values: dict[str, float],
         *,
-        count_eval: bool,
+        evaluation_kind: str,
         update_visuals: bool,
         enforce_budget: bool,
     ) -> tuple[float, dict[str, float]]:
+        if enforce_budget and eval_count[0] >= config.max_eval:
+            raise _MaxEvalReached()
+        eval_count[0] += 1
         full_params = dict(base_params)
         full_params.update(frozen_params)
         full_params.update(param_values)
 
         try:
             ana_trajectory = sim_ctx.simulate(full_params)
-        except Exception:
-            return 1e10, {}
+        except Exception as exc:
+            loss = 1e10
+            breakdown = {"L_simulation_failure": loss}
+            best_so_far[0] = min(best_so_far[0], loss)
+            if best_objective["trajectory"] is None and loss < best_objective["loss"]:
+                best_objective["loss"] = loss
+                best_objective["breakdown"] = dict(breakdown)
+            record = {
+                "eval": eval_count[0],
+                "kind": evaluation_kind,
+                "status": "failed",
+                "error": str(exc),
+                "loss": loss,
+                "best_loss": best_so_far[0],
+                "freq_ghz": np.nan,
+                "radius_nm": np.nan,
+                "max_radius_nm": np.nan,
+                "core_distance_nm": np.nan,
+                "max_core_distance_nm": np.nan,
+                "drift_ratio": np.nan,
+                "params": dict(param_values),
+            }
+            evaluation_records.append(record)
+            if pbar is not None:
+                pbar.update(1)
+            return loss, breakdown
 
         features_ana = extract_features(ana_trajectory, reference_radius=disk_radius)
 
@@ -350,16 +403,20 @@ def run_single_job_fit(
             breakdown["L_threshold_guard"] = threshold_guard
             loss += threshold_guard
 
-        next_eval = eval_count[0] + 1 if count_eval else eval_count[0]
+        next_eval = eval_count[0]
         best_candidate = min(best_so_far[0], loss)
-
-        if count_eval:
-            eval_count[0] = next_eval
         if loss < best_so_far[0]:
             best_so_far[0] = loss
+        if best_objective["trajectory"] is None or loss < best_objective["loss"]:
+            best_objective["loss"] = float(loss)
+            best_objective["breakdown"] = dict(breakdown)
+            best_objective["params"] = dict(param_values)
+            best_objective["trajectory"] = ana_trajectory
 
         record = {
             "eval": next_eval,
+            "kind": evaluation_kind,
+            "status": "success",
             "loss": float(loss),
             "best_loss": float(best_candidate),
             "freq_ghz": float(features_ana.dominant_freq_hz * 1e-9),
@@ -384,14 +441,14 @@ def run_single_job_fit(
             record["chi_ratio"] = float(cpp_metrics["chi_ratio"])
             record["chi"] = float(cpp_metrics["chi"])
             record["threshold"] = float(cpp_metrics["threshold"])
-        if count_eval:
-            evaluation_records.append(record)
+        evaluation_records.append(record)
 
         # Update progress bar
-        if update_visuals and pbar is not None:
-            pbar.set_postfix(
-                loss=f"{loss:.4g}", best=f"{best_so_far[0]:.4g}", refresh=False
-            )
+        if pbar is not None:
+            if update_visuals:
+                pbar.set_postfix(
+                    loss=f"{loss:.4g}", best=f"{best_so_far[0]:.4g}", refresh=False
+                )
             pbar.update(1)
         if update_visuals and live_monitor is not None:
             live_monitor.update(
@@ -400,24 +457,36 @@ def run_single_job_fit(
                 force=loss <= best_so_far[0],
             )
 
-        # Hard cap on evaluations
-        if enforce_budget and eval_count[0] >= config.max_eval:
-            raise _MaxEvalReached()
-
         return loss, breakdown
 
     def _objective(param_values: dict[str, float]) -> tuple[float, dict[str, float]]:
         return _evaluate(
             param_values,
-            count_eval=True,
+            evaluation_kind="optimization",
             update_visuals=True,
             enforce_budget=True,
         )
 
     # 9. Compute baseline loss (with initial params)
     _log("Computing baseline loss...")
-    baseline_loss, baseline_breakdown = _objective(initial_params)
+    baseline_loss, baseline_breakdown = _evaluate(
+        initial_params,
+        evaluation_kind="baseline",
+        update_visuals=True,
+        enforce_budget=True,
+    )
     _log(f"Baseline loss: {baseline_loss:.4g}")
+
+    def _evaluate_seed(params: dict[str, float]) -> tuple[float, dict[str, float]]:
+        try:
+            return _evaluate(
+                params,
+                evaluation_kind="seed",
+                update_visuals=False,
+                enforce_budget=True,
+            )
+        except _MaxEvalReached:
+            return float("inf"), {}
 
     seed_params, seed_loss = _select_threshold_aware_seed(
         features_num=features_num,
@@ -425,12 +494,8 @@ def run_single_job_fit(
         initial_params=initial_params,
         active_names=active_param_names,
         param_specs=param_specs,
-        evaluator=lambda p: _evaluate(
-            p,
-            count_eval=False,
-            update_visuals=False,
-            enforce_budget=False,
-        ),
+        evaluator=_evaluate_seed,
+        initial_loss=baseline_loss,
     )
     if seed_loss + 1e-12 < baseline_loss:
         initial_params = seed_params
@@ -446,30 +511,32 @@ def run_single_job_fit(
         f"global={'ON' if config.global_search else 'OFF'}, "
         f"max_eval={config.max_eval})..."
     )
+    optimizer_config = replace(config, max_eval=max(1, config.max_eval - eval_count[0]))
     best_fitted_params, diagnostics = run_optimization(
         _objective,
         param_names=active_param_names,
         param_specs=param_specs,
         initial_values=initial_params,
-        config=config,
+        config=optimizer_config,
     )
+
+    if best_objective["params"] is not None:
+        best_fitted_params = dict(best_objective["params"])
 
     if pbar is not None:
         pbar.close()
     if live_monitor is not None:
         live_monitor.close()
 
+    diagnostics.n_evaluations = eval_count[0]
     diagnostics.evaluation_records = evaluation_records
 
     _log(f"Done: {diagnostics.n_evaluations} evals in {diagnostics.time_total_s:.1f}s")
 
-    # 11. Compute final loss
-    final_loss, final_breakdown = _evaluate(
-        best_fitted_params,
-        count_eval=False,
-        update_visuals=False,
-        enforce_budget=False,
-    )
+    # Reuse the best objective result. A post-fit solver call would either
+    # exceed max_eval or discard the final optimizer evaluation at the cap.
+    final_loss = float(best_objective["loss"])
+    final_breakdown = dict(best_objective["breakdown"])
     _log(
         f"Final loss: {final_loss:.4g} "
         f"(improvement: {final_loss / max(baseline_loss, 1e-30):.3f})"
@@ -499,14 +566,14 @@ def run_single_job_fit(
         search_locations=resolution.search_locations,
     )
 
-    analytical_best, raw_center, alignment_center = _simulate_matching_trajectory(
-        vortex_interface,
-        numerical,
-        best_resolution,
-        tracking_source=config.tracking_source,
-        tracking_method=config.tracking_method,
-        initial_condition=config.initial_condition,
-    )
+    analytical_best = best_objective["trajectory"]
+    if analytical_best is None:
+        raise RuntimeError(
+            "Autofit did not produce a valid analytical trajectory; "
+            "comparison metrics cannot be computed."
+        )
+    raw_center = tuple(analytical_best.metadata["raw_center"])
+    alignment_center = tuple(analytical_best.metadata["alignment_reference_center"])
     comparison = VortexAnalyticalComparison(
         vortex_interface=vortex_interface,
         numerical=numerical,
@@ -610,7 +677,9 @@ def _physics_informed_init(
             elif "omega0" in base_params:
                 init[name] = float(base_params["omega0"])
             elif trajectory.time.size >= 4:
-                omega = np.asarray(trajectory.instantaneous_frequency, dtype=float)
+                omega = np.asarray(
+                    trajectory.instantaneous_angular_frequency, dtype=float
+                )
                 init[name] = float(np.abs(np.median(omega)))
             elif spec and spec.initial is not None:
                 init[name] = spec.initial
@@ -633,19 +702,14 @@ def _physics_informed_init(
                 init[name] = float(base_params.get("chi_scale", 1.0))
 
         elif name == "phase0":
-            if trajectory.time.size >= 1:
-                z = trajectory.z
-                init[name] = float(np.angle(z[0])) if z.size else 0.0
-            else:
-                init[name] = 0.0
+            # phase0 is an offset from the observed initial condition, which is
+            # already used to build the simulation context.
+            init[name] = 0.0
 
         elif name in ("center_x", "center_y"):
-            x_arr = np.asarray(trajectory.x, dtype=float)
-            y_arr = np.asarray(trajectory.y, dtype=float)
-            if name == "center_x":
-                init[name] = float(np.mean(x_arr)) if x_arr.size else 0.0
-            else:
-                init[name] = float(np.mean(y_arr)) if y_arr.size else 0.0
+            # These are offsets from the measured orbit centre, not absolute
+            # coordinates; zero therefore reproduces the unshifted model.
+            init[name] = 0.0
 
         elif name == "d0_scale":
             init[name] = 1.0

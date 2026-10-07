@@ -86,12 +86,7 @@ def _cubic_equilibrium_angle(
     tol: float = 1e-10,
     max_iter: int = 200,
 ) -> float:
-    """Solve the in-plane equilibrium angle φ_M via Newton iteration.
-
-    Equation:  H_ext sin(φ_M − φ_H) + (Kc1 / (2μ₀Ms)) sin(4(φ_M − φ_ani)) = 0
-
-    If |Kc1| is negligible compared to H_ext, φ_M ≈ φ_H.
-    """
+    """Find the lowest-energy stable in-plane cubic-anisotropy equilibrium."""
     H_ext = B / MU0
     coeff = Kc1 / (2.0 * MU0 * Ms)
 
@@ -99,21 +94,71 @@ def _cubic_equilibrium_angle(
     if abs(coeff) < 1e-6 * max(abs(H_ext), 1.0):
         return phi_H
 
-    phi_M = phi_H  # initial guess
-    for _ in range(max_iter):
-        f_val = H_ext * math.sin(phi_M - phi_H) + coeff * math.sin(
-            4.0 * (phi_M - phi_ani)
+    def torque(angle: float) -> float:
+        return H_ext * math.sin(angle - phi_H) + coeff * math.sin(
+            4.0 * (angle - phi_ani)
         )
-        df_val = H_ext * math.cos(phi_M - phi_H) + 4.0 * coeff * math.cos(
-            4.0 * (phi_M - phi_ani)
+
+    def torque_derivative(angle: float) -> float:
+        return H_ext * math.cos(angle - phi_H) + 4.0 * coeff * math.cos(
+            4.0 * (angle - phi_ani)
         )
-        if abs(df_val) < 1e-30:
-            break
-        delta = f_val / df_val
-        phi_M -= delta
-        if abs(delta) < tol:
-            break
-    return phi_M
+
+    def energy(angle: float) -> float:
+        return (
+            -Ms * B * math.cos(angle - phi_H)
+            + 0.25 * Kc1 * math.sin(2.0 * (angle - phi_ani)) ** 2
+        )
+
+    roots: list[float] = []
+    for initial in np.linspace(-math.pi, math.pi, 64, endpoint=False):
+        angle = float(initial)
+        for _ in range(max_iter):
+            derivative = torque_derivative(angle)
+            if abs(derivative) < 1e-30:
+                break
+            delta = torque(angle) / derivative
+            angle -= delta
+            if abs(delta) < tol:
+                break
+        wrapped = (angle + math.pi) % (2.0 * math.pi) - math.pi
+        if abs(torque(wrapped)) > max(abs(H_ext), abs(coeff), 1.0) * 1e-9:
+            continue
+        if not any(abs(np.angle(np.exp(1j * (wrapped - old)))) < 1e-7 for old in roots):
+            roots.append(wrapped)
+
+    curvature_scale = max(abs(Ms * B), abs(Kc1), 1.0)
+    stable = [
+        angle
+        for angle in roots
+        if Ms * B * math.cos(angle - phi_H)
+        + 2.0 * Kc1 * math.cos(4.0 * (angle - phi_ani))
+        > curvature_scale * 1e-12
+    ]
+    if not stable:
+        raise ValueError(
+            "No stable in-plane equilibrium was found for the supplied field and "
+            "cubic anisotropy."
+        )
+    return min(stable, key=energy)
+
+
+def _normalize_ku_axis(ku_axis: str) -> str:
+    """Return the declared uniaxial easy-axis orientation."""
+    value = str(ku_axis).strip().lower().replace("-", "_")
+    aliases = {
+        "in_plane": "in_plane",
+        "plane": "in_plane",
+        "xy": "in_plane",
+        "perpendicular": "perpendicular",
+        "out_of_plane": "perpendicular",
+        "oop": "perpendicular",
+        "z": "perpendicular",
+    }
+    try:
+        return aliases[value]
+    except KeyError as exc:
+        raise ValueError("ku_axis must be 'in_plane' or 'perpendicular'") from exc
 
 
 def _cubic_stiffness_field(
@@ -142,6 +187,7 @@ def kalinikos(
     d: float,
     Aex: float,
     Ku: float = 0.0,
+    ku_axis: str = "perpendicular",
     Kc1: float = 0.0,
     Kc2: float = 0.0,
     phi: float = np.pi / 2,
@@ -168,7 +214,13 @@ def kalinikos(
     Aex : float
         Exchange stiffness in J/m
     Ku : float, optional
-        Uniaxial anisotropy in J/m³ (default: 0)
+        Uniaxial anisotropy in J/m³ (default: 0). Its sign follows
+        ``E_ani = -Ku (m·e_easy)²``.
+    ku_axis : str, optional
+        Easy-axis orientation, ``"perpendicular"`` (the default, consistent
+        with :func:`mmpp.analytical.kittel`) or ``"in_plane"``. The in-plane
+        easy axis is assumed parallel to the applied field; its azimuth is not
+        an independent model parameter.
     Kc1 : float, optional
         First-order cubic anisotropy constant in J/m³ (default: 0).
         Enters as in-plane four-fold stiffness field.
@@ -228,6 +280,7 @@ def kalinikos(
     d = float(d)
     Aex = float(Aex)
     Ku = float(Ku)
+    ku_axis = _normalize_ku_axis(ku_axis)
     Kc1 = float(Kc1)
     Kc2 = float(Kc2)
     phi_ani = float(phi_ani)
@@ -256,12 +309,13 @@ def kalinikos(
     # Effective dipolar angle = angle between k and equilibrium M
     phi_eff = phi - phi_M
 
-    # Internal field H₀ (in A/m).
-    # For an in-plane magnetized thin film: H₀ = H_ext_parallel + H_uni + H_cub
+    # Internal in-plane stiffness (in A/m). Perpendicular anisotropy changes
+    # the out-of-plane stiffness only; in-plane anisotropy adds to both.
     H_ext_par = B / MU0  # for small phi_M this ≈ B/μ₀
     if abs(phi_M) > 1e-10:
         H_ext_par = (B / MU0) * math.cos(phi_M - phi_H)
-    H0 = H_ext_par + 2.0 * Ku / (MU0 * Ms) + H_cub
+    H_ku = 2.0 * Ku / (MU0 * Ms)
+    H0 = H_ext_par + H_cub + (H_ku if ku_axis == "in_plane" else 0.0)
 
     # Exchange stiffness field contribution (varies with k)
     H_ex = Ms * lex2 * (k * k)  # = 2A k²/(μ₀ Ms)
@@ -276,14 +330,23 @@ def kalinikos(
         F = 1.0 - P * c2 + (Ms * P * (1.0 - P) / (denom + 1e-30)) * s2
 
     # Characteristic frequencies (rad/s)
-    omega_H = gamma_val * MU0 * max(H0, 0.0)
+    if H0 <= 0.0:
+        raise ValueError("The in-plane equilibrium has non-positive field stiffness")
+    omega_H = gamma_val * MU0 * H0
     omega_M = gamma_val * MU0 * Ms
     omega_ex = omega_M * lex2 * (k * k)
 
     omega0 = omega_H + omega_ex
 
     # Final dispersion: ω² = ω₀(ω₀ + ω_M·F)
-    under_sqrt = omega0 * (omega0 + omega_M * F)
+    anisotropy_shift = gamma_val * MU0 * H_ku if ku_axis == "perpendicular" else 0.0
+    second_stiffness = omega0 + omega_M * F - anisotropy_shift
+    under_sqrt = omega0 * second_stiffness
+    if np.any(under_sqrt < -1e-12 * max(float(np.max(np.abs(under_sqrt))), 1.0)):
+        raise ValueError(
+            "The supplied field and anisotropy produce an unstable in-plane "
+            "spin-wave stiffness."
+        )
     under_sqrt = np.maximum(under_sqrt, 0.0)
     omega = np.sqrt(under_sqrt)
 
@@ -295,6 +358,7 @@ def kalinikos(
         "d": d,
         "Aex": Aex,
         "Ku": Ku,
+        "ku_axis": ku_axis,
         "phi": phi,
         "g": g,
     }
@@ -325,6 +389,7 @@ def kalinikos_no_approx(
     d: float,
     Aex: float,
     Ku: float = 0.0,
+    ku_axis: str = "perpendicular",
     n: int = 0,
     perpendicular: bool = False,
     g: float = 2.0,
@@ -350,6 +415,10 @@ def kalinikos_no_approx(
         Exchange stiffness in J/m
     Ku : float, optional
         Uniaxial anisotropy in J/m³ (default: 0)
+    ku_axis : str, optional
+        Easy-axis orientation. In-plane PSSW supports ``"in_plane"`` and
+        ``"perpendicular"``; the in-plane easy axis is assumed parallel to the
+        applied field. Out-of-plane geometry requires ``"perpendicular"``.
     n : int, optional
         PSSW mode index (default: 0 for fundamental mode)
         n > 0 includes quantization along thickness.
@@ -378,11 +447,29 @@ def kalinikos_no_approx(
     d = float(d)
     Aex = float(Aex)
     Ku = float(Ku)
+    ku_axis = _normalize_ku_axis(ku_axis)
     gamma_val = gamma(g)
+
+    if isinstance(n, (bool, np.bool_)) or not isinstance(n, (int, np.integer)):
+        raise TypeError("n must be a non-negative integer")
+    if n < 0:
+        raise ValueError("n must be a non-negative integer")
+    if perpendicular and ku_axis != "perpendicular":
+        raise ValueError("Out-of-plane geometry requires ku_axis='perpendicular'")
 
     if n == 0 and not perpendicular:
         # Use standard in-plane geometry formula (DE, phi=π/2)
-        return kalinikos(k=k, B=B, Ms=Ms, d=d, Aex=Aex, Ku=Ku, phi=np.pi / 2, g=g)
+        return kalinikos(
+            k=k,
+            B=B,
+            Ms=Ms,
+            d=d,
+            Aex=Aex,
+            Ku=Ku,
+            ku_axis=ku_axis,
+            phi=np.pi / 2,
+            g=g,
+        )
 
     if n == 0 and perpendicular:
         # Delegate to forward_volume for fundamental OOP mode
@@ -392,10 +479,26 @@ def kalinikos_no_approx(
     kz = abs(n) * math.pi / d
     k_total_sq = k * k + kz * kz
 
-    # Dipolar factor (for in-plane k only)
+    # Kalinikos-Slavin diagonal-approximation overlap for thickness mode n.
     kd = np.abs(k) * d
-    with np.errstate(divide="ignore", invalid="ignore"):
-        Fk = np.where(kd > 1e-10, (1.0 - np.exp(-kd)) / kd, 1.0)
+    kd2 = kd * kd
+    thickness_k2 = float(n * n) * math.pi**2
+    denominator = kd2 + thickness_k2
+    ratio = np.zeros_like(kd)
+    nonzero = kd > 0.0
+    ratio[nonzero] = np.where(
+        n % 2,
+        (1.0 + np.exp(-kd[nonzero])) / kd[nonzero],
+        -np.expm1(-kd[nonzero]) / kd[nonzero],
+    )
+    overlap = np.zeros_like(kd)
+    valid = denominator > 0.0
+    fraction = np.zeros_like(kd)
+    fraction[valid] = kd2[valid] / denominator[valid]
+    overlap[valid] = fraction[valid] * (1.0 - fraction[valid] * 2.0 * ratio[valid])
+    if n == 0:
+        # This is the continuous n=0 limit of Eq. 47.
+        overlap = _dipolar_factor_P(k, d)
 
     # Anisotropy field
     Han = 2.0 * Ku / (MU0 * Ms)
@@ -409,17 +512,30 @@ def kalinikos_no_approx(
 
     if perpendicular:
         # OOP: static demagnetization -Ms
-        H_static = np.maximum(0.0, H0 - Ms + Han + Hex)
+        H_static = H0 - Ms + Han + Hex
+        if np.any(H_static <= 0.0):
+            raise ValueError(
+                "The out-of-plane equilibrium is unsaturated or unstable for "
+                "the supplied field and mode."
+            )
         omega_0 = gamma_val * MU0 * H_static
         # Dynamic demagnetization for higher OOP modes:
         # P_nn = k²/k_total² (diagonal approximation)
         P_nn = (k * k) / (k_total_sq + 1e-30)
         under_sqrt = np.maximum(omega_0 * (omega_0 + omega_M * P_nn), 0.0)
     else:
-        # In-plane: same convention as kalinikos() — no in-plane
-        # demagnetization subtracted from H₀.
-        omega_0 = gamma_val * MU0 * (H0 + Han + Hex)
-        under_sqrt = np.maximum(omega_0 * (omega_0 + omega_M * (1.0 - Fk)), 0.0)
+        # Eq. 46-47 of the diagonal Kalinikos-Slavin approximation gives
+        # (H + H_ex + Ms*P_n)(H + H_ex + Ms*(1-P_n)). At k=0 this retains
+        # both PSSW stiffness factors, including the out-of-plane Ms term.
+        H_base = H0 + Hex
+        H_inplane = H_base + (Han if ku_axis == "in_plane" else 0.0)
+        H_outofplane = (
+            H_base + Ms * (1.0 - overlap) + (Han if ku_axis == "in_plane" else -Han)
+        )
+        H_inplane = H_inplane + Ms * overlap
+        under_sqrt = (gamma_val * MU0 * H_inplane) * (gamma_val * MU0 * H_outofplane)
+        if np.any(under_sqrt < 0.0):
+            raise ValueError("The supplied PSSW mode has unstable stiffness")
 
     omega = np.sqrt(under_sqrt)
     f_ghz = omega / (2.0 * math.pi * 1e9)
@@ -427,7 +543,7 @@ def kalinikos_no_approx(
     geometry = "perpendicular" if perpendicular else "in-plane"
 
     return DispersionResult(
-        model_name=f"Kalinikos PSSW n={n}",
+        model_name=f"Kalinikos-Slavin diagonal PSSW n={n}",
         k=k,
         f=f_ghz,
         params={
@@ -436,6 +552,7 @@ def kalinikos_no_approx(
             "d": d,
             "Aex": Aex,
             "Ku": Ku,
+            "ku_axis": ku_axis,
             "n": n,
             "perpendicular": perpendicular,
             "g": g,
@@ -452,6 +569,7 @@ def damon_eshbach(
     d: float,
     Aex: float = 0.0,
     Ku: float = 0.0,
+    ku_axis: str = "perpendicular",
     g: float = 2.0,
 ) -> DispersionResult:
     """
@@ -492,7 +610,17 @@ def damon_eshbach(
     R. W. Damon & J. R. Eshbach, J. Phys. Chem. Solids 19, 308 (1961).
     """
     # DE is Kalinikos with phi = π/2
-    result = kalinikos(k=k, B=B, Ms=Ms, d=d, Aex=Aex, Ku=Ku, phi=np.pi / 2, g=g)
+    result = kalinikos(
+        k=k,
+        B=B,
+        Ms=Ms,
+        d=d,
+        Aex=Aex,
+        Ku=Ku,
+        ku_axis=ku_axis,
+        phi=np.pi / 2,
+        g=g,
+    )
     result.model_name = "Damon-Eshbach (MSSW)"
     result.metadata["geometry"] = "k ⟂ M (surface wave)"
     result.metadata["reference"] = "J. Phys. Chem. Solids 19, 308 (1961)"
@@ -507,6 +635,7 @@ def backward_volume(
     d: float,
     Aex: float = 0.0,
     Ku: float = 0.0,
+    ku_axis: str = "perpendicular",
     g: float = 2.0,
 ) -> DispersionResult:
     """
@@ -549,7 +678,17 @@ def backward_volume(
     >>> bv.plt.plot(title="Backward Volume Mode")
     """
     # BV is Kalinikos with phi = 0
-    result = kalinikos(k=k, B=B, Ms=Ms, d=d, Aex=Aex, Ku=Ku, phi=0.0, g=g)
+    result = kalinikos(
+        k=k,
+        B=B,
+        Ms=Ms,
+        d=d,
+        Aex=Aex,
+        Ku=Ku,
+        ku_axis=ku_axis,
+        phi=0.0,
+        g=g,
+    )
     result.model_name = "Backward Volume (BVMSW)"
     result.metadata["geometry"] = "k ∥ M (volume wave)"
     return result
@@ -563,6 +702,7 @@ def forward_volume(
     d: float,
     Aex: float = 0.0,
     Ku: float = 0.0,
+    ku_axis: str = "perpendicular",
     g: float = 2.0,
 ) -> DispersionResult:
     """
@@ -614,6 +754,9 @@ def forward_volume(
     d = float(d)
     Aex = float(Aex)
     Ku = float(Ku)
+    ku_axis = _normalize_ku_axis(ku_axis)
+    if ku_axis != "perpendicular":
+        raise ValueError("Forward-volume geometry requires ku_axis='perpendicular'")
     gamma_val = gamma(g)
 
     P = _dipolar_factor_P(k, d)
@@ -625,7 +768,13 @@ def forward_volume(
     h_anis = 2.0 * Ku / Ms
     B_internal = B - MU0 * Ms + h_anis
 
-    omega0 = gamma_val * np.maximum(0.0, B_internal + B_ex)
+    effective_field = B_internal + B_ex
+    if np.any(effective_field <= 0.0):
+        raise ValueError(
+            "The perpendicular equilibrium is unsaturated or unstable for the "
+            "supplied field and wavevector."
+        )
+    omega0 = gamma_val * effective_field
     omega_M = gamma_val * MU0 * Ms
 
     under_sqrt = omega0 * (omega0 + omega_M * P)
@@ -638,7 +787,15 @@ def forward_volume(
         model_name="Forward Volume (FVMSW)",
         k=k,
         f=f_ghz,
-        params={"B": B, "Ms": Ms, "d": d, "Aex": Aex, "Ku": Ku, "g": g},
+        params={
+            "B": B,
+            "Ms": Ms,
+            "d": d,
+            "Aex": Aex,
+            "Ku": Ku,
+            "ku_axis": ku_axis,
+            "g": g,
+        },
         metadata={"geometry": "M ⟂ film plane"},
     )
 

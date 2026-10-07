@@ -121,7 +121,8 @@ class BrillouinZoneFolding:
 
         # Estimate origin BZ
         n_folds = int(round((k - k_folded) / bz_width))
-        G_applied = n_folds * bz_width
+        # The public contract is k_folded = k + G_applied.
+        G_applied = k_folded - k
 
         logger.debug(
             "Fallback folding for k=%.3e: k_folded=%.3e, origin=%d",
@@ -130,7 +131,8 @@ class BrillouinZoneFolding:
             n_folds,
         )
 
-        return k_folded, n_folds, G_applied
+        origin_bz = int(round(-G_applied / bz_width))
+        return k_folded, origin_bz, G_applied
 
     def _find_peaks_in_spectrum(
         self,
@@ -310,29 +312,86 @@ class BrillouinZoneFolding:
         self, modes: list[DispersionMode]
     ) -> dict[int, list[DispersionMode]]:
         """
-        Group modes into branches based on origin BZ and continuity.
+        Track peaks between neighboring k columns by frequency continuity.
 
-        Uses a combined index: branch_id = origin_BZ * 100 + local_branch_index
-        This allows distinguishing between same-indexed branches from different BZs.
+        Each source BZ is tracked independently. Ambiguous assignments receive
+        a low ``tracking_confidence`` because intensity maps alone cannot
+        resolve a true mode crossing or an overlap exchange.
         """
-        branches: dict[int, list[DispersionMode]] = {}
-
+        by_origin: dict[int, dict[float, list[DispersionMode]]] = {}
         for mode in modes:
-            # Combined branch ID
-            branch_id = mode.origin_BZ * 100 + mode.branch_index
+            by_origin.setdefault(mode.origin_BZ, {}).setdefault(
+                mode.k_original, []
+            ).append(mode)
 
-            if branch_id not in branches:
-                branches[branch_id] = []
-            branches[branch_id].append(mode)
+        tracked: list[list[DispersionMode]] = []
+        for origin_bz in sorted(by_origin):
+            branches: dict[int, list[DispersionMode]] = {}
+            next_branch_id = 0
+            previous: dict[int, DispersionMode] = {}
 
-        # Re-index branches sequentially
+            for _k, column_modes in sorted(by_origin[origin_bz].items()):
+                current = sorted(column_modes, key=lambda mode: mode.omega)
+                costs = sorted(
+                    (
+                        abs(float(candidate.omega) - float(previous_mode.omega)),
+                        branch_id,
+                        candidate_idx,
+                    )
+                    for branch_id, previous_mode in previous.items()
+                    for candidate_idx, candidate in enumerate(current)
+                )
+                used_branches: set[int] = set()
+                used_candidates: set[int] = set()
+                next_previous: dict[int, DispersionMode] = {}
+
+                for distance, branch_id, candidate_idx in costs:
+                    if branch_id in used_branches or candidate_idx in used_candidates:
+                        continue
+                    candidate = current[candidate_idx]
+                    alternatives = [
+                        cost
+                        for cost, other_branch, other_idx in costs
+                        if (other_branch == branch_id and other_idx != candidate_idx)
+                        or (other_idx == candidate_idx and other_branch != branch_id)
+                    ]
+                    if alternatives:
+                        margin = max(min(alternatives) - distance, 0.0)
+                        candidate.tracking_confidence = float(
+                            np.clip(
+                                margin / (min(alternatives) + np.finfo(float).eps),
+                                0.0,
+                                1.0,
+                            )
+                        )
+                    else:
+                        candidate.tracking_confidence = 1.0
+                    candidate.branch_index = branch_id
+                    branches[branch_id].append(candidate)
+                    next_previous[branch_id] = candidate
+                    used_branches.add(branch_id)
+                    used_candidates.add(candidate_idx)
+
+                for candidate_idx, candidate in enumerate(current):
+                    if candidate_idx in used_candidates:
+                        continue
+                    branch_id = next_branch_id
+                    next_branch_id += 1
+                    candidate.branch_index = branch_id
+                    candidate.tracking_confidence = 0.0 if previous else 1.0
+                    branches[branch_id] = [candidate]
+                    next_previous[branch_id] = candidate
+
+                # A missing peak breaks a branch; do not bridge unobserved k.
+                previous = next_previous
+
+            tracked.extend(branches[idx] for idx in sorted(branches))
+
         reindexed: dict[int, list[DispersionMode]] = {}
-        for new_idx, (_old_idx, branch_modes) in enumerate(sorted(branches.items())):
-            # Update mode branch indices
-            for mode in branch_modes:
-                mode.branch_index = new_idx
-            reindexed[new_idx] = branch_modes
-
+        for branch_index, branch in enumerate(tracked):
+            for mode in branch:
+                mode.branch_index = branch_index
+            reindexed[branch_index] = branch
         return reindexed
 
     def fold_k_array(

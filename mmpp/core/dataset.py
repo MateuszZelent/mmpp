@@ -520,6 +520,7 @@ class DatasetAwareWrapper:
         geometry_override=None,
         index_plan: IndexPlan | None = None,
         time_step_scale: float = 1.0,
+        time_values: np.ndarray | None = None,
     ):
         self.job_result = job_result
         self.dataset_name = dataset_name
@@ -529,6 +530,11 @@ class DatasetAwareWrapper:
         self._geometry_override = geometry_override
         self._index_plan: IndexPlan | None = index_plan
         self._time_step_scale = float(time_step_scale)
+        self._time_values_override = (
+            None
+            if time_values is None
+            else np.asarray(time_values, dtype=float).reshape(-1)
+        )
         self._fft: Any | None = None
         self._solitons: Any | None = None
         self._analyze: Any | None = None
@@ -852,6 +858,11 @@ class DatasetAwareWrapper:
                 time_step_scale=self._materialized_time_step_scale(
                     local_normalized_key, self._time_step_scale
                 ),
+                time_values=(
+                    self._time_values_override[local_normalized_key[0]]
+                    if self._time_values_override is not None
+                    else None
+                ),
             )
 
         if not has_only_simple_slices(local_normalized_key, ndim):
@@ -871,6 +882,11 @@ class DatasetAwareWrapper:
                 index_plan=new_plan,
                 time_step_scale=self._materialized_time_step_scale(
                     local_normalized_key, self._time_step_scale
+                ),
+                time_values=(
+                    self._time_values_override[local_normalized_key[0]]
+                    if self._time_values_override is not None
+                    else None
                 ),
             )
 
@@ -1048,65 +1064,113 @@ class DatasetAwareWrapper:
 
     @property
     def dt(self):
-        """
-        Get time step for this dataset.
+        """Return the uniform sampling interval of this exact view in seconds."""
+        times = self.time
+        if times.size < 2:
+            raise ValueError("At least two selected time samples are required for dt")
+        intervals = np.diff(times)
+        dt = float(np.mean(intervals))
+        tolerance = max(abs(dt) * 1e-6, np.finfo(float).eps * 16)
+        if not np.all(np.isfinite(intervals)) or not np.allclose(
+            intervals, dt, rtol=1e-6, atol=tolerance
+        ):
+            raise ValueError(
+                f"Dataset view '{self.dataset_name}' has nonuniform time samples; "
+                "a scalar dt is not valid."
+            )
+        return abs(dt)
 
-        Algorithm:
-        1. Check if 't_sampl' exists in job_result attrs (global)
-        2. Check if 't' exists in THIS dataset's attrs and calculate dt
-        3. Look for 't' array in various locations (root, table, etc.)
-        4. Calculate dt = t[1] - t[0]
+    @property
+    def time(self) -> Any:
+        """Physical timestamps for the current view, preserving its time origin."""
+        if self._time_values_override is not None:
+            return self._time_values_override.copy()
 
-        Returns:
-            float: Time step in seconds
-        """
-        # Method 1: Check for t_sampl in main attributes
-        if hasattr(self.job_result, "_z") and self.job_result._z is not None:
-            if "t_sampl" in self.job_result._z.attrs:
-                return self.job_result._z.attrs["t_sampl"]
-
-        # Method 2: Check THIS dataset's attrs for 't' array (MOST SPECIFIC)
-        if hasattr(self.job_result, "_z") and self.job_result._z is not None:
+        root = getattr(self.job_result, "_z", None)
+        dataset_attrs = getattr(self.zarr_array, "attrs", {})
+        if root is not None:
             try:
-                dataset = self.job_result._z[self.dataset_name]
-                if hasattr(dataset, "attrs") and "t" in dataset.attrs:
-                    t_attr = dataset.attrs["t"]
-                    # t_attr is a list or array in attrs
-                    if hasattr(t_attr, "__len__") and len(t_attr) >= 2:
-                        dt = float(t_attr[1] - t_attr[0])
-                        return dt
-            except (KeyError, NameError, AttributeError, IndexError, TypeError):
+                dataset_attrs = root[self.dataset_name].attrs
+            except Exception:
                 pass
 
-        # Method 3: Look for time array in various locations
-        # Try common naming patterns and locations
-        time_locations = [
-            ("t",),  # Root level 't'
-            ("table", "t"),  # Often in 'table' group
-            ("time",),  # Alternative name
-            (f"t_{self.dataset_name}",),  # Dataset-specific time
-        ]
+        raw_times: Any = None
+        try:
+            candidate = dataset_attrs.get("t")
+        except AttributeError:
+            candidate = None
+        if candidate is not None:
+            raw_times = np.asarray(candidate, dtype=float).reshape(-1)
 
-        for location in time_locations:
-            try:
-                if hasattr(self.job_result, "_z"):
-                    # Navigate through the location path
-                    t_array = self.job_result._z
+        if raw_times is None and root is not None:
+            for location in (
+                ("t",),
+                ("time",),
+                ("t_" + str(self.dataset_name),),
+                ("table", "t"),
+            ):
+                try:
+                    candidate = root
                     for key in location:
-                        t_array = t_array[key]
+                        candidate = candidate[key]
+                    raw_times = np.asarray(candidate[:], dtype=float).reshape(-1)
+                    break
+                except Exception:
+                    continue
 
-                    # Calculate dt from first two time points
-                    if t_array.shape[0] >= 2:
-                        dt = float(t_array[1] - t_array[0])
-                        return dt
-            except (KeyError, NameError, AttributeError, IndexError):
-                continue
+        source_length = self._base_shape()[0]
+        if raw_times is None:
+            sampling_interval = None
+            for attrs in (
+                dataset_attrs,
+                getattr(self.job_result, "attrs", {}),
+                getattr(root, "attrs", {}) if root is not None else {},
+            ):
+                try:
+                    sampling_interval = attrs.get("t_sampl")
+                except AttributeError:
+                    continue
+                if sampling_interval is not None:
+                    break
+            if sampling_interval is None:
+                raise AttributeError(
+                    f"Cannot determine time axis for dataset '{self.dataset_name}': "
+                    "no timestamp array or positive t_sampl metadata was found."
+                )
+            try:
+                dt = float(sampling_interval)
+            except (TypeError, ValueError) as exc:
+                raise AttributeError(
+                    f"Cannot determine time axis for dataset '{self.dataset_name}': "
+                    "no timestamp array or positive t_sampl metadata was found."
+                ) from exc
+            if not np.isfinite(dt) or dt <= 0:
+                raise ValueError(f"Invalid t_sampl for dataset {self.dataset_name!r}")
+            raw_times = np.arange(source_length, dtype=float) * dt
 
-        # Method 4: Fallback - raise informative error
-        raise AttributeError(
-            f"Cannot determine time step for dataset '{self.dataset_name}'. "
-            f"Neither 't_sampl' attribute nor time array 't' found in zarr file."
-        )
+        if raw_times.size == source_length:
+            selection = (
+                self._index_plan.storage_key
+                if self._index_plan is not None
+                else self.slice_info
+            )
+            if selection is not None:
+                index_key = selection if isinstance(selection, tuple) else (selection,)
+                time_key = index_key[0] if index_key else slice(None)
+                raw_times = np.asarray(raw_times[time_key], dtype=float).reshape(-1)
+        elif raw_times.size != self._current_shape()[0]:
+            raise ValueError(
+                f"Time axis for dataset '{self.dataset_name}' has {raw_times.size} "
+                f"samples but the current view has {self._current_shape()[0]}."
+            )
+
+        if raw_times.size != self._current_shape()[0]:
+            raise ValueError(
+                f"Selected time axis for dataset '{self.dataset_name}' has "
+                f"{raw_times.size} samples but the current view has "
+                f"{self._current_shape()[0]}."
+            )
+        return np.asarray(raw_times, dtype=float)
 
     @property
     def data(self):
@@ -1346,19 +1410,39 @@ class DatasetAwareWrapper:
         targets = self._normalize_downsample_spec(spec, array.ndim)
 
         reduced = array
+        geometry = self.geometry
+        try:
+            reduced_times = self.time
+        except (AttributeError, TypeError, ValueError):
+            reduced_times = None
         for axis, target in enumerate(targets):
             if target is None:
                 continue
+            source_size = int(reduced.shape[axis])
+            target_size = int(target)
+            if 0 < target_size < source_size:
+                scale = source_size // target_size
+                trimmed_size = target_size * scale
+                if trimmed_size != source_size:
+                    indexer = [slice(None)] * len(reduced.shape)
+                    indexer[axis] = slice(0, trimmed_size)
+                    geometry = geometry.sliced(tuple(indexer))
+                    if axis == 0 and reduced_times is not None:
+                        reduced_times = reduced_times[:trimmed_size]
+                if axis == 0 and reduced_times is not None:
+                    reduced_times = reduced_times.reshape(target_size, scale).mean(
+                        axis=1
+                    )
             reduced = self._block_mean_downsample_axis(
                 reduced,
                 axis=axis,
-                target=int(target),
+                target=target_size,
                 strict=bool(strict),
             )
 
         geometry_override = None
         try:
-            geometry_override = self.geometry.resampled(tuple(reduced.shape))
+            geometry_override = geometry.resampled(tuple(reduced.shape))
         except Exception:
             geometry_override = None
 
@@ -1382,6 +1466,7 @@ class DatasetAwareWrapper:
             materialized_data=np.asarray(reduced, dtype=np.float32),
             geometry_override=geometry_override,
             time_step_scale=effective_time_scale,
+            time_values=reduced_times,
         )
 
     def sel(self, *axes: str, **coords: Any) -> DatasetAwareWrapper:

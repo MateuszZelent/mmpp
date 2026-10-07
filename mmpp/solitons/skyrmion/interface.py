@@ -101,6 +101,11 @@ class SkyrmionInterface(InteractiveNodeMixin):
         return self._size
 
     def _resolve_data(self) -> np.ndarray:
+        view = self._dataset_view
+        if view is not None:
+            shape = tuple(int(value) for value in getattr(view, "shape", ()))
+            if shape and shape[-1] >= 3:
+                return np.asarray(view.numpy(copy=False, keepdims=True), dtype=float)
         name = self.dataset_name
         if name is None:
             raise ValueError(
@@ -114,6 +119,12 @@ class SkyrmionInterface(InteractiveNodeMixin):
         return np.asarray(dataset, dtype=float)
 
     def _resolve_spacing(self) -> tuple[float, float]:
+        view = self._dataset_view
+        if view is not None:
+            axes = getattr(getattr(view, "geometry", None), "axes", {})
+            x_axis, y_axis = axes.get("x"), axes.get("y")
+            if x_axis is not None and y_axis is not None:
+                return float(x_axis.cell_m), float(y_axis.cell_m)
         attrs = self._job.attrs
 
         def resolve(axis: str, index: int) -> float:
@@ -141,6 +152,7 @@ class SkyrmionInterface(InteractiveNodeMixin):
             namespace,
             self.dataset_name,
             repr(self._slice_info),
+            id(self._dataset_view) if self._dataset_view is not None else None,
             tuple(sorted(values.items())),
             mask_token,
         )

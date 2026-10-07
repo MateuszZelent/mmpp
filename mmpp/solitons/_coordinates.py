@@ -18,6 +18,10 @@ class XYConvention:
 
     y_axis: Literal["up", "down"] = "up"
 
+    def __post_init__(self) -> None:
+        if self.y_axis not in {"up", "down"}:
+            raise ValueError("y_axis must be 'up' or 'down'")
+
 
 def grid_xy(
     Nx: int,

@@ -1,6 +1,9 @@
 import numpy as np
 
-from mmpp.fft.mode_characterization import ModeCharacterAnalyzer, ModeCharacteristicConfig
+from mmpp.fft.mode_characterization import (
+    ModeCharacterAnalyzer,
+    ModeCharacteristicConfig,
+)
 from mmpp.fft.modes import FMRModeData
 
 
@@ -22,7 +25,7 @@ def test_gyration_mode_classification():
     x, y = _make_grid(96)
     r = np.sqrt(x**2 + y**2)
     phi = np.arctan2(y, x)
-    envelope = np.exp(-(r / 0.7) ** 2)
+    envelope = np.exp(-((r / 0.7) ** 2))
 
     mx = envelope * np.exp(1j * phi)
     my = envelope * np.exp(1j * (phi + np.pi / 2))
@@ -34,9 +37,14 @@ def test_gyration_mode_classification():
 
     assert result.primary_class == "gyration"
     assert result.m_index in {1, -1}
-    assert result.rotation_sense in {"CCW", "CW"}
+    assert result.rotation_sense is None
+    assert any("declared_phasor_convention" in note for note in result.notes)
     assert result.radial_nodes == 0
     assert result.confidence > 0.4
+
+    mode.metadata["phasor_convention"] = "exp(-iwt)"
+    declared_result = analyzer.analyze(mode)
+    assert declared_result.rotation_sense == "CCW"
 
 
 def test_breathing_mode_classification():
@@ -64,7 +72,7 @@ def test_azimuthal_mode_classification():
     x, y = _make_grid(96)
     r = np.sqrt(x**2 + y**2)
     phi = np.arctan2(y, x)
-    envelope = (r / 0.8) * np.exp(-(r / 0.9) ** 2)
+    envelope = (r / 0.8) * np.exp(-((r / 0.9) ** 2))
 
     mx = envelope * np.exp(1j * 2 * phi)
     my = envelope * np.exp(1j * (2 * phi + np.pi / 3))

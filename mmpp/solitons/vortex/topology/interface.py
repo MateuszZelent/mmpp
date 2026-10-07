@@ -27,11 +27,13 @@ class TopologyInterface(InteractiveNodeMixin):
         dataset_name: str | None,
         slice_info: Any | None,
         config: VortexConfig,
+        dataset_view: Any | None = None,
     ):
         self._job = job_result
         self._dataset_name = dataset_name
         self._slice_info = slice_info
         self._config = config
+        self._dataset_view = dataset_view
         self._last_result: TopologyResult | None = None
         self._cache = InMemoryResultCache(job_result, namespace="topology")
 
@@ -48,6 +50,11 @@ class TopologyInterface(InteractiveNodeMixin):
         return self._dataset_name
 
     def _resolve_dataset_array(self) -> np.ndarray:
+        view = self._dataset_view
+        if view is not None:
+            shape = tuple(int(value) for value in getattr(view, "shape", ()))
+            if shape and shape[-1] >= 3:
+                return np.asarray(view.numpy(copy=False, keepdims=True), dtype=float)
         dataset_name = self.dataset_name
         if dataset_name is None:
             raise ValueError("No dataset selected")
@@ -57,6 +64,12 @@ class TopologyInterface(InteractiveNodeMixin):
         return np.asarray(dataset.numpy(copy=False), dtype=float)
 
     def _resolve_spacing(self) -> tuple[float, float]:
+        view = self._dataset_view
+        if view is not None:
+            axes = getattr(getattr(view, "geometry", None), "axes", {})
+            x_axis, y_axis = axes.get("x"), axes.get("y")
+            if x_axis is not None and y_axis is not None:
+                return float(x_axis.cell_m), float(y_axis.cell_m)
         attrs = self._job.attrs
         dx = attrs.get("dx", attrs.get("cellsize_x", 1.0))
         dy = attrs.get("dy", attrs.get("cellsize_y", 1.0))
@@ -105,6 +118,12 @@ class TopologyInterface(InteractiveNodeMixin):
                 "dx": float(dx),
                 "dy": float(dy),
                 "shape": tuple(int(v) for v in data.shape),
+                "materialized_view": (
+                    id(self._dataset_view)
+                    if self._dataset_view is not None
+                    and bool(getattr(self._dataset_view, "is_materialized", False))
+                    else None
+                ),
                 "params": {
                     "polarity_threshold": float(selected_p),
                     "chirality_ring_r": None

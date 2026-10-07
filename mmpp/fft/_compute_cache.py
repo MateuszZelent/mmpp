@@ -64,12 +64,12 @@ def load_existing_fft_result(
 
         metadata = dict(fft_group.attrs)
         config = config_cls(
-            window_function=metadata.pop("window_function", "hann"),
-            filter_type=metadata.pop("filter_type", "remove_mean"),
-            fft_engine=metadata.pop("fft_engine", "auto"),
-            scaling=metadata.pop("scaling", "raw"),
-            zero_padding=metadata.pop("zero_padding", True),
-            nfft=metadata.pop("nfft", None),
+            window_function=metadata.get("window_function", "hann"),
+            filter_type=metadata.get("filter_type", "remove_mean"),
+            fft_engine=metadata.get("fft_engine", "auto"),
+            scaling=metadata.get("scaling", "raw"),
+            zero_padding=metadata.get("zero_padding", True),
+            nfft=metadata.get("nfft"),
         )
 
         total_time = time.time() - start_time

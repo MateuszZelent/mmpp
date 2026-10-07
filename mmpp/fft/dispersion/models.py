@@ -95,6 +95,7 @@ class DispersionResult1D:
     flipx: bool = True  # Whether k-axis was flipped to correct FFT convention
     _interface: Any = field(default=None, repr=False, compare=False)
     notes: list[str] | None = None
+    spatial_origin: float = 0.0  # Physical coordinate of propagation-axis sample 0 [m]
 
     def __post_init__(self):
         self.S = np.asarray(self.S)
@@ -323,6 +324,7 @@ class DispersionResult1D:
             orth_axis_label=self.orth_axis_label,
             dt=self.dt,
             dx=self.dx,
+            spatial_origin=self.spatial_origin,
             flipx=self.flipx,
             scaling=self.scaling,
             scaling_factors=dict(self.scaling_factors or {}),

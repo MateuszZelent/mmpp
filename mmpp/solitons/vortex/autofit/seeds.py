@@ -133,10 +133,11 @@ def select_threshold_aware_seed(
     active_names: list[str],
     param_specs: dict[str, Any],
     evaluator,
+    initial_loss: float | None = None,
 ) -> tuple[dict[str, float], float]:
     """Pick the best warm start from a small threshold-aware candidate pool."""
     best_params = dict(initial_params)
-    best_loss = float("inf")
+    best_loss = float(initial_loss) if initial_loss is not None else float("inf")
     for candidate in build_cpp_threshold_seed_candidates(
         features_num,
         base_params,
@@ -144,6 +145,8 @@ def select_threshold_aware_seed(
         active_names,
         param_specs,
     ):
+        if candidate == initial_params and initial_loss is not None:
+            continue
         loss, _ = evaluator(candidate)
         if loss < best_loss:
             best_loss = float(loss)

@@ -161,12 +161,7 @@ def _charge_density(
             dy,
             convention=convention,
         )
-        # The shared finite-difference primitive preserves the historical
-        # vortex sign convention.  Align it with the Berg--Luscher skyrmion
-        # convention without changing the existing vortex contract.
         density = np.asarray(density, dtype=float)
-        if _y_axis(convention) == "up":
-            density = -density
 
         # A derivative next to a geometry hole samples the zero-filled
         # exterior and creates a spurious charge sheet.  Keep only cells whose

@@ -224,8 +224,8 @@ class FilterPipeline:
             pre["remove_static"] = True
         if self.config.pre.remove_mean:
             pre["remove_mean"] = True
-        if self.config.pre.detrend == "linear":
-            pre["detrend_linear"] = True
+        if self.config.pre.detrend in {"linear", "quadratic"}:
+            pre["detrend"] = {"order": 1 if self.config.pre.detrend == "linear" else 2}
         if self.config.pre.window and self.config.pre.window != "none":
             pre["hann_time"] = self.config.pre.window
         if self.config.pre.high_pass_cutoff is not None:
@@ -282,7 +282,12 @@ class FilterPipeline:
             if filters is not None
             else self._config_to_stages()
         )
-        pre_filters = cfg.get("pre", {}) if cfg else {}
+        configured_pre = cfg.get("pre", {}) if cfg else {}
+        pre_filters = {
+            name: option
+            for name, option in configured_pre.items()
+            if _is_enabled(option)
+        }
         if not pre_filters:
             return np.asarray(data)
 

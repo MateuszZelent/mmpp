@@ -28,6 +28,10 @@ class AutofitDiagnostics:
     param_correlations: np.ndarray | None = None
     param_uncertainties: dict[str, float] | None = None
     poorly_identified: list[str] = field(default_factory=list)
+    curvature_status: str = (
+        "Not estimated. Statistical parameter uncertainty requires an explicit "
+        "observation-noise model."
+    )
 
     active_bounds: dict[str, str] = field(default_factory=dict)
 
@@ -84,6 +88,10 @@ class AutofitDiagnostics:
                 f"<tr><td style='{lbl}'>Message</td>"
                 f"<td style='{val}'>{_esc(self.optimizer_message)}</td></tr>"
             )
+        html += (
+            f"<div style='{section}font-size:0.82em;color:#94a3b8;'>"
+            f"{_esc(self.curvature_status)}</div>"
+        )
         html += "</table></div>"
 
         # Uncertainties

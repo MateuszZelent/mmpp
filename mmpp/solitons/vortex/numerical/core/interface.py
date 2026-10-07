@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Any
 
@@ -76,6 +77,9 @@ def _track_core_from_table(
     x_column: str | None = None,
     y_column: str | None = None,
     polarity_column: str | None = None,
+    selected_times: np.ndarray | None = None,
+    time_selection: Any | None = None,
+    source_time_size: int | None = None,
 ) -> TrajectoryResult:
     columns = _read_table_columns(job_result)
     if not columns:
@@ -92,26 +96,140 @@ def _track_core_from_table(
             "(expected aliases like ext_coreposx/ext_coreposy)."
         )
 
-    lengths = [int(columns[x_key].size), int(columns[y_key].size)]
+    aligned_keys = [x_key, y_key]
     if t_key is not None:
-        lengths.append(int(columns[t_key].size))
+        aligned_keys.append(t_key)
     if z_key is not None:
-        lengths.append(int(columns[z_key].size))
-    n = int(min(lengths))
+        aligned_keys.append(z_key)
+    lengths = {int(columns[key].size) for key in aligned_keys}
+    if len(lengths) != 1:
+        raise ValueError(
+            "Table core position, time, and polarity columns must have equal "
+            f"lengths; got {sorted(lengths)}."
+        )
+    n = next(iter(lengths))
     if n <= 0:
         raise ValueError("Table-driven tracking found zero samples.")
 
     attrs = getattr(job_result, "attrs", {})
     if t_key is not None:
-        time = np.asarray(columns[t_key][:n], dtype=float)
+        source_time = np.asarray(columns[t_key], dtype=float)
+        indices = None
+        if selected_times is not None:
+            requested = np.asarray(selected_times, dtype=float).reshape(-1)
+            if not np.isfinite(requested).all():
+                raise ValueError("Selected dataset timestamps must be finite")
+            if source_time.size > 1 and np.all(np.diff(source_time) > 0):
+                right = np.searchsorted(source_time, requested).clip(
+                    0, source_time.size - 1
+                )
+                left = np.maximum(right - 1, 0)
+                indices = np.where(
+                    np.abs(source_time[left] - requested)
+                    <= np.abs(source_time[right] - requested),
+                    left,
+                    right,
+                )
+            elif source_time.size > 1 and np.all(np.diff(source_time) < 0):
+                reversed_time = source_time[::-1]
+                right = np.searchsorted(reversed_time, requested).clip(
+                    0, source_time.size - 1
+                )
+                left = np.maximum(right - 1, 0)
+                reversed_indices = np.where(
+                    np.abs(reversed_time[left] - requested)
+                    <= np.abs(reversed_time[right] - requested),
+                    left,
+                    right,
+                )
+                indices = source_time.size - 1 - reversed_indices
+            else:
+                indices = np.asarray(
+                    [
+                        int(np.argmin(np.abs(source_time - value)))
+                        for value in requested
+                    ],
+                    dtype=int,
+                )
+            matched = source_time[indices]
+            local_dt = (
+                float(np.median(np.abs(np.diff(source_time))))
+                if source_time.size > 1
+                else 0.0
+            )
+            tolerance = max(local_dt * 1e-6, 1e-18)
+            if np.any(np.abs(matched - requested) > tolerance):
+                raise ValueError(
+                    "Dataset timestamps could not be matched to table tracking "
+                    "rows within tolerance."
+                )
+            if np.unique(indices).size != indices.size:
+                raise ValueError(
+                    "Selected dataset timestamps map to duplicate table rows"
+                )
+            columns = {
+                key: values[indices] if values.size == source_time.size else values
+                for key, values in columns.items()
+            }
+        elif time_selection is not None and source_time_size == n:
+            columns = {
+                key: values[time_selection]
+                if values.size == source_time_size
+                else values
+                for key, values in columns.items()
+            }
+        time = np.asarray(columns[t_key], dtype=float)
+        n = int(time.size)
     else:
-        dt = float(attrs.get("t_sampl", attrs.get("sampling_interval", 1e-12)))
-        time = np.arange(n, dtype=float) * dt
+        if selected_times is not None:
+            time = np.asarray(selected_times, dtype=float).reshape(-1)
+            if time.size != n:
+                if time_selection is not None and source_time_size == n:
+                    columns = {
+                        key: values[time_selection]
+                        if values.size == source_time_size
+                        else values
+                        for key, values in columns.items()
+                    }
+                    n = int(columns[x_key].size)
+                if time.size != n:
+                    raise ValueError(
+                        "Table tracking has no time column and its row count does "
+                        "not match the selected dataset time axis."
+                    )
+        else:
+            raw_dt = attrs.get("t_sampl", attrs.get("sampling_interval"))
+            try:
+                dt = float(raw_dt)
+            except (TypeError, ValueError) as exc:
+                raise AttributeError(
+                    "Table tracking requires a time column or sampling interval metadata"
+                ) from exc
+            if not np.isfinite(dt) or dt <= 0:
+                raise ValueError(f"Invalid table sampling interval: {raw_dt!r}")
+            source_time = np.arange(n, dtype=float) * dt
+            if time_selection is not None and source_time_size == n:
+                columns = {
+                    key: values[time_selection]
+                    if values.size == source_time_size
+                    else values
+                    for key, values in columns.items()
+                }
+                time = np.asarray(source_time[time_selection], dtype=float).reshape(-1)
+                n = int(time.size)
+            else:
+                time = source_time
 
     if time.size >= 2:
         dt_est = float(np.median(np.diff(time)))
     else:
-        dt_est = float(attrs.get("t_sampl", attrs.get("sampling_interval", 1e-12)))
+        raw_dt = attrs.get("t_sampl", attrs.get("sampling_interval"))
+        try:
+            dt_est = float(raw_dt)
+        except (TypeError, ValueError) as exc:
+            raise AttributeError(
+                "At least two table timestamps are needed to infer dt"
+            ) from exc
 
     x = np.asarray(columns[x_key][:n], dtype=float)
     y = np.asarray(columns[y_key][:n], dtype=float)
@@ -135,7 +253,9 @@ def _track_core_from_table(
         confidence = np.clip(np.abs(core_signal), 0.0, 1.0)
     else:
         core_signal = None
-        polarity = np.ones(n, dtype=int)
+        # A core location does not identify the sign of its out-of-plane
+        # magnetization. Zero is the trajectory contract's explicit unknown.
+        polarity = np.zeros(n, dtype=int)
         switch_times = []
         switch_count = 0
         confidence = np.ones(n, dtype=float)
@@ -149,6 +269,17 @@ def _track_core_from_table(
         "y_column": str(y_key),
         "time_column": str(t_key) if t_key is not None else None,
         "polarity_column": str(z_key) if z_key is not None else None,
+        "polarity_status": "observed" if z_key is not None else "unavailable",
+        "confidence_scope": (
+            "core_polarity_signal_magnitude"
+            if z_key is not None
+            else "observed_table_position"
+        ),
+        "polarity_confidence": (
+            np.asarray(confidence, dtype=float).copy()
+            if z_key is not None
+            else np.zeros(n, dtype=float)
+        ),
         "table_columns": sorted(columns.keys()),
         "method_used": ["table"] * int(n),
         "gaussian_frame_fallbacks": 0,
@@ -184,11 +315,13 @@ class CoreInterface(InteractiveNodeMixin):
         dataset_name: str | None,
         slice_info: Any | None,
         config: VortexConfig,
+        dataset_view: Any | None = None,
     ):
         self._job = job_result
         self._dataset_name = dataset_name
         self._slice_info = slice_info
         self._config = config
+        self._dataset_view = dataset_view
         self._last_trajectory: TrajectoryResult | None = None
         self._cache = InMemoryResultCache(job_result, namespace="core")
 
@@ -205,6 +338,11 @@ class CoreInterface(InteractiveNodeMixin):
         return self._dataset_name
 
     def _resolve_dataset(self):
+        view = self._dataset_view
+        if view is not None:
+            shape = tuple(int(value) for value in getattr(view, "shape", ()))
+            if shape and shape[-1] >= 3:
+                return view
         dataset_name = self.dataset_name
         if dataset_name is None:
             raise ValueError("No magnetisation dataset is available for core tracking")
@@ -215,17 +353,58 @@ class CoreInterface(InteractiveNodeMixin):
 
     def _resolve_data(self) -> np.ndarray:
         dataset = self._resolve_dataset()
-        return np.asarray(dataset.numpy(copy=False), dtype=float)
+        if hasattr(dataset, "numpy"):
+            return np.asarray(dataset.numpy(copy=False, keepdims=True), dtype=float)
+        return np.asarray(dataset, dtype=float)
 
     def _resolve_dt(self) -> float:
         dataset = self._resolve_dataset()
         try:
             return float(dataset.dt)
-        except Exception:
-            attrs = self._job.attrs
-            return float(attrs.get("t_sampl", 1e-12))
+        except (AttributeError, TypeError, ValueError):
+            times = self._resolve_time_axis()
+            if times.size < 2:
+                raise ValueError(
+                    "At least two selected time samples are required"
+                ) from None
+            return float(np.mean(np.diff(times)))
+
+    def _resolve_time_axis(self) -> np.ndarray:
+        if self._dataset_view is not None:
+            try:
+                return np.asarray(self._dataset_view.time, dtype=float).reshape(-1)
+            except (AttributeError, TypeError, ValueError):
+                pass
+        dataset = self._resolve_dataset()
+        try:
+            times = np.asarray(dataset.time, dtype=float).reshape(-1)
+            if times.size:
+                return times
+        except (AttributeError, TypeError, ValueError):
+            pass
+        attrs = getattr(self._job, "attrs", {})
+        raw_dt = attrs.get("t_sampl") if hasattr(attrs, "get") else None
+        if raw_dt is None:
+            raise AttributeError(
+                "Core tracking requires a dataset time axis or positive t_sampl metadata"
+            )
+        try:
+            dt = float(raw_dt)
+        except (TypeError, ValueError) as exc:
+            raise AttributeError(
+                "Core tracking requires a dataset time axis or positive t_sampl metadata"
+            ) from exc
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError(f"Invalid t_sampl metadata: {raw_dt!r}")
+        return np.arange(int(dataset.shape[0]), dtype=float) * dt
 
     def _resolve_spacing(self) -> tuple[float, float]:
+        view = self._dataset_view
+        if view is not None:
+            axes = getattr(getattr(view, "geometry", None), "axes", {})
+            x_axis, y_axis = axes.get("x"), axes.get("y")
+            if x_axis is not None and y_axis is not None:
+                return float(x_axis.cell_m), float(y_axis.cell_m)
         attrs = self._job.attrs
         dx = attrs.get("dx", attrs.get("cellsize_x", 1.0))
         dy = attrs.get("dy", attrs.get("cellsize_y", 1.0))
@@ -233,6 +412,15 @@ class CoreInterface(InteractiveNodeMixin):
 
     def _resolve_lazy_dataset_source(self):
         """Return zarr-like source suitable for per-frame lazy reads, if available."""
+        if self._dataset_view is not None:
+            shape = tuple(
+                int(value) for value in getattr(self._dataset_view, "shape", ())
+            )
+            if not shape or shape[-1] < 3:
+                return None
+            if bool(getattr(self._dataset_view, "is_materialized", False)):
+                return None
+            return self._dataset_view
         try:
             raw = self._job.get_raw(self.dataset_name)
         except Exception:
@@ -267,6 +455,12 @@ class CoreInterface(InteractiveNodeMixin):
         y_column: str | None = None,
     ) -> bool:
         method_norm = str(selected_method).lower()
+        if (
+            method_norm == "auto"
+            and self._dataset_view is not None
+            and bool(getattr(self._dataset_view, "is_materialized", False))
+        ):
+            return False
         if method_norm == "table":
             return True
         if method_norm != "auto":
@@ -331,6 +525,22 @@ class CoreInterface(InteractiveNodeMixin):
         selected_polarity_column = kwargs.pop("polarity_column", None)
 
         requested_method = str(selected_method).lower()
+        selected_times = None
+        if self._dataset_view is not None or self.dataset_name is not None:
+            try:
+                selected_times = self._resolve_time_axis()
+            except (AttributeError, TypeError, ValueError, IndexError):
+                selected_times = None
+
+        if (
+            requested_method == "table"
+            and self._dataset_view is not None
+            and bool(getattr(self._dataset_view, "is_materialized", False))
+        ):
+            raise ValueError(
+                "Table tracking cannot represent a materialized field view; use "
+                "field tracking or pass a trajectory explicitly."
+            )
         if self._should_prefer_table_tracking(
             requested_method,
             x_column=selected_x_column,
@@ -342,7 +552,26 @@ class CoreInterface(InteractiveNodeMixin):
                 polarity_threshold_down=float(selected_p_down),
                 x_column=selected_x_column,
                 y_column=selected_y_column,
+                selected_times=selected_times,
+                time_selection=(
+                    self._slice_info[0]
+                    if isinstance(self._slice_info, tuple) and self._slice_info
+                    else None
+                ),
+                source_time_size=(
+                    int(self._dataset_view._index_plan.source_shape[0])
+                    if self._dataset_view is not None
+                    and getattr(self._dataset_view, "_index_plan", None) is not None
+                    else None
+                ),
                 polarity_column=selected_polarity_column,
+            )
+            selected_time_digest = (
+                hashlib.blake2b(
+                    np.ascontiguousarray(selected_times).tobytes(), digest_size=12
+                ).hexdigest()
+                if selected_times is not None
+                else None
             )
             key, config_json = build_cache_key(
                 "table",
@@ -350,6 +579,7 @@ class CoreInterface(InteractiveNodeMixin):
                 config_payload={
                     "dataset_name": self._dataset_name,
                     "slice_info": repr(self._slice_info),
+                    "time_axis_digest": selected_time_digest,
                     "params": {
                         "x_column": preview.metadata.get("x_column"),
                         "y_column": preview.metadata.get("y_column"),
@@ -384,7 +614,10 @@ class CoreInterface(InteractiveNodeMixin):
             )
 
         dx, dy = self._resolve_spacing()
-        dt = self._resolve_dt()
+        time_axis = self._resolve_time_axis()
+        if time_axis.size < 2:
+            raise ValueError("At least two selected time samples are required to track")
+        dt = abs(float(np.mean(np.diff(time_axis))))
 
         lazy_source = self._resolve_lazy_dataset_source()
         shape_for_key: tuple[int, ...] | None = None
@@ -413,7 +646,16 @@ class CoreInterface(InteractiveNodeMixin):
                 "dx": float(dx),
                 "dy": float(dy),
                 "dt": float(dt),
+                "time_axis_digest": hashlib.blake2b(
+                    np.ascontiguousarray(time_axis).tobytes(), digest_size=12
+                ).hexdigest(),
                 "shape": shape_for_key,
+                "materialized_view": (
+                    id(self._dataset_view)
+                    if self._dataset_view is not None
+                    and bool(getattr(self._dataset_view, "is_materialized", False))
+                    else None
+                ),
                 "params": {
                     "z_layer": int(selected_z),
                     "core_threshold": float(selected_core_threshold),
@@ -464,6 +706,7 @@ class CoreInterface(InteractiveNodeMixin):
                 dx,
                 dy,
                 dt,
+                time_axis=time_axis,
                 **common_kwargs,
             )
         else:
@@ -474,6 +717,7 @@ class CoreInterface(InteractiveNodeMixin):
                 dx,
                 dy,
                 dt,
+                time_axis=time_axis,
                 **common_kwargs,
             )
 

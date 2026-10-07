@@ -202,7 +202,6 @@ exclude = '(^|/)(old_modes|run_h5_test|test_dispersion_models)\.py$'
 module = [
     "mmpp._shared.cache",
     "mmpp.analyze.hysteresis.metrics",
-    "mmpp.analyze.hysteresis.metrics.core",
     "mmpp.cache.batch",
     "mmpp.cache.decorators",
     "mmpp.cache.serializers",
@@ -219,7 +218,6 @@ module = [
     "mmpp.fft.modes.analyzer.data_access",
     "mmpp.fft.modes.models",
     "mmpp.fft.modes.visualization.animation",
-    "mmpp.fft.spectrum.batch.result",
     "mmpp.fft.transmission.cache",
     "mmpp.plotting",
     "mmpp.pyzfn.pyzfn",

@@ -96,6 +96,7 @@ class VortexInterface(InteractiveNodeMixin):
                 dataset_name=self._dataset,
                 slice_info=self._slice_info,
                 config=self._config,
+                dataset_view=self._dataset_view,
             )
         return self._topology
 
@@ -110,6 +111,7 @@ class VortexInterface(InteractiveNodeMixin):
                 dataset_name=self._dataset,
                 slice_info=self._slice_info,
                 config=self._config,
+                dataset_view=self._dataset_view,
             )
         return self._core
 

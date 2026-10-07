@@ -116,7 +116,10 @@ def compute_fft_cached(
             )
         raise
 
-    if use_cache and not force:
+    # A forced computation refreshes the in-memory entry as well as any
+    # persisted entry. Leaving the old value here made the next request
+    # silently return the pre-force spectrum.
+    if use_cache:
         cache[cache_key] = result
 
     return result

@@ -29,6 +29,7 @@ class SpectrumResult:
         spectrum_kind: str = "complex",
         power_quantity: str = "raw_power",
         compute_metadata: dict[str, Any] | None = None,
+        display_override: np.ndarray | None = None,
     ):
         self.frequencies = np.asarray(frequencies, dtype=float)
         self.spectrum = np.asarray(spectrum)
@@ -46,6 +47,9 @@ class SpectrumResult:
         )
         self._power_override = (
             np.asarray(power_override) if power_override is not None else None
+        )
+        self._display_override = (
+            np.asarray(display_override) if display_override is not None else None
         )
         self.scaling = str(scaling)
         self.spectrum_kind = str(spectrum_kind)
@@ -76,8 +80,17 @@ class SpectrumResult:
         if self._power_override is not None:
             if self._power_override.shape != self.spectrum.shape:
                 raise ValueError("power_override must have the same shape as spectrum")
-            if not np.isfinite(self._power_override).all():
-                raise ValueError("power_override must contain only finite values")
+            if not np.isfinite(self._power_override).all() or np.any(
+                self._power_override < 0
+            ):
+                raise ValueError("power_override must be finite and non-negative")
+        if self._display_override is not None:
+            if self._display_override.shape != self.spectrum.shape:
+                raise ValueError(
+                    "display_override must have the same shape as spectrum"
+                )
+            if not np.isfinite(self._display_override).all():
+                raise ValueError("display_override must contain only finite values")
         if self.component_label is not None and not isinstance(
             self.component_label, str
         ):
@@ -144,13 +157,15 @@ class SpectrumResult:
     def spectral_quantity(self) -> np.ndarray:
         """Return the non-negative spectral quantity consistent with ``scaling``.
 
-        This accessor is the semantics-aware counterpart of the legacy ``power``
-        property and respects ``power_quantity`` plus any filtered override.
+        This accessor returns the non-negative quantity represented by the
+        numerical spectrum. Display transforms such as logarithms are kept in
+        :attr:`display_quantity` and do not alter this physical quantity.
         """
-        if self._power_override is not None:
-            return np.asarray(self._power_override, dtype=float)
-
-        quantity = np.abs(self.spectrum) ** 2
+        quantity = (
+            np.asarray(self._power_override, dtype=float)
+            if self._power_override is not None
+            else np.abs(self.spectrum) ** 2
+        )
         power_quantity = self.power_quantity.lower()
         if power_quantity in {
             "raw_power",
@@ -162,6 +177,23 @@ class SpectrumResult:
             return quantity
 
         return quantity
+
+    @property
+    def display_quantity(self) -> np.ndarray:
+        """Return the values intended for display, including view transforms."""
+        if self._display_override is not None:
+            return np.asarray(self._display_override, dtype=float)
+        return self.spectral_quantity
+
+    @property
+    def display_quantity_label(self) -> str:
+        """Label for values returned by :attr:`display_quantity`."""
+        if self._display_override is None:
+            return self.spectral_quantity_label
+        post_filters = (self._filter_config or {}).get("post", {})
+        if post_filters.get("log_transform"):
+            return self.spectral_quantity_label
+        return f"Filtered {self.spectral_quantity_label.lower()}"
 
     @property
     def spectral_quantity_label(self) -> str:
@@ -180,7 +212,7 @@ class SpectrumResult:
         if self.frequencies.size == 0 or self.spectral_quantity.size == 0:
             raise ValueError("Spectrum is empty; cannot determine peak frequency")
 
-        quantity = np.asarray(self.spectral_quantity, dtype=float)
+        quantity = np.asarray(self.display_quantity, dtype=float)
         if quantity.ndim > 1:
             reduction_axes = tuple(range(1, quantity.ndim))
             quantity = quantity.sum(axis=reduction_axes)
@@ -212,8 +244,8 @@ class SpectrumResult:
 
     @property
     def power(self) -> np.ndarray:
-        """Backward-compatible alias for :attr:`spectral_quantity`."""
-        return self.spectral_quantity
+        """Backward-compatible alias for values shown by the spectrum view."""
+        return self.display_quantity
 
     @property
     def amplitude(self) -> np.ndarray:
@@ -466,8 +498,11 @@ class SpectrumResult:
             filters={"post": post} if post else None,
             stage="post",
         )
+        # The filtered values may be signed (for example log10(power)). Keep
+        # them as a display transform and leave the underlying magnitude and
+        # non-negative spectral quantity internally consistent.
         filtered_spectrum = np.sqrt(
-            np.clip(np.asarray(filtered_power, dtype=float), 0.0, None)
+            np.clip(np.asarray(self.spectral_quantity, dtype=float), 0.0, None)
         )
         filtered_result = SpectrumResult(
             frequencies=self.frequencies,
@@ -480,10 +515,10 @@ class SpectrumResult:
             compute_metadata=getattr(self, "compute_metadata", {}),
             filter_config={"post": post},
             raw_spectrum=self._raw_spectrum,
-            power_override=filtered_power,
             scaling=self.scaling,
             spectrum_kind="magnitude",
             power_quantity=self.power_quantity,
+            display_override=filtered_power,
         )
         filtered_result._single_component = self._single_component
         return filtered_result

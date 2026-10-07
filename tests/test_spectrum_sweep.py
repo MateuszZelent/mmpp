@@ -405,3 +405,97 @@ def test_pyzfn_mode_fft_resamples_nonuniform_time_axis(tmp_path):
     strict = Pyzfn(path)
     with pytest.raises(ValueError, match="resample_nonuniform=True"):
         strict.calc_modes(window=False, resample_nonuniform=False)
+
+
+def test_batch_spectrum_persists_per_input_failures(tmp_path, monkeypatch):
+    frequencies = np.array([0.0, 1.0e9])
+    results = [
+        SimpleNamespace(path=str(tmp_path / "good.zarr"), attributes={}),
+        SimpleNamespace(path=str(tmp_path / "bad.zarr"), attributes={}),
+    ]
+
+    class FakeFFT:
+        def __init__(self, result, _mmpp_ref):
+            self.result = result
+
+        def spectrum(self, **_kwargs):
+            if "bad" in self.result.path:
+                raise ValueError("synthetic input failure")
+            return SimpleNamespace(
+                frequencies=frequencies,
+                spectrum=np.array([0.0 + 0.0j, 1.0 + 0.0j]),
+                spectral_quantity=np.array([0.0, 1.0]),
+            )
+
+    import mmpp.fft.core as fft_core
+
+    monkeypatch.setattr(fft_core, "FFT", FakeFFT)
+    batch = BatchSpectrum(
+        results, SimpleNamespace(base_path=str(tmp_path))
+    ).compute_all(
+        parallel=False,
+        save=False,
+        save_batch=False,
+        use_cache=False,
+        extract_parameters=[],
+    )
+
+    assert batch.status == "partial"
+    assert batch.is_complete is False
+    assert batch.requested_paths == [result.path for result in results]
+    assert batch.job_paths == [results[0].path]
+    assert batch.path_statuses[0]["status"] == "success"
+    assert batch.path_statuses[1]["status"] == "failed"
+    assert "synthetic input failure" in batch.failures[0]["error"]
+
+    saved_path = tmp_path / "partial.pkl"
+    batch.save(saved_path)
+    restored = BatchSpectrumResult.load(saved_path)
+    assert restored.status == "partial"
+    assert restored.path_statuses == batch.path_statuses
+
+
+def test_batch_cache_key_changes_when_selected_source_changes(tmp_path, monkeypatch):
+    frequencies = np.array([0.0, 1.0e9])
+    source = tmp_path / "source.zarr"
+    dataset = source / "m"
+    dataset.mkdir(parents=True)
+    chunk = dataset / "0.0.0.0"
+    chunk.write_text("original", encoding="utf-8")
+    results = [SimpleNamespace(path=str(source), attributes={})]
+    calls = []
+
+    class FakeFFT:
+        def __init__(self, _result, _mmpp_ref):
+            pass
+
+        def spectrum(self, **_kwargs):
+            calls.append("compute")
+            return SimpleNamespace(
+                frequencies=frequencies,
+                spectrum=np.array([0.0 + 0.0j, 1.0 + 0.0j]),
+                spectral_quantity=np.array([0.0, 1.0]),
+            )
+
+    import mmpp.fft.core as fft_core
+
+    monkeypatch.setattr(fft_core, "FFT", FakeFFT)
+    analyzer = BatchSpectrum(results, SimpleNamespace(base_path=str(tmp_path)))
+    options = {
+        "parallel": False,
+        "save": False,
+        "save_batch": True,
+        "use_cache": False,
+        "extract_parameters": [],
+        "batch_cache_dir": tmp_path / "batch-cache",
+    }
+
+    first = analyzer.compute_all(**options)
+    cached = analyzer.compute_all(**options)
+    assert cached.requested_paths == first.requested_paths
+    assert calls == ["compute"]
+
+    chunk.write_text("changed-source", encoding="utf-8")
+    recomputed = analyzer.compute_all(**options)
+    assert recomputed.is_complete
+    assert calls == ["compute", "compute"]

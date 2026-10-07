@@ -15,27 +15,27 @@ from typing import Any, cast
 import numpy as np
 import zarr
 
+from .._backend import (
+    fft as _fft,
+)
+from .._backend import (
+    fft2 as _fft2,
+)
+from .._backend import (
+    fftfreq as _fftfreq,
+)
+from .._backend import (
+    fftshift as _fftshift,
+)
+from .._backend import (
+    rfft as _rfft,
+)
+from .._backend import (
+    rfftfreq as _rfftfreq,
+)
 from .._compute_loading import (
     _resample_nonuniform_time_data,
     _time_axis_requires_resampling,
-)
-from ._fft_backend import (
-    fft as _fft,
-)
-from ._fft_backend import (
-    fft2 as _fft2,
-)
-from ._fft_backend import (
-    fftfreq as _fftfreq,
-)
-from ._fft_backend import (
-    fftshift as _fftshift,
-)
-from ._fft_backend import (
-    rfft as _rfft,
-)
-from ._fft_backend import (
-    rfftfreq as _rfftfreq,
 )
 from .models import (
     DispersionBranch,
@@ -54,6 +54,7 @@ from .utils import (
     fold_spectrum_1d,
     hann_window,
     k_axis_from_grid,
+    mirror_fftshifted_indices,
     normalize_filter_config,
     normalize_magnetization_components,
     split_filter_stages,
@@ -94,12 +95,11 @@ def _normalize_dispersion_scaling(
 
 
 def _mirror_k_indices(k_axis: np.ndarray) -> np.ndarray:
-    """Return indices that sample the spectrum at ``-k`` for each sorted k bin."""
+    """Return the exact DFT ``k -> -k`` permutation for an fftshift axis."""
     k_values = np.asarray(k_axis, dtype=float)
-    return np.array(
-        [int(np.argmin(np.abs(k_values + k_value))) for k_value in k_values],
-        dtype=int,
-    )
+    if k_values.ndim != 1:
+        raise ValueError("k_axis must be one-dimensional")
+    return mirror_fftshifted_indices(k_values.size)
 
 
 def _time_spacing_from_axis(
@@ -246,6 +246,7 @@ class SpinWaveAnalyzer:
         preloaded_data: np.ndarray | None = None,
         time_step_scale: float = 1.0,
         view_geometry=None,
+        job_result: Any | None = None,
     ):
         """
         Initialize spin-wave analyzer.
@@ -273,6 +274,12 @@ class SpinWaveAnalyzer:
         self._preloaded_data = preloaded_data
         self._time_step_scale = float(time_step_scale)
         self.view_geometry = view_geometry
+        self.job_result = (
+            job_result
+            if callable(getattr(job_result, "get_raw", None))
+            and hasattr(job_result, "datasets")
+            else None
+        )
         self.zarr_path = Path(zarr_path)
 
         # Data storage
@@ -305,8 +312,15 @@ class SpinWaveAnalyzer:
                 raise ValueError("Expected zarr Group, got Array")
             logger.info("Opened zarr file: %s", self.zarr_path)
         except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to open zarr file %s: %s", self.zarr_path, exc)
-            raise
+            if self.job_result is None:
+                logger.error("Failed to open zarr file %s: %s", self.zarr_path, exc)
+                raise
+            logger.warning(
+                "Could not open raw Zarr group %s; using JobResult adapter: %s",
+                self.zarr_path,
+                exc,
+            )
+            self.zarr_file = None
 
         # Load time-domain magnetization data
         self._load_magnetization()
@@ -315,36 +329,47 @@ class SpinWaveAnalyzer:
 
     def _load_magnetization(self) -> None:
         """Load time-domain magnetization data M(t,x,y,z) or single component."""
-        possible_paths = []
         if self.dataset_name:
-            possible_paths.append(self.dataset_name)
-        possible_paths.extend(
-            [
-                "m_layer",
-                "m",
-                "M",
-                "magnetization",
-                "m_full",
-                "m_resonator",
-                "table/m",
+            possible_paths = [self.dataset_name]
+        else:
+            if self.job_result is not None:
+                names = list(self.job_result.datasets)
+            elif self.zarr_file is not None:
+                names = list(self.zarr_file.array_keys())
+            else:
+                names = []
+            possible_paths = [
+                name
+                for name in names
+                if name.rsplit("/", 1)[-1].lower().startswith("m")
             ]
-        )
+            if not possible_paths:
+                possible_paths = [
+                    name
+                    for name in names
+                    if name.rsplit("/", 1)[-1].lower() == "magnetization"
+                ]
+            possible_paths.sort(
+                key=lambda name: self._dataset_time_length(name), reverse=True
+            )
 
-        if self.zarr_file is None:
+        if self.zarr_file is None and self.job_result is None:
             raise ValueError("Zarr file not loaded")
 
         logger.debug("Searching for magnetization data in paths: %s", possible_paths)
-        logger.debug("Available datasets in zarr file: %s", list(self.zarr_file.keys()))
         logger.debug("Slice info: %s", self.slice_info)
 
         failed_attempts = []
 
         for path in possible_paths:
-            if path not in self.zarr_file:
-                logger.debug("Path '%s' not found in zarr file", path)
-                continue
             try:
-                M_ref = self.zarr_file[path]
+                if self.job_result is not None:
+                    M_ref = self.job_result.get_raw(path)
+                elif self.zarr_file is not None and path in self.zarr_file:
+                    M_ref = self.zarr_file[path]
+                else:
+                    logger.debug("Path '%s' not found in data source", path)
+                    continue
                 if not (hasattr(M_ref, "shape") and hasattr(M_ref, "dtype")):
                     logger.info("'%s' is not an array, skipping", path)
                     failed_attempts.append((path, "not an array"))
@@ -398,12 +423,28 @@ class SpinWaveAnalyzer:
                 self._M_ref = None
                 continue
         else:
-            error_msg = f"No magnetization data found in {self.zarr_path}"
+            error_msg = (
+                f"No requested/eligible magnetization data found in {self.zarr_path}"
+            )
             if failed_attempts:
                 error_msg += "\nFailed attempts:"
                 for path, reason in failed_attempts:
                     error_msg += f"\n  - {path}: {reason}"
             raise ValueError(error_msg)
+
+    def _dataset_time_length(self, name: str) -> int:
+        """Return a candidate's time length for automatic selection."""
+        try:
+            if self.job_result is not None:
+                dataset = self.job_result.get_raw(name)
+            elif self.zarr_file is not None:
+                dataset = self.zarr_file[name]
+            else:
+                return -1
+            shape = tuple(getattr(dataset, "shape", ()))
+            return int(shape[0]) if len(shape) >= 3 else -1
+        except Exception:
+            return -1
 
     def _configure_indexing(self, M_ref: Any) -> None:
         """Prepare base slice/indexer information for repeated loads."""
@@ -648,23 +689,29 @@ class SpinWaveAnalyzer:
 
     def _time_axis_metadata(self) -> tuple[np.ndarray, str] | None:
         """Return the time axis that belongs to the selected magnetization."""
-        if self.zarr_file is None:
-            return None
-
         candidates: list[tuple[Any, str]] = []
-        if self._M_path:
+        dataset_attrs = getattr(self._M_ref, "attrs", {})
+        if hasattr(dataset_attrs, "get") and dataset_attrs.get("t") is not None:
+            candidates.append((dataset_attrs.get("t"), f"{self._M_path}.attrs['t']"))
+        if self._M_ref is not None:
             try:
-                dataset = self.zarr_file[self._M_path]
-                attrs = getattr(dataset, "attrs", {})
-                if hasattr(attrs, "get") and attrs.get("t") is not None:
-                    candidates.append((attrs.get("t"), f"{self._M_path}.attrs['t']"))
-            except (KeyError, AttributeError, TypeError):
+                raw_time = self._M_ref["t"]
+            except (KeyError, TypeError, IndexError):
+                raw_time = None
+            if raw_time is not None:
+                candidates.append((raw_time, f"{self._M_path}['t']"))
+        if self.zarr_file is not None:
+            try:
+                if "t" in self.zarr_file:
+                    candidates.append((self.zarr_file["t"], "t"))
+            except (KeyError, TypeError):
                 pass
-        try:
-            if "t" in self.zarr_file:
-                candidates.append((np.asarray(self.zarr_file["t"]), "t"))
-        except (KeyError, TypeError):
-            pass
+        if self.job_result is not None:
+            try:
+                if "t" in self.job_result:
+                    candidates.append((self.job_result.get_raw("t"), "JobResult['t']"))
+            except (KeyError, NameError, TypeError):
+                pass
 
         expected_samples = (
             int(self.M_data.shape[0])
@@ -673,6 +720,10 @@ class SpinWaveAnalyzer:
         )
         for raw_time, source in candidates:
             try:
+                if not isinstance(raw_time, np.ndarray) and hasattr(
+                    raw_time, "__getitem__"
+                ):
+                    raw_time = raw_time[:]
                 axis = np.asarray(raw_time, dtype=float).reshape(-1)
             except (TypeError, ValueError):
                 continue
@@ -874,11 +925,18 @@ class SpinWaveAnalyzer:
         self._apply_time_axis_resampling()
 
     def _extract_grid_parameters(self) -> None:
-        """Extract time step and spatial grid parameters from zarr attributes."""
-        if self.zarr_file is None:
+        """Extract time step and spatial grid parameters from the data source."""
+        if self.zarr_file is None and self.job_result is None:
             raise ValueError("Zarr file not loaded")
 
-        attrs = dict(self.zarr_file.attrs)
+        if self.zarr_file is not None:
+            attrs = dict(self.zarr_file.attrs)
+        else:
+            assert self.job_result is not None
+            attrs = dict(self.job_result.attrs)
+        dataset_attrs = getattr(self._M_ref, "attrs", {})
+        if hasattr(dataset_attrs, "items"):
+            attrs.update(dict(dataset_attrs.items()))
         logger.info(f"Available zarr attributes: {list(attrs.keys())}")
 
         time_axis_dt: float | None = None
@@ -981,16 +1039,29 @@ class SpinWaveAnalyzer:
         }
         for spacing_name, axis_keys in coordinate_keys.items():
             for axis_key in axis_keys:
-                if axis_key not in self.zarr_file:
+                coordinate_ref = None
+                if self.zarr_file is not None and axis_key in self.zarr_file:
+                    coordinate_ref = self.zarr_file[axis_key]
+                elif self.job_result is not None:
+                    try:
+                        coordinate_ref = self.job_result.get_raw(axis_key)
+                    except (KeyError, NameError, TypeError):
+                        coordinate_ref = None
+                if coordinate_ref is None:
                     continue
                 spacing = _uniform_spatial_spacing(
-                    np.array(self.zarr_file[axis_key]),
+                    np.array(coordinate_ref[:]),
                     axis_key,
                 )
                 if spacing is None:
                     continue
                 if spacing_name not in self.grid_spacings:
                     self.grid_spacings[spacing_name] = spacing
+                coordinates = np.asarray(coordinate_ref[:], dtype=float).reshape(-1)
+                if coordinates.size:
+                    self.spatial_origins[spacing_name[-1]] = float(
+                        min(coordinates[0], coordinates[-1]) - 0.5 * spacing
+                    )
                     logger.info(
                         "Inferred %s = %s m from spatial axis '%s'",
                         spacing_name,
@@ -1304,6 +1375,7 @@ class SpinWaveAnalyzer:
                     if "dy" in self.grid_spacings:
                         orth_axis_values = (
                             self.spatial_origins.get("y", 0.0)
+                            + 0.5 * self.grid_spacings["dy"]
                             + np.arange(spatial_signal.shape[1])
                             * self.grid_spacings["dy"]
                         )
@@ -1314,6 +1386,7 @@ class SpinWaveAnalyzer:
                     if "dx" in self.grid_spacings:
                         orth_axis_values = (
                             self.spatial_origins.get("x", 0.0)
+                            + 0.5 * self.grid_spacings["dx"]
                             + np.arange(spatial_signal.shape[2])
                             * self.grid_spacings["dx"]
                         )
@@ -1397,7 +1470,8 @@ class SpinWaveAnalyzer:
             power = power / np.float32(coherent_gain * coherent_gain)
             scaling_factors["scale"] = float(1.0 / (coherent_gain * coherent_gain))
         elif scaling == "psd":
-            scale = float(self.dt * dx / window_energy)
+            # k is expressed in rad/m; report density per displayed rad/m.
+            scale = float(self.dt * dx / (2.0 * np.pi * window_energy))
             power = power * np.float32(scale)
             scaling_factors["scale"] = scale
         else:
@@ -1521,6 +1595,8 @@ class SpinWaveAnalyzer:
         if not store_complex:
             notes.append("Complex spectrum disabled (store_complex=False)")
         notes.append(f"Spectral scaling: {scaling}")
+        if scaling == "psd":
+            notes.append("PSD measure: per Hz per (rad/m) on the displayed 1D k axis")
         notes.extend(self._time_axis_notes)
         sampling_notes = _sampling_quality_notes(
             n_time=T_len,
@@ -1544,6 +1620,7 @@ class SpinWaveAnalyzer:
             config=self.config,
             dt=self.dt,
             dx=dx,
+            spatial_origin=float(self.spatial_origins.get(axis, 0.0)) + 0.5 * dx,
             flipx=flipx,
             notes=notes,
             S_local=S_local,
@@ -1721,7 +1798,8 @@ class SpinWaveAnalyzer:
             scale = float(1.0 / (coherent_gain * coherent_gain))
             S *= np.float32(scale)
         elif scaling == "psd":
-            scale = float(self.dt * dx * dy / window_energy)
+            # Convert both spatial frequency measures from cycles/m to rad/m.
+            scale = float(self.dt * dx * dy / ((2.0 * np.pi) ** 2 * window_energy))
             S *= np.float32(scale)
         else:
             scale = 1.0
@@ -1744,6 +1822,11 @@ class SpinWaveAnalyzer:
             notes=[
                 "2D dispersion S(kx,ky,f)",
                 f"Spectral scaling: {scaling}",
+                *(
+                    ["PSD measure: per Hz per (rad/m)^2 on the displayed 2D k axes"]
+                    if scaling == "psd"
+                    else []
+                ),
                 *(
                     [f"Pre-filters: {', '.join(sorted(pre_filters))}"]
                     if pre_filters

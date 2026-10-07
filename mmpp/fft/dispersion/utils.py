@@ -13,11 +13,23 @@ from typing import Any
 
 import numpy as np
 
-from ._fft_backend import fft as _fft
-from ._fft_backend import fftfreq as _fftfreq
-from ._fft_backend import fftshift as _fftshift
+from .._backend import fft as _fft
+from .._backend import fftfreq as _fftfreq
+from .._backend import fftshift as _fftshift
 
 logger = logging.getLogger(__name__)
+
+
+def mirror_fftshifted_indices(size: int) -> np.ndarray:
+    """Return the exact ``k -> -k`` permutation for an ``fftshift`` axis."""
+    n = int(size)
+    if n < 0:
+        raise ValueError("size must be non-negative")
+    if n == 0:
+        return np.array([], dtype=int)
+    shifted_to_raw = np.fft.fftshift(np.arange(n, dtype=int))
+    raw_to_shifted = np.argsort(shifted_to_raw)
+    return raw_to_shifted[(-shifted_to_raw) % n]
 
 
 # ---------------------------------------------------------------------------

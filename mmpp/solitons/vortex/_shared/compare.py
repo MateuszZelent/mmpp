@@ -20,10 +20,10 @@ class TrajectoryComparison:
     @property
     def delta_f_mean(self) -> float:
         f_lhs = float(
-            np.mean(np.asarray(self.lhs.instantaneous_frequency, dtype=float))
+            np.mean(np.asarray(self.lhs.instantaneous_frequency_hz, dtype=float))
         )
         f_rhs = float(
-            np.mean(np.asarray(self.rhs.instantaneous_frequency, dtype=float))
+            np.mean(np.asarray(self.rhs.instantaneous_frequency_hz, dtype=float))
         )
         return abs(f_lhs - f_rhs)
 

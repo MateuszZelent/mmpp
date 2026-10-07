@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 
 class SpectrumModes:
     """FMR mode bridge accessible as ``spec.modes``."""
@@ -53,7 +55,123 @@ class SpectrumModes:
 
     def at(self, f: float, z_layer: int = -1):
         """Return mode at frequency ``f`` [GHz]."""
-        return self._resolve_interface().mode(f=f, z_layer=z_layer)
+        interface = self._resolve_interface()
+        result = interface.mode(f=f, z_layer=z_layer)
+        result.analysis_metadata = self._transform_report(
+            interface,
+            result.mode_data,
+            requested_frequency_ghz=float(f),
+        )
+        return result
+
+    def _transform_report(
+        self,
+        interface: Any,
+        mode_data: Any,
+        *,
+        requested_frequency_ghz: float,
+    ) -> dict[str, Any]:
+        """Describe the effective spectrum and mode transforms side by side."""
+        spectrum_transform = dict(
+            getattr(self._spectrum, "_mode_context", {}).get("spectrum_transform")
+            or getattr(self._spectrum, "compute_metadata", {})
+        )
+        mode_transform = dict(
+            getattr(mode_data, "metadata", {}).get("analysis_config", {})
+        )
+        actual_frequency_hz = float(getattr(mode_data, "frequency", np.nan)) * 1e9
+        source_frequencies_hz = np.asarray(
+            getattr(self._spectrum, "frequencies", []), dtype=float
+        )
+        try:
+            mode_frequencies_hz = (
+                np.asarray(interface._legacy_analyzer.frequencies, dtype=float) * 1e9
+            )
+        except (AttributeError, TypeError, ValueError):
+            mode_frequencies_hz = np.asarray([], dtype=float)
+        frequency_grid_matches = bool(
+            source_frequencies_hz.shape == mode_frequencies_hz.shape
+            and source_frequencies_hz.size > 0
+            and np.allclose(
+                source_frequencies_hz,
+                mode_frequencies_hz,
+                rtol=1e-9,
+                atol=max(
+                    float(np.max(np.abs(source_frequencies_hz))) * 1e-12,
+                    1e-9,
+                ),
+            )
+        )
+
+        spectrum_window = str(spectrum_transform.get("window", "")).strip().lower()
+        spectrum_windowed = spectrum_window in {"hann", "hanning"}
+        spectrum_unwindowed = spectrum_window in {
+            "none",
+            "rectangular",
+            "boxcar",
+            "",
+        }
+        mode_window = mode_transform.get("window")
+        window_matches = (
+            bool(mode_window) == spectrum_windowed
+            if spectrum_windowed or spectrum_unwindowed
+            else None
+        )
+        filter_type = spectrum_transform.get("filter_type")
+        if isinstance(filter_type, (tuple, list, set)):
+            preprocessing_matches = "remove_mean" in filter_type
+        else:
+            preprocessing_matches = filter_type == "remove_mean"
+        scaling_matches = spectrum_transform.get("scaling") in (None, "raw")
+        dt_spectrum = spectrum_transform.get("dt")
+        dt_mode = mode_transform.get("dt")
+        dt_matches = None
+        if dt_spectrum is not None and dt_mode is not None:
+            try:
+                dt_matches = bool(np.isclose(dt_spectrum, dt_mode, rtol=1e-9, atol=0.0))
+            except (TypeError, ValueError):
+                dt_matches = False
+        temporal_checks = (
+            frequency_grid_matches,
+            window_matches,
+            preprocessing_matches,
+            scaling_matches,
+            dt_matches,
+        )
+        transform_consistent = (
+            None
+            if not mode_transform or not spectrum_transform
+            else bool(all(value is True for value in temporal_checks))
+        )
+        method = spectrum_transform.get("method")
+        spatial_method = (
+            "method 2 reports spatially averaged power; modes are cell-wise complex FFTs"
+            if method == 2
+            else "mode arrays are cell-wise complex FFTs; spectrum may use a spatial mean"
+            if method == 1
+            else "spectrum spatial aggregation is unknown"
+        )
+        requested_frequency_hz = requested_frequency_ghz * 1e9
+        return {
+            "spectrum_transform": spectrum_transform,
+            "mode_transform": mode_transform,
+            "frequency_grid_matches": frequency_grid_matches,
+            "window_matches": window_matches,
+            "preprocessing_matches": preprocessing_matches,
+            "scaling_matches": scaling_matches,
+            "dt_matches": dt_matches,
+            "requested_frequency_hz": requested_frequency_hz,
+            "actual_mode_frequency_hz": actual_frequency_hz,
+            "frequency_offset_hz": actual_frequency_hz - requested_frequency_hz,
+            "transform_consistent": transform_consistent,
+            "spatial_method": spatial_method,
+            "interpretation": (
+                "same temporal FFT settings; spatial observables can differ"
+                if transform_consistent
+                else "mode transform differs or lacks provenance; use its recorded "
+                "frequency and analysis parameters"
+            ),
+        }
 
     def at_peak(self, peak_index: int, z_layer: int = -1):
         """Return mode at detected peak index."""

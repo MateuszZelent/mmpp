@@ -5,6 +5,8 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
+import numpy as np
+
 from ...._method_helpers import InteractiveNodeMixin
 from ..._shared.models import TrajectoryResult
 from ...config import VortexConfig
@@ -75,10 +77,29 @@ class EnergyInterface(InteractiveNodeMixin):
         strict_mode = (
             bool(self._config.energy.strict_missing) if strict is None else bool(strict)
         )
+        selected_times = None
+        if self._core is not None:
+            try:
+                selected_times = self._core._resolve_time_axis()
+            except (AttributeError, TypeError, ValueError, IndexError):
+                selected_times = None
+        dataset_view = getattr(self._core, "_dataset_view", None)
+        index_plan = getattr(dataset_view, "_index_plan", None)
+        source_time_size = (
+            int(index_plan.source_shape[0]) if index_plan is not None else None
+        )
+        time_selection = (
+            self._slice_info[0]
+            if isinstance(self._slice_info, tuple) and self._slice_info
+            else None
+        )
         result = extract_energy_time_series(
             self._job,
             columns=columns,
             prefixes=tuple(self._config.energy.column_prefixes),
+            selected_times=selected_times,
+            time_selection=time_selection,
+            source_time_size=source_time_size,
         )
 
         if strict_mode and (not result.channels):
@@ -110,17 +131,19 @@ class EnergyInterface(InteractiveNodeMixin):
         *,
         trajectory: TrajectoryResult | None = None,
         method: str = "auto",
-        temperature_k: float = 300.0,
+        temperature_k: float | None = None,
         bins: int = 64,
+        assume_equilibrium: bool = False,
         force: bool = False,
     ) -> EffectivePotentialResult:
-        """Estimate effective radial potential from trajectory statistics."""
+        """Estimate a radial energy profile or explicitly assumed equilibrium PMF."""
         if (
             not force
             and self._last_potential is not None
             and trajectory is None
             and method == "auto"
-            and abs(float(temperature_k) - 300.0) < 1e-15
+            and temperature_k is None
+            and not assume_equilibrium
             and int(bins) == 64
         ):
             return self._last_potential
@@ -133,12 +156,30 @@ class EnergyInterface(InteractiveNodeMixin):
             )
 
         method_norm = str(method).lower()
-        if method_norm not in {"auto", "boltzmann", "energy_bin"}:
-            raise ValueError("method must be 'auto', 'boltzmann', or 'energy_bin'")
+        if method_norm not in {"auto", "boltzmann", "radial_pmf", "energy_bin"}:
+            raise ValueError(
+                "method must be 'auto', 'energy_bin', 'radial_pmf', or 'boltzmann'"
+            )
 
-        table_energy = self.time_resolved(force=False)
-        has_e_total = "E_total" in table_energy.channels
-        can_energy_bin = has_e_total and table_energy.time.size == traj.time.size
+        table_energy = None
+        try:
+            table_energy = self.time_resolved(force=False)
+        except ValueError as exc:
+            if method_norm == "energy_bin":
+                raise
+            warnings.warn(
+                "Energy channels could not be aligned to the selected trajectory "
+                f"time axis ({exc}); falling back to trajectory statistics.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        has_e_total = table_energy is not None and "E_total" in table_energy.channels
+        can_energy_bin = bool(
+            has_e_total
+            and table_energy is not None
+            and table_energy.time.size == traj.time.size
+            and np.allclose(table_energy.time, traj.time, rtol=1e-9, atol=1e-15)
+        )
 
         if method_norm == "energy_bin" and not can_energy_bin:
             raise ValueError(
@@ -146,16 +187,29 @@ class EnergyInterface(InteractiveNodeMixin):
             )
 
         if method_norm == "energy_bin" or (method_norm == "auto" and can_energy_bin):
+            assert table_energy is not None
             result = potential_from_energy_channel(
                 traj,
                 table_energy.channels["E_total"],
                 bins=bins,
             )
-        else:
+        elif method_norm in {"boltzmann", "radial_pmf"}:
+            if temperature_k is None:
+                raise ValueError(
+                    "Radial Boltzmann inversion requires an explicit temperature_k"
+                )
             result = potential_from_boltzmann(
                 traj,
                 temperature_k=temperature_k,
                 bins=bins,
+                assume_equilibrium=assume_equilibrium,
+            )
+        else:
+            raise ValueError(
+                "No energy channel is aligned with this trajectory. Automatic "
+                "radial Boltzmann inversion is disabled; request "
+                "method='radial_pmf', set assume_equilibrium=True, and provide "
+                "the physical temperature explicitly."
             )
 
         self._last_potential = result
@@ -167,7 +221,7 @@ class EnergyInterface(InteractiveNodeMixin):
         potential: EffectivePotentialResult | None = None,
         trajectory: TrajectoryResult | None = None,
         method: str = "auto",
-        temperature_k: float = 300.0,
+        temperature_k: float | None = None,
         bins: int = 64,
         min_depth_fraction: float = 0.05,
         force: bool = False,
@@ -179,7 +233,7 @@ class EnergyInterface(InteractiveNodeMixin):
             and potential is None
             and trajectory is None
             and method == "auto"
-            and abs(float(temperature_k) - 300.0) < 1e-15
+            and temperature_k is None
             and int(bins) == 64
             and abs(float(min_depth_fraction) - 0.05) < 1e-15
         ):

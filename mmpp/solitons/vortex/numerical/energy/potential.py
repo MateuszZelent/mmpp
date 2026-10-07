@@ -36,10 +36,23 @@ def _hist_probability(radius: np.ndarray, bins: int) -> tuple[np.ndarray, np.nda
 def potential_from_boltzmann(
     trajectory: TrajectoryResult,
     *,
-    temperature_k: float = 300.0,
+    temperature_k: float,
     bins: int = 64,
+    assume_equilibrium: bool = False,
 ) -> EffectivePotentialResult:
-    """Estimate ``W(r) = -k_B T ln P(r)`` from radial occupancy histogram."""
+    """Estimate radial PMF from equilibrium occupancy, correcting the 2D measure.
+
+    For an axisymmetric potential ``U(r)``, the radial histogram includes the
+    annular measure ``2*pi*r``. This returns ``-kBT*ln(P(r)/(2*pi*r))`` up to an
+    additive constant; it is not a spatially resolved pinning potential.
+    """
+    if not isinstance(assume_equilibrium, (bool, np.bool_)) or not assume_equilibrium:
+        raise ValueError(
+            "Radial Boltzmann inversion requires explicit assume_equilibrium=True"
+        )
+    temperature_k = float(temperature_k)
+    if not np.isfinite(temperature_k) or temperature_k <= 0.0:
+        raise ValueError("temperature_k must be finite and positive")
     radius = _radius_series(trajectory)
     centers, prob = _hist_probability(radius, bins=bins)
     if centers.size == 0:
@@ -47,23 +60,30 @@ def potential_from_boltzmann(
             radius_m=np.array([], dtype=float),
             potential_j=np.array([], dtype=float),
             probability=np.array([], dtype=float),
-            method="boltzmann",
+            method="radial_pmf",
             metadata={"status": "insufficient_samples"},
         )
 
-    p_safe = np.clip(prob, 1e-30, None)
-    potential = -_K_B * float(max(temperature_k, 1e-9)) * np.log(p_safe)
+    shell_measure = 2.0 * np.pi * np.maximum(centers, np.finfo(float).tiny)
+    density_per_area = prob / shell_measure
+    p_safe = np.clip(density_per_area, 1e-300, None)
+    potential = -_K_B * temperature_k * np.log(p_safe)
     potential = potential - float(np.min(potential))
 
     return EffectivePotentialResult(
         radius_m=np.asarray(centers, dtype=float),
         potential_j=np.asarray(potential, dtype=float),
         probability=np.asarray(prob, dtype=float),
-        method="boltzmann",
+        method="radial_pmf",
         metadata={
-            "temperature_k": float(temperature_k),
+            "temperature_k": temperature_k,
             "bins": int(max(bins, 8)),
             "n_samples": int(radius.size),
+            "potential_kind": "radial_free_energy",
+            "equilibrium_assumed": True,
+            "radial_symmetry_assumed": True,
+            "measure_correction": "divide radial occupancy by 2*pi*r",
+            "spatial_pinning_localization": False,
         },
     )
 
@@ -126,6 +146,8 @@ def potential_from_energy_channel(
         metadata={
             "bins": int(max(bins, 8)),
             "n_samples": int(radius.size),
+            "potential_kind": "conditional_radial_energy_profile",
+            "spatial_pinning_localization": False,
         },
     )
 

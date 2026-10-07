@@ -8,9 +8,7 @@ import numpy as np
 
 from ..core.models import TrajectoryResult
 from ..spectrum.gyration import compute_breathing_spectrum, compute_gyration_spectrum
-from .azimuthal import estimate_azimuthal_index
 from .models import VortexModeResult
-from .radial import estimate_radial_index
 
 try:
     from scipy.signal import find_peaks
@@ -69,27 +67,17 @@ def _find_peak_indices(
 
 
 def _classify_mode_type(*, harmonic: float, source: str) -> tuple[str, float]:
-    """Classify mode type from harmonic ratio and source spectrum."""
+    """Describe the trajectory signal channel and harmonic proximity.
+
+    A trajectory spectrum does not contain the spatial mode profile needed to
+    identify azimuthal or radial eigenmode indices.
+    """
     harmonic_abs = abs(float(harmonic))
     source_norm = source.lower()
-
-    if source_norm == "gyration":
-        if harmonic_abs <= 1.4:
-            return "gyration", float(
-                np.clip(1.0 - abs(harmonic_abs - 1.0) / 0.4, 0.0, 1.0)
-            )
-        if harmonic_abs <= 2.4:
-            return "azimuthal", float(
-                np.clip(1.0 - abs(harmonic_abs - 2.0) / 0.6, 0.0, 1.0)
-            )
-        return "azimuthal", 0.4
-
-    if source_norm == "breathing":
-        if harmonic_abs >= 1.5:
-            return "breathing", float(np.clip((harmonic_abs - 1.5) / 1.0, 0.5, 1.0))
-        return "gyration", 0.3
-
-    return "unknown", 0.1
+    if source_norm not in {"gyration", "breathing"}:
+        return "unknown", 0.0
+    confidence = float(np.clip(1.0 - abs(harmonic_abs - 1.0), 0.0, 1.0))
+    return source_norm, confidence
 
 
 def classify_modes_from_trajectory(
@@ -131,11 +119,6 @@ def classify_modes_from_trajectory(
             harmonic = freq / base_freq
             mode_type, base_conf = _classify_mode_type(harmonic=harmonic, source=source)
 
-            m_idx = estimate_azimuthal_index(
-                mode_type=mode_type, rotation_sense=rotation_sense
-            )
-            n_idx = estimate_radial_index(mode_type=mode_type, harmonic=harmonic)
-
             rel_power = pwr / max(base_power, 1e-30)
             confidence = float(
                 np.clip(0.7 * base_conf + 0.3 * min(rel_power, 1.0), 0.0, 1.0)
@@ -143,8 +126,8 @@ def classify_modes_from_trajectory(
 
             results.append(
                 VortexModeResult(
-                    m_index=int(m_idx),
-                    n_index=int(n_idx),
+                    m_index=None,
+                    n_index=None,
                     mode_type=mode_type,
                     rotation_sense=rotation_sense,
                     confidence=confidence,
@@ -152,6 +135,8 @@ def classify_modes_from_trajectory(
                     power=pwr,
                     source=source,
                     metadata={
+                        "classification_scope": "trajectory_signal_spectrum",
+                        "spatial_indices_status": "unavailable_without_mode_profile",
                         "harmonic": harmonic,
                         "base_frequency_hz": base_freq,
                         "relative_power": rel_power,

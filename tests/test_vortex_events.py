@@ -9,6 +9,7 @@ import zarr
 
 from mmpp.core.job import ZarrJobResult
 from mmpp.solitons.vortex.core.models import TrajectoryResult
+from mmpp.solitons.vortex.health import check_core_health
 
 
 def _make_vortex_snapshot(
@@ -146,6 +147,7 @@ def test_events_state_switches_and_dwell_times(tmp_path):
     transitions = job.m.solitons.vortex.events.state_switches(
         trajectory=traj,
         radius_threshold=0.45,
+        disk_radius=10e-9,
         min_dwell_periods=2,
         refractory=0.0,
     )
@@ -158,6 +160,7 @@ def test_events_state_switches_and_dwell_times(tmp_path):
         state="G-state",
         trajectory=traj,
         radius_threshold=0.45,
+        disk_radius=10e-9,
         min_dwell_periods=2,
     )
     assert dwell.count >= 1
@@ -235,3 +238,201 @@ def test_events_core_expulsion_infers_radius_from_diameter_attr(tmp_path):
 
     assert len(events) >= 1
     assert abs(events[0].threshold - 38.0e-9) < 1e-12
+
+
+def test_core_health_samples_the_tracked_off_center_core():
+    class Dataset:
+        def __init__(self, values):
+            self.values = values
+
+        def numpy(self, *, copy=False):
+            return self.values
+
+    class Job:
+        attrs = {"dx": 1.0e-9, "dy": 1.0e-9}
+
+        def __init__(self, values):
+            self.m = Dataset(values)
+
+    values = np.zeros((2, 32, 32, 3), dtype=float)
+    values[:, 9:12, 19:22, 2] = 1.0
+    trajectory = TrajectoryResult(
+        time=np.array([0.0, 1.0e-12]),
+        x=np.array([20.0e-9, 20.0e-9]),
+        y=np.array([10.0e-9, 10.0e-9]),
+        polarity=np.ones(2, dtype=int),
+        method="synthetic",
+        confidence=np.ones(2),
+        metadata={"y_axis": "down"},
+    )
+
+    health = check_core_health(
+        Job(values),
+        trajectory=trajectory,
+        disk_radius=20.0e-9,
+        disk_center=(15.5e-9, 15.5e-9),
+    )
+
+    assert health.annihilated is False
+    assert health.mz_initial > 0.05
+    assert health.mz_final > 0.05
+    assert health.is_healthy is True
+
+
+def test_core_health_does_not_invent_boundary_geometry():
+    class Dataset:
+        def numpy(self, *, copy=False):
+            return np.zeros((2, 32, 32, 3), dtype=float)
+
+    class Job:
+        attrs = {}
+        m = Dataset()
+
+    trajectory = TrajectoryResult(
+        time=np.array([0.0, 1.0e-12]),
+        x=np.array([1.0e-9, 2.0e-9]),
+        y=np.array([1.0e-9, 2.0e-9]),
+        polarity=np.ones(2, dtype=int),
+        method="synthetic",
+        confidence=np.ones(2),
+        metadata={"y_axis": "down"},
+    )
+
+    health = check_core_health(Job(), trajectory=trajectory, disk_radius=20.0e-9)
+
+    assert health.min_wall_distance_frac is None
+    assert health.annihilated is False
+    assert health.is_healthy is None
+    assert health.status == "unavailable"
+
+
+def test_topological_charge_uses_one_physical_y_orientation_across_soliton_apis():
+    from mmpp.solitons._coordinates import XYConvention
+    from mmpp.solitons._topology import berg_luscher_Q, topological_density_fd
+    from mmpp.solitons.skyrmion._core import detect_skyrmion
+    from mmpp.solitons.skyrmion.config import SkyrmionTopologyConfig
+    from mmpp.solitons.vortex.topology.detection import detect_topology
+
+    n = 61
+    spacing = 1e-9
+    yy, xx = np.indices((n, n))
+    x = (xx - (n - 1) / 2.0) * spacing
+    y = ((n - 1) - yy - (n - 1) / 2.0) * spacing
+    radius = np.hypot(x, y)
+    phi = np.arctan2(y, x)
+    theta = 2.0 * np.arctan(np.exp(-(radius - 12e-9) / (2e-9)))
+    field = np.stack(
+        (
+            np.sin(theta) * np.cos(phi),
+            np.sin(theta) * np.sin(phi),
+            np.cos(theta),
+        ),
+        axis=-1,
+    )
+    convention = XYConvention(y_axis="up")
+
+    q_shared_bl = berg_luscher_Q(field, convention=convention)
+    q_shared_fd = topological_density_fd(
+        field, spacing, spacing, convention=convention
+    )[1]
+    q_skyrmion_bl = detect_skyrmion(
+        field, spacing, spacing, convention=convention
+    ).Q
+    q_skyrmion_fd = detect_skyrmion(
+        field,
+        spacing,
+        spacing,
+        convention=convention,
+        config=SkyrmionTopologyConfig(method="finite_diff"),
+    ).Q
+    q_vortex_bl = detect_topology(
+        field, spacing, spacing, method="berg_luscher", convention=convention
+    ).Q
+    q_vortex_fd = detect_topology(
+        field, spacing, spacing, method="finite_diff", convention=convention
+    ).Q
+
+    assert np.isclose(q_shared_bl, -1.0, atol=1e-5)
+    assert np.isclose(q_shared_bl, q_skyrmion_bl)
+    assert np.isclose(q_shared_bl, q_vortex_bl)
+    assert q_shared_fd < -0.9
+    assert np.isclose(q_shared_fd, q_skyrmion_fd, atol=1e-4)
+    assert np.isclose(q_shared_fd, q_vortex_fd, atol=1e-4)
+
+    reversed_q = berg_luscher_Q(
+        field[::-1], convention=XYConvention(y_axis="down")
+    )
+    assert np.isclose(reversed_q, q_shared_bl)
+
+def test_table_tracking_marks_missing_core_polarity_unknown():
+    from mmpp.solitons.vortex.numerical.core.interface import _track_core_from_table
+
+    class TableJob:
+        attrs = {"t_sampl": 1e-12}
+
+        def __init__(self):
+            self.table = {
+                "ext_coreposx": np.array([0.0, 1.0, 2.0]),
+                "ext_coreposy": np.array([0.0, 0.0, 0.0]),
+                "t": np.array([0.0, 1e-12, 2e-12]),
+            }
+
+        def __contains__(self, key):
+            return key == "table"
+
+        def __getitem__(self, key):
+            return self.table if key == "table" else self.table[key]
+
+    trajectory = _track_core_from_table(
+        TableJob(),
+        polarity_threshold_up=0.3,
+        polarity_threshold_down=-0.3,
+    )
+    assert np.array_equal(trajectory.polarity, np.zeros(3, dtype=int))
+    assert not trajectory.polarity_known.any()
+    assert trajectory.metadata["polarity_status"] == "unavailable"
+    assert np.array_equal(trajectory.metadata["polarity_confidence"], np.zeros(3))
+
+def test_steady_state_fallback_tail_is_not_reported_as_detected():
+    from mmpp.solitons.vortex._shared.models import TrajectoryResult
+    from mmpp.solitons.vortex.trajectory.steady_state import extract_steady_state
+
+    n = 120
+    time = np.arange(n, dtype=float) * 1e-12
+    unstable = TrajectoryResult(
+        time=time,
+        x=np.linspace(0.0, 1e-6, n) ** 2,
+        y=np.zeros(n),
+        polarity=np.ones(n, dtype=int),
+        method="test",
+        confidence=np.ones(n),
+    )
+    selected = extract_steady_state(
+        unstable, threshold=0.01, window=9, min_samples=20
+    )
+    assert not selected.metadata["steady_state"]
+    assert not selected.metadata["steady_state_detected"]
+    assert selected.metadata["steady_state_status"] == "not_detected"
+    assert selected.time.size == 20
+
+def test_trajectory_frequency_exposes_hz_and_angular_frequency_separately():
+    from mmpp.solitons.vortex._shared.models import TrajectoryResult
+
+    frequency = 5e9
+    time = np.linspace(0.0, 1e-9, 1001)
+    trajectory = TrajectoryResult(
+        time=time,
+        x=np.cos(2.0 * np.pi * frequency * time),
+        y=np.sin(2.0 * np.pi * frequency * time),
+        polarity=np.ones(time.size, dtype=int),
+        method="test",
+        confidence=np.ones(time.size),
+    )
+    assert np.isclose(
+        np.mean(trajectory.instantaneous_angular_frequency),
+        2.0 * np.pi * frequency,
+        rtol=1e-3,
+    )
+    assert np.isclose(
+        np.mean(trajectory.instantaneous_frequency_hz), frequency, rtol=1e-3
+    )
