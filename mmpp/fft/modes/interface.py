@@ -818,9 +818,7 @@ class FFTModeInterfaceNew:
             if names:
                 return max(
                     names,
-                    key=lambda name: int(
-                        getattr(get_raw(name), "shape", (0,))[0]
-                    ),
+                    key=lambda name: int(getattr(get_raw(name), "shape", (0,))[0]),
                 )
         # Auto-detect
         try:
