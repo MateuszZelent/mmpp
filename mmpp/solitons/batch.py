@@ -416,6 +416,10 @@ def _read_table_trace(result: Any, *, component: str) -> tuple[np.ndarray, np.nd
     else:
         attrs = getattr(result, "attrs", {}) or {}
         raw_dt = attrs.get("t_sampl", attrs.get("sampling_interval"))
+        if raw_dt is None:
+            raise ValueError(
+                "A table signal without a time column requires sampling interval metadata"
+            )
         try:
             dt = float(raw_dt)
         except (TypeError, ValueError) as exc:
@@ -498,6 +502,10 @@ def _read_magnetization_trace(
     attrs = getattr(result, "attrs", {}) or {}
     if time_values is None:
         raw_dt = attrs.get("t_sampl", attrs.get("sampling_interval"))
+        if raw_dt is None:
+            raise ValueError(
+                f"Dataset {dset_name!r} has no timestamp array or sampling interval"
+            )
         try:
             dt = float(raw_dt)
         except (TypeError, ValueError) as exc:

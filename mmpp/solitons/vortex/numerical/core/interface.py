@@ -199,6 +199,10 @@ def _track_core_from_table(
                     )
         else:
             raw_dt = attrs.get("t_sampl", attrs.get("sampling_interval"))
+            if raw_dt is None:
+                raise AttributeError(
+                    "Table tracking requires a time column or sampling interval metadata"
+                )
             try:
                 dt = float(raw_dt)
             except (TypeError, ValueError) as exc:
@@ -224,6 +228,8 @@ def _track_core_from_table(
         dt_est = float(np.median(np.diff(time)))
     else:
         raw_dt = attrs.get("t_sampl", attrs.get("sampling_interval"))
+        if raw_dt is None:
+            raise AttributeError("At least two table timestamps are needed to infer dt")
         try:
             dt_est = float(raw_dt)
         except (TypeError, ValueError) as exc:

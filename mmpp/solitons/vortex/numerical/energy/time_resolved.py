@@ -43,6 +43,10 @@ def _resolve_time_array(
         if hasattr(attrs, "get")
         else None
     )
+    if raw_dt is None:
+        raise ValueError(
+            "Energy channels without a table time column require sampling interval metadata"
+        )
     try:
         dt = float(raw_dt)
     except (TypeError, ValueError) as exc:

@@ -350,9 +350,13 @@ def check_core_health(
         and tx.size >= 2
     ):
         attrs = getattr(job_result, "attrs", {}) or {}
+        raw_dx = attrs.get("dx", attrs.get("cellsize_x"))
+        raw_dy = attrs.get("dy", attrs.get("cellsize_y", raw_dx))
         try:
-            dx = float(attrs.get("dx", attrs.get("cellsize_x")))
-            dy = float(attrs.get("dy", attrs.get("cellsize_y", dx)))
+            if raw_dx is None or raw_dy is None:
+                raise ValueError("Missing grid spacing metadata")
+            dx = float(raw_dx)
+            dy = float(raw_dy)
         except (TypeError, ValueError):
             dx = dy = float("nan")
         if np.isfinite(dx) and np.isfinite(dy) and dx > 0.0 and dy > 0.0:
@@ -450,14 +454,14 @@ def check_core_health(
                         ny = nx = 1
                     center_x = attrs.get("center_x")
                     center_y = attrs.get("center_y")
-                    dx = attrs.get("dx", attrs.get("cellsize_x"))
-                    dy = attrs.get("dy", attrs.get("cellsize_y", dx))
+                    raw_dx = attrs.get("dx", attrs.get("cellsize_x"))
+                    raw_dy = attrs.get("dy", attrs.get("cellsize_y", raw_dx))
                     if center_x is None or center_y is None:
-                        if dx is None or dy is None or nx < 2 or ny < 2:
+                        if raw_dx is None or raw_dy is None or nx < 2 or ny < 2:
                             raise ValueError(
                                 "Cannot infer disk center without physical grid spacing"
                             )
-                        dx_value, dy_value = float(dx), float(dy)
+                        dx_value, dy_value = float(raw_dx), float(raw_dy)
                         if (
                             not np.isfinite(dx_value)
                             or not np.isfinite(dy_value)

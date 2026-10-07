@@ -224,10 +224,12 @@ def compute_loop_area(field: np.ndarray, magnetization: np.ndarray) -> float:
     """Numerical loop area integral A = ∮ M dB."""
     field_arr = np.asarray(field, dtype=float)
     mag_arr = np.asarray(magnetization, dtype=float)
-    if hasattr(np, "trapezoid"):
-        area = float(np.trapezoid(mag_arr, field_arr))
-    else:  # pragma: no cover - NumPy < 1.20 compatibility
-        area = float(np.trapz(mag_arr, field_arr))
+    integrate = getattr(np, "trapezoid", None)
+    if integrate is None:  # NumPy < 2.0 compatibility
+        integrate = getattr(np, "trapz", None)
+    if integrate is None:  # pragma: no cover - NumPy >= 1.20 always has trapz
+        raise RuntimeError("NumPy has no trapezoidal integration function")
+    area = float(integrate(mag_arr, field_arr))
     return float(np.abs(area))
 
 
