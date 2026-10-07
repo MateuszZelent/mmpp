@@ -335,9 +335,7 @@ def test_topological_charge_uses_one_physical_y_orientation_across_soliton_apis(
     q_shared_fd = topological_density_fd(
         field, spacing, spacing, convention=convention
     )[1]
-    q_skyrmion_bl = detect_skyrmion(
-        field, spacing, spacing, convention=convention
-    ).Q
+    q_skyrmion_bl = detect_skyrmion(field, spacing, spacing, convention=convention).Q
     q_skyrmion_fd = detect_skyrmion(
         field,
         spacing,
@@ -359,10 +357,9 @@ def test_topological_charge_uses_one_physical_y_orientation_across_soliton_apis(
     assert np.isclose(q_shared_fd, q_skyrmion_fd, atol=1e-4)
     assert np.isclose(q_shared_fd, q_vortex_fd, atol=1e-4)
 
-    reversed_q = berg_luscher_Q(
-        field[::-1], convention=XYConvention(y_axis="down")
-    )
+    reversed_q = berg_luscher_Q(field[::-1], convention=XYConvention(y_axis="down"))
     assert np.isclose(reversed_q, q_shared_bl)
+
 
 def test_table_tracking_marks_missing_core_polarity_unknown():
     from mmpp.solitons.vortex.numerical.core.interface import _track_core_from_table
@@ -393,6 +390,7 @@ def test_table_tracking_marks_missing_core_polarity_unknown():
     assert trajectory.metadata["polarity_status"] == "unavailable"
     assert np.array_equal(trajectory.metadata["polarity_confidence"], np.zeros(3))
 
+
 def test_steady_state_fallback_tail_is_not_reported_as_detected():
     from mmpp.solitons.vortex._shared.models import TrajectoryResult
     from mmpp.solitons.vortex.trajectory.steady_state import extract_steady_state
@@ -407,13 +405,12 @@ def test_steady_state_fallback_tail_is_not_reported_as_detected():
         method="test",
         confidence=np.ones(n),
     )
-    selected = extract_steady_state(
-        unstable, threshold=0.01, window=9, min_samples=20
-    )
+    selected = extract_steady_state(unstable, threshold=0.01, window=9, min_samples=20)
     assert not selected.metadata["steady_state"]
     assert not selected.metadata["steady_state_detected"]
     assert selected.metadata["steady_state_status"] == "not_detected"
     assert selected.time.size == 20
+
 
 def test_trajectory_frequency_exposes_hz_and_angular_frequency_separately():
     from mmpp.solitons.vortex._shared.models import TrajectoryResult
