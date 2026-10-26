@@ -1,3 +1,32 @@
+# MMPP Library Release v0.7.0
+
+## Committed Zarr results and analysis caches
+
+- Read committed solver snapshots with verified frame timestamps and SHA-256
+  chunk records; report invalid metadata or missing committed payloads.
+- Respect the committed row count for Zarr tables and keep solver metadata
+  read-only during analysis.
+- Publish FFT, modes, dispersion, transmission, and shared caches as verified
+  generations tied to a source revision. Legacy sources remain readable,
+  but reusable analysis caches require a committed source.
+- Add a read-only diagnostic and verified, single-field Zarr snapshot export.
+- Preserve prior standalone Zarr exports when publishing a replacement. Atomic
+  replacement and pinned export reads currently require supported Linux
+  filesystem operations; consult `docs/zarr-integrity.md` before migration.
+
+## Compatibility
+
+- Ordinary Zarr metadata is a compatibility projection and can lag a committed
+  solver snapshot until controlled finalization. Use MMPP for live or interrupted
+  results written by the corresponding solver release.
+- `Pyzfn.add_ndarray` writes a verified generation exposed through Pyzfn rather
+  than overwriting an existing source array. Reusable mode caches require a
+  committed source; use `save=False` for legacy sources when applicable.
+- Table manifest v1 protects the committed row count but does not include
+  checksums for table payloads.
+
+---
+
 # MMPP Library Release v0.6.10
 
 ## Uniform handling of nonuniform FFT time axes
