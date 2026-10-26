@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -17,6 +18,8 @@ def load_existing_fft_result(
     config_cls: Any,
     psutil_module: Any | None,
     logger: Any,
+    source_dataset: str | None = None,
+    expected_source_revision: str | None = None,
 ) -> Any | None:
     """Load cached FFT result from zarr, or return ``None`` when unavailable."""
     try:
@@ -30,15 +33,30 @@ def load_existing_fft_result(
         logger.debug("Loading existing FFT data from: %s", zarr_path)
         logger.debug("FFT dataset: fft/%s", dataset_name)
 
-        import zarr
+        from ..cache.transactions import open_published_cache, peek_cache_revision
+        from ..core.zarr_integrity import source_revision
 
-        z = zarr.open(zarr_path, mode="r")
-        fft_path = f"fft/{dataset_name}"
-        if fft_path not in z:
-            logger.debug("FFT dataset %s not found", fft_path)
+        parent = Path(zarr_path) / "fft"
+        revision = (
+            expected_source_revision or source_revision(zarr_path, source_dataset)
+            if source_dataset is not None
+            else peek_cache_revision(parent, dataset_name)
+        )
+        fft_group = open_published_cache(parent, dataset_name, source_revision=revision)
+        if fft_group is None:
             return None
-
-        fft_group = z[fft_path]
+        stored_dataset = fft_group.attrs.get("source_dataset")
+        if (
+            not isinstance(stored_dataset, str)
+            or (source_dataset is not None and stored_dataset != source_dataset)
+            or (
+                expected_source_revision is None
+                and source_revision(zarr_path, stored_dataset) != revision
+            )
+        ):
+            logger.debug("Ignoring FFT cache with a stale or unknown source revision")
+            return None
+        fft_path = f"fft/{dataset_name}"
         required_arrays = {"spectrum", "frequencies"}
         missing_arrays = required_arrays.difference(fft_group.keys())
         if missing_arrays:
@@ -63,12 +81,24 @@ def load_existing_fft_result(
         logger.debug("Total FFT data size: %.1f MB", total_size_mb)
 
         metadata = dict(fft_group.attrs)
+        required_config = {
+            "window_function",
+            "filter_type",
+            "fft_engine",
+            "scaling",
+            "zero_padding",
+        }
+        if not required_config.issubset(metadata):
+            logger.info(
+                "Ignoring FFT cache %s without its complete configuration", fft_path
+            )
+            return None
         config = config_cls(
-            window_function=metadata.get("window_function", "hann"),
-            filter_type=metadata.get("filter_type", "remove_mean"),
-            fft_engine=metadata.get("fft_engine", "auto"),
-            scaling=metadata.get("scaling", "raw"),
-            zero_padding=metadata.get("zero_padding", True),
+            window_function=metadata["window_function"],
+            filter_type=metadata["filter_type"],
+            fft_engine=metadata["fft_engine"],
+            scaling=metadata["scaling"],
+            zero_padding=metadata["zero_padding"],
             nfft=metadata.get("nfft"),
         )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -15,13 +16,24 @@ from .serializers import serialize_for_json
 
 # Try to import zarr
 try:
-    import zarr
+    import zarr  # noqa: F401
 
     ZARR_AVAILABLE = True
 except ImportError:
     ZARR_AVAILABLE = False
 
 log = logging.getLogger("mmpp.cache.batch")
+
+
+def _batch_revision(job_paths: list[str], dataset_name: str) -> str | None:
+    from ..core.zarr_integrity import source_revision
+
+    revisions = [
+        (str(path), source_revision(str(path), dataset_name)) for path in job_paths
+    ]
+    if not revisions or any(revision is None for _, revision in revisions):
+        return None
+    return hashlib.sha256(json.dumps(sorted(revisions)).encode()).hexdigest()
 
 
 class BatchCacheEntry:
@@ -70,66 +82,72 @@ class BatchCacheEntry:
         cache_dir = zarr_path / ".mmpp_batch_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        cache_file = cache_dir / f"{cache_key.to_entry_name()}.zarr"
+        from ..core.zarr_integrity import source_revision
+        from .transactions import publish_cache
 
-        z = zarr.open(str(cache_file), mode="w")
+        revision = _batch_revision(self.job_paths, cache_key.dataset_name)
+        if len(self.results) != len(self.job_paths):
+            revision = None
+        else:
+            for path, result in zip(self.job_paths, self.results, strict=True):
+                metadata = getattr(result, "metadata", None)
+                expected = source_revision(str(path), cache_key.dataset_name)
+                if (
+                    not isinstance(metadata, dict)
+                    or metadata.get("source_revision") != expected
+                ):
+                    revision = None
+                    break
 
-        # Save job paths
-        z.attrs["job_paths"] = self.job_paths
-        z.attrs["n_jobs"] = len(self.job_paths)
-        z.attrs["cache_key"] = cache_key.to_string()
-        z.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
-
-        # Save config
-        if self.config is not None:
-            z.attrs["config_json"] = json.dumps(
-                serialize_for_json(self.config),
-                default=str,
-            )
-
-        # Save parameters
-        params_group = z.create_group("parameters")
-        for param_name, param_values in self.parameters.items():
-            # Convert to numpy array if possible
-            try:
-                arr = np.array(param_values)
-                params_group.create_dataset(param_name, data=arr)
-            except Exception:
-                # Store as JSON for non-numeric types
-                params_group.attrs[param_name] = json.dumps(
-                    serialize_for_json(param_values)
+        def populate(z: Any) -> None:
+            z.attrs["job_paths"] = self.job_paths
+            z.attrs["n_jobs"] = len(self.job_paths)
+            z.attrs["cache_key"] = cache_key.to_string()
+            z.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
+            if self.config is not None:
+                z.attrs["config_json"] = json.dumps(
+                    serialize_for_json(self.config), default=str
                 )
+            params_group = z.create_group("parameters")
+            for param_name, param_values in self.parameters.items():
+                try:
+                    arr = np.array(param_values)
+                    params_group.create_dataset(param_name, data=arr)
+                except (TypeError, ValueError):
+                    params_group.attrs[param_name] = json.dumps(
+                        serialize_for_json(param_values)
+                    )
+            if self.frequencies is not None:
+                z.create_dataset("frequencies", data=self.frequencies)
+            results_group = z.create_group("results")
+            if self.results:
+                first = self.results[0]
+                if hasattr(first, "spectrum") and hasattr(first, "frequencies"):
+                    results_group.create_dataset(
+                        "spectra",
+                        data=np.stack([r.spectrum for r in self.results], axis=0),
+                    )
+                    if self.frequencies is None:
+                        z.create_dataset("frequencies", data=first.frequencies)
+                elif hasattr(first, "transmission") and hasattr(first, "frequencies"):
+                    results_group.create_dataset(
+                        "transmission",
+                        data=np.stack([r.transmission for r in self.results], axis=0),
+                    )
+                    if hasattr(first, "power_map"):
+                        results_group.create_dataset(
+                            "power_map",
+                            data=np.stack([r.power_map for r in self.results], axis=0),
+                        )
 
-        # Save frequencies if available
-        if self.frequencies is not None:
-            z.create_dataset("frequencies", data=self.frequencies)
-
-        # Save results as stacked arrays
-        results_group = z.create_group("results")
-
-        # Determine what arrays to save based on first result
-        if self.results:
-            first = self.results[0]
-
-            # Check for common result types
-            if hasattr(first, "spectrum") and hasattr(first, "frequencies"):
-                # FFTComputeResult-like
-                spectra = np.stack([r.spectrum for r in self.results], axis=0)
-                results_group.create_dataset("spectra", data=spectra)
-
-                if self.frequencies is None:
-                    z.create_dataset("frequencies", data=first.frequencies)
-
-            elif hasattr(first, "transmission") and hasattr(first, "frequencies"):
-                # TransmissionResult-like
-                trans = np.stack([r.transmission for r in self.results], axis=0)
-                results_group.create_dataset("transmission", data=trans)
-
-                if hasattr(first, "power_map"):
-                    power = np.stack([r.power_map for r in self.results], axis=0)
-                    results_group.create_dataset("power_map", data=power)
-
-        log.info(f"Saved batch cache to {cache_file}")
+        publish_cache(
+            cache_dir,
+            cache_key.to_entry_name(),
+            populate,
+            source_revision=revision,
+            overwrite=True,
+        )
+        log.info("Saved batch cache generation %s", cache_key.to_entry_name())
 
     @classmethod
     def load_from_zarr(
@@ -156,15 +174,18 @@ class BatchCacheEntry:
 
         zarr_path = Path(zarr_path)
         cache_dir = zarr_path / ".mmpp_batch_cache"
-        cache_file = cache_dir / f"{cache_key.to_entry_name()}.zarr"
-
-        if not cache_file.exists():
-            return None
-
         try:
-            z = zarr.open(str(cache_file), mode="r")
+            from .transactions import open_published_cache, peek_cache_revision
+
+            name = cache_key.to_entry_name()
+            revision = peek_cache_revision(cache_dir, name)
+            z = open_published_cache(cache_dir, name, source_revision=revision)
+            if z is None:
+                return None
 
             job_paths = z.attrs.get("job_paths", [])
+            if _batch_revision(job_paths, cache_key.dataset_name) != revision:
+                return None
 
             # Load parameters
             parameters = {}
@@ -191,7 +212,7 @@ class BatchCacheEntry:
             # Attach raw zarr group for caller to extract results
             entry._zarr_group = z  # type: ignore[attr-defined]
 
-            log.info(f"Loaded batch cache from {cache_file}")
+            log.info("Loaded batch cache generation %s", name)
             return entry
 
         except Exception as e:

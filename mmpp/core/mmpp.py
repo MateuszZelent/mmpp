@@ -141,9 +141,11 @@ class MMPP:
             self.zarr_results = [result]
             log.info(f"Loaded single zarr file: {self.base_path}")
         except Exception as e:
-            log.error(f"Failed to load single zarr file: {e}")
-            self.df = pd.DataFrame()
-            self.zarr_results = []
+            from .zarr_integrity import ZarrIntegrityError
+
+            raise ZarrIntegrityError(
+                f"Zarr metadata invalid or unreadable in {self.base_path}: {e}"
+            ) from e
 
     @property
     def dataframe(self) -> "pd.DataFrame":

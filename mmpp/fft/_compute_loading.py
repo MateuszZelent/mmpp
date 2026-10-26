@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from ..core.zarr_integrity import ZarrIntegrityError, open_source
+
 
 @dataclass(frozen=True)
 class InputLoadMetrics:
@@ -23,6 +25,7 @@ class InputLoadMetrics:
     memory_used_mb: float | None
     spatial_axes: tuple[int, ...] | None = None
     component_axis: int | None = None
+    source_revision: str | None = None
 
 
 def _resolve_dataset(
@@ -34,13 +37,13 @@ def _resolve_dataset(
 ) -> Any:
     """Resolve dataset from Pyzfn job or direct zarr access."""
     data_set = None
-    if hasattr(job, dataset):
+    if hasattr(job, "__contains__") and dataset in job:
+        data_set = job[dataset]
+    elif hasattr(job, dataset):
         data_set = getattr(job, dataset)
     else:
         try:
-            import zarr
-
-            z_root = zarr.open(zarr_path, mode="r")
+            z_root = open_source(zarr_path)
             if dataset in z_root:
                 data_set = z_root[dataset]
             else:
@@ -48,18 +51,20 @@ def _resolve_dataset(
                     "Dataset %s not found in zarr root, checking if it's an attribute of Pyzfn job",
                     dataset,
                 )
+        except ZarrIntegrityError:
+            raise
         except Exception as exc:
             logger.debug("Could not access zarr directly: %s", exc)
 
     if data_set is None:
         available = []
         try:
-            import zarr
-
-            z_root = zarr.open(zarr_path, mode="r")
+            z_root = open_source(zarr_path)
             available.extend(list(z_root.group_keys()))
             available.extend(list(z_root.array_keys()))
             available = sorted({key.split("/")[0] for key in available})
+        except ZarrIntegrityError:
+            raise
         except Exception as exc:
             logger.debug("Unable to enumerate datasets in %s: %s", zarr_path, exc)
 
@@ -550,6 +555,7 @@ def load_fft_input_data(
     time_step_scale: float = 1.0,
     resample_nonuniform: bool = True,
     _layout_out: dict[str, Any] | None = None,
+    _source_group: Any | None = None,
 ) -> tuple[np.ndarray, float]:
     """Load FFT input data from zarr with slicing, z-layer handling, and dt detection.
 
@@ -572,13 +578,23 @@ def load_fft_input_data(
     logger.debug("Dataset: %s, z_layer: %s, tmax: %s", dataset, z_layer, tmax)
 
     try:
-        job = pyzfn_cls(zarr_path)
+        job = _source_group if _source_group is not None else pyzfn_cls(zarr_path)
     except Exception as exc:
         raise RuntimeError(f"Failed to open zarr job at {zarr_path}: {exc}") from exc
 
     data_set = _resolve_dataset(
         job=job, zarr_path=zarr_path, dataset=dataset, logger=logger
     )
+    if _layout_out is not None:
+        store = getattr(data_set, "store", None)
+        field = (
+            store._field(getattr(data_set, "path", dataset))
+            if hasattr(store, "_field")
+            else None
+        )
+        _layout_out["source_revision"] = (
+            None if field is None or preloaded_data is not None else field["revision"]
+        )
     original_dataset_shape = tuple(getattr(data_set, "shape", ()) or ())
 
     # ------------------------------------------------------------------
@@ -719,6 +735,7 @@ def load_fft_input_data_profiled(
     preloaded_data: np.ndarray | None = None,
     time_step_scale: float = 1.0,
     resample_nonuniform: bool = True,
+    source_group: Any | None = None,
 ) -> tuple[np.ndarray, float, InputLoadMetrics]:
     """Load FFT input data and collect timing/memory metrics."""
     process = None
@@ -747,6 +764,7 @@ def load_fft_input_data_profiled(
         time_step_scale=time_step_scale,
         resample_nonuniform=resample_nonuniform,
         _layout_out=layout_info,
+        _source_group=source_group,
     )
     load_time = time.time() - load_start_time
 
@@ -776,6 +794,7 @@ def load_fft_input_data_profiled(
         memory_used_mb=(float(memory_used) if memory_used is not None else None),
         spatial_axes=layout_info.get("spatial_axes"),
         component_axis=layout_info.get("component_axis"),
+        source_revision=layout_info.get("source_revision"),
     )
     return data, dt, metrics
 
@@ -841,12 +860,12 @@ def normalize_z_layer_index(
 
         if temp_data_set is None:
             try:
-                import zarr
-
-                z_root = zarr.open(zarr_path, mode="r")
+                z_root = open_source(zarr_path)
                 if dataset in z_root:
                     temp_data_set = z_root[dataset]
                     logger.debug("Found dataset '%s' via direct zarr access", dataset)
+            except ZarrIntegrityError:
+                raise
             except Exception:
                 pass
 

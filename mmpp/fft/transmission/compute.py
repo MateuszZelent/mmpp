@@ -2930,6 +2930,10 @@ class TransmissionCompute:
     ) -> tuple[np.ndarray, float]:
         dataset = config.dataset_name or self._job_result.get_largest_m_dataset()
 
+        source_group = getattr(self._job_result, "z", None)
+        if source_group is not None and dataset not in source_group:
+            source_group = None
+
         data, dt = self._fft_compute.load_data_from_zarr(
             self._job_result.path,
             dataset,
@@ -2939,6 +2943,7 @@ class TransmissionCompute:
             preloaded_data=preloaded_data,
             time_step_scale=time_step_scale,
             resample_nonuniform=config.resample_nonuniform,
+            source_group=source_group,
         )
 
         # Check if component was pre-selected via slicing

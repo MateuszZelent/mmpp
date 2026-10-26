@@ -949,6 +949,15 @@ class FFTDispersionInterface:
         dataset_key = self.dataset_name or "__global__"
         return f"{mode}:{dataset_key}:{context_hash}"
 
+    def _source_revision(self) -> str | None:
+        from ...core.zarr_integrity import job_source_revision
+
+        job = self.parent_fft.job_result
+        dataset = self.dataset_name
+        if dataset is None and callable(getattr(job, "get_largest_m_dataset", None)):
+            dataset = job.get_largest_m_dataset()
+        return job_source_revision(job, dataset)
+
     def _build_cache_context(
         self,
         mode: str,
@@ -968,6 +977,7 @@ class FFTDispersionInterface:
             "kwargs": self._serialize_for_json(extra_kwargs),
             "job_name": getattr(self.parent_fft.job_result, "name", None),
             "zarr_path": str(self.parent_fft.job_result.path),
+            "source_revision": self._source_revision(),
             "tmin": self._determine_tmin(),
             "tmax": self._determine_tmax(),
             "time_step_scale": getattr(self, "time_step_scale", 1.0),
@@ -1313,7 +1323,14 @@ class FFTDispersionInterface:
         if dataset_group is None:
             return None
 
-        entry_node = dataset_group.get(entry_name)
+        from ...cache.transactions import group_directory, open_published_cache
+
+        revision = self._source_revision()
+        if revision is None:
+            return None
+        entry_node = open_published_cache(
+            group_directory(dataset_group), entry_name, source_revision=revision
+        )
         if entry_node is None or not hasattr(entry_node, "get"):
             return None
 
@@ -1331,16 +1348,14 @@ class FFTDispersionInterface:
         try:
             config_json_raw = entry.attrs.get("config_json")
             config_json = self._ensure_text(config_json_raw)
-            config = (
-                DispersionConfig(**json.loads(config_json))
-                if config_json is not None
-                else DispersionConfig()
-            )
+            if config_json is None:
+                return None
+            config = DispersionConfig(**json.loads(config_json))
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to deserialize dispersion config from cache: %s", exc
             )
-            config = DispersionConfig()
+            return None
 
         notes_json_raw = entry.attrs.get("notes_json", "[]")
         notes_json = self._ensure_text(notes_json_raw) or "[]"
@@ -1531,73 +1546,73 @@ class FFTDispersionInterface:
             logger.debug("Skipping dispersion cache save; dataset group unavailable")
             return
 
-        if entry_name in dataset_group:
-            if not overwrite:
-                existing = dataset_group[entry_name]
-                stored_hash = existing.attrs.get("context_hash")
-                if stored_hash == context_hash:
-                    logger.info("Dispersion cache %s already up to date", entry_name)
-                else:
-                    logger.warning(
-                        "Dispersion cache %s exists with different parameters; use force=True to overwrite",
-                        entry_name,
-                    )
-                return
-            del dataset_group[entry_name]
+        from ...cache.transactions import group_directory, publish_cache
 
-        try:
-            entry = dataset_group.create_group(entry_name)
-        except ValueError as exc:
-            message = str(exc).lower()
-            if "read-only" in message or "read only" in message:
-                logger.warning("Dispersion cache skipped: %s", exc)
-                return
-            raise
-        self._create_dataset(entry, "S", result.S)
-        self._create_dataset(entry, "k_axis", result.k_axis)
-        self._create_dataset(entry, "f_axis", result.f_axis)
+        revision = self._source_revision()
+        if revision is None:
+            logger.debug(
+                "Skipping dispersion cache for source without a committed revision"
+            )
+            return
 
-        if result.S_local is not None:
-            self._create_dataset(entry, "S_local", result.S_local)
-        if result.S_local_raw is not None:
-            self._create_dataset(entry, "S_local_raw", result.S_local_raw)
-        if result.S_local_display is not None:
-            self._create_dataset(entry, "S_local_display", result.S_local_display)
-        if result.S_complex is not None:
-            self._create_dataset(entry, "S_complex", result.S_complex)
-        if result.S_raw is not None:
-            self._create_dataset(entry, "S_raw", result.S_raw)
-        if result.S_display is not None:
-            self._create_dataset(entry, "S_display", result.S_display)
-        if result.orth_axis is not None:
-            self._create_dataset(entry, "orth_axis", result.orth_axis)
-        if result.S_folded is not None:
-            self._create_dataset(entry, "S_folded", result.S_folded)
-        if result.k_folded is not None:
-            self._create_dataset(entry, "k_folded", result.k_folded)
+        def populate(entry: Any) -> None:
+            self._create_dataset(entry, "S", result.S)
+            self._create_dataset(entry, "k_axis", result.k_axis)
+            self._create_dataset(entry, "f_axis", result.f_axis)
 
-        entry.attrs["axis"] = result.axis
-        entry.attrs["component"] = result.component
-        entry.attrs["dt"] = float(result.dt)
-        entry.attrs["dx"] = float(result.dx)
-        entry.attrs["spatial_origin"] = float(result.spatial_origin)
-        entry.attrs["flipx"] = bool(result.flipx)
-        entry.attrs["scaling"] = str(result.scaling)
-        entry.attrs["scaling_factors_json"] = json.dumps(result.scaling_factors or {})
-        if result.fold_period is not None:
-            entry.attrs["fold_period"] = float(result.fold_period)
-        entry.attrs["orth_axis_label"] = result.orth_axis_label or ""
-        entry.attrs["notes_json"] = json.dumps(result.notes or [])
-        entry.attrs["config_json"] = json.dumps(asdict(result.config))
-        entry.attrs["context_json"] = context_json
-        entry.attrs["context_hash"] = context_hash
-        entry.attrs["dataset_name"] = self.dataset_name
-        entry.attrs["slice_info"] = json.dumps(
-            self._serialize_for_json(self.slice_info)
-        )
-        entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat()
-        entry.attrs["job_name"] = getattr(self.parent_fft.job_result, "name", "")
-        entry.attrs["zarr_path"] = str(self.parent_fft.job_result.path)
+            if result.S_local is not None:
+                self._create_dataset(entry, "S_local", result.S_local)
+            if result.S_local_raw is not None:
+                self._create_dataset(entry, "S_local_raw", result.S_local_raw)
+            if result.S_local_display is not None:
+                self._create_dataset(entry, "S_local_display", result.S_local_display)
+            if result.S_complex is not None:
+                self._create_dataset(entry, "S_complex", result.S_complex)
+            if result.S_raw is not None:
+                self._create_dataset(entry, "S_raw", result.S_raw)
+            if result.S_display is not None:
+                self._create_dataset(entry, "S_display", result.S_display)
+            if result.orth_axis is not None:
+                self._create_dataset(entry, "orth_axis", result.orth_axis)
+            if result.S_folded is not None:
+                self._create_dataset(entry, "S_folded", result.S_folded)
+            if result.k_folded is not None:
+                self._create_dataset(entry, "k_folded", result.k_folded)
+
+            entry.attrs["axis"] = result.axis
+            entry.attrs["component"] = result.component
+            entry.attrs["dt"] = float(result.dt)
+            entry.attrs["dx"] = float(result.dx)
+            entry.attrs["spatial_origin"] = float(result.spatial_origin)
+            entry.attrs["flipx"] = bool(result.flipx)
+            entry.attrs["scaling"] = str(result.scaling)
+            entry.attrs["scaling_factors_json"] = json.dumps(
+                result.scaling_factors or {}
+            )
+            if result.fold_period is not None:
+                entry.attrs["fold_period"] = float(result.fold_period)
+            entry.attrs["orth_axis_label"] = result.orth_axis_label or ""
+            entry.attrs["notes_json"] = json.dumps(result.notes or [])
+            entry.attrs["config_json"] = json.dumps(asdict(result.config))
+            entry.attrs["context_json"] = context_json
+            entry.attrs["context_hash"] = context_hash
+            entry.attrs["dataset_name"] = self.dataset_name
+            entry.attrs["slice_info"] = json.dumps(
+                self._serialize_for_json(self.slice_info)
+            )
+            entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat()
+            entry.attrs["job_name"] = getattr(self.parent_fft.job_result, "name", "")
+            entry.attrs["zarr_path"] = str(self.parent_fft.job_result.path)
+
+        if not publish_cache(
+            group_directory(dataset_group),
+            entry_name,
+            populate,
+            source_revision=revision,
+            overwrite=overwrite,
+        ):
+            logger.info("Dispersion cache %s already up to date", entry_name)
+            return
         store = getattr(dataset_group, "store", None)
         store_desc = (
             getattr(store, "path", None)

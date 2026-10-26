@@ -18,7 +18,7 @@ from .serializers import serialize_for_json
 
 # Try to import zarr
 try:
-    import zarr
+    import zarr  # noqa: F401
 
     ZARR_AVAILABLE = True
 except ImportError:
@@ -100,6 +100,14 @@ def cached_result(
                 # No path to store cache, just compute
                 return func(*args, **kwargs)
 
+            from ..core.zarr_integrity import source_revision
+
+            source_dataset = all_params.get("dataset_name", "m")
+            revision = source_revision(str(zarr_path), str(source_dataset))
+            if revision is None:
+                # A legacy source has no immutable version to bind a hit to.
+                return func(*args, **kwargs)
+
             # Generate cache key
             cache_key = CacheKey.create(
                 analysis_type=analysis_type,
@@ -109,6 +117,7 @@ def cached_result(
                 method=all_params.get("method", 1),
                 config=all_params.get(config_param),
                 slice_info=all_params.get(slice_param),
+                source_revision=revision,
             )
 
             # Try to load from cache
@@ -124,7 +133,17 @@ def cached_result(
             computation_time = time.time() - start_time
 
             # Save to cache
-            if save and not force:
+            result_metadata = getattr(result, "metadata", None)
+            result_revision = (
+                result_metadata.get("source_revision")
+                if isinstance(result_metadata, dict)
+                else None
+            )
+            if (
+                save
+                and result_revision == revision
+                and source_revision(str(zarr_path), str(source_dataset)) == revision
+            ):
                 _save_to_zarr_cache(
                     zarr_path,
                     cache_key,
@@ -156,17 +175,15 @@ def _load_from_zarr_cache(
 ) -> Any | None:
     """Load result from zarr cache if available."""
     try:
-        z = zarr.open(str(zarr_path), mode="r")
+        from .transactions import open_published_cache
 
         cache_path = cache_key.to_zarr_path()
-        if cache_path not in z:
-            # Try legacy format (direct entry name)
-            legacy_path = f"fft/{cache_key.to_entry_name()}"
-            if legacy_path not in z:
-                return None
-            cache_path = legacy_path
-
-        entry = z[cache_path]
+        parent = Path(zarr_path) / Path(cache_path).parent
+        entry = open_published_cache(
+            parent, Path(cache_path).name, source_revision=cache_key.source_revision
+        )
+        if entry is None:
+            return None
 
         # Load arrays and reconstruct result
         result_data = {}
@@ -184,7 +201,9 @@ def _load_from_zarr_cache(
                 metadata = dict(entry.attrs)
 
             # Reconstruct config from metadata
-            config_json = metadata.get("config_json", "{}")
+            config_json = metadata.get("config_json")
+            if config_json is None:
+                return None
             if isinstance(config_json, bytes):
                 config_json = config_json.decode("utf-8")
 
@@ -192,7 +211,7 @@ def _load_from_zarr_cache(
                 config_dict = json.loads(config_json)
                 config = FFTComputeConfig(**config_dict)
             except Exception:
-                config = FFTComputeConfig()
+                return None
 
             return FFTComputeResult(
                 frequencies=result_data["frequencies"],
@@ -218,57 +237,47 @@ def _save_to_zarr_cache(
 ) -> None:
     """Save result to zarr cache."""
     try:
-        z = zarr.open(str(zarr_path), mode="a")
+        from .transactions import publish_cache
 
+        if cache_key.source_revision is None:
+            return
         cache_path = cache_key.to_zarr_path()
 
-        # Create nested groups if needed
-        current = z
-        path_parts = cache_path.split("/")
-        for part in path_parts[:-1]:
-            if part not in current:
-                current = current.create_group(part)
-            else:
-                current = current[part]
+        def populate(entry: Any) -> None:
+            if hasattr(result, "frequencies") and hasattr(result, "spectrum"):
+                _create_dataset(entry, "frequencies", result.frequencies)
+                _create_dataset(entry, "spectrum", result.spectrum)
+            elif isinstance(result, dict):
+                for key, value in result.items():
+                    if isinstance(value, np.ndarray):
+                        _create_dataset(entry, key, value)
+            metadata = getattr(result, "metadata", None)
+            if isinstance(metadata, dict):
+                for key, value in metadata.items():
+                    entry.attrs[key] = value
+            entry.attrs["cache_key"] = cache_key.to_string()
+            entry.attrs["analysis_type"] = cache_key.analysis_type
+            entry.attrs["dataset_name"] = cache_key.dataset_name
+            entry.attrs["z_layer"] = cache_key.z_layer
+            entry.attrs["method"] = cache_key.method
+            entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
+            entry.attrs["computation_time_s"] = computation_time
+            config = params.get("config") or getattr(result, "config", None)
+            if config is not None:
+                entry.attrs["config_json"] = json.dumps(
+                    serialize_for_json(config), default=str
+                )
+            slice_info = params.get("slice_info")
+            if slice_info is not None:
+                entry.attrs["slice_info"] = json.dumps(serialize_for_json(slice_info))
 
-        entry_name = path_parts[-1]
-
-        # Remove existing entry if present
-        if entry_name in current:
-            del current[entry_name]
-
-        entry = current.create_group(entry_name)
-
-        # Save arrays from result
-        if hasattr(result, "frequencies") and hasattr(result, "spectrum"):
-            # FFTComputeResult-like object
-            _create_dataset(entry, "frequencies", result.frequencies)
-            _create_dataset(entry, "spectrum", result.spectrum)
-        elif isinstance(result, dict):
-            for key, value in result.items():
-                if isinstance(value, np.ndarray):
-                    _create_dataset(entry, key, value)
-
-        # Save metadata
-        entry.attrs["cache_key"] = cache_key.to_string()
-        entry.attrs["analysis_type"] = cache_key.analysis_type
-        entry.attrs["dataset_name"] = cache_key.dataset_name
-        entry.attrs["z_layer"] = cache_key.z_layer
-        entry.attrs["method"] = cache_key.method
-        entry.attrs["cached_at"] = datetime.now(timezone.utc).isoformat() + "Z"
-        entry.attrs["computation_time_s"] = computation_time
-
-        # Save config
-        config = params.get("config")
-        if config is not None:
-            entry.attrs["config_json"] = json.dumps(
-                serialize_for_json(config), default=str
-            )
-
-        # Save slice info
-        slice_info = params.get("slice_info")
-        if slice_info is not None:
-            entry.attrs["slice_info"] = json.dumps(serialize_for_json(slice_info))
+        publish_cache(
+            Path(zarr_path) / Path(cache_path).parent,
+            Path(cache_path).name,
+            populate,
+            source_revision=cache_key.source_revision,
+            overwrite=bool(params.get("force", False)),
+        )
 
         log.debug(f"Saved to cache: {cache_path}")
 

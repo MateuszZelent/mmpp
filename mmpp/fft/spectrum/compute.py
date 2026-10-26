@@ -80,11 +80,25 @@ def compute_fft_cached(
     slice_identifier = format_slice_identifier(slice_info)
     if preloaded_data is not None:
         slice_identifier = f"materialized={fingerprint_array(preloaded_data)};dt_scale={time_step_scale}"
+    try:
+        source_group = job_result.z
+    except AttributeError:
+        source_group = None
+    source_revision = None
+    store = getattr(source_group, "store", None)
+    if store is not None and hasattr(store, "_field"):
+        snapshot = store._field(dataset_name)
+        if snapshot is not None:
+            source_revision = snapshot["revision"]
+    if source_revision is None:
+        # Unknown or legacy sources have no immutable version for reuse.
+        use_cache = False
     cache_key = build_cache_key(
         dataset_name,
         z_layer,
         method,
         slice_identifier=slice_identifier,
+        source_revision=source_revision,
         **kwargs,
     )
 
@@ -106,6 +120,8 @@ def compute_fft_cached(
             ),
             preloaded_data=preloaded_data,
             time_step_scale=time_step_scale,
+            use_cache=use_cache,
+            source_group=source_group,
             **kwargs,
         )
     except OSError as exc:

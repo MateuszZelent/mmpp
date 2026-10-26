@@ -168,13 +168,16 @@ def test_dataset_vortex_alias_works(tmp_path):
     assert result.state == "vortex"
 
 
-def test_topology_cache_manifest_written_to_zarr_attrs(tmp_path):
+def test_topology_memory_cache_does_not_write_source_zarr_attrs(tmp_path):
     snapshot = _make_vortex_snapshot(polarity=1)
     data_4d = snapshot[np.newaxis, ...]
     job = _create_job(tmp_path, data_4d, dx=1e-9, dy=1e-9, dt=1e-12)
+    attrs_path = tmp_path / "vortex_topology_test.zarr" / ".zattrs"
+    original_attrs = attrs_path.read_bytes()
+    topology = job.m.vortex.topology
 
-    _ = job.m.vortex.topology.detect()
+    result = topology.detect()
+    assert topology.detect() is result
 
-    manifest = job.z.attrs.get("_mmpp_solitons_cache_manifest", {})
-    assert "topology" in manifest
-    assert len(manifest["topology"]) >= 1
+    assert attrs_path.read_bytes() == original_attrs
+    assert "_mmpp_solitons_cache_manifest" not in job.z.attrs

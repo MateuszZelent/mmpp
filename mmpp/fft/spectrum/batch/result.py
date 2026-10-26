@@ -526,28 +526,32 @@ class BatchSpectrumResult:
         log.info(f"Saved batch spectrum result to {path}")
 
     def _save_zarr(self, path: Path) -> None:
-        """Save to zarr format."""
-        import zarr
+        """Publish a verified standalone Zarr export without losing an old one."""
+        from ....cache.exports import publish_export
 
-        root = zarr.open_group(str(path), mode="w")
-        write_zarr_array(root, "frequencies", self.frequencies)
-        write_zarr_array(root, "spectra", np.stack(self.spectra, axis=0))
-        write_zarr_array(root, "powers", np.stack(self.powers, axis=0))
+        def populate(root: Any) -> None:
+            write_zarr_array(root, "frequencies", self.frequencies)
+            write_zarr_array(root, "spectra", np.stack(self.spectra, axis=0))
+            write_zarr_array(root, "powers", np.stack(self.powers, axis=0))
 
-        root.attrs["job_paths"] = self.job_paths
-        root.attrs["requested_paths"] = json.dumps(self.requested_paths)
-        root.attrs["path_statuses"] = json.dumps(self.path_statuses, default=str)
-        root.attrs["dataset_name"] = self.dataset_name
-        root.attrs["z_layer"] = self.z_layer
-        root.attrs["schema_version"] = self.schema_version
-        root.attrs["config_dict"] = json.dumps(self.config_dict, default=str)
+            root.attrs["job_paths"] = self.job_paths
+            root.attrs["requested_paths"] = json.dumps(self.requested_paths)
+            root.attrs["path_statuses"] = json.dumps(self.path_statuses, default=str)
+            root.attrs["dataset_name"] = self.dataset_name
+            root.attrs["z_layer"] = self.z_layer
+            root.attrs["schema_version"] = self.schema_version
+            root.attrs["config_dict"] = json.dumps(self.config_dict, default=str)
 
-        params_group = root.create_group("parameters")
-        for name, values in self.parameters.items():
-            try:
-                write_zarr_array(params_group, name, np.array(values))
-            except Exception:
-                params_group.attrs[name] = json.dumps(values, default=str)
+            params_group = root.create_group("parameters")
+            for name, values in self.parameters.items():
+                try:
+                    write_zarr_array(params_group, name, np.array(values))
+                except (TypeError, ValueError):
+                    if name in params_group:
+                        del params_group[name]
+                    params_group.attrs[name] = json.dumps(values, default=str)
+
+        publish_export(path, populate)
 
     @classmethod
     def load(cls, path: str | Path) -> BatchSpectrumResult:
@@ -578,9 +582,9 @@ class BatchSpectrumResult:
     @classmethod
     def _load_zarr(cls, path: Path) -> BatchSpectrumResult:
         """Load from zarr format."""
-        import zarr
+        from ....cache.exports import open_export
 
-        root = zarr.open_group(str(path), mode="r")
+        root = open_export(path)
 
         frequencies = np.array(root["frequencies"])
         spectra_stacked = np.array(root["spectra"])

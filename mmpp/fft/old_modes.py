@@ -19,6 +19,7 @@ import numpy as np
 
 # Import shared logging configuration
 from ..cli.logging_config import get_mmpp_logger, setup_mmpp_logging
+from ..core.zarr_integrity import open_source
 from ._compute_loading import (
     _resample_nonuniform_time_data,
     _time_axis_requires_resampling,
@@ -1240,7 +1241,7 @@ class FMRModeAnalyzer:
         """Enumerate top-level datasets available in the zarr archive."""
 
         try:
-            root = zarr.open(self.zarr_path, mode="r")
+            root = open_source(self.zarr_path)
             keys = set(root.group_keys()) | set(root.array_keys())
             return sorted({key.split("/")[0] for key in keys})
         except Exception as exc:
@@ -1310,7 +1311,28 @@ class FMRModeAnalyzer:
     def _load_data(self) -> None:
         """Load mode and spectrum data from zarr file."""
         try:
-            self.zarr_file = zarr.open(self.zarr_path, mode="r")
+            from pathlib import Path
+
+            from ..cache.transactions import open_published_cache
+            from .modes import _ModeCacheOverlay
+
+            root = open_source(self.zarr_path)
+            source = root[self.dataset_name]
+            store = getattr(source, "store", None)
+            snapshot = (
+                store._field(getattr(source, "path", self.dataset_name))
+                if hasattr(store, "_field")
+                else None
+            )
+            revision = None if snapshot is None else snapshot["revision"]
+            generation = open_published_cache(
+                Path(self.zarr_path) / "modes",
+                self.dataset_name,
+                source_revision=revision,
+            )
+            self.zarr_file = _ModeCacheOverlay(
+                root, f"modes/{self.dataset_name}", generation, self.dataset_name
+            )
             log.info(f"Opened zarr file: {self.zarr_path}")
         except Exception as e:
             log.error(f"Failed to open zarr file {self.zarr_path}: {e}")
@@ -3224,29 +3246,17 @@ Interactive Spectrum Controls:
             raise TypeError("resample_nonuniform must be boolean")
 
         if not force and f"modes/{self.dataset_name}/arr" in self.zarr_file:
-            log.info("Mode data already exists, use force=True to recompute")
-            return
+            cached = self.zarr_file[f"modes/{self.dataset_name}"]
+            if (
+                cached.attrs.get("mode_algorithm") == "legacy_amplitude"
+                and cached.attrs.get("window_applied") == window
+                and cached.attrs.get("z_slice") == str(z_slice)
+                and cached.attrs.get("resample_nonuniform") == resample_nonuniform
+            ):
+                log.info("Matching legacy mode data already exists")
+                return
 
         log.info(f"Computing FMR modes for dataset {self.dataset_name}")
-
-        # Remove existing data if force=True
-        if force:
-            try:
-                # Open in write mode for deletion
-                zarr_write = zarr.open(self.zarr_path, mode="a")
-                if f"modes/{self.dataset_name}" in zarr_write:
-                    del zarr_write[f"modes/{self.dataset_name}"]
-                    log.info(f"Removed existing modes data for {self.dataset_name}")
-                if f"fft/{self.dataset_name}" in zarr_write:
-                    del zarr_write[f"fft/{self.dataset_name}"]
-                    log.info(f"Removed existing FFT data for {self.dataset_name}")
-                zarr_write.close()
-                # Important: Reopen in read mode and reload data paths
-                self.zarr_file = zarr.open(self.zarr_path, mode="r")
-                self._load_data()  # Reload paths after deletion
-            except Exception as e:
-                log.warning(f"Could not remove existing data: {e}")
-                # Continue anyway - might be permission issue
 
         # Load magnetization data
         if self.dataset_name not in self.zarr_file:
@@ -3391,89 +3401,102 @@ Interactive Spectrum Controls:
         if save:
             log.info("Saving mode data...")
 
-            # Open in write mode
-            zarr_write = zarr.open(self.zarr_path, mode="a")
+            from pathlib import Path
 
-            # Remove existing data if force=True to avoid conflicts
-            if force:
-                if f"modes/{self.dataset_name}" in zarr_write:
-                    del zarr_write[f"modes/{self.dataset_name}"]
-                if f"fft/{self.dataset_name}" in zarr_write:
-                    del zarr_write[f"fft/{self.dataset_name}"]
+            from ..cache.transactions import publish_cache
 
-            # Create groups
-            modes_group = zarr_write.require_group(f"modes/{self.dataset_name}")
-            # Don't create fft_group here - let plot_spectrum/calculate_fft_data handle it
-            # This avoids conflicts with standard FFT data format
+            source = self.zarr_file[self.dataset_name]
+            store = getattr(source, "store", None)
+            snapshot = (
+                store._field(getattr(source, "path", self.dataset_name))
+                if hasattr(store, "_field")
+                else None
+            )
+            revision = None if snapshot is None else snapshot["revision"]
+            if revision is None:
+                raise RuntimeError(
+                    "Cannot safely save legacy modes without a committed source revision"
+                )
 
-            # Save frequencies in modes group only
-            _write_zarr_array(
-                modes_group,
-                "freqs",
-                data=freqs,
-                shape=freqs.shape,
-                dtype=freqs.dtype,
-                chunks=freqs.shape,  # Use the data shape as chunk size
+            def populate(modes_group: Any) -> None:
+                # Save frequencies in modes group only
+                _write_zarr_array(
+                    modes_group,
+                    "freqs",
+                    data=freqs,
+                    shape=freqs.shape,
+                    dtype=freqs.dtype,
+                    chunks=freqs.shape,  # Use the data shape as chunk size
+                    overwrite=True,
+                )
+
+                # Save complex modes (chunked only on first dimension)
+                chunks = (1,) + fft_result.shape[1:]
+                _write_zarr_array(
+                    modes_group,
+                    "arr",
+                    data=fft_result.astype(np.complex64, copy=False),
+                    shape=fft_result.shape,
+                    dtype=np.complex64,
+                    chunks=chunks,
+                    overwrite=True,
+                )
+
+                # Save power spectrum summary in modes group
+                power_spec = np.abs(fft_result)
+                reduction_axes = (
+                    tuple(range(1, power_spec.ndim)) if power_spec.ndim > 1 else None
+                )
+                power_max = (
+                    np.max(power_spec, axis=reduction_axes)
+                    if reduction_axes
+                    else np.max(power_spec, keepdims=False)
+                )
+                power_sum = (
+                    np.sum(power_spec, axis=reduction_axes)
+                    if reduction_axes
+                    else np.sum(power_spec, keepdims=False)
+                )
+                _write_zarr_array(
+                    modes_group,
+                    "power_max",
+                    data=power_max.astype(np.float32, copy=False),
+                    shape=power_max.shape,
+                    dtype=np.float32,
+                    chunks=power_max.shape,  # Use data shape as chunk size
+                    overwrite=True,
+                )
+                _write_zarr_array(
+                    modes_group,
+                    "power_sum",
+                    data=power_sum.astype(np.float32, copy=False),
+                    shape=power_sum.shape,
+                    dtype=np.float32,
+                    chunks=power_sum.shape,  # Use data shape as chunk size
+                    overwrite=True,
+                )
+
+                # Save metadata
+                modes_group.attrs["computed_at"] = str(datetime.now())
+                modes_group.attrs["window_applied"] = window
+                modes_group.attrs["z_slice"] = str(z_slice)
+                modes_group.attrs["dt"] = dt
+
+                modes_group.attrs["mode_algorithm"] = "legacy_amplitude"
+                modes_group.attrs["resample_nonuniform"] = bool(resample_nonuniform)
+
+            publish_cache(
+                Path(self.zarr_path) / "modes",
+                self.dataset_name,
+                populate,
+                source_revision=revision,
                 overwrite=True,
             )
-
-            # Save complex modes (chunked only on first dimension)
-            chunks = (1,) + fft_result.shape[1:]
-            _write_zarr_array(
-                modes_group,
-                "arr",
-                data=fft_result.astype(np.complex64, copy=False),
-                shape=fft_result.shape,
-                dtype=np.complex64,
-                chunks=chunks,
-                overwrite=True,
-            )
-
-            # Save power spectrum summary in modes group
-            power_spec = np.abs(fft_result)
-            reduction_axes = (
-                tuple(range(1, power_spec.ndim)) if power_spec.ndim > 1 else None
-            )
-            power_max = (
-                np.max(power_spec, axis=reduction_axes)
-                if reduction_axes
-                else np.max(power_spec, keepdims=False)
-            )
-            power_sum = (
-                np.sum(power_spec, axis=reduction_axes)
-                if reduction_axes
-                else np.sum(power_spec, keepdims=False)
-            )
-            _write_zarr_array(
-                modes_group,
-                "power_max",
-                data=power_max.astype(np.float32, copy=False),
-                shape=power_max.shape,
-                dtype=np.float32,
-                chunks=power_max.shape,  # Use data shape as chunk size
-                overwrite=True,
-            )
-            _write_zarr_array(
-                modes_group,
-                "power_sum",
-                data=power_sum.astype(np.float32, copy=False),
-                shape=power_sum.shape,
-                dtype=np.float32,
-                chunks=power_sum.shape,  # Use data shape as chunk size
-                overwrite=True,
-            )
-
-            # Save metadata
-            modes_group.attrs["computed_at"] = str(datetime.now())
-            modes_group.attrs["window_applied"] = window
-            modes_group.attrs["z_slice"] = str(z_slice)
-            modes_group.attrs["dt"] = dt
 
             # zarr groups don't have close() method, just let it go out of scope
             log.info("✅ Mode computation completed and saved")
 
-        # Reload data
-        self.zarr_file = zarr.open(self.zarr_path, mode="r")
+        # Reload the verified generation.
         self._load_data()
 
     def save_modes_animation(

@@ -442,36 +442,51 @@ class TableAwareWrapper:
         return getattr(self._group, name)
 
     def keys(self) -> list[str]:
-        try:
-            return list(self._group.keys())
-        except Exception:
-            return self.columns
+        return list(self._group.keys())
 
     def array_keys(self) -> list[str]:
-        try:
+        if hasattr(self._group, "array_keys"):
             return list(self._group.array_keys())
-        except Exception:
-            return [
-                key
-                for key in self.keys()
-                if hasattr(self._group[key], "shape")
-                and hasattr(self._group[key], "__getitem__")
-            ]
+        return [
+            key
+            for key in self.keys()
+            if hasattr(self._group[key], "shape")
+            and hasattr(self._group[key], "__getitem__")
+        ]
 
     def group_keys(self) -> list[str]:
-        try:
+        if hasattr(self._group, "group_keys"):
             return list(self._group.group_keys())
-        except Exception:
-            return []
+        return []
 
     @property
     def columns(self) -> list[str]:
         """Return table columns stored as arrays."""
+        store = getattr(self._group, "store", None)
+        table_path = getattr(self._group, "path", None)
+        if table_path and store is not None and hasattr(store, "_table"):
+            manifest = store._table(table_path)
+            if manifest is not None:
+                if manifest["committed_rows"]:
+                    for name in manifest["columns"]:
+                        if name not in self._group:
+                            from .zarr_integrity import ZarrIntegrityError
+
+                            raise ZarrIntegrityError(
+                                f"Missing committed table column {table_path}/{name}"
+                            )
+                return list(manifest["columns"])
         return self.array_keys()
 
     @property
     def n_rows(self) -> int:
         """Best-effort number of rows inferred from the first table column."""
+        store = getattr(self._group, "store", None)
+        table_path = getattr(self._group, "path", None)
+        if table_path and store is not None and hasattr(store, "_table"):
+            manifest = store._table(table_path)
+            if manifest is not None and manifest["committed_rows"] == 0:
+                return 0
         lengths = []
         for column in self.columns:
             shape = getattr(self._group[column], "shape", None)
@@ -520,6 +535,8 @@ class TableAwareWrapper:
         return requested
 
     def _read_column(self, column: str, start: int, stop: int) -> dict[str, Any]:
+        if start >= stop:
+            return {column: np.array([], dtype=float)}
         array = self._group[column]
         data = np.asarray(array[start:stop])
         if data.ndim <= 1:

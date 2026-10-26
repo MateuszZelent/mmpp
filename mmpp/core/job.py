@@ -199,7 +199,9 @@ class ZarrJobResult:
             if not os.path.exists(self.path):
                 raise FileNotFoundError(f"Path Not Found : '{self.path}'")
 
-            z = zarr.open(self.path)
+            from .zarr_integrity import open_source
+
+            z = open_source(self.path)
             if not isinstance(z, zarr.Group):
                 raise TypeError(f"Path is not a zarr group : '{self.path}'")
             self._z = z
@@ -343,9 +345,13 @@ class ZarrJobResult:
             raise
 
     def __setitem__(self, key: str, value: str) -> None:
-        """Set zarr dataset or attribute."""
-        self._ensure_zarr_loaded()
-        self._z[key] = value
+        """Explicitly set a dataset in the source store.
+
+        Normal result access remains read-only so analysis cannot race with
+        the simulation's metadata writer.
+        """
+        zarr.open(self.path, mode="a")[key] = value
+        self._z = cast(zarr.Group, None)
 
     def __getattr__(
         self, name: str
@@ -691,6 +697,40 @@ class ZarrJobResult:
     def is_finished(self) -> bool:
         """Check if simulation is finished."""
         self._ensure_zarr_loaded()
+        run_path = Path(self.path) / "run.json"
+        try:
+            with run_path.open("r", encoding="utf-8") as stream:
+                run = json.load(stream)
+        except FileNotFoundError as exc:
+            if self._z.attrs.get("run_status_file") == "run.json":
+                from .zarr_integrity import ZarrIntegrityError
+
+                raise ZarrIntegrityError(
+                    f"Missing authoritative run status {run_path}"
+                ) from exc
+            # Legacy stores use root attributes.
+        except (OSError, ValueError) as exc:
+            from .zarr_integrity import ZarrIntegrityError
+
+            raise ZarrIntegrityError(
+                f"Invalid run status in {run_path}: {exc}"
+            ) from exc
+        else:
+            if not isinstance(run, dict):
+                from .zarr_integrity import ZarrIntegrityError
+
+                raise ZarrIntegrityError(f"Run status is not a JSON object: {run_path}")
+            completion = run.get("completion")
+            if not isinstance(completion, str) or completion not in {
+                "running",
+                "complete",
+                "interrupted",
+                "failed",
+            }:
+                from .zarr_integrity import ZarrIntegrityError
+
+                raise ZarrIntegrityError(f"Invalid completion status in {run_path}")
+            return completion != "running"
         end_time: str = self._z.attrs.get("end_time", "")
         return end_time != ""
 

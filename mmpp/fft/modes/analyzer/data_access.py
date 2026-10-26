@@ -147,7 +147,9 @@ class DataAccessMixin:
             raise ValueError("zarr_path must be set before loading data")
 
         try:
-            self.zarr_file = zarr.open(self.zarr_path, mode="r")  # type: ignore
+            from ....core.zarr_integrity import open_source
+
+            self.zarr_file = open_source(self.zarr_path)
             log.info(f"Opened zarr file: {self.zarr_path}")
         except Exception as e:
             log.error(f"Failed to open zarr file {self.zarr_path}: {e}")

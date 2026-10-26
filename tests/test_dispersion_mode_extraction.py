@@ -1245,6 +1245,7 @@ def test_dispersion_cache_roundtrip_preserves_local_raw_display_split(tmp_path):
 
     from mmpp.fft.dispersion.interface import FFTDispersionInterface
     from mmpp.fft.dispersion.models import DispersionConfig, DispersionResult1D
+    from tests.test_committed_zarr_store import _make_committed_store
 
     local_raw = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
     local_display = local_raw + 50.0
@@ -1270,8 +1271,9 @@ def test_dispersion_cache_roundtrip_preserves_local_raw_display_split(tmp_path):
     iface = FFTDispersionInterface.__new__(FFTDispersionInterface)
     iface.dataset_name = "m"
     iface.slice_info = None
+    source, _, _ = _make_committed_store(tmp_path)
     iface.parent_fft = SimpleNamespace(
-        job_result=SimpleNamespace(name="run", path=tmp_path / "run.zarr")
+        job_result=SimpleNamespace(name="run", path=source)
     )
     dataset_group = zarr.open(str(tmp_path / "cache.zarr"), mode="w")
 
@@ -5606,18 +5608,19 @@ def test_mode_fft_warns_and_uses_mean_dt_for_small_sampling_jitter():
 
 def test_fmr_modes_resample_nonuniform_time_axis_by_default(tmp_path):
     from mmpp.fft.modes import FMRModeAnalyzer
+    from tests.test_committed_zarr_store import _write_commit, _write_projection
 
     n_time = 8
     nominal = np.arange(n_time, dtype=float) * 1e-12
     time_axis = nominal.copy()
     time_axis[1:-1] += np.array([0.0, 0.2, -0.15, 0.1, -0.1, 0.05]) * 1e-12
-    data = np.zeros((n_time, 1, 2, 2, 3), dtype=np.float32)
-    data[:, 0, :, :, 2] = np.sin(2 * np.pi * np.arange(n_time) / n_time)[:, None, None]
+    data = np.zeros((n_time, 1, 1, 2, 1), dtype=np.float32)
+    data[:, 0, 0, :, 0] = np.sin(2 * np.pi * np.arange(n_time) / n_time)[:, None]
 
     path = tmp_path / "nonuniform_modes.zarr"
-    root = zarr.open(str(path), mode="w")
-    root.create_dataset("m", data=data, chunks=data.shape)
-    root["m"].attrs["t"] = time_axis.tolist()
+    _write_projection(path)
+    _write_commit(path, list(data), time_axis.tolist())
+    root = zarr.open(str(path), mode="a")
     root.attrs["t_sampl"] = 1e-12
 
     analyzer = FMRModeAnalyzer(str(path), dataset_name="m")

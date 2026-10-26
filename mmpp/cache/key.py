@@ -54,6 +54,7 @@ class CacheKey:
     method: int
     config_hash: str
     slice_hash: str
+    source_revision: str | None = None
 
     def __hash__(self) -> int:
         """Hash for use in dictionaries."""
@@ -71,7 +72,7 @@ class CacheKey:
 
         Includes job_path to ensure uniqueness across different jobs.
         """
-        full = f"{self.job_path}|{self.to_string()}"
+        full = f"{self.job_path}|{self.to_string()}|source:{self.source_revision}"
         return hashlib.sha256(full.encode()).hexdigest()[:16]
 
     def to_entry_name(self) -> str:
@@ -101,6 +102,7 @@ class CacheKey:
         method: int = 1,
         config: Any | None = None,
         slice_info: Any | None = None,
+        source_revision: str | None = None,
     ) -> CacheKey:
         """Factory method to create cache key from parameters.
 
@@ -137,6 +139,7 @@ class CacheKey:
             method=method,
             config_hash=config_hash,
             slice_hash=slice_hash,
+            source_revision=source_revision,
         )
 
     @classmethod

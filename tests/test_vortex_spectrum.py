@@ -73,7 +73,7 @@ def _make_orbit_data(
 def _create_job(tmp_path, data: np.ndarray, *, dx: float, dy: float, dt: float):
     zarr_path = tmp_path / "vortex_spectrum_phase2.zarr"
     z = zarr.open(str(zarr_path), mode="w")
-    z.create_dataset("m", data=data, chunks=data.shape)
+    z.create_dataset("m", data=data, chunks=(1, *data.shape[1:]))
     z.attrs["dx"] = dx
     z.attrs["dy"] = dy
     z.attrs["t_sampl"] = dt

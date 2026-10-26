@@ -1,10 +1,10 @@
 """Functions for calculating spatially-resolved FFT modes."""
 
 import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-import zarr
 
 from ..fft._compute_loading import (
     _resample_nonuniform_time_data,
@@ -137,34 +137,44 @@ def inner_calc_modes(
 
     out = np.fft.rfft(arr, axis=0).astype(np.complex64)
 
-    # ``Pyzfn`` opens its group read-only for safe inspection, while this
-    # legacy helper is explicitly an in-place writer. Reopen the same store
-    # only after all input has been loaded and the FFT is ready to persist.
-    self._group = zarr.open_group(self.clean_path, mode="a")
-
     dt = _uniform_dt_from_time_axis(ts, allow_nonuniform=False)
     freqs = np.fft.rfftfreq(len(ts), dt) * 1e-9
-
-    self.add_ndarray(
-        f"modes/{dset_out_str}/freqs",
-        data=freqs,
-    )
-    self.add_ndarray(
-        f"modes/{dset_out_str}/arr",
-        data=out,
-        chunks=(1, out.shape[1], out.shape[2], out.shape[3], out.shape[4]),
-    )
-
     spec = np.abs(out)
-    self.add_ndarray(
-        f"fft/{dset_out_str}/freqs",
-        data=freqs,
+    from ..cache.transactions import open_published_cache, publish_cache
+
+    location = Path(dset_out_str)
+    if not location.parts or location.is_absolute() or ".." in location.parts:
+        raise ValueError(f"Invalid output dataset path {dset_out_str!r}")
+    store = dset_in.store
+    snapshot = store._field(dset_in.path) if hasattr(store, "_field") else None
+    revision = None if snapshot is None else snapshot["revision"]
+    if revision is None:
+        warnings.warn(
+            "The source has no committed revision; mode results are available "
+            "in this Pyzfn instance but will not be reused by a new instance.",
+            UserWarning,
+            stacklevel=2,
+        )
+    parent = Path(self.clean_path) / "modes" / location.parent
+
+    def populate(group):
+        group.attrs["source_dataset"] = dset_in_str
+        group.attrs["mode_algorithm"] = "pyzfn"
+        group.attrs["window"] = bool(window)
+        group.attrs["resample_nonuniform"] = bool(resample_nonuniform)
+        group.create_dataset("freqs", data=freqs)
+        group.create_dataset("arr", data=out, chunks=(1, *out.shape[1:]))
+        fft = group.create_group("legacy_fft")
+        fft.create_dataset("freqs", data=freqs)
+        fft.create_dataset("spec", data=np.max(spec, axis=(1, 2, 3)))
+        fft.create_dataset("sum", data=np.sum(spec, axis=(1, 2, 3)))
+
+    publish_cache(
+        parent, location.name, populate, source_revision=revision, overwrite=True
     )
-    self.add_ndarray(
-        f"fft/{dset_out_str}/spec",
-        data=np.max(spec, axis=(1, 2, 3)),
+    generation = open_published_cache(
+        parent, location.name, source_revision=revision, allow_unversioned=True
     )
-    self.add_ndarray(
-        f"fft/{dset_out_str}/sum",
-        data=np.sum(spec, axis=(1, 2, 3)),
-    )
+    if generation is None:
+        raise RuntimeError("Unable to verify the published Pyzfn mode result")
+    self._derived_modes[dset_out_str] = generation

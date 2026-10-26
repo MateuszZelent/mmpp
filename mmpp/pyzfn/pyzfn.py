@@ -42,6 +42,7 @@ warnings.filterwarnings(
 )
 
 T = TypeVar("T", bound=np.generic)
+_NOT_DERIVED = object()
 IndexLike = int | slice | Sequence[int] | NDArray[np.int_]
 SliceTuple = tuple[IndexLike, ...]
 
@@ -103,18 +104,83 @@ class Pyzfn:
                 raise NotADirectoryError(msg)
 
         # Open the zarr group
-        self._group = zarr.open_group(store, mode="r")
+        if isinstance(store, (str, Path)):
+            from ..core.zarr_integrity import open_source
+
+            self._group = open_source(str(store))
+            if not isinstance(self._group, zarr.Group):
+                raise ValueError(f"Expected a Zarr group at {store}")
+        else:
+            self._group = zarr.open_group(store, mode="r")
 
         # Store clean path
         path_str = str(store) if isinstance(store, Path) else store
         self.clean_path: str = path_str.replace("file://", "")
+        self._derived_modes: dict[str, Any] = {}
+
+    def _derived_member(self, key: str) -> Any:
+        """Resolve a verified analysis generation while retaining legacy reads."""
+        from ..cache.transactions import open_published_cache, peek_cache_revision
+
+        location = Path(key)
+        if not location.parts or location.is_absolute() or ".." in location.parts:
+            return _NOT_DERIVED
+        parts = key.split("/")
+        if len(parts) >= 2 and parts[0] in ("modes", "fft"):
+            for stop in range(len(parts), 1, -1):
+                name = "/".join(parts[1:stop])
+                remainder = "/".join(parts[stop:])
+                group = self._derived_modes.get(name)
+                if group is None:
+                    location = Path(name)
+                    parent = Path(self.clean_path) / "modes" / location.parent
+                    revision = peek_cache_revision(parent, location.name)
+                    group = open_published_cache(
+                        parent, location.name, source_revision=revision
+                    )
+                    if group is not None:
+                        source_name = group.attrs.get("source_dataset", name)
+                        try:
+                            source = self._group[source_name]
+                            store = source.store
+                            snapshot = (
+                                store._field(source.path)
+                                if hasattr(store, "_field")
+                                else None
+                            )
+                            actual = None if snapshot is None else snapshot["revision"]
+                        except (AttributeError, KeyError):
+                            actual = None
+                        if actual != revision:
+                            group = None
+                        else:
+                            self._derived_modes[name] = group
+                if group is None:
+                    continue
+                if parts[0] == "fft":
+                    if "legacy_fft" not in group:
+                        continue
+                    group = group["legacy_fft"]
+                if not remainder:
+                    return group
+                if remainder in group:
+                    return group[remainder]
+        group = open_published_cache(
+            Path(self.clean_path) / location.parent,
+            location.name,
+            source_revision="pyzfn-manual-v1",
+        )
+        if group is not None and "array" in group:
+            return group["array"]
+        return _NOT_DERIVED
 
     # Delegate all zarr Group methods to self._group
     def __getitem__(self, key):
-        return self._group[key]
+        value = self._derived_member(str(key))
+        return self._group[key] if value is _NOT_DERIVED else value
 
     def __contains__(self, key):
-        return key in self._group
+        return self._derived_member(str(key)) is not _NOT_DERIVED or key in self._group
 
     def __iter__(self):
         return iter(self._group)
@@ -314,16 +380,40 @@ class Pyzfn:
             zarr.Array: The created Zarr array.
 
         """
-        dset = self.create_array(
-            name=name,
-            shape=data.shape,
-            chunks=chunks,
-            dtype=data.dtype,
+        from ..cache.transactions import open_published_cache, publish_cache
+
+        location = Path(name)
+        if not location.parts or location.is_absolute() or ".." in location.parts:
+            raise ValueError(f"Invalid dataset path {name!r}")
+        if not overwrite and name in self:
+            raise FileExistsError(f"Dataset {name!r} already exists")
+        if name in self._group:
+            existing = self._group[name]
+            store = getattr(existing, "store", None)
+            if (
+                hasattr(store, "_field")
+                and store._field(getattr(existing, "path", name)) is not None
+            ):
+                raise ValueError("Refusing to replace a committed simulation dataset")
+        parent = Path(self.clean_path) / location.parent
+
+        def populate(group: Any) -> None:
+            kwargs = {} if chunks == "auto" else {"chunks": chunks}
+            group.create_dataset("array", data=np.asarray(data), **kwargs)
+
+        publish_cache(
+            parent,
+            location.name,
+            populate,
+            source_revision="pyzfn-manual-v1",
             overwrite=overwrite,
-            shards=None,
         )
-        dset[:] = data
-        return dset
+        group = open_published_cache(
+            parent, location.name, source_revision="pyzfn-manual-v1"
+        )
+        if group is None:
+            raise RuntimeError(f"Unable to verify published array {name!r}")
+        return group["array"]
 
     def get_mode(self, dset_str: str, f: float) -> NDArray[np.complex64]:
         """Retrieve a specific mode from the dataset.

@@ -7,7 +7,6 @@ import hashlib
 import inspect
 import json
 import threading
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -41,6 +40,20 @@ class TransmissionCache:
     def _source_identity(self) -> str:
         """Return the canonical source archive path used to scope cache entries."""
         return str(Path(self.job_result.path).expanduser().resolve())
+
+    def _source_revision(self, dataset_name: str | None) -> str | None:
+        """Use the same committed snapshot that the JobResult will analyze."""
+        if not dataset_name:
+            return None
+        from ...core.zarr_integrity import job_source_revision
+
+        return job_source_revision(self.job_result, dataset_name)
+
+    @staticmethod
+    def _group_directory(group: Any) -> Path:
+        from ...cache.transactions import group_directory
+
+        return group_directory(group)
 
     def _serialize_for_json(self, obj: Any) -> Any:
         """Recursively prepare object for JSON serialization."""
@@ -259,6 +272,9 @@ class TransmissionCache:
 
         # Add slice info to cache key
         config_dict["source_archive"] = self._source_identity()
+        config_dict["source_revision"] = self._source_revision(
+            self.dataset_name or config.dataset_name
+        )
         if slice_info is not None:
             config_dict["slice_info"] = self._serialize_for_json(slice_info)
         if view_identity is not None:
@@ -304,7 +320,12 @@ class TransmissionCache:
         entry_name = f"transmission_{cache_key}"
         log.debug("Looking for cache entry: %s (key=%s)", entry_name, cache_key[:16])
 
-        entry_node = cache_group.get(entry_name)
+        from ...cache.transactions import open_published_cache
+
+        revision = self._source_revision(self.dataset_name or config.dataset_name)
+        entry_node = open_published_cache(
+            self._group_directory(cache_group), entry_name, source_revision=revision
+        )
         if entry_node is None or not hasattr(entry_node, "get"):
             log.debug("Cache entry not found: %s", entry_name)
             # List available entries for debugging
@@ -464,48 +485,21 @@ class TransmissionCache:
         entry_name = f"transmission_{cache_key}"
         log.debug("Saving cache entry: %s (key=%s)", entry_name, cache_key[:16])
 
-        if entry_name in cache_group:
-            existing = cache_group[entry_name]
-            if not overwrite and existing.attrs.get("complete") is True:
-                log.info(
-                    "Transmission cache %s already exists (use overwrite=True to replace)",
-                    entry_name,
-                )
-                return
-            log.debug(
-                "Replacing incomplete or explicitly overwritten cache entry: %s",
-                entry_name,
-            )
-            del cache_group[entry_name]
+        from ...cache.transactions import publish_cache
 
-        temporary_name = f"{entry_name}.tmp-{uuid.uuid4().hex}"
-
-        try:
-            entry = cache_group.create_group(temporary_name)
-        except ValueError as exc:
-            message = str(exc).lower()
-            if "read-only" in message or "read only" in message:
-                log.warning("Transmission cache skipped: %s", exc)
-                return
-            raise
-
-        try:
-            self._populate_entry(entry, result, slice_info)
-        except Exception:
-            if temporary_name in cache_group:
-                del cache_group[temporary_name]
-            raise
-
-        # Publish only after every array and metadata field has been written.
-        # The completion marker is added after the move so interrupted writes
-        # can never masquerade as valid cache hits.
-        try:
-            cache_group.move(temporary_name, entry_name)
-            cache_group[entry_name].attrs["complete"] = True
-        except Exception:
-            if temporary_name in cache_group:
-                del cache_group[temporary_name]
-            raise
+        revision = self._source_revision(
+            self.dataset_name or result.config.dataset_name
+        )
+        published = publish_cache(
+            self._group_directory(cache_group),
+            entry_name,
+            lambda entry: self._populate_entry(entry, result, slice_info),
+            source_revision=revision,
+            overwrite=overwrite,
+        )
+        if not published:
+            log.info("Transmission cache %s already exists", entry_name)
+            return
 
         store = getattr(cache_group, "store", None)
         store_desc = (

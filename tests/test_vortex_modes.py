@@ -74,11 +74,30 @@ def _make_mode_rich_orbit_data(
 def _create_job(tmp_path, data: np.ndarray, *, dx: float, dy: float, dt: float):
     zarr_path = tmp_path / "vortex_modes_phase3.zarr"
     z = zarr.open(str(zarr_path), mode="w")
-    z.create_dataset("m", data=data, chunks=data.shape)
+    # Solvers store one time frame per chunk. A single 640-frame chunk would
+    # otherwise be decompressed again for every lazy frame read.
+    z.create_dataset("m", data=data, chunks=(1, *data.shape[1:]))
     z.attrs["dx"] = dx
     z.attrs["dy"] = dy
     z.attrs["t_sampl"] = dt
     return ZarrJobResult(str(zarr_path), {})
+
+
+def test_lazy_tracking_reads_multiple_frames_from_one_time_chunk(tmp_path):
+    from mmpp.solitons.vortex.numerical.core.tracking import (
+        track_core,
+        track_core_lazy,
+    )
+
+    data, _, _, dx, dy, dt = _make_mode_rich_orbit_data(nt=8, nx=24, ny=24)
+    root = zarr.open(str(tmp_path / "shared-time-chunk.zarr"), mode="w")
+    array = root.create_dataset("m", data=data, chunks=data.shape)
+
+    expected = track_core(data, dx, dy, dt, method="maximum")
+    actual = track_core_lazy(array, dx, dy, dt, method="maximum")
+    np.testing.assert_allclose(actual.x, expected.x)
+    np.testing.assert_allclose(actual.y, expected.y)
+    np.testing.assert_array_equal(actual.polarity, expected.polarity)
 
 
 def _create_table_mode_job(

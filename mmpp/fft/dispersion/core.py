@@ -305,7 +305,9 @@ class SpinWaveAnalyzer:
     def _load_data(self) -> None:
         """Load magnetization data from zarr file."""
         try:
-            zarr_obj = zarr.open(str(self.zarr_path), mode="r")
+            from ...core.zarr_integrity import open_source
+
+            zarr_obj = open_source(str(self.zarr_path))
             if isinstance(zarr_obj, zarr.Group):
                 self.zarr_file = zarr_obj
             else:

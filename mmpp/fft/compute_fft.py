@@ -7,6 +7,7 @@ Provides low-level FFT calculations without user interface elements.
 
 import hashlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -225,72 +226,53 @@ class FFTComputeResult:
         # Open zarr file
         z = zarr.open(zarr_path, mode="a")
 
-        # Create dataset path
-        fft_path = f"fft/{dataset_name}"
-
-        # Remove existing if force=True
-        if force and fft_path in z:
-            del z[fft_path]
-
         # Create fft group if it doesn't exist
         if "fft" not in z:
             fft_main_group = z.create_group("fft")
         else:
             fft_main_group = z["fft"]
 
-        # Create dataset group within fft/
-        if dataset_name not in fft_main_group:
-            fft_group = fft_main_group.create_group(dataset_name)
-            log.debug(f"Created new FFT dataset group: fft/{dataset_name}")
-        else:
-            fft_group = fft_main_group[dataset_name]
-            if not force:
-                required_arrays = {"spectrum", "frequencies"}
-                if required_arrays.issubset(set(fft_group.keys())):
-                    raise FileExistsError(
-                        f"FFT dataset fft/{dataset_name} already exists. "
-                        "Use force=True to overwrite."
-                    )
-                log.warning("Replacing incomplete FFT cache at fft/%s", dataset_name)
-                del fft_main_group[dataset_name]
-                fft_group = fft_main_group.create_group(dataset_name)
-            else:
-                log.info(f"Overwriting existing FFT dataset: fft/{dataset_name}")
+        def populate(fft_group: Any) -> None:
+            write_zarr_array(fft_group, "spectrum", self.spectrum, overwrite=False)
+            write_zarr_array(
+                fft_group, "frequencies", self.frequencies, overwrite=False
+            )
+            for key, value in self.metadata.items():
+                fft_group.attrs[key] = value
+            fft_group.attrs["window_function"] = self.config.window_function
+            fft_group.attrs["filter_type"] = self.config.filter_type
+            fft_group.attrs["fft_engine"] = self.config.fft_engine
+            fft_group.attrs["scaling"] = self.config.scaling
+            fft_group.attrs["zero_padding"] = self.config.zero_padding
+            if self.config.nfft is not None:
+                fft_group.attrs["nfft"] = self.config.nfft
 
-        # Disable chunking for FFT data to avoid unnecessary fragmentation
+        # A plain in-memory mapping can replace a completed group in one
+        # assignment. Real filesystem stores use the durable generation head.
+        if not hasattr(fft_main_group, "store") and hasattr(fft_main_group, "members"):
+            from uuid import uuid4
 
-        # Save spectrum data - handle chunking properly based on array dimensions
+            temporary = f"_mmpp_stage_{uuid4().hex}"
+            staged = fft_main_group.create_group(temporary)
+            try:
+                populate(staged)
+                fft_main_group.members[dataset_name] = staged
+            finally:
+                del fft_main_group.members[temporary]
+            return
 
-        log.debug(
-            f"Saving spectrum shape: {self.spectrum.shape}, frequencies shape: {self.frequencies.shape}"
-        )
+        from ..cache.transactions import publish_cache
 
-        # Save spectrum data
-        write_zarr_array(
-            fft_group,
-            "spectrum",
-            self.spectrum,
+        if not publish_cache(
+            Path(zarr_path) / "fft",
+            dataset_name,
+            populate,
+            source_revision=self.metadata.get("source_revision"),
             overwrite=force,
-        )
-        write_zarr_array(
-            fft_group,
-            "frequencies",
-            self.frequencies,
-            overwrite=force,
-        )
-
-        # Save metadata as attributes
-        for key, value in self.metadata.items():
-            fft_group.attrs[key] = value
-
-        # Save config as attributes
-        fft_group.attrs["window_function"] = self.config.window_function
-        fft_group.attrs["filter_type"] = self.config.filter_type
-        fft_group.attrs["fft_engine"] = self.config.fft_engine
-        fft_group.attrs["scaling"] = self.config.scaling
-        fft_group.attrs["zero_padding"] = self.config.zero_padding
-        if self.config.nfft is not None:
-            fft_group.attrs["nfft"] = self.config.nfft
+        ):
+            raise FileExistsError(
+                f"FFT cache fft/{dataset_name} already exists. Use force=True to overwrite."
+            )
 
 
 class FFTCompute:
@@ -699,6 +681,7 @@ class FFTCompute:
         preloaded_data: np.ndarray | None = None,
         time_step_scale: float = 1.0,
         resample_nonuniform: bool = True,
+        source_group: Any | None = None,
     ) -> tuple[np.ndarray, float]:
         """Load data from zarr file."""
         return load_fft_input_data(
@@ -714,6 +697,7 @@ class FFTCompute:
             pyzfn_cls=Pyzfn,
             psutil_module=(psutil if PSUTIL_AVAILABLE else None),
             logger=log,
+            _source_group=source_group,
         )
 
     def get_available_options(self) -> dict[str, Any]:
@@ -739,7 +723,11 @@ class FFTCompute:
         }
 
     def load_existing_fft_data(
-        self, zarr_path: str, dataset_name: str = "fft"
+        self,
+        zarr_path: str,
+        dataset_name: str = "fft",
+        source_dataset: str | None = None,
+        expected_source_revision: str | None = None,
     ) -> FFTComputeResult | None:
         """Load existing FFT data from zarr file."""
         loaded = load_existing_fft_result(
@@ -749,6 +737,8 @@ class FFTCompute:
             config_cls=FFTComputeConfig,
             psutil_module=(psutil if PSUTIL_AVAILABLE else None),
             logger=log,
+            source_dataset=source_dataset,
+            expected_source_revision=expected_source_revision,
         )
         return loaded
 
@@ -792,6 +782,8 @@ class FFTCompute:
         preloaded_data: np.ndarray | None = None,
         time_step_scale: float = 1.0,
         resample_nonuniform: bool = True,
+        use_cache: bool = True,
+        source_group: Any | None = None,
         **kwargs,
     ) -> FFTComputeResult:
         """
@@ -861,9 +853,24 @@ class FFTCompute:
                 save_dataset_name = f"{save_dataset_name}_s{slice_hash}"
 
         # Try to load existing data if not forcing recalculation
-        if not force:
+        if use_cache and not force and preloaded_data is None:
             log.debug(f"Checking for existing FFT data: fft/{save_dataset_name}")
-            existing_result = self.load_existing_fft_data(zarr_path, save_dataset_name)
+            source_store = getattr(source_group, "store", None)
+            source_snapshot = (
+                source_store._field(dataset)
+                if hasattr(source_store, "_field")
+                else None
+            )
+            pinned_revision = (
+                source_snapshot["revision"] if source_snapshot is not None else None
+            )
+            existing_result = (
+                None
+                if source_group is not None and pinned_revision is None
+                else self.load_existing_fft_data(
+                    zarr_path, save_dataset_name, dataset, pinned_revision
+                )
+            )
             if existing_result is not None:
                 # Verify that parameters match
                 if self._verify_fft_parameters(
@@ -919,6 +926,7 @@ class FFTCompute:
             pyzfn_cls=Pyzfn,
             psutil_module=(psutil if PSUTIL_AVAILABLE else None),
             logger=log,
+            source_group=source_group,
         )
         log_input_load_metrics(
             logger=log,
@@ -993,6 +1001,7 @@ class FFTCompute:
                 "save_dataset_name": save_dataset_name,
                 "slice_identifier": slice_identifier,
                 "resample_nonuniform": bool(resample_nonuniform),
+                "source_revision": getattr(load_metrics, "source_revision", None),
             }
         )
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -92,6 +93,7 @@ class CacheManager:
         context = {
             "config": config,
             "filters": filters,
+            "source_revision": self.interface._source_revision(),
         }
         if extra:
             context.update(extra)
@@ -148,7 +150,14 @@ class CacheManager:
             return None
 
         # Look for cached result with this hash
-        result_node = group.get(context_hash)
+        from ....cache.transactions import group_directory, open_published_cache
+
+        revision = self.interface._source_revision()
+        if revision is None:
+            return None
+        result_node = open_published_cache(
+            group_directory(group), context_hash, source_revision=revision
+        )
         if result_node is None or not hasattr(result_node, "get"):
             return None
 
@@ -170,6 +179,10 @@ class CacheManager:
         # Reconstruct DispersionResult1D
         from ..models import DispersionConfig, DispersionResult1D
 
+        try:
+            config = DispersionConfig(**json.loads(attrs["config_json"]))
+        except (KeyError, TypeError, ValueError):
+            return None
         result = DispersionResult1D(
             k_axis=k_axis,
             f_axis=f_axis,
@@ -177,7 +190,7 @@ class CacheManager:
             S_complex=S_complex,
             axis=str(attrs.get("axis", "x")),
             component=str(attrs.get("component", "perp")),
-            config=DispersionConfig(),
+            config=config,
             dx=float(attrs.get("dx", 0.0)),
             orth_axis=self._load_group_array(result_group, "orth_axis"),
         )
@@ -213,29 +226,34 @@ class CacheManager:
         if group is None:
             return False
 
-        # Create result group
-        if context_hash in group:
-            del group[context_hash]
+        from ....cache.transactions import group_directory, publish_cache
 
-        result_group = group.create_group(context_hash)
+        revision = self.interface._source_revision()
+        if revision is None:
+            return False
 
-        # Save arrays
-        self._create_dataset(result_group, "k_axis", result.k_axis)
-        self._create_dataset(result_group, "f_axis", result.f_axis)
-        self._create_dataset(result_group, "S", result.S)
+        def populate(result_group: Any) -> None:
+            self._create_dataset(result_group, "k_axis", result.k_axis)
+            self._create_dataset(result_group, "f_axis", result.f_axis)
+            self._create_dataset(result_group, "S", result.S)
+            if result.S_complex is not None:
+                self._create_dataset(result_group, "S_complex", result.S_complex)
+            if result.orth_axis is not None:
+                self._create_dataset(result_group, "orth_axis", result.orth_axis)
+            result_group.attrs["axis"] = result.axis
+            result_group.attrs["component"] = result.component
+            result_group.attrs["dx"] = result.dx
+            result_group.attrs["config_json"] = json.dumps(asdict(result.config))
+            result_group.attrs["context_signature"] = context_signature
+            result_group.attrs["saved_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Save S_complex if available
-        if result.S_complex is not None:
-            self._create_dataset(result_group, "S_complex", result.S_complex)
-
-        if result.orth_axis is not None:
-            self._create_dataset(result_group, "orth_axis", result.orth_axis)
-
-        # Save metadata
-        result_group.attrs["axis"] = result.axis
-        result_group.attrs["dx"] = result.dx
-        result_group.attrs["context_signature"] = context_signature
-        result_group.attrs["saved_at"] = datetime.now(timezone.utc).isoformat()
+        publish_cache(
+            group_directory(group),
+            context_hash,
+            populate,
+            source_revision=revision,
+            overwrite=True,
+        )
 
         logger.info("Saved dispersion to cache: %s", context_hash)
         return True

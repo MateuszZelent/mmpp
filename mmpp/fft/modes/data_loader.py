@@ -144,9 +144,9 @@ class ModeDataLoader:
         """Lazy load zarr file."""
         if self._zarr_file is None:
             try:
-                import zarr
+                from ...core.zarr_integrity import open_source
 
-                self._zarr_file = zarr.open(self.context.zarr_path, mode="r")
+                self._zarr_file = open_source(self.context.zarr_path)
                 log.debug(f"Opened zarr file: {self.context.zarr_path}")
             except Exception as e:
                 log.error(f"Failed to open zarr file: {e}")

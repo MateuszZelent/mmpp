@@ -689,9 +689,9 @@ class FFT:
                 )
 
             if data_set is None:
-                import zarr
+                from ..core.zarr_integrity import open_source
 
-                zarr_group = zarr.open(self.job_result.path, mode="r")
+                zarr_group = open_source(self.job_result.path)
                 if dataset_name not in zarr_group:
                     raise ValueError(
                         f"Dataset '{dataset_name}' not found in {self.job_result.path}"
