@@ -1,3 +1,10 @@
+# MMPP Library Release v0.7.1
+
+- Require certifi 2026.10.19 or later to replace CA bundles affected by GHSA-6q48-6c7w-9gw2.
+- The Zarr compatibility and Python 3.10 Pillow limitation described below still apply.
+
+---
+
 # MMPP Library Release v0.7.0
 
 ## Committed Zarr results and analysis caches
