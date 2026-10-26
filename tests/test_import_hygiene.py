@@ -9,6 +9,31 @@ import sys
 import textwrap
 
 
+def test_import_mmpp_then_solitons_submodule_in_fresh_process() -> None:
+    """Top-level import must not leave the soliton namespace half initialized."""
+    code = (
+        "import mmpp\n"
+        "import mmpp.solitons._method_helpers as helpers\n"
+        "assert helpers.CallableNodeHelper is not None\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", code], check=True, capture_output=True, text=True
+    )
+
+
+def test_top_level_thiele_dashboard_delegates_lazily(monkeypatch) -> None:
+    import mmpp
+    import mmpp.solitons.vortex.nonlinear.interactive as interactive
+
+    marker = object()
+    monkeypatch.setattr(
+        interactive,
+        "build_thiele_dashboard",
+        lambda analyzer, **kwargs: (analyzer, kwargs),
+    )
+    assert mmpp.build_thiele_dashboard(marker, show=False) == (marker, {"show": False})
+
+
 def test_import_mmpp_without_matplotlib_reports_fft_dependency_groups() -> None:
     """Top-level import must not require plotting modules."""
     code = textwrap.dedent(

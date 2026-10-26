@@ -505,21 +505,18 @@ def _configure_system_path(ffmpeg_path: str, verbose: bool = True) -> None:
 # ─────────────────────────────────────────────────────────────────────
 # Thiele Interactive Dashboard (re-export from solitons module)
 # ─────────────────────────────────────────────────────────────────────
-try:
-    from .solitons.vortex.nonlinear.interactive import build_thiele_dashboard
-except Exception as e:
-    _SOLITONS_IMPORT_ERROR = f"{type(e).__name__}: {e}"
-
-    # Fallback if solitons module not available
-    def build_thiele_dashboard(  # type: ignore[no-redef]
-        analyzer: Any | None = None, **kwargs: Any
-    ) -> Any:
-        """Thiele interactive dashboard (solitons module required)."""
-        raise ImportError(
-            "build_thiele_dashboard requires solitons module. "
-            "Install with: pip install mmpp[solitons]\n"
-            f"Import error: {_SOLITONS_IMPORT_ERROR}"
+def build_thiele_dashboard(analyzer: Any | None = None, **kwargs: Any) -> Any:
+    """Load the optional Thiele dashboard only when it is requested."""
+    try:
+        from .solitons.vortex.nonlinear.interactive import (
+            build_thiele_dashboard as _build_thiele_dashboard,
         )
+    except Exception as exc:
+        raise ImportError(
+            "build_thiele_dashboard requires the solitons module and its "
+            f"optional dependencies. Import error: {type(exc).__name__}: {exc}"
+        ) from exc
+    return _build_thiele_dashboard(analyzer, **kwargs)
 
 
 __all__ = [

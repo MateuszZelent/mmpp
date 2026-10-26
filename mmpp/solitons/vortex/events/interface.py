@@ -13,8 +13,8 @@ from .._plotting import (
     pop_axes_style_kwargs,
     pop_figure_kwargs,
 )
+from .._shared.models import TrajectoryResult
 from ..config import VortexConfig
-from ..core.models import TrajectoryResult
 from .core_expulsion import detect_core_expulsions
 from .dwell_time import dwell_time_statistics
 from .models import (

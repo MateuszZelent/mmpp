@@ -10,6 +10,8 @@
   generations tied to a source revision. Legacy sources remain readable,
   but reusable analysis caches require a committed source.
 - Add a read-only diagnostic and verified, single-field Zarr snapshot export.
+- Avoid a circular import when loading soliton analysis in a fresh process;
+  load the top-level Thiele dashboard only when requested.
 - Preserve prior standalone Zarr exports when publishing a replacement. Atomic
   replacement and pinned export reads currently require supported Linux
   filesystem operations; consult `docs/zarr-integrity.md` before migration.
@@ -24,6 +26,9 @@
   committed source; use `save=False` for legacy sources when applicable.
 - Table manifest v1 protects the committed row count but does not include
   checksums for table payloads.
+- Python 3.11 and later require Pillow 13, which contains fixes for reported
+  image-processing vulnerabilities. Pillow 13 does not support Python 3.10;
+  its newest compatible release remains affected by upstream advisories.
 
 ---
 

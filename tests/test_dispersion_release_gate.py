@@ -481,6 +481,21 @@ def test_installed_import_mode_preserves_live_mmpp_module_identity(monkeypatch):
     monkeypatch.setattr(sys, "path", original_path)
 
 
+def test_benchmark_installed_import_mode_preserves_live_mmpp_modules(monkeypatch):
+    import mmpp
+    import mmpp.solitons._method_helpers as helpers
+    from scripts.analysis.benchmark_fft_dispersion import _prepare_import_path
+
+    package = sys.modules["mmpp"]
+    module = sys.modules["mmpp.solitons._method_helpers"]
+    monkeypatch.setattr(sys, "path", list(sys.path))
+
+    _prepare_import_path("installed")
+
+    assert sys.modules["mmpp"] is package is mmpp
+    assert sys.modules["mmpp.solitons._method_helpers"] is module is helpers
+
+
 def test_release_workflow_installs_built_artifacts_before_publish():
     workflow = Path(".github/workflows/release.yml").read_text()
     extras_smoke = workflow.split("  extras-smoke:", 1)[1].split("  build:", 1)[0]

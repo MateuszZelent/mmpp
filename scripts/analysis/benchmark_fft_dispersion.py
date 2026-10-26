@@ -48,9 +48,9 @@ def _prepare_import_path(import_mode: str) -> dict[str, str]:
         sys.path[:] = [
             entry for entry in sys.path if not _path_points_to_repo_root(entry)
         ]
-        for module_name in list(sys.modules):
-            if module_name == "mmpp" or module_name.startswith("mmpp."):
-                del sys.modules[module_name]
+        # A library caller may hold live MMPP class objects. Replacing their
+        # modules would break class identity; installed CLI smoke tests start in
+        # a fresh interpreter and do not need module eviction.
 
     return {"import_mode": import_mode, "repo_root": repo_root}
 

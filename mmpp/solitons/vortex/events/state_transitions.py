@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..core.models import TrajectoryResult
+from .._shared.models import TrajectoryResult
 from .models import StateSwitchEvent
 
 
