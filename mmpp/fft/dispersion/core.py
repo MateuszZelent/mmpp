@@ -1920,11 +1920,8 @@ class SpinWaveAnalyzer:
             else:
                 search_slice = slice(None)
 
-            idx_local = np.argmax(spec[search_slice])
-            if isinstance(search_slice, slice):
-                idx_global = search_slice.start + idx_local
-            else:
-                idx_global = idx_local
+            idx_local = int(np.argmax(spec[search_slice]))
+            idx_global = (search_slice.start or 0) + idx_local
 
             f_tracked[i] = f_axis[idx_global]
             amplitudes[i] = spec[idx_global]

@@ -6,20 +6,26 @@ from typing import Any
 
 import numpy as np
 
+njit: Any
+
 try:  # pragma: no cover - optional dependency availability is environment-specific
-    from numba import njit
+    from numba import njit as _numba_njit
+
+    njit = _numba_njit
 
     HAS_NUMBA = True
 except Exception:  # pragma: no cover
     HAS_NUMBA = False
 
-    def njit(*args, **kwargs):  # type: ignore[misc]
-        def decorator(func):
+    def _fallback_njit(*args: Any, **kwargs: Any) -> Any:
+        def decorator(func: Any) -> Any:
             return func
 
         if len(args) == 1 and callable(args[0]):
             return args[0]
         return decorator
+
+    njit = _fallback_njit
 
 
 def _y_axis_value(convention: Any | None) -> str:

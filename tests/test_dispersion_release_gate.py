@@ -5,24 +5,32 @@ import sys
 import types
 from pathlib import Path
 
+import yaml
+from packaging.requirements import Requirement
 from setuptools.config.pyprojecttoml import read_configuration
 
 
 def test_declared_python_versions_match_ci_matrix():
-    pyproject = Path("pyproject.toml").read_text()
-    ci_workflow = Path(".github/workflows/ci.yml").read_text()
-    expected = ["3.10", "3.11", "3.12"]
+    project = read_configuration("pyproject.toml")["project"]
+    workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
+    matrix = workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]
+    prefix = "Programming Language :: Python :: "
+    declared = {
+        value.removeprefix(prefix)
+        for value in project["classifiers"]
+        if value.startswith(prefix) and value.removeprefix(prefix).startswith("3.")
+    }
 
-    assert 'python-version: ["3.10", "3.11", "3.12"]' in ci_workflow
-    for version in expected:
-        classifier = f"Programming Language :: Python :: {version}"
-        assert classifier in pyproject
+    assert declared == set(matrix)
 
 
 def test_dev_extra_declares_docs_linkify_dependency():
     docs_conf = Path("docs/conf.py").read_text()
     project = read_configuration("pyproject.toml")["project"]
-    dev_extra = project["optional-dependencies"]["dev"]
+    dev_extra = {
+        Requirement(item).name.lower()
+        for item in project["optional-dependencies"]["dev"]
+    }
 
     assert '"linkify"' in docs_conf
     assert "linkify-it-py" in dev_extra
@@ -74,14 +82,17 @@ def test_docs_workflows_use_dev_extra_for_linkify_dependency():
 
     assert 'pip install -e ".[dev]"' in docs_workflow
     assert "pip install -e .[dev]" not in docs_workflow
-    assert 'pip install -e ".[dev]"' in release_workflow
+    assert "uv sync --locked --extra dev " in release_workflow
     assert "pip install linkify-it-py" not in docs_workflow
     assert "pip install linkify-it-py" not in release_workflow
 
 
 def test_full_extra_includes_fft_backend_dependencies():
     project = read_configuration("pyproject.toml")["project"]
-    full_extra = project["optional-dependencies"]["full"]
+    full_extra = {
+        Requirement(item).name.lower()
+        for item in project["optional-dependencies"]["full"]
+    }
 
     assert "pyfftw" in full_extra
 

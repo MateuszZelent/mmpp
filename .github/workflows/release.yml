@@ -19,6 +19,10 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout
@@ -27,12 +31,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m pip install uv==0.13.5
+          uv audit --locked --python-version "${{ matrix.python-version }}"
+          uv sync --locked --extra dev --python "$(which python)"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Verify tag matches package version
         env:
@@ -50,24 +57,29 @@ jobs:
           PY
 
       - name: Ruff format check
+        if: matrix.python-version == '3.11'
         run: python -m ruff format --check mmpp/ tests/ scripts/
 
       - name: Ruff lint
+        if: matrix.python-version == '3.11'
         run: python -m ruff check mmpp/ tests/ scripts/
 
       - name: MyPy
+        if: matrix.python-version == '3.11'
         run: python -m mypy mmpp/
 
       - name: Pytest
         run: python -m pytest tests/ -q
 
       - name: Build documentation
+        if: matrix.python-version == '3.11'
         run: |
           cd docs
           mkdir -p _build
           sphinx-build -b html . _build --keep-going
 
       - name: Benchmark profile preflight
+        if: matrix.python-version == '3.11'
         run: |
           python scripts/analysis/benchmark_fft_dispersion.py --profile medium-dev --preflight-only --max-peak-memory-mb 1024 --output /tmp/mmpp-dispersion-medium-dev-preflight.json
           python scripts/analysis/benchmark_fft_dispersion.py --profile research-reference --preflight-only --max-peak-memory-mb 4096 --output /tmp/mmpp-dispersion-research-reference-preflight.json

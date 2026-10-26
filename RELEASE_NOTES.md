@@ -1,3 +1,14 @@
+# MMPP Library Release v0.8.0
+
+- Require Python 3.11 or newer, allowing the security-fixed Pillow 13 release.
+- Refresh the locked dependency graph.
+- Preserve Zarr 2 compatibility and the committed snapshot format.
+- Test Python 3.11 through 3.14 on Linux. Python 3.14 installations may need
+  a C compiler to build the Zarr 2-compatible numcodecs release from source.
+- Fix dispersion branch tracking without a frequency window.
+
+---
+
 # MMPP Library Release v0.7.1
 
 - Require certifi 2026.10.19 or later to replace CA bundles affected by GHSA-6q48-6c7w-9gw2.

@@ -861,10 +861,6 @@ if TEXTUAL_AVAILABLE:
             # Start with dashboard
             self.push_screen(DashboardScreen())
 
-        def action_quit(self) -> None:
-            """Quit the application."""
-            self.exit()
-
         def action_dashboard(self) -> None:
             """Return to dashboard."""
             # Clear screen stack and show dashboard

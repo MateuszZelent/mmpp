@@ -43,42 +43,33 @@ def _applies_to_python(requirement: Requirement, python_version: str) -> bool:
 
 def _assert_zarr_python_markers(requirements: list[str]) -> None:
     zarr_requirements = _zarr_requirements(requirements)
-
-    python310 = [
-        requirement
-        for requirement in zarr_requirements
-        if _applies_to_python(requirement, "3.10")
+    project = read_configuration(str(ROOT / "pyproject.toml"))["project"]
+    prefix = "Programming Language :: Python :: "
+    versions = [
+        value.removeprefix(prefix)
+        for value in project["classifiers"]
+        if value.startswith(prefix) and value.removeprefix(prefix).startswith("3.")
     ]
-    python311 = [
-        requirement
-        for requirement in zarr_requirements
-        if _applies_to_python(requirement, "3.11")
-    ]
-
-    assert python310
-    assert any(
-        requirement.specifier.contains("2.18.3", prereleases=True)
-        for requirement in python310
-    )
-    assert not any(
-        requirement.specifier.contains("3.0.0", prereleases=True)
-        for requirement in python310
-    )
-
-    assert python311
-    assert any(
-        requirement.specifier.contains("2.18.3", prereleases=True)
-        for requirement in python311
-    )
-    assert not any(
-        requirement.specifier.contains("3.0.0", prereleases=True)
-        for requirement in python311
-    )
+    assert versions
+    for python_version in versions:
+        applicable = [
+            requirement
+            for requirement in zarr_requirements
+            if _applies_to_python(requirement, python_version)
+        ]
+        assert applicable
+        assert any(r.specifier.contains("2.18.7", prereleases=True) for r in applicable)
+        assert not any(
+            r.specifier.contains("2.18.6", prereleases=True) for r in applicable
+        )
+        assert not any(
+            r.specifier.contains("3.0.0", prereleases=True) for r in applicable
+        )
 
     numcodecs_requirements = _numcodecs_requirements(requirements)
     assert numcodecs_requirements
     assert all(
-        requirement.specifier.contains("0.15.1", prereleases=True)
+        requirement.specifier.contains("0.15.2", prereleases=True)
         and not requirement.specifier.contains("0.16.0", prereleases=True)
         for requirement in numcodecs_requirements
     )

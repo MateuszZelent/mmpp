@@ -9,7 +9,7 @@ from importlib import import_module
 from importlib.util import find_spec
 from typing import Any, Optional, cast
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 __author__ = "Mateusz Zelent"
 __email__ = "mateusz.zelent@amu.edu.pl"
 

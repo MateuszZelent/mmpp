@@ -47,14 +47,22 @@ Example
 
 import math
 import warnings
+from typing import Any
 
 import numpy as np
 
 # =====================================================================
 # NUMBA-FREE FALLBACK (Bezpieczeństwo Środowiskowe CI/CD)
 # =====================================================================
+njit: Any
+prange: Any
+
 try:
-    from numba import njit, prange
+    from numba import njit as _numba_njit
+    from numba import prange as _numba_prange
+
+    njit = _numba_njit
+    prange = _numba_prange
 
     HAS_NUMBA = True
 except ImportError:
@@ -67,14 +75,15 @@ except ImportError:
     )
 
     # Dummy decorators by zachować ciągłość interfejsu
-    def njit(*args, **kwargs):
-        def decorator(func):
+    def _fallback_njit(*args: Any, **kwargs: Any) -> Any:
+        def decorator(func: Any) -> Any:
             return func
 
         if len(args) == 1 and callable(args[0]):
             return args[0]
         return decorator
 
+    njit = _fallback_njit
     prange = range
 
 

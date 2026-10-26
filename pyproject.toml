@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=84.2.1", "wheel>=0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,110 +12,111 @@ description = "A library for MMPP (Micro Magnetic Post Processing) simulation an
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "numpy>=1.20.0",
-    "pandas>=1.3.0",
-    "matplotlib>=3.5.0",
+    "numpy>=2.4.6",
+    "pandas>=3.1.0",
+    "matplotlib>=3.11.2",
     # Restore an uncompromised CA bundle for HTTPS clients.
-    "certifi>=2026.10.19",
-    # Pillow 13 contains upstream security fixes and requires Python 3.11+.
-    "Pillow>=13.0.0; python_version >= '3.11'",
+    "certifi>=2026.10.23",
+    # Pillow 13 contains upstream security fixes.
+    "Pillow>=13.0.0",
     # The package currently uses the Zarr 2 API (including create_dataset(data=...)).
     # Keep one compatible storage dependency across the supported Python versions
     # until the Zarr 3 API migration is complete.
-    "zarr>=2.18.0,<3.0.0",
+    "zarr>=2.18.7,<3.0.0",
     # Zarr 2.18.x imports codec helpers removed by numcodecs 0.16.
-    "numcodecs>=0.12.1,<0.16",
-    "h5py>=3.0.0",
-    "rich",
-    "tqdm",
-    "PyYAML>=5.4.0",
+    "numcodecs>=0.15.2,<0.16",
+    "h5py>=3.16.0",
+    "rich>=15.0.0",
+    "tqdm>=4.70.1",
+    "PyYAML>=6.0.3",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "setuptools>=61.0.0",
-    "pytest>=6.0",
-    "pytest-cov",
-    "ruff",
-    "mypy",
-    "build",
-    "twine",
-    "sphinx>=4.0",
-    "sphinx-rtd-theme",
-    "sphinx-autodoc-typehints",
-    "myst-parser",
-    "linkify-it-py",
-    "IPython",
-    "ipywidgets",
-    "scipy",
+    "setuptools>=84.2.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.2",
+    "mypy>=2.4.0",
+    "build>=1.6.1",
+    "twine>=7.0.0",
+    "sphinx>=9.0.4",
+    "sphinx-rtd-theme>=3.1.0",
+    "sphinx-autodoc-typehints>=3.6.1",
+    "myst-parser>=5.1.0",
+    "linkify-it-py>=2.2.0",
+    "IPython>=9.17.1",
+    "ipywidgets>=8.1.9",
+    "scipy>=1.17.1",
 ]
 interactive = [
-    "itables",
-    "IPython",
-    "jupyter",
-    "ipywidgets",
-    "k3d",
-    "holoviews",
-    "pyvista",
+    "itables>=2.9.1",
+    "IPython>=9.17.1",
+    "jupyter>=1.1.1",
+    "ipywidgets>=8.1.9",
+    "k3d>=3.2.0",
+    "holoviews>=1.23.2",
+    "pyvista>=0.49.1",
 ]
 plotting = [
-    "cmocean",
-    "cmcrameri",
-    "k3d",
-    "holoviews",
-    "pyvista",
+    "cmocean>=4.0.3",
+    "cmcrameri>=1.10",
+    "k3d>=3.2.0",
+    "holoviews>=1.23.2",
+    "pyvista>=0.49.1",
 ]
 fft = [
-    "scipy",
-    "pyfftw",
+    "scipy>=1.17.1",
+    "pyfftw>=0.15.1",
 ]
 wavelets = [
-    "PyWavelets",
+    "PyWavelets>=1.9.0",
 ]
 image = [
-    "scikit-image",
-    "imageio",
+    "scikit-image>=0.26.0",
+    "imageio>=2.38.1",
 ]
 ml = [
-    "scikit-learn",
-    "joblib",
+    "scikit-learn>=1.9.1",
+    "joblib>=1.6.0",
 ]
 tui = [
-    "textual>=0.40.0",
+    "textual>=8.2.8",
 ]
 full = [
-    "textual>=0.40.0",
-    "cmocean",
-    "cmcrameri",
-    "k3d",
-    "holoviews",
-    "pyvista",
-    "itables",
-    "IPython",
-    "jupyter",
-    "ipywidgets",
-    "scipy",
-    "pyfftw",
-    "PyWavelets",
-    "scikit-image",
-    "imageio",
-    "scikit-learn",
-    "joblib",
-    "numba",
-    "psutil",
+    "textual>=8.2.8",
+    "cmocean>=4.0.3",
+    "cmcrameri>=1.10",
+    "k3d>=3.2.0",
+    "holoviews>=1.23.2",
+    "pyvista>=0.49.1",
+    "itables>=2.9.1",
+    "IPython>=9.17.1",
+    "jupyter>=1.1.1",
+    "ipywidgets>=8.1.9",
+    "scipy>=1.17.1",
+    "pyfftw>=0.15.1",
+    "PyWavelets>=1.9.0",
+    "scikit-image>=0.26.0",
+    "imageio>=2.38.1",
+    "scikit-learn>=1.9.1",
+    "joblib>=1.6.0",
+    "numba>=0.68.0",
+    "psutil>=7.2.2",
 ]
 
 [project.urls]
@@ -167,7 +168,6 @@ ignore = [
     "C901",  # too complex
     "UP007", # retain Optional annotations in the public compatibility layer
     "UP045", # retain Optional annotations across the established public API
-    "UP038", # keep tuple-style isinstance checks compatible with older Ruff
     "C420",  # preserve explicit parameter dictionaries in legacy exports
 ]
 
@@ -194,7 +194,7 @@ ignore = [
 known-first-party = ["mmpp"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_unused_configs = true
 ignore_missing_imports = true
 implicit_optional = true
