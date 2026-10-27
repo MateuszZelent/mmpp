@@ -38,7 +38,7 @@ dependencies = [
     # until the Zarr 3 API migration is complete.
     "zarr>=2.18.7,<3.0.0",
     # Zarr 2.18.x imports codec helpers removed by numcodecs 0.16.
-    "numcodecs>=0.15.2,<0.16",
+    "numcodecs>=0.15.2,<0.17",
     "h5py>=3.16.0",
     "rich>=15.0.0",
     "tqdm>=4.70.1",
