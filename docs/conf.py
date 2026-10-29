@@ -19,8 +19,8 @@ sys.path.insert(0, str(project_root))
 project = "MMPP"
 copyright = "2025, Mateusz Zelent"
 author = "Mateusz Zelent"
-release = "0.7.0"
-version = "0.7.0"
+release = "0.8.1"
+version = "0.8.1"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

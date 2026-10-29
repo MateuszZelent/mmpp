@@ -181,9 +181,10 @@ def test_reader_rejects_replaced_frame_record(tmp_path: Path):
         ZarrJobResult(str(path), {}).z["m"]
 
 
-def test_reader_does_not_downgrade_when_commit_disappears(tmp_path: Path):
+def test_nonempty_projection_does_not_downgrade_when_commit_disappears(tmp_path: Path):
     path, _, _ = _make_committed_store(tmp_path)
     (path / "m" / "commit.json").unlink()
+    (path / "m" / ".zarray").write_text(json.dumps(_metadata(2)), encoding="utf-8")
     with pytest.raises(ValueError, match="Missing Zarr commit"):
         ZarrJobResult(str(path), {}).z["m"]
 
@@ -235,7 +236,9 @@ def test_reader_keeps_legacy_zarr_without_commit(tmp_path: Path):
     path = tmp_path / "legacy.zarr"
     root = zarr.open(str(path), mode="w")
     values = np.asarray([[[[[1.5], [2.5]]]], [[[[3.5], [4.5]]]]], dtype="<f4")
-    array = root.create_dataset("m", data=values, chunks=(1, 1, 1, 2, 1))
+    array = root.create_dataset(
+        "m", data=values, shape=values.shape, chunks=(1, 1, 1, 2, 1)
+    )
     array.attrs["t"] = [0.125, 0.375]
 
     result = _open_single_result(path)

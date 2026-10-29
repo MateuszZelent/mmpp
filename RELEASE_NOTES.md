@@ -1,3 +1,20 @@
+# MMPP Library Release v0.8.1
+
+## Recover incomplete Zarr time metadata
+
+- Recover the contiguous, checksummed frame prefix when a MuMax field's
+  `.zarray` reports zero time samples and its `commit.json` is missing.
+- Restore time values and expose the recovered length in memory without
+  rewriting source metadata. Keep each reader and cache revision pinned to
+  the recovered prefix, and warn that recovery does not confirm run completion.
+- Read verified committed and recovered sources through a Zarr 3 store adapter.
+  The package dependency range still targets Zarr 2; the complete Zarr 3
+  dependency and cache/export migration remains separate work.
+- Reject broken frame chains, invalid timestamps, incomplete records, and
+  modified chunk payloads rather than treating them as missing data.
+
+---
+
 # MMPP Library Release v0.8.0
 
 - Require Python 3.11 or newer, allowing the security-fixed Pillow 13 release.
