@@ -80,6 +80,7 @@ tests/**
 !tests/test_legacy_modes_transactional.py
 !tests/test_pyzfn_transactional.py
 !tests/test_transactional_transmission_cache.py
+!tests/test_transmission_source_signature.py
 !tests/test_transactional_dispersion_cache.py
 !tests/test_transactional_mode_cache.py
 !tests/test_zarr_integrity_regressions.py

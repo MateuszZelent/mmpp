@@ -99,7 +99,11 @@ def _finite_max(values: np.ndarray) -> float | None:
 
 
 def _source_state_signature(path_value: Any) -> dict[str, Any]:
-    """Return a content-state signature without reading source file payloads."""
+    """Return a file-stat signature, excluding MuMax atomic-write staging files.
+
+    This is cache invalidation, not a consistent snapshot of a running solver.
+    Missing committed files and other I/O errors must still reach the caller.
+    """
     path = Path(path_value)
     if not path.exists():
         return {"path": str(path), "exists": False}
@@ -112,7 +116,13 @@ def _source_state_signature(path_value: Any) -> dict[str, Any]:
         [path]
         if path.is_file()
         else sorted(
-            (entry for entry in path.rglob("*") if entry.is_file()),
+            (
+                entry
+                for entry in path.rglob("*")
+                # Filter before is_file()/stat(): staging files can disappear
+                # at any point when MuMax atomically publishes their contents.
+                if not entry.name.startswith(".mumax-write-") and entry.is_file()
+            ),
             key=lambda entry: entry.as_posix(),
         )
     )
