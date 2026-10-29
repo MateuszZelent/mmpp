@@ -48,16 +48,21 @@ def test_missing_committed_file_is_not_silently_ignored(tmp_path, monkeypatch):
     chunk = source / "0.0.0.0.0"
     chunk.write_bytes(b"committed")
     real_stat = Path.stat
-    calls = 0
+    real_is_file = Path.is_file
+
+    def is_file(path, *args, **kwargs):
+        # Freeze successful enumeration independently of pathlib's version-
+        # specific use of stat() and cached directory-entry information.
+        if path == chunk:
+            return True
+        return real_is_file(path, *args, **kwargs)
 
     def stat(path, *args, **kwargs):
-        nonlocal calls
         if path == chunk:
-            calls += 1
-            if calls == 2:
-                raise FileNotFoundError(str(path))
+            raise FileNotFoundError(str(path))
         return real_stat(path, *args, **kwargs)
 
+    monkeypatch.setattr(Path, "is_file", is_file)
     monkeypatch.setattr(Path, "stat", stat)
     with pytest.raises(FileNotFoundError):
         _source_state_signature(source)

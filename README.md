@@ -44,7 +44,7 @@ Install the latest MMPP release from PyPI:
 python -m pip install --upgrade "mmpp[fft]"
 ```
 
-MMPP 0.8.2 excludes MuMax3 `.mumax-write-*` staging files from batch
+MMPP 0.8.3 excludes MuMax3 `.mumax-write-*` staging files from batch
 transmission cache fingerprints, preventing transient files from causing
 `FileNotFoundError` or unnecessary cache invalidation during atomic publication.
 Changes to published source files still invalidate the cache.
